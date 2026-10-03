@@ -1,0 +1,504 @@
+generator client {
+  provider      = "prisma-client-js"
+  binaryTargets = ["native", "debian-openssl-3.0.x", "linux-arm64-openssl-3.0.x"]
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  ADMIN
+  USER
+}
+
+enum DatType {
+  NOINTRO
+  REDUMP
+  FBNEO
+  MAME
+  HACKS
+  OTHER
+}
+
+enum MatchStatus {
+  MATCHED
+  HACK
+  UNKNOWN
+}
+
+enum MediaType {
+  COVER
+  SCREENSHOT
+  TITLE
+  MANUAL
+  VIDEO
+  MARQUEE
+  WHEEL
+}
+
+enum Visibility {
+  PRIVATE
+  SHARED
+  PUBLIC
+}
+
+enum ConnType {
+  LOCAL
+  SSH
+}
+
+enum SaveKind {
+  SAVE
+  STATE
+}
+
+enum JobStatus {
+  PENDING
+  RUNNING
+  DONE
+  FAILED
+}
+
+enum HackType {
+  HACK
+  TRANSLATION
+  IMPROVEMENT
+  OTHER
+}
+
+model User {
+  id           Int      @id @default(autoincrement())
+  username     String   @unique @db.VarChar(64)
+  email        String   @unique @db.VarChar(191)
+  passwordHash String
+  role         Role     @default(USER)
+  locale       String   @default("es") @db.VarChar(8)
+  // Credenciales externas cifradas (AES-256-GCM)
+  ssUser       String?  @db.Text
+  ssPassword   String?  @db.Text
+  raUser       String?  @db.Text
+  raApiKey     String?  @db.Text
+  createdAt    DateTime @default(now())
+
+  lists         List[]
+  listShares    ListShare[]
+  devices       Device[]
+  saves         Save[]
+  jobs          Job[]
+  refreshTokens RefreshToken[]
+  invitations   Invitation[]   @relation("invitationCreator")
+}
+
+model RefreshToken {
+  id        Int      @id @default(autoincrement())
+  userId    Int
+  tokenHash String   @unique @db.Char(64)
+  expiresAt DateTime
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model Invitation {
+  id        Int       @id @default(autoincrement())
+  token     String    @unique @db.VarChar(64)
+  role      Role      @default(USER)
+  createdBy Int
+  usedById  Int?
+  usedAt    DateTime?
+  expiresAt DateTime
+  creator   User      @relation("invitationCreator", fields: [createdBy], references: [id], onDelete: Cascade)
+}
+
+model Setting {
+  key   String @id @db.VarChar(64)
+  value String @db.Text
+}
+
+model System {
+  id           Int    @id @default(autoincrement())
+  slug         String @unique @db.VarChar(32)
+  name         String @db.VarChar(128)
+  manufacturer String @db.VarChar(64)
+  // Nombre usado por No-Intro/Redump/libretro, p.ej. "Nintendo - Nintendo Entertainment System"
+  datName      String @unique @db.VarChar(191)
+  datAliases   Json?
+  extensions   Json
+  // nes | snes | lynx | a7800 | fds | none
+  headerType   String @default("none") @db.VarChar(16)
+  // rom | disc | arcade
+  mediaType    String @default("rom") @db.VarChar(16)
+  raConsoleId  Int?
+  ssSystemId   Int?
+  sortOrder    Int    @default(0)
+
+  games      Game[]
+  datSources DatSource[]
+  raGames    RaGame[]
+}
+
+model DatSource {
+  id         Int       @id @default(autoincrement())
+  type       DatType
+  systemId   Int
+  name       String    @db.VarChar(191)
+  version    String?   @db.VarChar(64)
+  fileSha1   String    @db.VarChar(40)
+  // Nombre del fichero en DATA_DIR/dats o SEED_DIR/dats
+  fileName   String?   @db.VarChar(255)
+  importedAt DateTime  @default(now())
+  romCount   Int       @default(0)
+  system     System    @relation(fields: [systemId], references: [id], onDelete: Cascade)
+  roms       Rom[]
+  hacks      RomHack[]
+
+  @@unique([systemId, type, name])
+}
+
+model Game {
+  id              Int        @id @default(autoincrement())
+  systemId        Int
+  title           String     @db.VarChar(255)
+  titleNormalized String     @db.VarChar(255)
+  releaseYear     Int?
+  developer       String?    @db.VarChar(128)
+  publisher       String?    @db.VarChar(128)
+  genre           String?    @db.VarChar(128)
+  players         String?    @db.VarChar(32)
+  description     String?    @db.Text
+  ssGameId        Int?
+  scrapedAt       DateTime?
+  system          System     @relation(fields: [systemId], references: [id], onDelete: Cascade)
+  roms            Rom[]
+  hacks           RomHack[]
+  media           Media[]
+  listItems       ListItem[]
+  saves           Save[]
+
+  @@unique([systemId, titleNormalized])
+  @@index([title])
+}
+
+model Rom {
+  id          Int        @id @default(autoincrement())
+  gameId      Int
+  datSourceId Int
+  name        String     @db.VarChar(255)
+  regions     Json
+  languages   Json
+  revision    String?    @db.VarChar(32)
+  flags       Json
+  isBios      Boolean    @default(false)
+  // Hash RA precalculado a partir del DAT cuando el algoritmo lo permite
+  raHash      String?    @db.Char(32)
+  raGameId    Int?
+  game        Game       @relation(fields: [gameId], references: [id], onDelete: Cascade)
+  datSource   DatSource  @relation(fields: [datSourceId], references: [id], onDelete: Cascade)
+  parts       RomPart[]
+  listItems   ListItem[]
+  media       Media[]
+  saves       Save[]
+  baseOfHacks RomHack[]
+
+  @@unique([datSourceId, name])
+  @@index([raHash])
+  @@index([gameId])
+}
+
+model RomPart {
+  id             Int       @id @default(autoincrement())
+  romId          Int
+  name           String    @db.VarChar(255)
+  size           BigInt
+  crc32          String?   @db.Char(8)
+  md5            String?   @db.Char(32)
+  sha1           String?   @db.Char(40)
+  headerlessSize BigInt?
+  headerlessCrc  String?   @db.Char(8)
+  headerlessMd5  String?   @db.Char(32)
+  headerlessSha1 String?   @db.Char(40)
+  rom            Rom       @relation(fields: [romId], references: [id], onDelete: Cascade)
+  files          RomFile[]
+
+  @@index([sha1])
+  @@index([md5])
+  @@index([crc32, size])
+  @@index([headerlessSha1])
+  @@index([headerlessMd5])
+  @@index([romId])
+}
+
+model RomHack {
+  id          Int        @id @default(autoincrement())
+  gameId      Int
+  baseRomId   Int?
+  datSourceId Int?
+  type        HackType   @default(HACK)
+  title       String     @db.VarChar(255)
+  author      String?    @db.VarChar(255)
+  version     String?    @db.VarChar(64)
+  language    String?    @db.VarChar(32)
+  description String?    @db.Text
+  sourceUrl   String?    @db.VarChar(512)
+  size        BigInt?
+  crc32       String?    @db.Char(8)
+  md5         String?    @db.Char(32)
+  sha1        String?    @db.Char(40)
+  createdAt   DateTime   @default(now())
+  game        Game       @relation(fields: [gameId], references: [id], onDelete: Cascade)
+  baseRom     Rom?       @relation(fields: [baseRomId], references: [id], onDelete: SetNull)
+  datSource   DatSource? @relation(fields: [datSourceId], references: [id], onDelete: Cascade)
+  files       RomFile[]
+  listItems   ListItem[]
+
+  @@index([sha1])
+  @@index([md5])
+}
+
+model RomPath {
+  id             Int       @id @default(autoincrement())
+  label          String    @db.VarChar(128)
+  path           String    @unique @db.VarChar(700)
+  // Si se fija, todo lo escaneado se asume de ese sistema; si no, se deduce por carpeta/extension
+  systemId       Int?
+  isUploadTarget Boolean   @default(false)
+  readOnly       Boolean   @default(false)
+  lastScanAt     DateTime?
+  files          RomFile[]
+}
+
+model RomFile {
+  id             Int         @id @default(autoincrement())
+  romPathId      Int
+  // sha1(relativePath + "\0" + archiveEntry) para indice unico
+  pathKey        String      @db.Char(40)
+  relativePath   String      @db.VarChar(1024)
+  archiveEntry   String?     @db.VarChar(512)
+  size           BigInt
+  // Tamano y fecha del fichero en disco (deteccion de cambios; size es el del contenido)
+  fileSize       BigInt      @default(0)
+  // sha1(tamano + primer MiB + ultimo MiB): reutiliza hashes de ficheros movidos o renombrados
+  quickHash      String?     @db.Char(40)
+  mtimeMs        BigInt
+  crc32          String      @db.Char(8)
+  md5            String?     @db.Char(32)
+  sha1           String?     @db.Char(40)
+  headerlessCrc  String?     @db.Char(8)
+  headerlessMd5  String?     @db.Char(32)
+  headerlessSha1 String?     @db.Char(40)
+  raHash         String?     @db.Char(32)
+  systemId       Int?
+  status         MatchStatus @default(UNKNOWN)
+  romPartId      Int?
+  romHackId      Int?
+  scannedAt      DateTime    @default(now())
+  romPath        RomPath     @relation(fields: [romPathId], references: [id], onDelete: Cascade)
+  romPart        RomPart?    @relation(fields: [romPartId], references: [id], onDelete: SetNull)
+  romHack        RomHack?    @relation(fields: [romHackId], references: [id], onDelete: SetNull)
+
+  @@unique([romPathId, pathKey])
+  @@index([sha1])
+  @@index([quickHash])
+  @@index([romPartId])
+  @@index([status])
+}
+
+model Media {
+  id        Int       @id @default(autoincrement())
+  gameId    Int?
+  romId     Int?
+  type      MediaType
+  source    String    @db.VarChar(32)
+  path      String    @db.VarChar(512)
+  region    String?   @db.VarChar(16)
+  createdAt DateTime  @default(now())
+  game      Game?     @relation(fields: [gameId], references: [id], onDelete: Cascade)
+  rom       Rom?      @relation(fields: [romId], references: [id], onDelete: Cascade)
+
+  @@index([gameId, type])
+}
+
+model List {
+  id              Int         @id @default(autoincrement())
+  ownerId         Int
+  name            String      @db.VarChar(191)
+  description     String?     @db.Text
+  visibility      Visibility  @default(PRIVATE)
+  isCollaborative Boolean     @default(false)
+  parentListId    Int?
+  derivedFilter   Json?
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
+  owner           User        @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  parent          List?       @relation("derived", fields: [parentListId], references: [id], onDelete: SetNull)
+  children        List[]      @relation("derived")
+  items           ListItem[]
+  shares          ListShare[]
+}
+
+model ListItem {
+  id       Int      @id @default(autoincrement())
+  listId   Int
+  gameId   Int?
+  romId    Int?
+  hackId   Int?
+  // Clave unica: g<id> | r<id> | h<id>
+  itemKey  String   @db.VarChar(24)
+  position Int      @default(0)
+  note     String?  @db.VarChar(512)
+  list     List     @relation(fields: [listId], references: [id], onDelete: Cascade)
+  game     Game?    @relation(fields: [gameId], references: [id], onDelete: Cascade)
+  rom      Rom?     @relation(fields: [romId], references: [id], onDelete: Cascade)
+  hack     RomHack? @relation(fields: [hackId], references: [id], onDelete: Cascade)
+
+  @@unique([listId, itemKey])
+}
+
+model ListShare {
+  listId  Int
+  userId  Int
+  canEdit Boolean @default(false)
+  list    List    @relation(fields: [listId], references: [id], onDelete: Cascade)
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([listId, userId])
+}
+
+model Console {
+  id           Int      @id @default(autoincrement())
+  name         String   @unique @db.VarChar(128)
+  manufacturer String   @db.VarChar(64)
+  formFactor   String   @default("handheld") @db.VarChar(32)
+  devices      Device[]
+}
+
+model Firmware {
+  id          Int      @id @default(autoincrement())
+  slug        String   @unique @db.VarChar(32)
+  name        String   @db.VarChar(128)
+  // Rutas relativas a la raiz del dispositivo
+  romsRoot    String   @db.VarChar(255)
+  savesRoot   String   @db.VarChar(255)
+  statesRoot  String   @db.VarChar(255)
+  biosRoot    String   @db.VarChar(255)
+  // { systemSlug: { folder, emulator } }
+  systemMap   Json
+  // flat: savesRoot/<rom>.srm | system: savesRoot/<folder>/ | core: savesRoot/<core>/ | rom: junto a la rom
+  savesLayout String   @default("flat") @db.VarChar(16)
+  devices     Device[]
+}
+
+model Device {
+  id           Int           @id @default(autoincrement())
+  userId       Int
+  name         String        @db.VarChar(128)
+  consoleId    Int
+  firmwareId   Int
+  connType     ConnType
+  // Raiz del dispositivo: path local (SD montada) o path remoto via SSH
+  rootPath     String        @db.VarChar(512)
+  sshHost      String?       @db.VarChar(255)
+  sshPort      Int?          @default(22)
+  sshUser      String?       @db.VarChar(64)
+  // Cifrado
+  sshPassword  String?       @db.Text
+  sshKey       String?       @db.Text
+  // Sobrescribe campos de Firmware: { romsRoot, savesRoot, statesRoot, systemMap }
+  overrides    Json?
+  syncSaves    Boolean       @default(false)
+  lastSyncAt   DateTime?
+  createdAt    DateTime      @default(now())
+  user         User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  console      Console       @relation(fields: [consoleId], references: [id])
+  firmware     Firmware      @relation(fields: [firmwareId], references: [id])
+  saveVersions SaveVersion[]
+}
+
+model Emulator {
+  id         Int     @id @default(autoincrement())
+  slug       String  @unique @db.VarChar(64)
+  name       String  @db.VarChar(128)
+  // Core de RetroArch si aplica
+  core       String? @db.VarChar(64)
+  // Formato logico de save: raw | ps1card
+  saveFormat String  @default("raw") @db.VarChar(16)
+  saveExt    String  @db.VarChar(16)
+  stateExt   String? @db.VarChar(16)
+  saves      Save[]
+}
+
+model Save {
+  id               Int           @id @default(autoincrement())
+  userId           Int
+  gameId           Int?
+  romId            Int?
+  emulatorId       Int
+  kind             SaveKind
+  slot             Int           @default(0)
+  // Nombre base del fichero (sin extension) tal y como se encontro
+  baseName         String        @db.VarChar(255)
+  currentVersionId Int?
+  updatedAt        DateTime      @updatedAt
+  user             User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  game             Game?         @relation(fields: [gameId], references: [id], onDelete: SetNull)
+  rom              Rom?          @relation(fields: [romId], references: [id], onDelete: SetNull)
+  emulator         Emulator      @relation(fields: [emulatorId], references: [id])
+  versions         SaveVersion[]
+
+  @@unique([userId, emulatorId, kind, slot, baseName])
+}
+
+model SaveVersion {
+  id             Int      @id @default(autoincrement())
+  saveId         Int
+  path           String   @db.VarChar(512)
+  size           Int
+  sha1           String   @db.Char(40)
+  // mtime del fichero en origen
+  fileMtime      DateTime
+  sourceDeviceId Int?
+  note           String?  @db.VarChar(255)
+  createdAt      DateTime @default(now())
+  save           Save     @relation(fields: [saveId], references: [id], onDelete: Cascade)
+  sourceDevice   Device?  @relation(fields: [sourceDeviceId], references: [id], onDelete: SetNull)
+
+  @@index([saveId])
+}
+
+model RaGame {
+  id              Int      @id
+  systemId        Int
+  title           String   @db.VarChar(255)
+  numAchievements Int      @default(0)
+  imageIcon       String?  @db.VarChar(255)
+  system          System   @relation(fields: [systemId], references: [id], onDelete: Cascade)
+  hashes          RaHash[]
+}
+
+model RaHash {
+  hash     String @db.Char(32)
+  raGameId Int
+  raGame   RaGame @relation(fields: [raGameId], references: [id], onDelete: Cascade)
+
+  @@id([hash, raGameId])
+  @@index([raGameId])
+}
+
+model Job {
+  id         Int       @id @default(autoincrement())
+  userId     Int?
+  type       String    @db.VarChar(32)
+  status     JobStatus @default(PENDING)
+  params     Json
+  total      Int       @default(0)
+  processed  Int       @default(0)
+  message    String?   @db.VarChar(512)
+  log        String?   @db.MediumText
+  result     Json?
+  createdAt  DateTime  @default(now())
+  startedAt  DateTime?
+  finishedAt DateTime?
+  user       User?     @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([status])
+}

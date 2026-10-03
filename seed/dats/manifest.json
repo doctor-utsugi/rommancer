@@ -1,0 +1,162 @@
+[
+ {
+  "file": "nointro - Nintendo - Nintendo Entertainment System.dat",
+  "system": "nes",
+  "type": "NOINTRO"
+ },
+ {
+  "file": "nointro - Nintendo - Super Nintendo Entertainment System.dat",
+  "system": "snes",
+  "type": "NOINTRO"
+ },
+ {
+  "file": "hacks - Nintendo - Nintendo Entertainment System.dat",
+  "system": "nes",
+  "type": "HACKS"
+ },
+ {
+  "file": "hacks - Nintendo - Super Nintendo Entertainment System.dat",
+  "system": "snes",
+  "type": "HACKS"
+ },
+ {
+  "file": "nointro - Nintendo - Family Computer Disk System.dat",
+  "system": "fds",
+  "type": "NOINTRO"
+ },
+ {
+  "file": "nointro - Nintendo - Game Boy.dat",
+  "system": "gb",
+  "type": "NOINTRO"
+ },
+ {
+  "file": "nointro - Nintendo - Game Boy Color.dat",
+  "system": "gbc",
+  "type": "NOINTRO"
+ },
+ {
+  "file": "nointro - Nintendo - Game Boy Advance.dat",
+  "system": "gba",
+  "type": "NOINTRO"
+ },
+ {
+  "file": "nointro - Nintendo - Nintendo 64.dat",
+  "system": "n64",
+  "type": "NOINTRO"
+ },
+ {
+  "file": "nointro - Nintendo - Nintendo DS.dat",
+  "system": "nds",
+  "type": "NOINTRO"
+ },
+ {
+  "file": "nointro - Sega - Master System - Mark III.dat",
+  "system": "sms",
+  "type": "NOINTRO"
+ },
+ {
+  "file": "nointro - Sega - Game Gear.dat",
+  "system": "gg",
+  "type": "NOINTRO"
+ },
+ {
+  "file": "nointro - Sega - Mega Drive - Genesis.dat",
+  "system": "md",
+  "type": "NOINTRO"
+ },
+ {
+  "file": "nointro - Atari - Lynx.dat",
+  "system": "lynx",
+  "type": "NOINTRO"
+ },
+ {
+  "file": "nointro - Atari - 7800.dat",
+  "system": "a7800",
+  "type": "NOINTRO"
+ },
+ {
+  "file": "redump - Sony - PlayStation.dat",
+  "system": "psx",
+  "type": "REDUMP"
+ },
+ {
+  "file": "redump - Sony - PlayStation 2.dat",
+  "system": "ps2",
+  "type": "REDUMP"
+ },
+ {
+  "file": "redump - Sony - PlayStation Portable.dat",
+  "system": "psp",
+  "type": "REDUMP"
+ },
+ {
+  "file": "redump - Nintendo - GameCube.dat",
+  "system": "gc",
+  "type": "REDUMP"
+ },
+ {
+  "file": "redump - Nintendo - Wii.dat",
+  "system": "wii",
+  "type": "REDUMP"
+ },
+ {
+  "file": "fbneo - FBNeo - Arcade Games.dat",
+  "system": "fbneo",
+  "type": "FBNEO"
+ },
+ {
+  "file": "hacks - Nintendo - Game Boy.dat",
+  "system": "gb",
+  "type": "HACKS"
+ },
+ {
+  "file": "hacks - Nintendo - Game Boy Color.dat",
+  "system": "gbc",
+  "type": "HACKS"
+ },
+ {
+  "file": "hacks - Nintendo - Game Boy Advance.dat",
+  "system": "gba",
+  "type": "HACKS"
+ },
+ {
+  "file": "hacks - Nintendo - Nintendo 64.dat",
+  "system": "n64",
+  "type": "HACKS"
+ },
+ {
+  "file": "hacks - Nintendo - Nintendo DS.dat",
+  "system": "nds",
+  "type": "HACKS"
+ },
+ {
+  "file": "hacks - Sega - Master System - Mark III.dat",
+  "system": "sms",
+  "type": "HACKS"
+ },
+ {
+  "file": "hacks - Sega - Game Gear.dat",
+  "system": "gg",
+  "type": "HACKS"
+ },
+ {
+  "file": "hacks - Sega - Mega Drive - Genesis.dat",
+  "system": "md",
+  "type": "HACKS"
+ },
+ {
+  "file": "hacks - Sony - PlayStation.dat",
+  "system": "psx",
+  "type": "HACKS"
+ },
+ {
+  "file": "hacks - Sony - PlayStation 2.dat",
+  "system": "ps2",
+  "type": "HACKS"
+ },
+ {
+  "file": "hacks - Sony - PlayStation Portable.dat",
+  "system": "psp",
+  "type": "HACKS"
+ }
+]

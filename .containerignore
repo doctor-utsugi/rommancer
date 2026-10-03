@@ -1,0 +1,8 @@
+**/node_modules
+**/dist
+data
+data-test
+roms
+.env
+.playwright-mcp
+backend/scratch

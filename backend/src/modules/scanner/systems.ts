@@ -1,0 +1,73 @@
+import path from 'node:path';
+import type { System } from '@prisma/client';
+import { prisma } from '../../lib/prisma.js';
+
+export const ARCHIVE_EXTS = new Set(['.zip', '.7z']);
+export const EXTRA_EXTS = ['.zip', '.7z', '.chd', '.rvz', '.wia', '.bin', '.img', '.iso', '.cue'];
+
+const EXTRA_FOLDERS: Record<string, string[]> = {
+  nes: ['fc', 'famicom', 'nintendo', 'nes'],
+  snes: ['sfc', 'superfamicom', 'supernintendo', 'snes'],
+  md: ['genesis', 'megadrive', 'md', 'mega drive'],
+  sms: ['mastersystem', 'ms', 'sms'],
+  gg: ['gamegear', 'gg'],
+  psx: ['ps1', 'ps', 'playstation', 'psx'],
+  ps2: ['ps2', 'playstation2'],
+  psp: ['psp'],
+  gc: ['gc', 'gamecube', 'ngc'],
+  wii: ['wii'],
+  fbneo: ['fbneo', 'fba', 'arcade', 'fbn'],
+  n64: ['n64'],
+  nds: ['nds', 'ds'],
+};
+
+export interface SystemIndex {
+  bySlug: Map<string, System>;
+  byId: Map<number, System>;
+  byFolder: Map<string, System>;
+  byExt: Map<string, System>;
+  allExts: Set<string>;
+}
+
+let cache: { at: number; idx: SystemIndex } | null = null;
+
+export async function systemIndex(): Promise<SystemIndex> {
+  if (cache && Date.now() - cache.at < 30_000) return cache.idx;
+  const systems = await prisma.system.findMany();
+  const firmwares = await prisma.firmware.findMany();
+  const idx: SystemIndex = { bySlug: new Map(), byId: new Map(), byFolder: new Map(), byExt: new Map(), allExts: new Set(EXTRA_EXTS) };
+  const extCount = new Map<string, number>();
+  for (const s of systems) {
+    idx.bySlug.set(s.slug, s);
+    idx.byId.set(s.id, s);
+    idx.byFolder.set(s.slug, s);
+    idx.byFolder.set(s.datName.toLowerCase(), s);
+    for (const f of EXTRA_FOLDERS[s.slug] ?? []) idx.byFolder.set(f, s);
+    for (const e of s.extensions as string[]) {
+      idx.allExts.add(e);
+      extCount.set(e, (extCount.get(e) ?? 0) + 1);
+    }
+  }
+  for (const fw of firmwares) {
+    for (const [slug, v] of Object.entries(fw.systemMap as Record<string, { folder: string }>)) {
+      const s = idx.bySlug.get(slug);
+      if (s && v.folder) idx.byFolder.set(v.folder.toLowerCase(), s);
+    }
+  }
+  // Solo extensiones inequivocas sirven para deducir el sistema
+  for (const s of systems)
+    for (const e of s.extensions as string[]) if (extCount.get(e) === 1 && !EXTRA_EXTS.includes(e)) idx.byExt.set(e, s);
+  cache = { at: Date.now(), idx };
+  return idx;
+}
+
+export function guessSystem(idx: SystemIndex, relPath: string, forced: System | null, entryName?: string): System | null {
+  if (forced) return forced;
+  const dirs = path.dirname(relPath).split(/[\\/]/).reverse();
+  for (const d of dirs) {
+    const s = idx.byFolder.get(d.toLowerCase());
+    if (s) return s;
+  }
+  const ext = path.extname(entryName ?? relPath).toLowerCase();
+  return idx.byExt.get(ext) ?? null;
+}

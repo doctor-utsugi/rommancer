@@ -1,0 +1,16 @@
+[Unit]
+Description=Rommancer web
+Requires=rommancer-api.service
+After=rommancer-api.service
+
+[Container]
+ContainerName=rommancer-web
+Image=localhost/rommancer-web:latest
+Network=rommancer.network
+PublishPort=8080:80
+
+[Service]
+Restart=always
+
+[Install]
+WantedBy=default.target

@@ -1,0 +1,94 @@
+import type { Job, Prisma } from '@prisma/client';
+import { prisma } from './prisma.js';
+
+export interface JobContext {
+  job: Job;
+  params: Record<string, any>;
+  progress(processed: number, total?: number, message?: string): Promise<void>;
+  log(line: string): void;
+}
+
+type Handler = (ctx: JobContext) => Promise<unknown>;
+
+const handlers = new Map<string, Handler>();
+const running = new Set<string>();
+let timer: NodeJS.Timeout | null = null;
+const MAX_CONCURRENT = 3;
+
+export function registerJob(type: string, handler: Handler) {
+  handlers.set(type, handler);
+}
+
+export async function enqueue(type: string, params: Record<string, unknown>, userId?: number): Promise<Job> {
+  const job = await prisma.job.create({ data: { type, params: params as Prisma.InputJsonValue, userId: userId ?? null } });
+  setImmediate(tick);
+  return job;
+}
+
+async function runJob(job: Job) {
+  const handler = handlers.get(job.type);
+  const lines: string[] = [];
+  let lastFlush = 0;
+  const flush = async (data: Prisma.JobUpdateInput = {}) => {
+    await prisma.job.update({ where: { id: job.id }, data: { ...data, log: lines.slice(-2000).join('\n') } });
+  };
+  const ctx: JobContext = {
+    job,
+    params: (job.params ?? {}) as Record<string, any>,
+    async progress(processed, total, message) {
+      const now = Date.now();
+      if (now - lastFlush < 500 && processed !== total) return;
+      lastFlush = now;
+      await flush({ processed, ...(total != null ? { total } : {}), ...(message ? { message: message.slice(0, 512) } : {}) });
+    },
+    log(line) {
+      lines.push(`[${new Date().toISOString()}] ${line}`);
+    },
+  };
+  try {
+    if (!handler) throw new Error(`Unknown job type ${job.type}`);
+    const result = await handler(ctx);
+    await flush({ status: 'DONE', finishedAt: new Date(), result: (result ?? null) as Prisma.InputJsonValue });
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    ctx.log(`ERROR: ${msg}`);
+    console.error(`Job ${job.id} (${job.type}) failed:`, e);
+    await flush({ status: 'FAILED', finishedAt: new Date(), message: msg.slice(0, 512) });
+  }
+}
+
+async function tick() {
+  if (running.size >= MAX_CONCURRENT) return;
+  const pending = await prisma.job.findMany({ where: { status: 'PENDING' }, orderBy: { id: 'asc' }, take: 10 });
+  for (const job of pending) {
+    if (running.size >= MAX_CONCURRENT) break;
+    // Un trabajo de cada tipo a la vez para no saturar disco ni APIs externas
+    if (running.has(job.type)) continue;
+    const claimed = await prisma.job.updateMany({ where: { id: job.id, status: 'PENDING' }, data: { status: 'RUNNING', startedAt: new Date() } });
+    if (!claimed.count) continue;
+    running.add(job.type);
+    runJob(job).finally(() => {
+      running.delete(job.type);
+      setImmediate(tick);
+    });
+  }
+}
+
+export async function startJobRunner() {
+  await prisma.job.updateMany({ where: { status: 'RUNNING' }, data: { status: 'FAILED', message: 'Interrupted by restart', finishedAt: new Date() } });
+  timer = setInterval(() => void tick().catch((e) => console.error(e)), 2000);
+}
+
+export function stopJobRunner() {
+  if (timer) clearInterval(timer);
+}
+
+export async function waitJob(id: number, timeoutMs = 600_000): Promise<Job> {
+  const start = Date.now();
+  for (;;) {
+    const j = await prisma.job.findUniqueOrThrow({ where: { id } });
+    if (j.status === 'DONE' || j.status === 'FAILED') return j;
+    if (Date.now() - start > timeoutMs) throw new Error('Job timeout');
+    await new Promise((r) => setTimeout(r, 300));
+  }
+}

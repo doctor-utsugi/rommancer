@@ -1,0 +1,27 @@
+[Unit]
+Description=Rommancer API
+Requires=rommancer-mysql.service
+After=rommancer-mysql.service
+
+[Container]
+ContainerName=rommancer-api
+Image=localhost/rommancer-api:latest
+Network=rommancer.network
+NetworkAlias=api
+EnvironmentFile=%h/.config/rommancer/rommancer.env
+Environment=DATA_DIR=/data
+Environment=SEED_DIR=/seed
+# Datos de la app (media, saves, uploads, dats)
+Volume=%h/rommancer/data:/data:Z
+# Semilla (copiar aqui la carpeta seed/ del repositorio)
+Volume=%h/rommancer/seed:/seed:Z
+# Carpetas de roms: se registran en la app como /roms/...
+Volume=%h/roms:/roms:z
+
+[Service]
+Restart=always
+# MySQL tarda unos segundos en aceptar conexiones en el primer arranque
+RestartSec=5
+
+[Install]
+WantedBy=default.target

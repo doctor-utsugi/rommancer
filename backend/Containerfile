@@ -1,0 +1,25 @@
+FROM docker.io/library/node:22-bookworm-slim AS build
+WORKDIR /app
+COPY package.json package-lock.json ./
+COPY backend/package.json backend/
+COPY frontend/package.json frontend/
+RUN npm ci -w backend --include-workspace-root=false --no-audit --no-fund
+COPY backend backend
+RUN cd backend && npx prisma generate && npx tsc -p tsconfig.json && npm prune --omit=dev -w backend
+
+FROM docker.io/library/node:22-bookworm-slim
+# chdman (CHD), 7zz (zip/7z), openssl (Prisma)
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends mame-tools 7zip openssl ca-certificates \
+ && rm -rf /var/lib/apt/lists/*
+ENV NODE_ENV=production DATA_DIR=/data CHDMAN_BIN=chdman SEVENZIP_BIN=7zz
+WORKDIR /app
+COPY --from=build /app/node_modules node_modules
+COPY --from=build /app/backend/dist backend/dist
+COPY --from=build /app/backend/prisma backend/prisma
+COPY --from=build /app/backend/package.json backend/package.json
+WORKDIR /app/backend
+VOLUME /data
+EXPOSE 3000
+# Sincroniza el esquema y arranca
+CMD ["sh", "-c", "npx prisma db push --skip-generate && node dist/server.js"]
