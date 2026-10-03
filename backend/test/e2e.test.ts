@@ -1077,6 +1077,24 @@ test('fase2: parches IPS/BPS, generacion bajo demanda y etiquetas', async () => 
   assert.equal(files.missing.length, 0);
   assert.ok(files.items[0].files[0].absPath.startsWith(path.dirname(pre)));
   assert.equal(await prisma.romFile.count({ where: { romHackId: h2.json.id } }), 2);
+
+  // Parche generado desde un romhack que solo existe como fichero: se puede regenerar si se pierde
+  const other = Buffer.from(base);
+  other.write('OTRO HACK', 0x300, 'latin1');
+  fs.writeFileSync(path.join(pre, 'otro hack.nes'), other);
+  await waitJob((await api('POST', `/admin/paths/${pp.json.id}/scan`)).json.id);
+  const of = await prisma.romFile.findFirstOrThrow({ where: { romPathId: pp.json.id, relativePath: { contains: 'otro hack' } } });
+  assert.equal(of.status, 'HACK');
+  const gd = (await api('GET', `/games/${ctx.smb3GameId}`)).json;
+  assert.equal(gd.hacks.find((x: any) => x.id === of.romHackId).canMakePatch, true);
+  const mp = await api('POST', `/hacks/${of.romHackId}/make-patch`);
+  assert.equal(mp.status, 201, JSON.stringify(mp.json));
+  assert.equal(mp.json.format, 'bps');
+  fs.rmSync(path.join(pre, 'otro hack.nes'));
+  await waitJob((await api('POST', `/admin/paths/${pp.json.id}/scan`)).json.id);
+  const regen = await fetch(`${base_()}/api/v1/hacks/${of.romHackId}/download?token=${userFiles}`);
+  assert.equal(regen.status, 200);
+  assert.ok(Buffer.from(await regen.arrayBuffer()).equals(other));
 });
 
 function base_() {
@@ -1441,6 +1459,10 @@ test('fase2: saves por eventos con script (inicio, cierre, conflicto, sin red) y
 });
 
 test('fase2: semilla acumulada con evidencias, wikidata, parches y multimedia grande', async () => {
+  const prisma = await prismaClient();
+  // Rom que su DAT ya no trae: se guarda en la semilla y se recupera en un despliegue nuevo
+  const gone = await prisma.rom.findFirstOrThrow({ where: { name: 'Zeta (Japan)' }, include: { parts: true } });
+  await prisma.rom.update({ where: { id: gone.id }, data: { removedFromSource: true } });
   const r = await waitJob((await api('POST', '/admin/seed/export')).json.id);
   const seed = path.join(DATA, 'seed');
   assert.ok(r.result.evidence >= 2);
@@ -1454,4 +1476,12 @@ test('fase2: semilla acumulada con evidencias, wikidata, parches y multimedia gr
   assert.ok(fs.readdirSync(path.join(seed, 'media-large'), { recursive: true }).some((f) => String(f).endsWith('.pdf')));
   const games = JSON.parse(fs.readFileSync(path.join(seed, 'games.json'), 'utf8'));
   assert.ok(games.every((g: any) => g.roms.length >= 1));
+  const removed = JSON.parse(fs.readFileSync(path.join(seed, 'removed.json'), 'utf8'));
+  assert.ok(removed.some((x: any) => x.name === 'Zeta (Japan)' && x.parts[0].sha1 === gone.parts[0].sha1));
+  await prisma.rom.delete({ where: { id: gone.id } });
+  const applied = await waitJob((await api('POST', '/admin/seed/apply')).json.id);
+  assert.equal(applied.result.removed, 1);
+  const back = await prisma.rom.findFirstOrThrow({ where: { name: 'Zeta (Japan)' }, include: { parts: true } });
+  assert.equal(back.removedFromSource, true);
+  assert.equal(back.parts[0].sha1, gone.parts[0].sha1);
 });

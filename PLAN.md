@@ -1,5 +1,7 @@
 # Rommancer - Plan de implementacion
 
+Fase 1 (abajo) y fase 2 (seccion final). Las decisiones de la fase 2 sustituyen a las de la fase 1 cuando se contradicen.
+
 Gestor multiusuario de roms, listas, dispositivos y saves. Fuente: `/Users/Shared/Proyects/wanda/rommancer/ROMMANCER.md` mas decisiones tomadas en conversacion.
 
 ## Decisiones cerradas
@@ -20,7 +22,7 @@ Gestor multiusuario de roms, listas, dispositivos y saves. Fuente: `/Users/Share
 | Subidas | Hash en cliente (Web Crypto, SHA1/MD5 en worker), consulta `/api/roms/match` antes de subir; servidor rehashea y guarda en path destino con nombre canonico. |
 | Listas | Niveles privada / compartida / publica. Colaborativas. Clonar. Exportar/importar JSON. Sublistas derivadas por filtro (region, RA compatible). |
 | Dispositivos | Tablas `Console`, `Firmware` (plantilla de rutas y nombres de carpeta por sistema), `Device` = consola + firmware + conexion (path local o SSH). Seeds para muOS, Knulli, Rocknix, Batocera, ES-DE, Android RetroArch, Windows RetroArch. |
-| Saves | Historial versionado por (usuario, juego, emulador/core). Push/pull manual y cron. Conflicto: mas reciente gana, versiones anteriores restaurables. Conversion: .srm <-> .sav (GBA/SNES/MD), memory cards PS1 (.mcr/.mcd/.srm/.gme/.vmp), reubicacion por nombre de rom. |
+| Saves | Historial versionado por (usuario, juego, emulador/core). Push/pull manual (el cron se sustituye en la fase 2 por eventos). Conflictos: ver fase 2. Conversion: .srm <-> .sav (GBA/SNES/MD), memory cards PS1 (.mcr/.mcd/.srm/.gme/.vmp), reubicacion por nombre de rom. |
 | Transferencia | Path montado, SSH/SFTP (ssh2), descarga zip desde navegador (stream). |
 | i18n | ES + EN con i18next desde el inicio. |
 
@@ -140,3 +142,32 @@ Implementadas las 11 fases. Cambios respecto al plan inicial:
 - Hash RA de todos los sistemas (incluido Wii) validado contra rcheevos compilado (tools/rahash-cli).
 - RVZ/WIA: lector propio portado de Dolphin (sin dolphin-tool), reconstruye la ISO para verificar contra Redump.
 - Semilla `seed/` con DATs de todas las consolas, RA y scraping; se aplica al arrancar y se actualiza automaticamente.
+
+## Fase 2
+
+Implementada. Decisiones y estado:
+
+| Tema | Decision |
+|---|---|
+| Git y esquema | Repositorio git local (seed/ incluido). Prisma con migraciones versionadas (`prisma/migrations`), `migrate deploy` en el contenedor; `npm run migration:new -w backend -- nombre` para nuevas. |
+| Permisos | Por usuario y en invitaciones: ver coleccion, listas, saves, descargar roms (y dispositivos), subir verificadas, subir no verificadas, multimedia de sus listas, scraping masivo. Por defecto: ver, listas, saves y multimedia de listas. Admin: todo. |
+| Seguridad | Limite de login (5 fallos / 15 min por IP y usuario), CORS cerrado (`CORS_ORIGINS`), cabeceras en Express y nginx, no arranca con secretos de ejemplo, tokens de 15 min, token de ficheros aparte para URLs, cambio obligatorio de la contrasena inicial. |
+| Destino de roms nuevas | Rutas destino por sistema con esquema de carpetas; si no, predeterminada; si no, `DATA_DIR/library`. Para subidas, parches generados y contenedores verificados. |
+| Subidas no verificadas | Estado `UNVERIFIED`, con usuario que la subio; no cuentan en porcentajes; pasan a verificadas si un DAT posterior las incluye. WBFS/CISO quedan asi (se identifican por id de disco). |
+| Discos | Lectores propios WBFS (tambien partido), CISO, CSO v1/v2 y ZSO (LZ4 propio). |
+| Parches | IPS/BPS/UPS propios con checksums. Generacion bajo demanda en el destino final. Hash con y sin cabecera. Fusion de romhacks duplicados. Parche BPS creado desde un romhack ya parcheado y su base. |
+| Romhacks | Identificados por contenido (parecido por bloques de 1 KiB con las roms que se tienen; >= 85 % fija la rom base exacta, >= 50 % solo el juego), codigo de cabecera (GBA, NDS, N64, MD) o parche. El nombre solo genera sugerencias en la cola de revision. |
+| Etiquetas | Region, idiomas, version solo si hay varias, no verificada, retirada, serial; romhack con rom base exacta y version propia ("Gran Turismo 4 (USA) v1.01 + Spec II v1.10"). |
+| Agrupacion | Evidencias + union-find: reglas manuales, clones del DAT (FBNeo oficial), Retool, RetroAchievements, ScreenScraper (por hash). Titulo como ultimo recurso marcado como dudoso. Sin paquete P/C de No-Intro (descarga protegida contra automatismos; decision del usuario). |
+| Obras y sagas | Wikidata (CC0): anclas por ids de RA/ScreenScraper, nombre unico en la plataforma, cola de revision si hay varios candidatos. Saga de Wikidata o libretro. Listas con obras y preferencia de plataforma. |
+| Datos permanentes | Nada externo se borra: roms y romhacks retirados se marcan; `seed/removed.json` los conserva para despliegues nuevos. Prioridad de metadatos: manual > ScreenScraper > TheGamesDB > libretro. |
+| Sincronizacion global | `EXTERNAL_SYNC_CRON` semanal: libretro (DATs, metadatos, caratulas de lo que se tiene), Retool, RetroAchievements, Wikidata, en secuencia y con peticiones condicionales. Forzado por fuente y sistema con intervalo minimo. |
+| FBNeo | DAT oficial (libretro/FBNeo, "Arcade only", con clones). El de libretro-database (un zip por set) no crea roms. |
+| Multimedia | Bajo demanda al anadir a listas y desde la ficha; solo con la cuenta propia del usuario (el admin puede usar las globales). Cuotas de ScreenScraper respetadas y reanudacion al dia siguiente; "no encontrado" recordado 6 meses; TheGamesDB como respaldo por nombre exacto y unico; Internet Archive solo como sugerencia. |
+| Saves | Estilo Steam Cloud: base por dispositivo, sin relojes; conflicto si cambian ambos lados (se guardan las dos versiones). Scripts de eventos para ES-DE y Batocera/Knulli/ROCKNIX con token por dispositivo y reintento sin red. SD montadas en el servidor: sincronizacion al conectarse. Sin `SAVE_SYNC_CRON`. |
+
+Pendiente:
+- Probar ScreenScraper y TheGamesDB reales (faltan credenciales de desarrollador y clave en `.env`).
+- Comprobar en la AYN Thor (Android) acceso a carpetas de saves y `curl`/`wget`.
+- Daijisho (sin eventos documentados): solo sincronizacion manual.
+- Opcional: IGDB para obras que Wikidata no tenga; familias de ScreenScraper para sagas; codigo de cabecera de mas sistemas; juegos "~Hack~" de RetroAchievements.

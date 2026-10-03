@@ -201,3 +201,67 @@ export function applyPatch(source: Buffer, patch: Buffer): Buffer {
   if (format === 'ups') return applyUps(source, patch);
   throw new PatchError('Unknown patch format');
 }
+
+function varint(n: number, out: number[]) {
+  for (;;) {
+    const x = n % 128;
+    n = Math.floor(n / 128);
+    if (n === 0) {
+      out.push(0x80 | x);
+      return;
+    }
+    out.push(x);
+    n--;
+  }
+}
+
+/**
+ * Crea un parche BPS que convierte `source` en `target`. Codificacion sencilla: los tramos que
+ * coinciden en la misma posicion se copian del origen (SourceRead) y el resto va literal (TargetRead).
+ * Suficiente para hacks y traducciones, que cambian zonas concretas de la rom.
+ */
+export function createBps(source: Buffer, target: Buffer): Buffer {
+  const out: number[] = [];
+  const head = Buffer.from('BPS1', 'latin1');
+  varint(source.length, out);
+  varint(target.length, out);
+  varint(0, out);
+  const chunks: Buffer[] = [head, Buffer.from(out)];
+  out.length = 0;
+  // Un tramo igual corto no compensa: se exige un minimo para cortar el literal
+  const MIN_RUN = 8;
+  let pos = 0;
+  const emit = (cmd: number, len: number, literal?: Buffer) => {
+    const a: number[] = [];
+    varint((len - 1) * 4 + cmd, a);
+    chunks.push(Buffer.from(a));
+    if (literal) chunks.push(literal);
+  };
+  while (pos < target.length) {
+    let same = 0;
+    while (pos + same < target.length && pos + same < source.length && source[pos + same] === target[pos + same]) same++;
+    if (same >= MIN_RUN || (same > 0 && pos + same === target.length)) {
+      emit(0, same);
+      pos += same;
+      continue;
+    }
+    // Literal hasta el siguiente tramo igual suficientemente largo
+    let end = pos + Math.max(same, 1);
+    while (end < target.length) {
+      let run = 0;
+      while (run < MIN_RUN && end + run < target.length && end + run < source.length && source[end + run] === target[end + run]) run++;
+      if (run >= MIN_RUN || (run > 0 && end + run === target.length)) break;
+      end += Math.max(run, 1);
+    }
+    emit(1, end - pos, target.subarray(pos, end));
+    pos = end;
+  }
+  const body = Buffer.concat(chunks);
+  const foot = Buffer.alloc(8);
+  foot.writeUInt32LE(zlib.crc32(source) >>> 0, 0);
+  foot.writeUInt32LE(zlib.crc32(target) >>> 0, 4);
+  const withFoot = Buffer.concat([body, foot]);
+  const pc = Buffer.alloc(4);
+  pc.writeUInt32LE(zlib.crc32(withFoot) >>> 0, 0);
+  return Buffer.concat([withFoot, pc]);
+}

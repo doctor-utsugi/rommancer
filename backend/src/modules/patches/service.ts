@@ -9,7 +9,7 @@ import { crc32 } from 'node:zlib';
 import { env } from '../../config/env.js';
 import { prisma } from '../../lib/prisma.js';
 import { HttpError } from '../../lib/http.js';
-import { applyPatch, detectPatchFormat, patchInfo, PatchError } from '../../lib/patch.js';
+import { applyPatch, createBps, detectPatchFormat, patchInfo, PatchError } from '../../lib/patch.js';
 import { detectHeader } from '../../lib/hash.js';
 import { extractEntryStream } from '../../lib/tools.js';
 import { safeFileName } from '../../lib/romname.js';
@@ -37,6 +37,21 @@ export async function readOwnedRom(romId: number): Promise<Buffer> {
   if (!f) throw new HttpError(409, 'Base rom not in collection');
   const abs = path.join(f.romPath.path, f.relativePath);
   return f.archiveEntry ? readStream(extractEntryStream(abs, f.archiveEntry)) : fs.promises.readFile(abs);
+}
+
+/**
+ * Crea y guarda un parche BPS desde el fichero del romhack y su rom base. Asi el romhack se puede
+ * regenerar aunque se pierda el fichero, y el parche viaja en la semilla.
+ */
+export async function makePatch(hackId: number, userId?: number) {
+  const hack = await prisma.romHack.findUniqueOrThrow({ where: { id: hackId }, include: { files: { include: { romPath: true } } } });
+  if (!hack.baseRomId) throw new HttpError(409, 'Hack without base rom');
+  const f = hack.files[0];
+  if (!f) throw new HttpError(409, 'Hack file not in collection');
+  const abs = path.join(f.romPath.path, f.relativePath);
+  const target = f.archiveEntry ? await readStream(extractEntryStream(abs, f.archiveEntry)) : await fs.promises.readFile(abs);
+  const source = await readOwnedRom(hack.baseRomId);
+  return addPatch(hackId, createBps(source, target), { baseRomId: hack.baseRomId, userId });
 }
 
 /** Registra un parche para un romhack. Busca la rom base por CRC (BPS/UPS) o usa la indicada. */

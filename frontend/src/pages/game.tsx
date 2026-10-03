@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router'
 import { useQuery } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
-import { Check, Download, FileText, ImageOff, Pencil, Trash2, Trophy, Upload, X } from 'lucide-react'
+import { Check, Download, FilePlus, FileText, ImageOff, Pencil, Trash2, Trophy, Upload, X } from 'lucide-react'
 import { toast } from 'sonner'
 import { authUrl, del, get, patch, post, upload } from '@/lib/api'
 import { useAuth } from '@/lib/auth'
@@ -341,6 +341,11 @@ export function GamePage() {
                       )}
                       {admin && (
                         <>
+                          {h.canMakePatch && (
+                            <Button variant="ghost" size="icon-sm" title={t('more.game.makePatch')} onClick={() => void run(() => post(`/hacks/${h.id}/make-patch`))}>
+                              <FilePlus className="size-4" />
+                            </Button>
+                          )}
                           <Button
                             variant="ghost"
                             size="icon-sm"

@@ -140,3 +140,16 @@ test('UPS: varios bloques XOR y destino mas largo', () => {
   bad[8] ^= 1;
   assert.throws(() => applyPatch(src, bad), PatchError);
 });
+
+test('BPS: se genera un parche a partir de base y romhack, y se aplica de vuelta', async () => {
+  const { createBps } = await import('../src/lib/patch.js');
+  const base = crypto.randomBytes(256 * 1024);
+  const hack = Buffer.concat([base, crypto.randomBytes(5000)]);
+  for (let i = 0; i < 40; i++) crypto.randomBytes(crypto.randomInt(1, 300)).copy(hack, crypto.randomInt(0, base.length - 300));
+  const p = createBps(base, hack);
+  assert.ok(p.length < hack.length / 4, `parche de ${p.length} bytes`);
+  assert.ok(applyPatch(base, p).equals(hack));
+  // Destino mas corto que el origen
+  const short = hack.subarray(0, 1000);
+  assert.ok(applyPatch(base, createBps(base, short)).equals(short));
+});

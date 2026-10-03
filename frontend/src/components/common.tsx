@@ -156,7 +156,7 @@ export interface System {
   roms: number
   owned: number
   hacks: number
-  files: { matched: number; hack: number; unknown: number }
+  files: { matched: number; hack: number; unknown: number; unverified: number }
   mediaType: string
 }
 

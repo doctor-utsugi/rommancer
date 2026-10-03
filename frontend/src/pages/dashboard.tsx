@@ -62,6 +62,7 @@ export function DashboardPage() {
                         <span>
                           {t('dashboard.hacks')}: {s.files.hack} / {s.hacks}
                         </span>
+                        {s.files.unverified > 0 && <span>{t('more.tags.unverifiedCount', { count: s.files.unverified })}</span>}
                         <span>
                           {t('dashboard.unknown')}: {s.files.unknown}
                         </span>

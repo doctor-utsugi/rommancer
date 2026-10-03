@@ -8,6 +8,7 @@
  *   dats/manifest.json        [{ file, system, type, priority }]
  *   ra.json                   { <slug>: [{ ID, Title, NumAchievements, ImageIcon, Hashes }] }
  *   games.json                [{ system, roms, ...metadatos, media: [{ type, source, file, region }] }]
+ *   removed.json              roms que ya no estan en su DAT (se conservan aunque la fuente las retire)
  *   grouping.json             evidencias externas (Retool, ScreenScraper), reglas manuales y "no encontrados"
  *   wikidata.json             subconjunto local de Wikidata (items y etiquetas)
  *   patches/                  parches de romhacks + patches.json
@@ -28,6 +29,7 @@ import { importDat } from '../dats/importer.js';
 import { storeRaGames } from '../ra/routes.js';
 import { rematchAll } from '../scanner/service.js';
 import { addRomEvidence, resolveRomGroups, type EvidenceSource } from '../grouping/service.js';
+import { normalizeTitle, parseRomName } from '../../lib/romname.js';
 
 interface ManifestEntry {
   file: string;
@@ -59,6 +61,22 @@ interface SeedGrouping {
   romRules: { rule: string; a: string; b: string; system: string }[];
   workRules: { rule: string; system: string; rom: string; wikidataId: string | null }[];
   misses: { system: string; rom: string; source: string; at: string }[];
+}
+
+interface SeedRemovedRom {
+  system: string;
+  datType: DatType;
+  datName: string;
+  name: string;
+  description: string | null;
+  regions: string[];
+  languages: string[];
+  revision: string | null;
+  flags: string[];
+  isBios: boolean;
+  serial: string | null;
+  parentName: string | null;
+  parts: { name: string; size: string; crc32: string | null; md5: string | null; sha1: string | null; headerlessSize: string | null; headerlessCrc: string | null; headerlessMd5: string | null; headerlessSha1: string | null }[];
 }
 
 interface SeedPatch {
@@ -123,6 +141,28 @@ export async function exportSeed(ctx?: JobContext) {
     manifest.push({ file, system: s.system.slug, type: s.type, priority: s.priority });
   }
   await fs.promises.writeFile(path.join(dir, 'dats', 'manifest.json'), JSON.stringify(manifest, null, 1));
+
+  // Roms retiradas de su fuente: el DAT actual ya no las trae
+  const removedRoms = await prisma.rom.findMany({
+    where: { removedFromSource: true, datSource: { type: { not: 'USER' } } },
+    include: { parts: true, datSource: { select: { type: true, name: true } }, game: { select: { system: { select: { slug: true } } } } },
+  });
+  const removed: SeedRemovedRom[] = removedRoms.map((r) => ({
+    system: r.game.system.slug,
+    datType: r.datSource.type,
+    datName: r.datSource.name,
+    name: r.name,
+    description: r.description,
+    regions: r.regions as string[],
+    languages: r.languages as string[],
+    revision: r.revision,
+    flags: r.flags as string[],
+    isBios: r.isBios,
+    serial: r.serial,
+    parentName: r.parentName,
+    parts: r.parts.map((p) => ({ name: p.name, size: String(p.size), crc32: p.crc32, md5: p.md5, sha1: p.sha1, headerlessSize: p.headerlessSize != null ? String(p.headerlessSize) : null, headerlessCrc: p.headerlessCrc, headerlessMd5: p.headerlessMd5, headerlessSha1: p.headerlessSha1 })),
+  }));
+  await fs.promises.writeFile(path.join(dir, 'removed.json'), JSON.stringify(removed));
 
   // RetroAchievements
   const raGames = await prisma.raGame.findMany({ include: { system: { select: { slug: true } }, hashes: true }, orderBy: { id: 'asc' } });
@@ -224,7 +264,7 @@ export async function exportSeed(ctx?: JobContext) {
     await fs.promises.copyFile(path.join(retoolDir, f), path.join(dir, 'retool', f));
   }
 
-  const res = { dats: manifest.length, raGames: raGames.length, games: out.length, mediaCopied: copied, evidence: grouping.evidence.length, wikidata: wdItems.length, patches: seedPatches.length, dir };
+  const res = { dats: manifest.length, removed: removed.length, raGames: raGames.length, games: out.length, mediaCopied: copied, evidence: grouping.evidence.length, wikidata: wdItems.length, patches: seedPatches.length, dir };
   ctx?.log(JSON.stringify(res));
   return res;
 }
@@ -233,7 +273,7 @@ export async function applySeed(ctx?: JobContext) {
   const dir = env.seedDir;
   if (!(await exists(dir))) return { skipped: 'no seed dir' };
   const systems = new Map((await prisma.system.findMany()).map((s) => [s.slug, s]));
-  const res = { datsImported: 0, datsSkipped: 0, raGames: 0, games: 0, media: 0, evidence: 0, wikidata: 0, patches: 0 };
+  const res = { datsImported: 0, datsSkipped: 0, removed: 0, raGames: 0, games: 0, media: 0, evidence: 0, wikidata: 0, patches: 0 };
 
   // 1. DATs (por prioridad y los de hacks al final para enlazarlos con las roms base)
   const manifest = await readJson<ManifestEntry[]>(path.join(dir, 'dats', 'manifest.json'), []);
@@ -253,6 +293,31 @@ export async function applySeed(ctx?: JobContext) {
       await copyIfMissing(file, path.join(env.datsDir, m.file));
     }
     await ctx?.progress(i + 1, manifest.length, m.file);
+  }
+
+  // Roms retiradas de su fuente que no esten ya
+  for (const r of await readJson<SeedRemovedRom[]>(path.join(dir, 'removed.json'), [])) {
+    const system = systems.get(r.system);
+    if (!system || (await prisma.rom.findFirst({ where: { name: r.name, game: { systemId: system.id } }, select: { id: true } }))) continue;
+    const ds =
+      (await prisma.datSource.findFirst({ where: { systemId: system.id, type: r.datType, name: r.datName } })) ??
+      (await prisma.datSource.findFirst({ where: { systemId: system.id, type: r.datType } }));
+    if (!ds) continue;
+    const title = parseRomName(r.description ?? r.name).title.slice(0, 255);
+    const key = normalizeTitle(title).slice(0, 255);
+    const game = (await prisma.game.findFirst({ where: { systemId: system.id, titleNormalized: key } })) ?? (await prisma.game.create({ data: { systemId: system.id, title, titleNormalized: key } }));
+    const { parts, system: _s, datType: _t, datName: _n, ...fields } = r;
+    await prisma.rom.create({
+      data: {
+        ...fields,
+        gameId: game.id,
+        datSourceId: ds.id,
+        removedFromSource: true,
+        parts: { create: parts.map((p) => ({ ...p, size: BigInt(p.size), headerlessSize: p.headerlessSize != null ? BigInt(p.headerlessSize) : null })) },
+      },
+    });
+    touched.add(system.id);
+    res.removed++;
   }
 
   // 2. RetroAchievements
