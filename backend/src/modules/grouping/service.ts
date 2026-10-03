@@ -1,7 +1,7 @@
 /**
  * Agrupacion de roms en juegos a partir de evidencias.
  *
- * Cada fuente aporta evidencias "estas roms comparten clave": Parent/Clone de No-Intro o del DAT,
+ * Cada fuente aporta evidencias "estas roms comparten clave": clones del DAT,
  * listas de clones de Retool, juego de RetroAchievements o de ScreenScraper (por hash) y titulo.
  * Un union-find une las roms con evidencias de confianza suficiente; el titulo solo une roms sin
  * informacion Parent/Clone. Las reglas manuales mandan sobre todo y los conflictos van a revision.
@@ -13,7 +13,6 @@ import type { JobContext } from '../../lib/jobs.js';
 
 export const CONFIDENCE = {
   manual: 100,
-  'nointro-pc': 90,
   'dat-clone': 90,
   retool: 80,
   ra: 60,
@@ -105,7 +104,7 @@ export async function resolveRomGroups(systemId?: number, ctx?: JobContext): Pro
     for (const e of evidence) {
       if (!e.romId || !byId.has(e.romId)) continue;
       add(e.key, e.source, e.confidence, e.romId);
-      if (e.source === 'nointro-pc' || e.source === 'dat-clone') hasParentInfo.add(e.romId);
+      if (e.source === 'dat-clone') hasParentInfo.add(e.romId);
     }
     for (const r of roms) {
       if (r.raGameId) add(`ra:${r.raGameId}`, 'ra', CONFIDENCE.ra, r.id);

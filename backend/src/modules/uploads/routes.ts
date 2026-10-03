@@ -179,6 +179,7 @@ uploadsRouter.post('/unverified', requirePerm('roms.uploadUnverified'), upload.s
           language: body.hackLanguage ?? null,
           author: body.author ?? null,
           baseRomId: body.baseRomId ?? null,
+          baseEvidence: 'manual',
           sourceUrl: body.sourceUrl ?? null,
           size: BigInt(h.size),
           crc32: h.crc32,

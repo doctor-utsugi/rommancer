@@ -46,7 +46,6 @@ Credenciales externas en `.env` (opcionales). Las globales solo las usa el admin
 - `SCREENSCRAPER_USER` / `SCREENSCRAPER_PASSWORD`: cuenta de usuario de ScreenScraper.
 - `RA_USERNAME` / `RA_API_KEY`: Web API Key de RetroAchievements (sincronización global).
 - `THEGAMESDB_API_KEY`: respaldo de multimedia (contraportadas, fanart, logos, capturas).
-- `NOINTRO_USERNAME` / `NOINTRO_PASSWORD`: reservado por si DAT-o-MATIC exigiera sesión.
 - `EXTERNAL_SYNC_CRON`: sincronización global de fuentes externas (por defecto domingos a las 4:00; vacío = desactivada).
 - `CORS_ORIGINS`: orígenes web permitidos (vacío = solo el mismo origen).
 
@@ -73,7 +72,7 @@ npm test
 
 Validación del hash de RetroAchievements contra la implementación oficial: `make -C tools/rahash-cli` descarga rcheevos y compila un CLI de referencia; `test/rahash.test.ts` compara ambos (se omite si no está compilado).
 
-La prueba usa la base de datos `rommancer_test` (hay que crearla y dar permisos al usuario de MySQL), las roms de `roms/nes` y `roms/snes` y los DATs de `data/dats`. Todos los servicios externos (ScreenScraper, TheGamesDB, DAT-o-MATIC, GitHub, Wikidata, RetroAchievements) se simulan con un servidor local. Cubre: autenticación e invitaciones, importación de DATs, escaneo con y sin cabecera, romhacks y traducciones, hash RetroAchievements, listas (compartir, colaborar, clonar, sublistas, exportar, importar, zip), dispositivos locales y SSH, subidas validadas por hash, scraping, saves (historial, restauración, conversión .srm/.sav y tarjetas PS1 .mcd/.gme/.vmp, sincronización y reubicación), renombrado y ordenación, CHD de PS1, sets arcade FBNeo, RVZ, permisos, cambio de contraseña obligatorio, límite de login, CORS, destino final, subidas no verificadas, parches, agrupación por evidencias y revisión, obras de Wikidata, sincronización global con ETag, permanencia de datos, cuotas de ScreenScraper, TheGamesDB, saves por eventos con el script real y semilla acumulada.
+La prueba usa la base de datos `rommancer_test` (hay que crearla y dar permisos al usuario de MySQL), las roms de `roms/nes` y `roms/snes` y los DATs de `data/dats`. Todos los servicios externos (ScreenScraper, TheGamesDB, GitHub, Wikidata, RetroAchievements) se simulan con un servidor local. Cubre: autenticación e invitaciones, importación de DATs, escaneo con y sin cabecera, romhacks y traducciones, hash RetroAchievements, listas (compartir, colaborar, clonar, sublistas, exportar, importar, zip), dispositivos locales y SSH, subidas validadas por hash, scraping, saves (historial, restauración, conversión .srm/.sav y tarjetas PS1 .mcd/.gme/.vmp, sincronización y reubicación), renombrado y ordenación, CHD de PS1, sets arcade FBNeo, RVZ, permisos, cambio de contraseña obligatorio, límite de login, CORS, destino final, subidas no verificadas, parches, agrupación por evidencias y revisión, obras de Wikidata, sincronización global con ETag, permanencia de datos, cuotas de ScreenScraper, TheGamesDB, saves por eventos con el script real y semilla acumulada.
 
 ```sql
 CREATE DATABASE rommancer_test; GRANT ALL ON rommancer_test.* TO 'rommancer'@'%';
@@ -113,7 +112,7 @@ La carpeta `seed/` contiene los DATs de todas las consolas soportadas (No-Intro,
 
 ## Uso
 
-1. Administración > Bases de datos: los DATs de todas las consolas se cargan desde la semilla. La sincronización global (semanal) comprueba libretro-database, Retool, RetroAchievements y Wikidata y solo descarga lo cambiado; se puede forzar por fuente y por sistema. DAT-o-MATIC no permite descargas automáticas: Rommancer avisa cuando hay paquete diario nuevo y el administrador sube el zip P/C.
+1. Administración > Bases de datos: los DATs de todas las consolas se cargan desde la semilla. La sincronización global (semanal) comprueba libretro-database, Retool, RetroAchievements y Wikidata y solo descarga lo cambiado; se puede forzar por fuente y por sistema.
 2. Administración > Rutas: registrar las carpetas de roms y escanear. Se detecta el sistema por carpeta o extensión. Cada ruta puede ser destino de roms nuevas (subidas, parches) de uno o varios sistemas; si no hay destino se usa la predeterminada o `DATA_DIR/library`.
 3. Juegos / Faltantes: ver qué se tiene y qué falta. Añadir juegos, roms o romhacks a listas.
 4. Listas: compartir, crear sublistas con alternativas por región, idioma o compatibilidad RetroAchievements, descargar en zip o enviar a un dispositivo.

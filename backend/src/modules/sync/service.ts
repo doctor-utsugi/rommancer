@@ -10,11 +10,10 @@ import { env } from '../../config/env.js';
 import { prisma } from '../../lib/prisma.js';
 import { enqueue, registerJob, type JobContext } from '../../lib/jobs.js';
 import { HttpError } from '../../lib/http.js';
-import { listArchive, extractEntryToFile, tmpDir } from '../../lib/tools.js';
 import { normalizeTitle, parseRomName } from '../../lib/romname.js';
 import { DAT_PRESETS } from '../dats/presets.js';
-import { importDat, detectSystem } from '../dats/importer.js';
-import { parseClrMameEntries, parseDat } from '../dats/parser.js';
+import { importDat } from '../dats/importer.js';
+import { parseClrMameEntries } from '../dats/parser.js';
 import { rematchAll } from '../scanner/service.js';
 import { replaceRomEvidence, resolveRomGroups, type EvidenceInput } from '../grouping/service.js';
 import { storeRaGames } from '../ra/routes.js';
@@ -25,7 +24,7 @@ import { applyMeta } from '../scrape/meta.js';
 import { conditionalFetch, sleep } from './fetch.js';
 import { resolveWorks, syncWikidataLabels, syncWikidataPlatform } from './wikidata.js';
 
-export const SOURCES = ['nointro', 'libretro', 'retool', 'retroachievements', 'wikidata'] as const;
+export const SOURCES = ['libretro', 'retool', 'retroachievements', 'wikidata'] as const;
 export type Source = (typeof SOURCES)[number];
 
 const LIBRETRO_META = `${env.github.rawUrl}/libretro/libretro-database/master/metadat`;
@@ -194,56 +193,11 @@ async function syncRetroAchievements(ctx: JobContext, systemSlug?: string) {
   return out;
 }
 
-// --- No-Intro: solo se comprueba si hay paquete nuevo; la descarga la hace el admin en la web ---
-async function checkNoIntro(ctx: JobContext) {
-  // DAT-o-MATIC protege la descarga contra automatismos; se respeta y se avisa al admin
-  const r = await fetch(`${env.nointro.baseUrl}/index.php?page=download&s=64&op=daily`, { headers: { 'User-Agent': env.userAgent } });
-  if (!r.ok) throw new Error(`DAT-o-MATIC HTTP ${r.status}`);
-  const version = (await r.text()).match(/Pack v\.<b>(\d{4}-\d{2}-\d{2})/)?.[1] ?? null;
-  const imported = (await prisma.sourceState.findUnique({ where: { key: 'nointro:imported' } }))?.version ?? null;
-  await prisma.sourceState.upsert({ where: { key: 'nointro:available' }, create: { key: 'nointro:available', version, checkedAt: new Date() }, update: { version, checkedAt: new Date() } });
-  ctx.log(`No-Intro: disponible ${version}, importado ${imported ?? '-'}`);
-  return { available: version, imported, update: !!version && version !== imported };
-}
-
-/** Importa un paquete P/C de DAT-o-MATIC (zip) subido por el admin. Solo los sistemas soportados. */
-export async function importNoIntroPack(zipPath: string, ctx?: JobContext) {
-  const dir = await tmpDir('nointro');
-  const res = { imported: [] as string[], skipped: [] as string[] };
-  try {
-    const entries = (await listArchive(zipPath)).filter((e) => /\.(dat|xml)$/i.test(e.path));
-    for (const e of entries) {
-      const out = path.join(dir, path.basename(e.path));
-      await extractEntryToFile(zipPath, e.path, out);
-      const text = await fs.promises.readFile(out, 'utf8');
-      const dat = parseDat(text);
-      // NES: se usa el DAT con cabecera; el resto, el estandar
-      if (/Headerless/i.test(dat.name)) continue;
-      const system = await detectSystem(dat, path.basename(e.path));
-      if (!system || !/no-intro/i.test(text.slice(0, 2000)) && !/no-intro/i.test(dat.description ?? '')) {
-        res.skipped.push(path.basename(e.path));
-        continue;
-      }
-      const fileName = `nointro-pc - ${path.basename(e.path)}`;
-      await fs.promises.copyFile(out, path.join(env.datsDir, fileName));
-      const r = await importDat(text, { systemId: system.id, type: 'NOINTRO', fileName, priority: 10, resolve: false });
-      res.imported.push(`${system.slug}${r.skipped ? ' (sin cambios)' : ''}`);
-      ctx?.log(`No-Intro ${system.slug}: ${JSON.stringify(r)}`);
-    }
-    const version = path.basename(zipPath).match(/(\d{4}-\d{2}-\d{2})/)?.[1] ?? new Date().toISOString().slice(0, 10);
-    await prisma.sourceState.upsert({ where: { key: 'nointro:imported' }, create: { key: 'nointro:imported', version, changedAt: new Date() }, update: { version, changedAt: new Date() } });
-  } finally {
-    await fs.promises.rm(dir, { recursive: true, force: true });
-  }
-  return res;
-}
-
 export async function runExternalSync(ctx: JobContext, sources: Source[], systemSlug?: string, force = false) {
   const result: Record<string, unknown> = {};
   const errors: Record<string, string> = {};
   for (const s of sources) {
     try {
-      if (s === 'nointro') result.nointro = await checkNoIntro(ctx);
       if (s === 'libretro') result.libretro = await syncLibretro(ctx, systemSlug, force);
       if (s === 'retool') result.retool = await syncRetool(ctx, systemSlug, force);
       if (s === 'retroachievements') result.retroachievements = await syncRetroAchievements(ctx, systemSlug);
@@ -273,15 +227,6 @@ export async function runExternalSync(ctx: JobContext, sources: Source[], system
 }
 
 registerJob('external-sync', async (ctx) => runExternalSync(ctx, (ctx.params.sources as Source[]) ?? [...SOURCES], ctx.params.system, !!ctx.params.force));
-registerJob('nointro-pack', async (ctx) => {
-  const r = await importNoIntroPack(ctx.params.file, ctx);
-  await fs.promises.rm(ctx.params.file, { force: true });
-  await rematchAll();
-  await resolveRomGroups(undefined, ctx);
-  await exportSeed(ctx);
-  return r;
-});
-
 /** Sincronizacion forzada: no si ya hay una en curso ni si se forzo lo mismo hace menos del intervalo minimo. */
 export async function forceSync(sources: Source[], system: string | undefined, userId: number) {
   const recent = await prisma.job.findMany({ where: { type: 'external-sync', createdAt: { gte: new Date(Date.now() - env.forceSyncMinMinutes * 60_000) } } });

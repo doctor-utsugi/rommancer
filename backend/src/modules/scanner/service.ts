@@ -8,6 +8,7 @@ import { parseCue } from '../../lib/cdreader.js';
 import { raHashArcade, raHashFile, raHashFromHashes, raHashGamecubeFrom, raHashWiiFrom } from '../../lib/rahash.js';
 import { RvzReader } from '../../lib/rvz.js';
 import { discId, openDiscImage } from '../../lib/discimage.js';
+import { identifyHacks } from '../hacks/identify.js';
 import { normalizeTitle, parseRomName } from '../../lib/romname.js';
 import { chdInfo, extractChd, extractEntryStream, extractEntryToFile, listArchive, tmpDir } from '../../lib/tools.js';
 import type { JobContext } from '../../lib/jobs.js';
@@ -82,7 +83,7 @@ export async function matchHashes(h: { sha1?: string | null; md5?: string | null
   if (part) return { status: part.rom.datSource.type === 'USER' ? 'UNVERIFIED' : 'MATCHED', romPartId: part.id, romHackId: null, systemId: part.rom.game.systemId };
   if (sha1s.length || h.md5) {
     const hack = await prisma.romHack.findFirst({
-      where: { OR: [...(sha1s.length ? [{ sha1: { in: sha1s } }] : []), ...(h.md5 ? [{ md5: h.md5 }] : [])] },
+      where: { OR: [...(sha1s.length ? [{ sha1: { in: sha1s } }, { headerlessSha1: { in: sha1s } }] : []), ...(h.md5 ? [{ md5: h.md5 }] : [])] },
       include: { game: { select: { systemId: true } } },
     });
     if (hack) return { status: 'HACK', romPartId: null, romHackId: hack.id, systemId: hack.game.systemId };
@@ -341,55 +342,12 @@ export async function scanPath(romPathId: number, ctx?: JobContext, force = fals
 
   const gone = existing.filter((e) => !seen.has(e.relativePath)).map((e) => e.id);
   if (gone.length) await prisma.romFile.deleteMany({ where: { id: { in: gone } } });
-  const linked = await autoLinkHacks(romPathId);
+  const linked = (await identifyHacks({ romPathId }, ctx)).linked;
   await linkRaGames();
   await prisma.romPath.update({ where: { id: romPathId }, data: { lastScanAt: new Date() } });
   const res = { ...stats, removed: gone.length, hacksLinked: linked };
   ctx?.log(JSON.stringify(res));
   return res;
-}
-
-/**
- * Ficheros desconocidos con marcas de hack o traduccion ([T+Spa], (Hack), [h1]) se registran como romhacks
- * del juego cuyo titulo coincide, usando el hash del propio fichero.
- */
-export async function autoLinkHacks(romPathId?: number): Promise<number> {
-  const unknown = await prisma.romFile.findMany({ where: { status: 'UNKNOWN', ...(romPathId ? { romPathId } : {}), sha1: { not: null } } });
-  let linked = 0;
-  for (const f of unknown) {
-    const name = path.basename(f.archiveEntry ?? f.relativePath);
-    const p = parseRomName(name);
-    if (!p.hack) continue;
-    // "Super Mario Bros. 3 - Mario Adventure (Hack)" -> se prueba tambien "Super Mario Bros. 3"
-    const titles = [p.title];
-    const segs = p.title.split(' - ');
-    for (let i = segs.length - 1; i > 0; i--) titles.push(segs.slice(0, i).join(' - '));
-    let game = null;
-    for (const t of titles) {
-      game = await prisma.game.findFirst({ where: { titleNormalized: normalizeTitle(t), ...(f.systemId ? { systemId: f.systemId } : {}) } });
-      if (game) break;
-    }
-    if (!game) continue;
-    const hack =
-      (await prisma.romHack.findFirst({ where: { sha1: f.sha1 } })) ??
-      (await prisma.romHack.create({
-        data: {
-          gameId: game.id,
-          type: p.hack.type,
-          title: name.replace(/\.[^.]+$/, '').slice(0, 255),
-          author: p.hack.author?.slice(0, 255) ?? null,
-          version: p.hack.version ?? null,
-          language: p.hack.language ?? null,
-          size: f.size,
-          crc32: f.crc32,
-          md5: f.md5,
-          sha1: f.sha1,
-        },
-      }));
-    await prisma.romFile.update({ where: { id: f.id }, data: { status: 'HACK', romHackId: hack.id, systemId: game.systemId } });
-    linked++;
-  }
-  return linked;
 }
 
 /** Re-empareja todos los ficheros contra la base de datos (tras importar un DAT). */
@@ -420,9 +378,9 @@ export async function rematchAll(): Promise<{ matched: number; hacks: number }> 
      SET f.status = 'UNVERIFIED', f.romPartId = p.id
      WHERE f.status = 'UNKNOWN' AND d.type = 'USER'`,
   );
-  for (const col of ['sha1', 'headerlessSha1'] as const) {
+  for (const [col, hcol] of [['sha1', 'sha1'], ['headerlessSha1', 'sha1'], ['sha1', 'headerlessSha1'], ['headerlessSha1', 'headerlessSha1']] as const) {
     await prisma.$executeRawUnsafe(
-      `UPDATE RomFile f JOIN RomHack h ON h.sha1 = f.${col} JOIN Game g ON g.id = h.gameId
+      `UPDATE RomFile f JOIN RomHack h ON h.${hcol} = f.${col} JOIN Game g ON g.id = h.gameId
        SET f.status = 'HACK', f.romHackId = h.id, f.systemId = g.systemId
        WHERE f.status = 'UNKNOWN' AND f.${col} IS NOT NULL`,
     );
@@ -434,7 +392,7 @@ export async function rematchAll(): Promise<{ matched: number; hacks: number }> 
     const d = await matchByDiscId(f.systemId, id, Number(rev ?? 0));
     if (d) await prisma.romFile.update({ where: { id: f.id }, data: { status: 'UNVERIFIED', romPartId: d.romPartId, systemId: d.systemId } });
   }
-  await autoLinkHacks();
+  await identifyHacks();
   await linkRaGames();
   const after = await prisma.romFile.count({ where: { status: { in: ['MATCHED', 'HACK'] } } });
   return { matched: after, hacks: after - before };

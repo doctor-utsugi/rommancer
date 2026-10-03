@@ -87,12 +87,6 @@ function otherMocks(req: http.IncomingMessage, res: http.ServerResponse, url: UR
     res.end(PNG);
     return true;
   }
-  if (p === '/nointro/index.php') {
-    hit('nointro');
-    res.setHeader('Content-Type', 'text/html');
-    res.end('<html><body>Daily pack: Pack v.<b>2026-10-01</b></body></html>');
-    return true;
-  }
   if (p === '/ra/API_GetGameList.php') {
     hit(`ra:${url.searchParams.get('i')}`);
     return json(res, raLists[url.searchParams.get('i') ?? ''] ?? []), true;
@@ -215,7 +209,6 @@ before(async () => {
     EXTERNAL_SYNC_CRON: '',
     SCREENSCRAPER_URL: mockBase(),
     THEGAMESDB_URL: `${mockBase()}/tgdb`,
-    NOINTRO_URL: `${mockBase()}/nointro`,
     WIKIDATA_SPARQL_URL: `${mockBase()}/sparql`,
     GITHUB_RAW_URL: `${mockBase()}/gh`,
     LIBRETRO_THUMBS_URL: `${mockBase()}/thumbs`,
@@ -247,6 +240,12 @@ before(async () => {
 after(async () => {
   const { stopJobRunner } = await import('../src/lib/jobs.js');
   const { prisma } = await import('../src/lib/prisma.js');
+  // Tareas encoladas por las ultimas pruebas (multimedia de listas): se espera a que terminen
+  for (let i = 0; i < 240; i++) {
+    const busy = await prisma.job.count({ where: { status: { in: ['PENDING', 'RUNNING'] }, OR: [{ runAfter: null }, { runAfter: { lte: new Date() } }] } });
+    if (!busy) break;
+    await new Promise((r) => setTimeout(r, 250));
+  }
   stopJobRunner();
   server?.close();
   ssMock.close();
@@ -353,7 +352,8 @@ test('escaneo: rutas, checksums con y sin cabecera, hacks y hash RA', async () =
   const r2 = await waitJob((await api('POST', `/admin/paths/${snes.json.id}/scan`)).json.id);
   assert.ok(r1.result.matched >= 150, `nes matched ${r1.result.matched}`);
   assert.ok(r2.result.matched >= 140, `snes matched ${r2.result.matched}`);
-  assert.ok(r2.result.hacksLinked >= 25);
+  // Romhacks enlazados por contenido (los que no tienen su base en roms/snes quedan en revision)
+  assert.ok(r2.result.hacksLinked >= 5, JSON.stringify(r2.result));
   // Re-escaneo incremental: nada que hashear
   const r3 = await waitJob((await api('POST', `/admin/paths/${nes.json.id}/scan`)).json.id);
   assert.equal(r3.result.hashed, 0);
@@ -367,6 +367,15 @@ test('escaneo: rutas, checksums con y sin cabecera, hacks y hash RA', async () =
 
   const translation = await api('GET', `/files?q=${encodeURIComponent('Chrono Trigger (USA) [T+Spa')}`);
   assert.equal(translation.json.items[0].status, 'HACK');
+  // Romhacks identificados por contenido: base exacta; los que no tienen base en la coleccion van a revision
+  const { prisma } = await import('../src/lib/prisma.js');
+  const ct = await prisma.romHack.findUniqueOrThrow({ where: { id: translation.json.items[0].romHackId }, include: { baseRom: true } });
+  assert.ok(ct.baseEvidence === 'content' || ct.baseEvidence === 'dat', String(ct.baseEvidence));
+  if (ct.baseEvidence === 'content') assert.equal(ct.baseRom?.name, 'Chrono Trigger (USA)');
+  assert.equal(await prisma.romHack.count({ where: { baseEvidence: 'title' } }), 0);
+  const review = (await api('GET', '/admin/review?kind=hack')).json.items;
+  assert.ok(review.length >= 25);
+  assert.ok(review.every((i: any) => i.payload.titleSuggestions), 'el titulo solo como sugerencia');
   const unknown = await api('GET', '/files?status=UNKNOWN&pageSize=100');
   assert.ok(unknown.json.items.some((x: any) => x.relativePath.startsWith('Pooyan')));
 
@@ -399,7 +408,7 @@ test('coleccion: juegos, filtros, faltantes, ficha y fusion', async () => {
   assert.ok(miss.json.items.every((r: any) => r.regions.includes('USA')));
 
   const hacks = await api('GET', `/hacks?systemId=${ctx.snesSystemId}`);
-  assert.ok(hacks.json.total >= 60);
+  assert.ok(hacks.json.total >= 40);
 
   // Fusion: "Rockman" (Japon) dentro de "Mega Man"
   const rock = (await api('GET', `/games?q=Rockman&systemId=${ctx.nesSystemId}`)).json.items.find((g: any) => g.title === 'Rockman');
@@ -1023,26 +1032,46 @@ test('fase2: parches IPS/BPS, generacion bajo demanda y etiquetas', async () => 
   await fetch(`${base_()}/api/v1/hacks/${h.json.id}/download?token=${userFiles}`);
   assert.equal(await prisma.romFile.count({ where: { romHackId: h.json.id } }), 1);
 
-  // BPS: la base se encuentra por el CRC del parche y una base distinta se rechaza
+  // Ficheros ya parcheados en disco antes de tener el parche: uno con cabecera y otro sin ella.
+  // Se reconocen por contenido como romhacks de SMB3 (sin mirar el nombre).
   const target = Buffer.from(base);
   target.write('BPS!', 0x40, 'latin1');
+  const pre = path.join(DATA, 'pre-hacks', 'nes');
+  fs.mkdirSync(pre, { recursive: true });
+  fs.writeFileSync(path.join(pre, 'nombre cualquiera.nes'), target);
+  fs.writeFileSync(path.join(pre, 'sin cabecera.nes'), target.subarray(16));
+  const pp = await api('POST', '/admin/paths', { label: 'Pre', path: path.dirname(pre) });
+  await waitJob((await api('POST', `/admin/paths/${pp.json.id}/scan`)).json.id);
+  const preFiles = await prisma.romFile.findMany({ where: { romPathId: pp.json.id }, include: { romHack: true } });
+  assert.equal(preFiles.length, 2);
+  for (const f of preFiles) {
+    assert.equal(f.status, 'HACK', f.relativePath);
+    assert.equal(f.romHack!.baseRomId, ctx.smb3RomId);
+    assert.equal(f.romHack!.baseEvidence, 'content');
+  }
+  // BPS: la base se encuentra por el CRC del parche; los romhacks creados por contenido con el mismo
+  // resultado se fusionan con este y sus ficheros quedan enlazados
   const h2 = await api('POST', '/hacks', { gameId: ctx.smb3GameId, title: 'SMB3 BPS', hackName: 'BPS', version: '2.0' });
   const fd2 = new FormData();
   fd2.append('file', new Blob([bpsPatch(base, target)]), 'p.bps');
   const p2 = await api('POST', `/hacks/${h2.json.id}/patches`, fd2);
   assert.equal(p2.json.baseRomId, ctx.smb3RomId);
   assert.equal(p2.json.baseCrc32, crcHex(base));
+  const relinked = await prisma.romFile.findMany({ where: { romPathId: pp.json.id } });
+  assert.ok(relinked.every((f) => f.romHackId === h2.json.id), JSON.stringify(relinked.map((f) => [f.relativePath, f.romHackId])));
+  assert.equal(await prisma.romHack.count({ where: { id: { in: preFiles.map((f) => f.romHackId!) }, NOT: { id: h2.json.id } } }), 0);
   const fd3 = new FormData();
   fd3.append('file', new Blob([bpsPatch(crypto.randomBytes(100), Buffer.from('x'))]), 'bad.bps');
   const h3 = await api('POST', '/hacks', { gameId: ctx.smb3GameId, baseRomId: ctx.smb3RomId, title: 'SMB3 Malo' });
   await api('POST', `/hacks/${h3.json.id}/patches`, fd3);
   assert.equal((await fetch(`${base_()}/api/v1/hacks/${h3.json.id}/download?token=${userFiles}`)).status, 409);
-  // En una lista: el hack se genera al resolver los ficheros
+  // En una lista: se usa el fichero que ya habia, no se genera otro
   const l = await api('POST', '/lists', { name: 'Hacks' }, userToken);
   await api('POST', `/lists/${l.json.id}/items`, { items: [{ hackId: h2.json.id }] }, userToken);
   const files = (await api('GET', `/lists/${l.json.id}/files`, undefined, userToken)).json;
   assert.equal(files.missing.length, 0);
-  assert.ok(fs.readFileSync(files.items[0].files[0].absPath).equals(target));
+  assert.ok(files.items[0].files[0].absPath.startsWith(path.dirname(pre)));
+  assert.equal(await prisma.romFile.count({ where: { romHackId: h2.json.id } }), 2);
 });
 
 function base_() {
@@ -1167,15 +1196,10 @@ test('fase2: sincronizacion global, ETag de GitHub, metadatos libretro y permane
   await waitJob((await api('POST', '/admin/sync', { sources: ['libretro'], system: 'nes' })).json.id);
   assert.equal((await prisma.rom.findUniqueOrThrow({ where: { id: contraRom.id } })).removedFromSource, false);
 
-  // No-Intro: se detecta paquete nuevo
-  const ni = await waitJob((await api('POST', '/admin/sync', { sources: ['nointro'] })).json.id);
-  assert.equal(ni.result.nointro.available, '2026-10-01');
-  const st = (await api('GET', '/admin/sync')).json;
-  assert.equal(st.nointro.available, '2026-10-01');
-  assert.ok(st.history.length >= 4);
+  assert.ok((await api('GET', '/admin/sync')).json.history.length >= 4);
 });
 
-test('fase2: agrupacion por evidencias (P/C de No-Intro, Retool, RA, ScreenScraper) y revision', async () => {
+test('fase2: agrupacion por evidencias (clones del DAT, Retool, RA, ScreenScraper) y revision', async () => {
   const prisma = await prismaClient();
   const { env } = await import('../src/config/env.js');
   env.forceSyncMinMinutes = 0;
@@ -1192,23 +1216,12 @@ test('fase2: agrupacion por evidencias (P/C de No-Intro, Retool, RA, ScreenScrap
     })
     .join('\n');
   const xml = `<?xml version="1.0"?><datafile><header><name>Nintendo - Game Boy (Parent-Clone)</name><description>Nintendo - Game Boy (Parent-Clone)</description><version>20260901-000000</version><homepage>No-Intro</homepage><url>https://www.no-intro.org</url></header>\n${games}\n</datafile>`;
-  // Paquete P/C de DAT-o-MATIC subido por el admin
-  const work = path.join(DATA, 'nointro-pack');
-  fs.mkdirSync(work, { recursive: true });
-  fs.writeFileSync(path.join(work, 'Nintendo - Game Boy (Parent-Clone) (20260901-000000).dat'), xml);
-  const zipFile = path.join(DATA, 'No-Intro Love Pack (PC XML) (2026-09-01).zip');
-  execSync(`7zz a -tzip "${zipFile}" .`, { cwd: work, stdio: 'ignore' });
-  const fd = new FormData();
-  fd.append('file', new Blob([fs.readFileSync(zipFile)]), path.basename(zipFile));
-  const pj = await waitJob((await api('POST', '/admin/sync/nointro-pack', fd)).json.id);
-  assert.deepEqual(pj.result.imported, ['gb']);
-  const ds = await prisma.datSource.findFirstOrThrow({ where: { systemId: gb.id, type: 'NOINTRO' } });
-  assert.equal(ds.priority, 10);
-  assert.equal((await api('GET', '/admin/sync')).json.nointro.imported, '2026-09-01');
+  fs.writeFileSync(path.join(DATA, 'dats', 'gb-test.dat'), xml);
+  await waitJob((await api('POST', '/admin/dats/import-file', { file: 'gb-test.dat', systemId: gb.id, type: 'NOINTRO' })).json.id);
 
   const romOf = async (n: string) => prisma.rom.findFirstOrThrow({ where: { name: n, game: { systemId: gb.id } } });
   const sameGame = async (a: string, b: string) => (await romOf(a)).gameId === (await romOf(b)).gameId;
-  // Parent/Clone une titulos distintos; padres con el mismo titulo quedan separados
+  // Los clones del DAT unen titulos distintos; padres con el mismo titulo quedan separados
   assert.ok(await sameGame('Alpha (Japan)', 'Beta Quest (USA)'));
   assert.ok(!(await sameGame('Gamma (USA)', 'Gamma (Europe)')));
   assert.ok(!(await sameGame('Delta (USA)', 'Delta Kun (Japan)')));

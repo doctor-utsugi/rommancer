@@ -17,9 +17,11 @@ import { applyOrganize, planOrganize } from '../roms/organize.js';
 import { SOURCES, forceSync } from '../sync/service.js';
 import { addRomRule, resolveRomGroups } from '../grouping/service.js';
 import { resolveWorks } from '../sync/wikidata.js';
+import { identifyHacks, linkFileAsHack } from '../hacks/identify.js';
 
 registerJob('scan', async (ctx) => scanPath(ctx.params.romPathId, ctx, !!ctx.params.force));
 registerJob('rematch', async () => rematchAll());
+registerJob('hack-identify', async (ctx) => identifyHacks({ recheck: !!ctx.params.recheck }, ctx));
 registerJob('seed-export', async (ctx) => exportSeed(ctx));
 registerJob('seed-apply', async (ctx) => applySeed(ctx));
 registerJob('dat-import', async (ctx) => {
@@ -188,6 +190,12 @@ adminRouter.delete('/dats/:id', async () => {
   throw badRequest('DATs are permanent');
 });
 
+// Vuelve a evaluar por contenido los ficheros desconocidos y los romhacks enlazados por titulo
+adminRouter.post('/hacks/identify', async (req, res) => {
+  const { recheck } = z.object({ recheck: z.boolean().default(false) }).parse(req.body ?? {});
+  res.status(202).json(await enqueue('hack-identify', { recheck }, me(req).id));
+});
+
 adminRouter.post('/rematch', async (req, res) => {
   res.status(202).json(await enqueue('rematch', {}, me(req).id));
 });
@@ -218,24 +226,14 @@ adminRouter.get('/tools', async (_req, res) => {
 adminRouter.get('/sync', async (_req, res) => {
   const [states, jobs] = await Promise.all([
     prisma.sourceState.findMany({ orderBy: { key: 'asc' } }),
-    prisma.job.findMany({ where: { type: { in: ['external-sync', 'nointro-pack'] } }, orderBy: { id: 'desc' }, take: 20 }),
+    prisma.job.findMany({ where: { type: 'external-sync' }, orderBy: { id: 'desc' }, take: 20 }),
   ]);
-  const nointro = { available: states.find((s) => s.key === 'nointro:available')?.version ?? null, imported: states.find((s) => s.key === 'nointro:imported')?.version ?? null };
-  res.json({ cron: env.externalSyncCron, sources: SOURCES, nointro, states, history: jobs });
+  res.json({ cron: env.externalSyncCron, sources: SOURCES, states, history: jobs });
 });
 
 adminRouter.post('/sync', async (req, res) => {
   const body = z.object({ sources: z.array(z.enum(SOURCES)).min(1).default([...SOURCES]), system: z.string().optional() }).parse(req.body ?? {});
   res.status(202).json(await forceSync(body.sources, body.system, me(req).id));
-});
-
-// Paquete diario P/C de DAT-o-MATIC descargado por el admin (la web no permite descargas automaticas)
-const packUpload = multer({ dest: path.join(env.tmpDir, 'uploads'), limits: { fileSize: 1024 * 1024 * 1024 } });
-adminRouter.post('/sync/nointro-pack', packUpload.single('file'), async (req, res) => {
-  if (!req.file) throw badRequest('Missing file');
-  const dest = path.join(env.tmpDir, `nointro-${path.basename(req.file.originalname).replace(/[^\w.() -]/g, '_')}`);
-  await fs.promises.rename(req.file.path, dest);
-  res.status(202).json(await enqueue('nointro-pack', { file: dest }, me(req).id));
 });
 
 // --- Revision de agrupaciones ---
@@ -262,6 +260,9 @@ adminRouter.post('/review/:id', async (req, res) => {
       // conflict: same/different; wikidata: link (qid) / none
       action: z.enum(['same', 'different', 'link', 'none', 'dismiss']),
       wikidataId: z.string().regex(/^Q\d+$/).optional(),
+      // hack: rom base elegida (o solo el juego si no se sabe la base exacta)
+      romId: z.number().int().optional(),
+      gameId: z.number().int().optional(),
     })
     .parse(req.body);
   const item = await prisma.reviewItem.findUniqueOrThrow({ where: { id: intParam(req) } });
@@ -278,6 +279,21 @@ adminRouter.post('/review/:id', async (req, res) => {
       for (const c of payload.candidates ?? []) await prisma.groupingRule.create({ data: { kind: 'game-work', rule: 'different', aGameId: item.gameId, wikidataId: c.qid, userId: u.id } });
     }
     await resolveWorks(item.systemId ?? undefined);
+  }
+  if (item.kind === 'hack') {
+    const p = item.payload as { fileId: number };
+    if (body.action === 'link' && (body.romId || body.gameId)) {
+      const rom = body.romId ? await prisma.rom.findUniqueOrThrow({ where: { id: body.romId } }) : null;
+      await linkFileAsHack(p.fileId, { romId: rom?.id ?? null, gameId: rom?.gameId ?? body.gameId! }, 'manual');
+    } else if (body.action === 'none') {
+      // No es un romhack de ningun juego conocido: si estaba enlazado solo por titulo, se desenlaza
+      const f = await prisma.romFile.findUnique({ where: { id: p.fileId }, include: { romHack: true } });
+      if (f?.romHack && f.romHack.baseEvidence === 'title') {
+        await prisma.romFile.update({ where: { id: f.id }, data: { status: 'UNKNOWN', romHackId: null } });
+        const left = await prisma.romHack.findUnique({ where: { id: f.romHack.id }, include: { _count: { select: { files: true, patches: true, listItems: true } } } });
+        if (left && !left._count.files && !left._count.patches && !left._count.listItems) await prisma.romHack.delete({ where: { id: left.id } });
+      }
+    }
   }
   await prisma.reviewItem.update({ where: { id: item.id }, data: { status: body.action === 'dismiss' ? 'dismissed' : 'resolved', resolvedAt: new Date(), resolvedBy: u.id } });
   await scheduleSeedExport();

@@ -259,7 +259,7 @@ export async function importDat(text: string, opts: ImportOptions = {}): Promise
   for (const c of chunk(removed, 1000)) await prisma.rom.updateMany({ where: { id: { in: c } }, data: { removedFromSource: true } });
 
   // Evidencias Parent/Clone: la clave es el padre (o la propia rom si es padre)
-  const pcSource = type === 'NOINTRO' && priority > 0 ? 'nointro-pc' : 'dat-clone';
+  const pcSource = 'dat-clone';
   const hasCloneInfo = merged.some((g) => g.cloneOf);
   if (hasCloneInfo) {
     const ev: EvidenceInput[] = [];
@@ -315,6 +315,7 @@ async function importHacks(dat: DatFile, system: System, datSourceId: number, na
       crc32: r.crc32,
       md5: r.md5,
       sha1: r.sha1,
+      baseEvidence: 'dat',
       removedFromSource: false,
     };
     const id = known.get(title);

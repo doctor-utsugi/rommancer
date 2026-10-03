@@ -284,6 +284,10 @@ model RomHack {
   crc32             String?    @db.Char(8)
   md5               String?    @db.Char(32)
   sha1              String?    @db.Char(40)
+  // Hash del contenido sin cabecera (NES, SNES...), para reconocer el fichero con o sin ella
+  headerlessSha1    String?    @db.Char(40)
+  // Como se enlazo con su rom base: dat | patch | content | header | manual | title
+  baseEvidence      String?    @db.VarChar(16)
   removedFromSource Boolean    @default(false)
   createdAt         DateTime   @default(now())
   game              Game       @relation(fields: [gameId], references: [id], onDelete: Cascade)
@@ -295,6 +299,7 @@ model RomHack {
 
   @@index([sha1])
   @@index([md5])
+  @@index([headerlessSha1])
 }
 
 model RomPath {
@@ -341,6 +346,8 @@ model RomFile {
   // Formato contenedor (rvz, wbfs, cso...) e id de disco si aplica
   container      String?     @db.VarChar(8)
   discId         String?     @db.VarChar(16)
+  // Ya evaluado como posible romhack por contenido
+  hackCheckedAt  DateTime?
   scannedAt      DateTime    @default(now())
   romPath        RomPath     @relation(fields: [romPathId], references: [id], onDelete: Cascade)
   romPart        RomPart?    @relation(fields: [romPartId], references: [id], onDelete: SetNull)
@@ -734,4 +741,14 @@ model SaveConflict {
   resolution      String?   @db.VarChar(8)
   save            Save      @relation(fields: [saveId], references: [id], onDelete: Cascade)
   device          Device    @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+}
+
+// Huella del contenido de una rom que se tiene: crc32 de bloques de 1 KiB (sin cabecera), muestreados
+// por contenido. Sirve para encontrar la rom base de un romhack por parecido.
+model RomSignature {
+  romId     Int      @id
+  fileSha1  String   @db.Char(40)
+  chunks    Int
+  sample    Bytes    @db.MediumBlob
+  createdAt DateTime @default(now())
 }

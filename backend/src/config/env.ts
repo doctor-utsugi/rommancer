@@ -61,11 +61,6 @@ export const env = {
     apiKey: process.env.THEGAMESDB_API_KEY ?? '',
     baseUrl: process.env.THEGAMESDB_URL ?? 'https://api.thegamesdb.net',
   },
-  nointro: {
-    username: process.env.NOINTRO_USERNAME ?? '',
-    password: process.env.NOINTRO_PASSWORD ?? '',
-    baseUrl: process.env.NOINTRO_URL ?? 'https://datomatic.no-intro.org',
-  },
   wikidata: {
     sparqlUrl: process.env.WIKIDATA_SPARQL_URL ?? 'https://query.wikidata.org/sparql',
   },
@@ -77,6 +72,6 @@ export const env = {
   externalSyncCron: process.env.EXTERNAL_SYNC_CRON ?? '0 4 * * 0',
   // Intervalo minimo entre sincronizaciones forzadas de la misma fuente y sistema
   forceSyncMinMinutes: Number(process.env.FORCE_SYNC_MIN_MINUTES ?? 10),
-  // Identificacion ante servicios externos (politicas de Wikidata y No-Intro)
+  // Identificacion ante servicios externos (politica de Wikidata)
   userAgent: process.env.HTTP_USER_AGENT ?? 'Rommancer/1.0 (self-hosted rom manager)',
 };

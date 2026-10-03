@@ -69,13 +69,13 @@ export async function addPatch(hackId: number, patch: Buffer, opts: { baseRomId?
   const p = await prisma.romPatch.create({
     data: { hackId, format, path: rel, size: patch.length, sha1, baseRomId, baseCrc32: info.sourceCrc32 ?? null, targetCrc32: info.targetCrc32 ?? null, sourceUrl: opts.sourceUrl ?? null, createdById: opts.userId ?? null },
   });
-  if (baseRomId && !hack.baseRomId) await prisma.romHack.update({ where: { id: hackId }, data: { baseRomId } });
-  // Si la base esta en la coleccion se calcula ya el resultado: sus hashes permiten reconocer el hack al escanear
-  if (baseRomId && !hack.sha1 && (await ownedRomIds({ romIds: [baseRomId], include: 'any' })).has(baseRomId)) {
+  if (baseRomId && (!hack.baseRomId || hack.baseEvidence === 'title' || !hack.baseEvidence))
+    await prisma.romHack.update({ where: { id: hackId }, data: { baseRomId, baseEvidence: 'patch' } });
+  // Si la base esta en la coleccion se calcula ya el resultado: sus hashes permiten reconocer el hack ya
+  // parcheado que haya en disco (tambien sin o con otra cabecera)
+  if (baseRomId && (await ownedRomIds({ romIds: [baseRomId], include: 'any' })).has(baseRomId)) {
     try {
-      const out = await patchedContent(p.id);
-      const h = hashesOf(out);
-      await prisma.romHack.update({ where: { id: hackId }, data: { sha1: h.sha1, md5: h.md5, crc32: h.crc32, size: BigInt(h.size) } });
+      await setResultHashes(hackId, await patchedContent(p.id));
     } catch {
       // Base distinta de la esperada: el parche queda registrado igualmente
     }
@@ -83,24 +83,77 @@ export async function addPatch(hackId: number, patch: Buffer, opts: { baseRomId?
   return p;
 }
 
+export interface Patched {
+  // Fichero completo (con la cabecera de la base si la tiene) y contenido sin cabecera
+  file: Buffer;
+  headerless: Buffer | null;
+}
+
 /** Aplica un parche a su rom base. Prueba con la rom tal cual y sin cabecera (NES, SNES...). */
-export async function patchedContent(patchId: number): Promise<Buffer> {
+export async function patchedContent(patchId: number): Promise<Patched> {
   const p = await prisma.romPatch.findUniqueOrThrow({ where: { id: patchId }, include: { hack: { include: { game: { include: { system: true } } } } } });
   if (!p.baseRomId) throw new HttpError(409, 'Patch without base rom');
   const base = await readOwnedRom(p.baseRomId);
   const patch = await fs.promises.readFile(path.join(env.patchesDir, p.path));
   const header = detectHeader(p.hack.game.system.headerType, base.subarray(0, 512), base.length);
-  const candidates = header ? [base, base.subarray(header)] : [base];
   let last: unknown;
-  for (const c of candidates) {
+  try {
+    const out = applyPatch(base, patch);
+    return { file: out, headerless: header ? out.subarray(header) : null };
+  } catch (e) {
+    last = e;
+    if (!(e instanceof PatchError)) throw e;
+  }
+  if (header) {
     try {
-      return applyPatch(c, patch);
+      // Parche hecho sobre la rom sin cabecera: el fichero final conserva la cabecera de la base
+      const out = applyPatch(base.subarray(header), patch);
+      return { file: Buffer.concat([base.subarray(0, header), out]), headerless: out };
     } catch (e) {
       last = e;
       if (!(e instanceof PatchError)) throw e;
     }
   }
   throw new HttpError(409, `Patch does not apply: ${last instanceof Error ? last.message : last}`);
+}
+
+/** Guarda los hashes del resultado en el romhack y enlaza los ficheros que ya lo tengan parcheado. */
+async function setResultHashes(hackId: number, r: Patched) {
+  const h = hashesOf(r.file);
+  const hl = r.headerless ? hashesOf(r.headerless).sha1 : null;
+  const hack = await prisma.romHack.findUniqueOrThrow({ where: { id: hackId } });
+  // Si el romhack ya tenia hash (de un DAT) se respeta; se anade la variante que falte
+  const data: Record<string, unknown> = { headerlessSha1: hack.headerlessSha1 ?? (hl && hl !== hack.sha1 ? hl : null) };
+  if (!hack.sha1) Object.assign(data, { sha1: h.sha1, md5: h.md5, crc32: h.crc32, size: BigInt(h.size) });
+  await prisma.romHack.update({ where: { id: hackId }, data });
+  await relinkHack(hackId);
+}
+
+/**
+ * Tras conocer los hashes de un romhack: fusiona los romhacks duplicados creados a partir de ficheros
+ * (mismo resultado) y enlaza los ficheros desconocidos que coincidan.
+ */
+export async function relinkHack(hackId: number) {
+  const hack = await prisma.romHack.findUniqueOrThrow({ where: { id: hackId } });
+  const shas = [hack.sha1, hack.headerlessSha1].filter((x): x is string => !!x);
+  if (!shas.length) return { merged: 0, linked: 0 };
+  const dups = await prisma.romHack.findMany({
+    where: { id: { not: hackId }, datSourceId: null, patches: { none: {} }, OR: [{ sha1: { in: shas } }, { headerlessSha1: { in: shas } }] },
+  });
+  for (const d of dups) {
+    await prisma.$transaction([
+      prisma.romFile.updateMany({ where: { romHackId: d.id }, data: { romHackId: hackId } }),
+      prisma.$executeRaw`UPDATE IGNORE ListItem SET hackId = ${hackId}, itemKey = CONCAT('h', ${hackId}) WHERE hackId = ${d.id}`,
+      prisma.$executeRaw`DELETE FROM ListItem WHERE hackId = ${d.id}`,
+      prisma.romHack.delete({ where: { id: d.id } }),
+    ]);
+  }
+  const game = await prisma.game.findUniqueOrThrow({ where: { id: hack.gameId } });
+  const r = await prisma.romFile.updateMany({
+    where: { status: 'UNKNOWN', OR: [{ sha1: { in: shas } }, { headerlessSha1: { in: shas } }] },
+    data: { status: 'HACK', romHackId: hackId, systemId: game.systemId },
+  });
+  return { merged: dups.length, linked: r.count };
 }
 
 /**
@@ -112,15 +165,21 @@ export async function materializeHack(hackId: number, userId?: number) {
   if (hack.files[0]) return hack.files[0];
   const patch = hack.patches.find((p) => p.baseRomId) ?? null;
   if (!patch) return null;
-  const out = await patchedContent(patch.id);
-  const h = hashesOf(out);
-  if (hack.sha1 && hack.sha1 !== h.sha1) throw new HttpError(409, 'Patched rom does not match the hack checksum');
-  if (!hack.sha1) await prisma.romHack.update({ where: { id: hackId }, data: { sha1: h.sha1, md5: h.md5, crc32: h.crc32, size: BigInt(h.size) } });
+  const r = await patchedContent(patch.id);
+  const h = hashesOf(r.file);
+  const hl = r.headerless ? hashesOf(r.headerless).sha1 : null;
+  const known = [hack.sha1, hack.headerlessSha1].filter(Boolean);
+  if (known.length && !known.includes(h.sha1) && !(hl && known.includes(hl))) throw new HttpError(409, 'Patched rom does not match the hack checksum');
+  await setResultHashes(hackId, r);
+  // Puede que ya hubiera un fichero parcheado en disco que ahora se ha enlazado
+  const linked = await prisma.romFile.findFirst({ where: { romHackId: hackId }, include: { romPath: true } });
+  if (linked) return linked;
+  const out = r.file;
   const ext = path.extname(hack.baseRom?.parts[0]?.name ?? '') || '.bin';
   const { file } = await placeFile(out, {
     system: hack.game.system,
     fileName: safeFileName(hack.title + ext),
-    hashes: h,
+    hashes: { ...h, ...(r.headerless ? { headerless: hashesOf(r.headerless) } : {}) },
     status: 'HACK',
     romHackId: hack.id,
     uploadedById: userId ?? null,
