@@ -126,6 +126,11 @@ export async function importDat(text: string, opts: ImportOptions = {}): Promise
   if (existing && existing.fileSha1 === fileSha1 && !opts.force) {
     return { datSourceId: existing.id, system: system.slug, type, name, games: 0, roms: existing.romCount, hacks: 0, skipped: true };
   }
+  // DAT de arcade con un unico fichero por set (hash del zip entero, como el de libretro-database):
+  // describe los mismos juegos que el DAT oficial con otros nombres y no verifica el contenido. No se usa.
+  if (system.mediaType === 'arcade' && dat.games.length && dat.games.every((g) => g.roms.length === 1 && /\.(zip|7z)$/i.test(g.roms[0].name))) {
+    return { datSourceId: existing?.id ?? 0, system: system.slug, type, name, games: 0, roms: 0, hacks: 0, skipped: true };
+  }
   const source = existing
     ? await prisma.datSource.update({ where: { id: existing.id }, data: { fileSha1: '', version: dat.version ?? null, importedAt: new Date(), fileName: opts.fileName ?? existing.fileName, priority } })
     : await prisma.datSource.create({ data: { systemId: system.id, type, name, version: dat.version ?? null, fileSha1: '', fileName: opts.fileName ?? null, priority } });

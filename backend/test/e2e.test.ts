@@ -852,6 +852,11 @@ test('comprimidos: zip/7z de cartuchos y sets arcade FBNeo', async () => {
   const imp = await waitJob((await api('POST', '/admin/dats/import-file', { file: 'fbneo-test.dat' })).json.id);
   assert.equal(imp.result.system, 'fbneo');
   assert.equal(imp.result.games, 1, 'el clon comparte juego con el padre');
+  // DAT de "un zip por set" (como el de libretro-database): describe los mismos juegos con otro nombre; no crea roms
+  const zipDat = `clrmamepro (\n\tname "FBNeo - Arcade Games"\n)\n\ngame (\n\tname "Test Game (World)"\n\trom ( name testgame.zip size 100 crc 12345678 )\n)\n`;
+  fs.writeFileSync(path.join(DATA, 'dats', 'fbneo-zip.dat'), zipDat);
+  const zipImp = await waitJob((await api('POST', '/admin/dats/import-file', { file: 'fbneo-zip.dat' })).json.id);
+  assert.equal(zipImp.result.skipped, true);
   const p = await api('POST', '/admin/paths', { label: 'Archives', path: dir });
   const scan = await waitJob((await api('POST', `/admin/paths/${p.json.id}/scan`)).json.id);
   assert.equal(scan.result.matched, 4, JSON.stringify(scan.result));

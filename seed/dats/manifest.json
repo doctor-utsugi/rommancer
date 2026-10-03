@@ -2,161 +2,193 @@
  {
   "file": "nointro - Nintendo - Nintendo Entertainment System.dat",
   "system": "nes",
-  "type": "NOINTRO"
+  "type": "NOINTRO",
+  "priority": 0
  },
  {
   "file": "nointro - Nintendo - Super Nintendo Entertainment System.dat",
   "system": "snes",
-  "type": "NOINTRO"
+  "type": "NOINTRO",
+  "priority": 0
  },
  {
   "file": "hacks - Nintendo - Nintendo Entertainment System.dat",
   "system": "nes",
-  "type": "HACKS"
+  "type": "HACKS",
+  "priority": 0
  },
  {
   "file": "hacks - Nintendo - Super Nintendo Entertainment System.dat",
   "system": "snes",
-  "type": "HACKS"
+  "type": "HACKS",
+  "priority": 0
  },
  {
   "file": "nointro - Nintendo - Family Computer Disk System.dat",
   "system": "fds",
-  "type": "NOINTRO"
+  "type": "NOINTRO",
+  "priority": 0
  },
  {
   "file": "nointro - Nintendo - Game Boy.dat",
   "system": "gb",
-  "type": "NOINTRO"
+  "type": "NOINTRO",
+  "priority": 0
  },
  {
   "file": "nointro - Nintendo - Game Boy Color.dat",
   "system": "gbc",
-  "type": "NOINTRO"
+  "type": "NOINTRO",
+  "priority": 0
  },
  {
   "file": "nointro - Nintendo - Game Boy Advance.dat",
   "system": "gba",
-  "type": "NOINTRO"
+  "type": "NOINTRO",
+  "priority": 0
  },
  {
   "file": "nointro - Nintendo - Nintendo 64.dat",
   "system": "n64",
-  "type": "NOINTRO"
+  "type": "NOINTRO",
+  "priority": 0
  },
  {
   "file": "nointro - Nintendo - Nintendo DS.dat",
   "system": "nds",
-  "type": "NOINTRO"
+  "type": "NOINTRO",
+  "priority": 0
  },
  {
   "file": "nointro - Sega - Master System - Mark III.dat",
   "system": "sms",
-  "type": "NOINTRO"
+  "type": "NOINTRO",
+  "priority": 0
  },
  {
   "file": "nointro - Sega - Game Gear.dat",
   "system": "gg",
-  "type": "NOINTRO"
+  "type": "NOINTRO",
+  "priority": 0
  },
  {
   "file": "nointro - Sega - Mega Drive - Genesis.dat",
   "system": "md",
-  "type": "NOINTRO"
+  "type": "NOINTRO",
+  "priority": 0
  },
  {
   "file": "nointro - Atari - Lynx.dat",
   "system": "lynx",
-  "type": "NOINTRO"
+  "type": "NOINTRO",
+  "priority": 0
  },
  {
   "file": "nointro - Atari - 7800.dat",
   "system": "a7800",
-  "type": "NOINTRO"
+  "type": "NOINTRO",
+  "priority": 0
  },
  {
   "file": "redump - Sony - PlayStation.dat",
   "system": "psx",
-  "type": "REDUMP"
+  "type": "REDUMP",
+  "priority": 0
  },
  {
   "file": "redump - Sony - PlayStation 2.dat",
   "system": "ps2",
-  "type": "REDUMP"
+  "type": "REDUMP",
+  "priority": 0
  },
  {
   "file": "redump - Sony - PlayStation Portable.dat",
   "system": "psp",
-  "type": "REDUMP"
+  "type": "REDUMP",
+  "priority": 0
  },
  {
   "file": "redump - Nintendo - GameCube.dat",
   "system": "gc",
-  "type": "REDUMP"
+  "type": "REDUMP",
+  "priority": 0
  },
  {
   "file": "redump - Nintendo - Wii.dat",
   "system": "wii",
-  "type": "REDUMP"
- },
- {
-  "file": "fbneo - FBNeo - Arcade Games.dat",
-  "system": "fbneo",
-  "type": "FBNEO"
+  "type": "REDUMP",
+  "priority": 0
  },
  {
   "file": "hacks - Nintendo - Game Boy.dat",
   "system": "gb",
-  "type": "HACKS"
+  "type": "HACKS",
+  "priority": 0
  },
  {
   "file": "hacks - Nintendo - Game Boy Color.dat",
   "system": "gbc",
-  "type": "HACKS"
+  "type": "HACKS",
+  "priority": 0
  },
  {
   "file": "hacks - Nintendo - Game Boy Advance.dat",
   "system": "gba",
-  "type": "HACKS"
+  "type": "HACKS",
+  "priority": 0
  },
  {
   "file": "hacks - Nintendo - Nintendo 64.dat",
   "system": "n64",
-  "type": "HACKS"
+  "type": "HACKS",
+  "priority": 0
  },
  {
   "file": "hacks - Nintendo - Nintendo DS.dat",
   "system": "nds",
-  "type": "HACKS"
+  "type": "HACKS",
+  "priority": 0
  },
  {
   "file": "hacks - Sega - Master System - Mark III.dat",
   "system": "sms",
-  "type": "HACKS"
+  "type": "HACKS",
+  "priority": 0
  },
  {
   "file": "hacks - Sega - Game Gear.dat",
   "system": "gg",
-  "type": "HACKS"
+  "type": "HACKS",
+  "priority": 0
  },
  {
   "file": "hacks - Sega - Mega Drive - Genesis.dat",
   "system": "md",
-  "type": "HACKS"
+  "type": "HACKS",
+  "priority": 0
  },
  {
   "file": "hacks - Sony - PlayStation.dat",
   "system": "psx",
-  "type": "HACKS"
+  "type": "HACKS",
+  "priority": 0
  },
  {
   "file": "hacks - Sony - PlayStation 2.dat",
   "system": "ps2",
-  "type": "HACKS"
+  "type": "HACKS",
+  "priority": 0
  },
  {
   "file": "hacks - Sony - PlayStation Portable.dat",
   "system": "psp",
-  "type": "HACKS"
+  "type": "HACKS",
+  "priority": 0
+ },
+ {
+  "file": "fbneo - FinalBurn Neo (ClrMame Pro XML, Arcade only).dat",
+  "system": "fbneo",
+  "type": "FBNEO",
+  "priority": 0
  }
 ]
