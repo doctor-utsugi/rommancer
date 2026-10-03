@@ -6,9 +6,11 @@
     "dev": "tsx watch --env-file=../.env src/server.ts",
     "start": "node dist/server.js",
     "build": "prisma generate && tsc -p tsconfig.json",
-    "db:push": "dotenv -e ../.env -- prisma db push",
     "db:seed": "tsx --env-file=../.env src/seed/run.ts",
-    "test": "tsx --env-file=../.env --test --test-concurrency=1 test/*.test.ts"
+    "test": "tsx --env-file=../.env --test --test-concurrency=1 test/*.test.ts",
+    "db:migrate": "dotenv -e ../.env -- prisma migrate deploy",
+    "db:status": "dotenv -e ../.env -- prisma migrate status",
+    "migration:new": "sh scripts/new-migration.sh"
   },
   "prisma": {
     "schema": "prisma/schema.prisma"

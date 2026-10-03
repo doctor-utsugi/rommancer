@@ -19,8 +19,8 @@ export function registerJob(type: string, handler: Handler) {
   handlers.set(type, handler);
 }
 
-export async function enqueue(type: string, params: Record<string, unknown>, userId?: number): Promise<Job> {
-  const job = await prisma.job.create({ data: { type, params: params as Prisma.InputJsonValue, userId: userId ?? null } });
+export async function enqueue(type: string, params: Record<string, unknown>, userId?: number, runAfter?: Date): Promise<Job> {
+  const job = await prisma.job.create({ data: { type, params: params as Prisma.InputJsonValue, userId: userId ?? null, runAfter: runAfter ?? null } });
   setImmediate(tick);
   return job;
 }
@@ -59,7 +59,11 @@ async function runJob(job: Job) {
 
 async function tick() {
   if (running.size >= MAX_CONCURRENT) return;
-  const pending = await prisma.job.findMany({ where: { status: 'PENDING' }, orderBy: { id: 'asc' }, take: 10 });
+  const pending = await prisma.job.findMany({
+    where: { status: 'PENDING', OR: [{ runAfter: null }, { runAfter: { lte: new Date() } }] },
+    orderBy: { id: 'asc' },
+    take: 10,
+  });
   for (const job of pending) {
     if (running.size >= MAX_CONCURRENT) break;
     // Un trabajo de cada tipo a la vez para no saturar disco ni APIs externas

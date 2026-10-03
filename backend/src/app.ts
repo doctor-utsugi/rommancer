@@ -13,19 +13,33 @@ import { uploadsRouter } from './modules/uploads/routes.js';
 import { mediaRouter, scrapeRouter } from './modules/scrape/routes.js';
 import { raRouter } from './modules/ra/routes.js';
 import { savesRouter } from './modules/saves/routes.js';
+import { agentRouter } from './modules/saves/agent.js';
+import { env } from './config/env.js';
+import './modules/sync/service.js';
 
 export function createApp() {
   const app = express();
   app.set('json replacer', jsonReplacer);
   app.set('trust proxy', 'loopback');
-  app.use(cors());
-  app.use(express.json({ limit: '10mb' }));
+  app.disable('x-powered-by');
+  // CORS cerrado salvo origenes configurados
+  app.use(cors({ origin: env.corsOrigins.length ? env.corsOrigins : false }));
+  app.use((_req, res, next) => {
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('X-Frame-Options', 'DENY');
+    res.setHeader('Referrer-Policy', 'no-referrer');
+    res.setHeader('Cross-Origin-Resource-Policy', 'same-origin');
+    next();
+  });
 
   const api = express.Router();
   api.get('/health', (_req, res) => {
     res.json({ ok: true });
   });
-  api.use('/auth', authRouter);
+  api.use('/auth', express.json({ limit: '1mb' }), authRouter);
+  // Scripts de dispositivos: autenticados con su propio token
+  api.use('/agent', agentRouter);
+  api.use(express.json({ limit: '10mb' }));
   api.use(requireAuth);
   api.use('/users', usersRouter);
   api.use('/invitations', invitationsRouter);

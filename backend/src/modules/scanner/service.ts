@@ -7,6 +7,7 @@ import { hashFile, hashStream, type FileHashes } from '../../lib/hash.js';
 import { parseCue } from '../../lib/cdreader.js';
 import { raHashArcade, raHashFile, raHashFromHashes, raHashGamecubeFrom, raHashWiiFrom } from '../../lib/rahash.js';
 import { RvzReader } from '../../lib/rvz.js';
+import { discId, openDiscImage } from '../../lib/discimage.js';
 import { normalizeTitle, parseRomName } from '../../lib/romname.js';
 import { chdInfo, extractChd, extractEntryStream, extractEntryToFile, listArchive, tmpDir } from '../../lib/tools.js';
 import type { JobContext } from '../../lib/jobs.js';
@@ -62,29 +63,23 @@ interface MatchResult {
   systemId: number | null;
 }
 
+const partInclude = { rom: { include: { game: { select: { systemId: true } }, datSource: { select: { type: true } } } } } as const;
+
+/**
+ * Busca la rom a la que corresponde un fichero por sus hashes. Las roms de DATs (verificadas) tienen
+ * preferencia sobre las subidas sin verificar (fuente USER), que dan estado UNVERIFIED.
+ */
 export async function matchHashes(h: { sha1?: string | null; md5?: string | null; crc32: string; size: number; headerless?: { sha1: string; md5: string } }): Promise<MatchResult> {
   const sha1s = [h.sha1, h.headerless?.sha1].filter(Boolean) as string[];
-  let part = null;
-  if (sha1s.length) {
-    part = await prisma.romPart.findFirst({
-      where: { OR: [{ sha1: { in: sha1s } }, { headerlessSha1: { in: sha1s } }] },
-      include: { rom: { include: { game: { select: { systemId: true } } } } },
-      orderBy: { id: 'asc' },
-    });
-  }
-  if (!part && h.md5) {
-    part = await prisma.romPart.findFirst({
-      where: { OR: [{ md5: h.md5 }, { headerlessMd5: h.md5 }], sha1: null },
-      include: { rom: { include: { game: { select: { systemId: true } } } } },
-    });
-  }
-  if (!part && !h.sha1) {
-    part = await prisma.romPart.findFirst({
-      where: { crc32: h.crc32, size: BigInt(h.size) },
-      include: { rom: { include: { game: { select: { systemId: true } } } } },
-    });
-  }
-  if (part) return { status: 'MATCHED', romPartId: part.id, romHackId: null, systemId: part.rom.game.systemId };
+  const candidates = [];
+  if (sha1s.length)
+    candidates.push(...(await prisma.romPart.findMany({ where: { OR: [{ sha1: { in: sha1s } }, { headerlessSha1: { in: sha1s } }] }, include: partInclude, orderBy: { id: 'asc' }, take: 10 })));
+  if (!candidates.length && h.md5)
+    candidates.push(...(await prisma.romPart.findMany({ where: { OR: [{ md5: h.md5 }, { headerlessMd5: h.md5 }], sha1: null }, include: partInclude, take: 10 })));
+  if (!candidates.length && !h.sha1)
+    candidates.push(...(await prisma.romPart.findMany({ where: { crc32: h.crc32, size: BigInt(h.size) }, include: partInclude, take: 10 })));
+  const part = candidates.find((p) => p.rom.datSource.type !== 'USER') ?? candidates[0];
+  if (part) return { status: part.rom.datSource.type === 'USER' ? 'UNVERIFIED' : 'MATCHED', romPartId: part.id, romHackId: null, systemId: part.rom.game.systemId };
   if (sha1s.length || h.md5) {
     const hack = await prisma.romHack.findFirst({
       where: { OR: [...(sha1s.length ? [{ sha1: { in: sha1s } }] : []), ...(h.md5 ? [{ md5: h.md5 }] : [])] },
@@ -100,6 +95,27 @@ interface FileRow {
   hashes: FileHashes | { size: number; crc32: string; md5: null; sha1: null; headerless?: undefined };
   raHash: string | null;
   systemId: number | null;
+  container?: string | null;
+  discId?: string | null;
+  // id de disco y revision ("GALE01/0")
+  // Formatos que no conservan la imagen original (WBFS, CISO): se emparejan por id de disco como no verificados
+  byDiscId?: { id: string; revision: number } | null;
+}
+
+/**
+ * Rom de un disco de GameCube/Wii por su id (serial de Redump: DL-DOL-GALE-USA, RVL-RMCP-EUR) y revision.
+ * Solo si hay una unica candidata.
+ */
+export async function matchByDiscId(systemId: number | null, id: string, revision: number) {
+  const id4 = id.slice(0, 4);
+  const roms = await prisma.rom.findMany({
+    where: { ...(systemId ? { game: { systemId } } : {}), OR: [{ serial: { contains: `-${id4}-` } }, { serial: id4 }, { serial: id }] },
+    include: { parts: { take: 1 }, game: { select: { systemId: true } } },
+  });
+  const rev = (r: { revision: string | null }) => Number(r.revision?.match(/\d+/)?.[0] ?? 0);
+  const cands = roms.filter((r) => rev(r) === revision && !(r.flags as string[]).some((f) => ['beta', 'proto', 'demo'].includes(f)));
+  const pick = cands.length === 1 ? cands[0] : null;
+  return pick?.parts[0] ? { romPartId: pick.parts[0].id, systemId: pick.game.systemId } : null;
 }
 
 async function raForFile(system: System | null, h: FileHashes | null, file: string): Promise<string | null> {
@@ -112,7 +128,7 @@ async function raForFile(system: System | null, h: FileHashes | null, file: stri
 }
 
 /** Procesa un fichero en disco y devuelve una o varias filas (archivos comprimidos y CHD multi-pista). */
-async function processFile(full: string, rel: string, idx: SystemIndex, forced: System | null, rootName: string, ctx?: JobContext): Promise<FileRow[]> {
+export async function processFile(full: string, rel: string, idx: SystemIndex, forced: System | null, rootName: string, ctx?: JobContext): Promise<FileRow[]> {
   const ext = path.extname(full).toLowerCase();
   const guessRel = path.join(rootName, rel);
   const sys = guessSystem(idx, guessRel, forced);
@@ -174,6 +190,30 @@ async function processFile(full: string, rel: string, idx: SystemIndex, forced: 
     }
   }
 
+  if (['.wbfs', '.ciso', '.cso', '.zso'].includes(ext)) {
+    const r = await openDiscImage(full);
+    if (r) {
+      try {
+        const readAt = (pos: number, len: number) => r.read(pos, len);
+        if (r.format === 'wbfs' || r.format === 'ciso') {
+          // No se puede reconstruir la ISO de Redump: se identifica por cabecera y se calcula el hash RA
+          const d = await discId(readAt);
+          const discSys = (d.platform ? idx.bySlug.get(d.platform) : null) ?? sys;
+          ctx?.log(`${r.format.toUpperCase()} ${rel}: ${d.id} rev ${d.revision}`);
+          const ra = discSys?.slug === 'gc' ? await raHashGamecubeFrom(readAt) : discSys?.slug === 'wii' ? await raHashWiiFrom(readAt) : null;
+          const h = await r.hashIso();
+          return [{ archiveEntry: null, hashes: h, raHash: ra, systemId: discSys?.id ?? null, container: r.format, discId: `${d.id}/${d.revision}`, byDiscId: { id: d.id, revision: d.revision } }];
+        }
+        // CSO/ZSO conservan la ISO completa: verificable contra Redump
+        ctx?.log(`Rebuilding ${rel} (${r.format.toUpperCase()}, ${r.isoSize} bytes)`);
+        const h = await r.hashIso();
+        return [{ archiveEntry: null, hashes: h, raHash: null, systemId: sys?.id ?? null, container: r.format }];
+      } finally {
+        await r.close();
+      }
+    }
+  }
+
   if (ext === '.rvz' || ext === '.wia') {
     // Se reconstruye la ISO original en memoria por bloques para obtener los hashes de Redump
     const r = await RvzReader.open(full);
@@ -183,7 +223,7 @@ async function processFile(full: string, rel: string, idx: SystemIndex, forced: 
       const discSys = sys ?? idx.bySlug.get(r.discType === 2 ? 'wii' : 'gc') ?? null;
       const readAt = (pos: number, len: number) => r.read(pos, len);
       const ra = discSys?.slug === 'gc' ? await raHashGamecubeFrom(readAt) : discSys?.slug === 'wii' ? await raHashWiiFrom(readAt) : null;
-      return [{ archiveEntry: null, hashes: h, raHash: ra, systemId: discSys?.id ?? null }];
+      return [{ archiveEntry: null, hashes: h, raHash: ra, systemId: discSys?.id ?? null, container: ext.slice(1) }];
     } finally {
       await r.close();
     }
@@ -251,7 +291,11 @@ export async function scanPath(romPathId: number, ctx?: JobContext, force = fals
       const rows = await processFile(full, rel, idx, forced, rootName, ctx);
       if (prev?.length) await prisma.romFile.deleteMany({ where: { id: { in: prev.map((p) => p.id) } } });
       for (const r of rows) {
-        const m = await matchHashes(r.hashes as FileHashes);
+        let m = await matchHashes(r.hashes as FileHashes);
+        if (m.status === 'UNKNOWN' && r.byDiscId) {
+          const d = await matchByDiscId(r.systemId, r.byDiscId.id, r.byDiscId.revision);
+          if (d) m = { status: 'UNVERIFIED', romPartId: d.romPartId, romHackId: null, systemId: d.systemId };
+        }
         let raHash = r.raHash;
         const systemId = m.systemId ?? r.systemId;
         // Si el sistema solo se conoce tras emparejar, se calcula el hash RA ahora
@@ -279,6 +323,8 @@ export async function scanPath(romPathId: number, ctx?: JobContext, force = fals
             status: m.status,
             romPartId: m.romPartId,
             romHackId: m.romHackId,
+            container: r.container ?? null,
+            discId: r.discId ?? null,
           },
         });
         if (m.status === 'MATCHED') stats.matched++;
@@ -358,15 +404,21 @@ export async function rematchAll(): Promise<{ matched: number; hacks: number }> 
     ['headerlessSha1', 'headerlessSha1'],
   ] as const) {
     await prisma.$executeRawUnsafe(
-      `UPDATE RomFile f JOIN RomPart p ON p.${pcol} = f.${fcol} JOIN Rom r ON r.id = p.romId JOIN Game g ON g.id = r.gameId
+      `UPDATE RomFile f JOIN RomPart p ON p.${pcol} = f.${fcol} JOIN Rom r ON r.id = p.romId JOIN Game g ON g.id = r.gameId JOIN DatSource d ON d.id = r.datSourceId
        SET f.status = 'MATCHED', f.romPartId = p.id, f.romHackId = NULL, f.systemId = g.systemId
-       WHERE f.status <> 'MATCHED' AND f.${fcol} IS NOT NULL`,
+       WHERE f.status <> 'MATCHED' AND f.${fcol} IS NOT NULL AND d.type <> 'USER'`,
     );
   }
   await prisma.$executeRawUnsafe(
-    `UPDATE RomFile f JOIN RomPart p ON p.crc32 = f.crc32 AND p.size = f.size JOIN Rom r ON r.id = p.romId JOIN Game g ON g.id = r.gameId
+    `UPDATE RomFile f JOIN RomPart p ON p.crc32 = f.crc32 AND p.size = f.size JOIN Rom r ON r.id = p.romId JOIN Game g ON g.id = r.gameId JOIN DatSource d ON d.id = r.datSourceId
      SET f.status = 'MATCHED', f.romPartId = p.id, f.systemId = g.systemId
-     WHERE f.status <> 'MATCHED' AND f.sha1 IS NULL`,
+     WHERE f.status <> 'MATCHED' AND f.sha1 IS NULL AND d.type <> 'USER'`,
+  );
+  // Subidas sin verificar: se enlazan con su rom de usuario si no hay coincidencia verificada
+  await prisma.$executeRawUnsafe(
+    `UPDATE RomFile f JOIN RomPart p ON p.sha1 = f.sha1 JOIN Rom r ON r.id = p.romId JOIN DatSource d ON d.id = r.datSourceId
+     SET f.status = 'UNVERIFIED', f.romPartId = p.id
+     WHERE f.status = 'UNKNOWN' AND d.type = 'USER'`,
   );
   for (const col of ['sha1', 'headerlessSha1'] as const) {
     await prisma.$executeRawUnsafe(
@@ -374,6 +426,13 @@ export async function rematchAll(): Promise<{ matched: number; hacks: number }> 
        SET f.status = 'HACK', f.romHackId = h.id, f.systemId = g.systemId
        WHERE f.status = 'UNKNOWN' AND f.${col} IS NOT NULL`,
     );
+  }
+  await prisma.$executeRaw`UPDATE RomFile f LEFT JOIN RomPart p ON p.id = f.romPartId SET f.status = 'UNKNOWN', f.romPartId = NULL WHERE f.status = 'UNVERIFIED' AND p.id IS NULL`;
+  // Imagenes WBFS/CISO: por id de disco (los serial llegan con los DATs)
+  for (const f of await prisma.romFile.findMany({ where: { status: 'UNKNOWN', discId: { not: null } } })) {
+    const [id, rev] = f.discId!.split('/');
+    const d = await matchByDiscId(f.systemId, id, Number(rev ?? 0));
+    if (d) await prisma.romFile.update({ where: { id: f.id }, data: { status: 'UNVERIFIED', romPartId: d.romPartId, systemId: d.systemId } });
   }
   await autoLinkHacks();
   await linkRaGames();

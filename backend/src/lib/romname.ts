@@ -96,3 +96,20 @@ export function normalizeTitle(title: string): string {
 export function safeFileName(name: string): string {
   return name.replace(/[<>:"/\\|?*\u0000-\u001f]/g, '_').replace(/[. ]+$/, '');
 }
+
+/** Nombre de la rom base de un nombre con marcas GoodTools: "Contra (Japan) [T+Eng1.0_MadHacker]" -> "Contra (Japan)". */
+export function baseRomName(raw: string): string {
+  return raw.replace(/\.[a-z0-9]{1,5}$/i, '').replace(/\s*\[[^\]]*\]/g, '').trim();
+}
+
+/**
+ * Etiqueta de un romhack con su rom base exacta y su propia version, separada de la del juego:
+ * "Gran Turismo 4 (USA) v1.01 + Spec II v1.10", "Contra (Japan) + T-Eng v1.0 (MadHacker)".
+ */
+export function hackLabel(base: { name: string } | null, hack: { type: string; hackName?: string | null; title: string; version?: string | null; language?: string | null; author?: string | null }): string {
+  const baseText = base ? base.name.replace(/\s*\((?:[A-Z][a-z](?:-[A-Z][a-z])?,?)+\)/g, '').replace(/\(Rev ([\w.]+)\)/, 'Rev $1').replace(/\((v[\d.]+\w*)\)/, '$1').replace(/\s+/g, ' ').trim() : null;
+  const name = hack.type === 'TRANSLATION' ? `T-${hack.language ?? '?'}` : (hack.hackName ?? hack.title);
+  const own = [name, hack.version ? (/^v/i.test(hack.version) ? hack.version : `v${hack.version}`) : null].filter(Boolean).join(' ');
+  const author = hack.type === 'TRANSLATION' && hack.author ? ` (${hack.author})` : '';
+  return baseText ? `${baseText} + ${own}${author}` : `${own}${author}`;
+}

@@ -7,11 +7,17 @@ import { encrypt } from '../../lib/crypto.js';
 import { badRequest, forbidden, intParam } from '../../lib/http.js';
 import { enqueue, registerJob } from '../../lib/jobs.js';
 import { extractEntryStream } from '../../lib/tools.js';
-import { me, requireAdmin, type AuthUser } from '../auth/middleware.js';
+import { me, requireAdmin, requirePerm, type AuthUser } from '../auth/middleware.js';
+import crypto from 'node:crypto';
+import { ZipArchive } from 'archiver';
+import { sha256 } from '../../lib/crypto.js';
+import { scriptFiles } from '../saves/script.js';
 import { loadList, resolveListFiles } from '../lists/service.js';
 import { layoutOf, openSink } from './sink.js';
 
 export const devicesRouter = Router();
+// Dispositivos: para copiar roms (descargar) o para sincronizar saves
+devicesRouter.use(requirePerm('roms.download', 'saves'));
 
 const publicDevice = { sshPassword: true, sshKey: true } as const;
 
@@ -63,7 +69,7 @@ const deviceBody = z.object({
   name: z.string().min(1).max(128),
   consoleId: z.number().int(),
   firmwareId: z.number().int(),
-  connType: z.enum(['LOCAL', 'SSH']),
+  connType: z.enum(['LOCAL', 'SSH', 'AGENT']),
   rootPath: z.string().min(1).max(512),
   sshHost: z.string().max(255).nullable().optional(),
   sshPort: z.number().int().nullable().optional(),
@@ -126,6 +132,10 @@ devicesRouter.delete('/:id', async (req, res) => {
 
 devicesRouter.post('/:id/test', async (req, res) => {
   const d = await ownDevice(intParam(req), me(req));
+  if (d.connType === 'AGENT') {
+    res.json({ ok: !!d.lastSeenAt, lastSeenAt: d.lastSeenAt, romsFolders: [] });
+    return;
+  }
   try {
     const sink = await openSink(d);
     const layout = layoutOf(d);
@@ -138,7 +148,36 @@ devicesRouter.post('/:id/test', async (req, res) => {
 });
 
 // Copia las roms de una lista al dispositivo
-devicesRouter.post('/:id/transfer', async (req, res) => {
+// Token y scripts de eventos para dispositivos que sincronizan solos (ES-DE, Batocera, Knulli)
+devicesRouter.post('/:id/token', async (req, res) => {
+  const d = await ownDevice(intParam(req), me(req));
+  const token = crypto.randomBytes(24).toString('base64url');
+  await prisma.device.update({ where: { id: d.id }, data: { tokenHash: sha256(token), tokenCreatedAt: new Date() } });
+  res.status(201).json({ token });
+});
+
+devicesRouter.delete('/:id/token', async (req, res) => {
+  const d = await ownDevice(intParam(req), me(req));
+  await prisma.device.update({ where: { id: d.id }, data: { tokenHash: null, tokenCreatedAt: null } });
+  res.status(204).end();
+});
+
+// Zip con los scripts ya configurados; el token se genera nuevo (el anterior deja de valer)
+devicesRouter.post('/:id/agent-script', async (req, res) => {
+  const d = await ownDevice(intParam(req), me(req));
+  const { flavor, server } = z.object({ flavor: z.enum(['esde', 'batocera']), server: z.url() }).parse(req.body);
+  const token = crypto.randomBytes(24).toString('base64url');
+  await prisma.device.update({ where: { id: d.id }, data: { tokenHash: sha256(token), tokenCreatedAt: new Date() } });
+  res.setHeader('Content-Type', 'application/zip');
+  res.setHeader('Content-Disposition', `attachment; filename="rommancer-${flavor}.zip"`);
+  const zip = new ZipArchive({ zlib: { level: 6 } });
+  zip.on('error', (e: Error) => res.destroy(e));
+  zip.pipe(res);
+  for (const f of scriptFiles(flavor, server, token, d.name)) zip.append(f.content, { name: f.path, mode: f.mode });
+  await zip.finalize();
+});
+
+devicesRouter.post('/:id/transfer', requirePerm('roms.download'), async (req, res) => {
   const u = me(req);
   const d = await ownDevice(intParam(req), u);
   const body = z.object({ listId: z.number().int(), overwrite: z.boolean().default(false), dryRun: z.boolean().default(false) }).parse(req.body);

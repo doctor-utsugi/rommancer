@@ -5,7 +5,10 @@
  */
 import { after, before, test } from 'node:test';
 import assert from 'node:assert/strict';
-import { execSync } from 'node:child_process';
+import { execFile, execSync } from 'node:child_process';
+import { promisify } from 'node:util';
+
+const execFileP = promisify(execFile);
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import http from 'node:http';
@@ -19,18 +22,115 @@ const DATA = path.join(ROOT, 'data-test');
 const ROMS = path.join(ROOT, 'roms');
 const SMB3 = 'Super Mario Bros. 3 (USA) (Rev 1)';
 
-// --- Mock de ScreenScraper ---
+// --- Mock de ScreenScraper y del resto de servicios externos ---
 const PNG = Buffer.from('89504e470d0a1a0a0000000d49484452000000010000000108060000001f15c4890000000d49444154789c6360000002000154a24f5d0000000049454e44ae426082', 'hex');
 let ssRequests = 0;
-const ssMock = http.createServer((req, res) => {
+// normal | quota | notfound
+let ssMode = 'normal';
+const ssUsers: string[] = [];
+const ssRomSha1s: Record<string, string[]> = {};
+// Contadores de peticiones al resto de mocks
+const hits: Record<string, number> = {};
+const hit = (k: string) => (hits[k] = (hits[k] ?? 0) + 1);
+// Contenido servido por el mock de GitHub (ruta -> { body, etag })
+const ghFiles = new Map<string, { body: string | Buffer; etag: string }>();
+const wdBindings: Record<string, { props: any[]; names: any[] }> = {};
+const raLists: Record<string, any[]> = {};
+const mockBase = () => `http://127.0.0.1:${(ssMock.address() as AddressInfo).port}`;
+
+function json(res: http.ServerResponse, v: unknown, status = 200) {
+  res.statusCode = status;
+  res.setHeader('Content-Type', 'application/json');
+  res.end(JSON.stringify(v));
+}
+
+function otherMocks(req: http.IncomingMessage, res: http.ServerResponse, url: URL, body: string): boolean {
+  const p = decodeURIComponent(url.pathname);
+  if (p.startsWith('/gh/')) {
+    hit('gh');
+    const f = ghFiles.get(p.slice(3));
+    if (!f) {
+      res.statusCode = 404;
+      res.end();
+      return true;
+    }
+    if (req.headers['if-none-match'] === f.etag) {
+      hit('gh304');
+      res.statusCode = 304;
+      res.end();
+      return true;
+    }
+    hit(`gh:${p.slice(3)}`);
+    res.setHeader('ETag', f.etag);
+    res.end(f.body);
+    return true;
+  }
+  if (p.startsWith('/thumbs/')) {
+    hit('thumbs');
+    if (p.includes('Named_Boxarts/Mega Man 2')) res.end(PNG);
+    else {
+      res.statusCode = 404;
+      res.end();
+    }
+    return true;
+  }
+  if (p === '/tgdb/v1.1/Games/ByGameName') {
+    hit('tgdb');
+    const name = url.searchParams.get('name') ?? '';
+    return json(res, { data: { games: name === 'Contra' ? [{ id: 77, game_title: 'Contra' }, { id: 78, game_title: 'Contra III' }] : [] }, remaining_monthly_allowance: 1000 }), true;
+  }
+  if (p === '/tgdb/v1/Games/Images') {
+    hit('tgdb');
+    return json(res, { data: { images: { '77': [{ type: 'boxart', side: 'back', filename: 'back/77.jpg' }] } }, include: { boxart: { base_url: { original: `${mockBase()}/tgdb/img/` } } }, remaining_monthly_allowance: 999 }), true;
+  }
+  if (p.startsWith('/tgdb/img/')) {
+    res.end(PNG);
+    return true;
+  }
+  if (p === '/nointro/index.php') {
+    hit('nointro');
+    res.setHeader('Content-Type', 'text/html');
+    res.end('<html><body>Daily pack: Pack v.<b>2026-10-01</b></body></html>');
+    return true;
+  }
+  if (p === '/ra/API_GetGameList.php') {
+    hit(`ra:${url.searchParams.get('i')}`);
+    return json(res, raLists[url.searchParams.get('i') ?? ''] ?? []), true;
+  }
+  if (p === '/sparql') {
+    hit('sparql');
+    const q = new URLSearchParams(body).get('query') ?? '';
+    if (q.includes('VALUES ?x')) return json(res, { results: { bindings: [{ x: { value: 'http://www.wikidata.org/entity/Q500' }, l: { value: 'Super Mario' } }] } }), true;
+    const platform = q.match(/wdt:P400 wd:(Q\d+)/)?.[1] ?? '';
+    const b = wdBindings[platform] ?? { props: [], names: [] };
+    return json(res, { results: { bindings: q.includes('?names') ? b.names : b.props } }), true;
+  }
+  return false;
+}
+
+const ssMock = http.createServer(async (req, res) => {
   const url = new URL(req.url!, 'http://x');
+  let body = '';
+  for await (const c of req) body += c;
+  if (otherMocks(req, res, url, body)) return;
   if (url.pathname.endsWith('/jeuInfos.php')) {
     ssRequests++;
+    ssUsers.push(url.searchParams.get('ssid') ?? '');
+    const romnom = url.searchParams.get('romnom') ?? '';
+    if (ssMode === 'notfound') {
+      res.statusCode = 404;
+      res.end('Erreur : Rom/Iso/Dossier non trouvee !');
+      return;
+    }
+    const ssuser = ssMode === 'quota' ? { requeststoday: '95', requestskotoday: '0', maxrequestsperday: '100', maxrequestskoperday: '50', maxrequestspermin: '600' } : undefined;
+    const romsKey = Object.keys(ssRomSha1s).find((k) => romnom.includes(k));
     res.setHeader('Content-Type', 'application/json');
     res.end(
       JSON.stringify({
         response: {
+          ssuser,
           jeu: {
+            roms: romsKey ? ssRomSha1s[romsKey].map((h) => ({ romsha1: h.toUpperCase() })) : [],
             id: '1234',
             noms: [{ region: 'us', text: 'Mock Game' }],
             synopsis: [{ langue: 'es', text: 'Descripcion de prueba' }],
@@ -60,7 +160,10 @@ const ssMock = http.createServer((req, res) => {
 let base = '';
 let server: http.Server;
 let adminToken = '';
+let adminFiles = '';
 let userToken = '';
+let userFiles = '';
+let userRefresh = '';
 let userId = 0;
 const ctx: Record<string, any> = {};
 
@@ -109,8 +212,16 @@ before(async () => {
     DATA_DIR: DATA,
     SEED_DIR: path.join(DATA, 'seed'),
     SEED_AUTO_EXPORT: 'false',
-    SAVE_SYNC_CRON: '',
-    SCREENSCRAPER_URL: `http://127.0.0.1:${(ssMock.address() as AddressInfo).port}`,
+    EXTERNAL_SYNC_CRON: '',
+    SCREENSCRAPER_URL: mockBase(),
+    THEGAMESDB_URL: `${mockBase()}/tgdb`,
+    NOINTRO_URL: `${mockBase()}/nointro`,
+    WIKIDATA_SPARQL_URL: `${mockBase()}/sparql`,
+    GITHUB_RAW_URL: `${mockBase()}/gh`,
+    LIBRETRO_THUMBS_URL: `${mockBase()}/thumbs`,
+    RA_URL: `${mockBase()}/ra`,
+    RA_API_KEY: 'test-ra-key',
+    THEGAMESDB_API_KEY: '',
     SCREENSCRAPER_DEV_ID: 'dev',
     SCREENSCRAPER_DEV_PASSWORD: 'devpass',
     SCREENSCRAPER_USER: '',
@@ -118,7 +229,7 @@ before(async () => {
     ADMIN_USERNAME: 'admin',
     ADMIN_PASSWORD: 'admin1234',
   });
-  execSync('npx prisma db push --force-reset --skip-generate', { cwd: path.join(ROOT, 'backend'), env: process.env, stdio: 'ignore' });
+  execSync('npx prisma migrate reset --force --skip-seed --skip-generate', { cwd: path.join(ROOT, 'backend'), env: process.env, stdio: 'ignore' });
   fs.rmSync(DATA, { recursive: true, force: true });
   fs.mkdirSync(path.join(DATA, 'dats'), { recursive: true });
   for (const f of ['nointro - Nintendo - Nintendo Entertainment System.dat', 'nointro - Nintendo - Super Nintendo Entertainment System.dat', 'hacks - Nintendo - Nintendo Entertainment System.dat', 'hacks - Nintendo - Super Nintendo Entertainment System.dat']) fs.copyFileSync(path.join(ROOT, 'data/dats', f), path.join(DATA, 'dats', f));
@@ -145,12 +256,24 @@ after(async () => {
 test('auth: login admin, invitacion y registro de usuario', async () => {
   const bad = await api('POST', '/auth/login', { username: 'admin', password: 'nope' });
   assert.equal(bad.status, 401);
-  const r = await api('POST', '/auth/login', { username: 'admin', password: 'admin1234' });
-  assert.equal(r.status, 200);
+  const first = await api('POST', '/auth/login', { username: 'admin', password: 'admin1234' });
+  assert.equal(first.status, 200);
+  // Contrasena inicial de .env: hay que cambiarla antes de nada
+  assert.equal(first.json.user.mustChangePassword, true);
+  adminToken = first.json.accessToken;
+  assert.equal((await api('GET', '/systems')).status, 403);
+  assert.equal((await api('PATCH', '/users/me', { currentPassword: 'admin1234', newPassword: 'corta' })).status, 400);
+  const changed = await api('PATCH', '/users/me', { currentPassword: 'admin1234', newPassword: 'admin-segura-2026' });
+  assert.equal(changed.status, 200);
+  assert.equal(changed.json.user.mustChangePassword, false);
+  const r = await api('POST', '/auth/login', { username: 'admin', password: 'admin-segura-2026' });
   adminToken = r.json.accessToken;
   const refreshed = await api('POST', '/auth/refresh', { refreshToken: r.json.refreshToken });
   assert.equal(refreshed.status, 200);
   adminToken = refreshed.json.accessToken;
+  adminFiles = refreshed.json.filesToken;
+  // El token de ficheros no sirve como token de API
+  assert.equal((await api('GET', '/systems', undefined, adminFiles)).status, 401);
 
   const inv = await api('POST', '/invitations', { role: 'USER' });
   assert.equal(inv.status, 201);
@@ -159,6 +282,7 @@ test('auth: login admin, invitacion y registro de usuario', async () => {
   const reg = await api('POST', '/auth/register', { token: inv.json.token, username: 'player2', email: 'p2@example.com', password: 'player2pass' });
   assert.equal(reg.status, 201);
   userToken = reg.json.accessToken;
+  userRefresh = reg.json.refreshToken;
   userId = reg.json.user.id;
   const reuse = await api('POST', '/auth/register', { token: inv.json.token, username: 'player3', email: 'p3@example.com', password: 'player3pass' });
   assert.equal(reuse.status, 400);
@@ -169,6 +293,39 @@ test('auth: login admin, invitacion y registro de usuario', async () => {
   const me = await api('GET', '/users/me', undefined, userToken);
   assert.equal(me.json.locale, 'en');
   assert.equal(me.json.hasRetroAchievements, true);
+  assert.deepEqual(me.json.permissions, ['collection.view', 'lists', 'saves', 'scrape.lists']);
+});
+
+test('permisos: por defecto, 403 y concesion por el admin', async () => {
+  assert.equal((await api('GET', '/lists/1/files', undefined, userToken)).status, 403);
+  assert.equal((await api('POST', '/scrape', { gameIds: [1] }, userToken)).status, 403);
+  const fd = new FormData();
+  fd.append('file', new Blob([Buffer.from('x')]), 'x.nes');
+  assert.equal((await api('POST', '/uploads', fd, userToken)).status, 403);
+  // Lista sin permiso de listas
+  const u = await api('POST', '/users', { username: 'viewer', email: 'v@example.com', password: 'viewerpass', permissions: ['collection.view'] });
+  assert.equal(u.status, 201);
+  const vt = (await api('POST', '/auth/login', { username: 'viewer', password: 'viewerpass' })).json.accessToken;
+  assert.equal((await api('GET', '/lists', undefined, vt)).status, 403);
+  assert.equal((await api('GET', '/systems', undefined, vt)).status, 200);
+  // Se conceden todos al usuario de pruebas; los permisos van en el token y se renuevan con refresh
+  const all = ['collection.view', 'lists', 'saves', 'roms.download', 'roms.upload', 'roms.uploadUnverified', 'scrape.lists', 'scrape.bulk'];
+  assert.equal((await api('PATCH', `/users/${userId}`, { permissions: all })).status, 200);
+  const rr = await api('POST', '/auth/refresh', { refreshToken: userRefresh });
+  userToken = rr.json.accessToken;
+  userFiles = rr.json.filesToken;
+  userRefresh = rr.json.refreshToken;
+  assert.deepEqual((await api('GET', '/users/me', undefined, userToken)).json.permissions, all);
+});
+
+test('seguridad: limite de login, CORS cerrado y cabeceras', async () => {
+  const { resetLoginLimits } = await import('../src/modules/auth/routes.js');
+  for (let i = 0; i < 5; i++) assert.equal((await api('POST', '/auth/login', { username: 'viewer', password: 'mal' })).status, 401);
+  assert.equal((await api('POST', '/auth/login', { username: 'viewer', password: 'viewerpass' })).status, 429);
+  resetLoginLimits();
+  const r = await fetch(`${base}/api/v1/health`, { headers: { Origin: 'https://evil.example' } });
+  assert.equal(r.headers.get('access-control-allow-origin'), null);
+  assert.equal(r.headers.get('x-content-type-options'), 'nosniff');
 });
 
 test('dats: importacion No-Intro y hacks', async () => {
@@ -348,7 +505,9 @@ test('listas: crear, compartir, colaborar, clonar, sublistas, exportar e importa
 test('listas: descarga zip con estructura de firmware', async () => {
   const files = await api('GET', `/lists/${ctx.usaListId}/files`);
   assert.ok(files.json.items.length >= 5);
-  const r = await fetch(`${base}/api/v1/lists/${ctx.usaListId}/download?firmware=knulli&token=${adminToken}`);
+  // El token de acceso no vale en la URL; el de ficheros si
+  assert.equal((await fetch(`${base}/api/v1/lists/${ctx.usaListId}/download?token=${adminToken}`)).status, 401);
+  const r = await fetch(`${base}/api/v1/lists/${ctx.usaListId}/download?firmware=knulli&token=${adminFiles}`);
   assert.equal(r.status, 200);
   const zipPath = path.join(DATA, 'tmp', 'list.zip');
   fs.mkdirSync(path.dirname(zipPath), { recursive: true });
@@ -420,7 +579,7 @@ test('dispositivos: SSH/SFTP', async (t) => {
 test('subidas: validacion por hash (DAT, romhack, RetroAchievements)', async () => {
   const target = path.join(DATA, 'uploads-target');
   fs.mkdirSync(target, { recursive: true });
-  const p = await api('POST', '/admin/paths', { label: 'Subidas', path: target, isUploadTarget: true });
+  const p = await api('POST', '/admin/paths', { label: 'Subidas', path: target, isDefaultTarget: true });
   assert.equal(p.status, 201);
 
   const send = async (name: string, buf: Buffer) => {
@@ -463,20 +622,16 @@ test('scraping: ScreenScraper (mock) y libretro-thumbnails (real)', async (t) =>
   assert.equal(g.developer, 'Nintendo EAD');
   assert.equal(g.releaseYear, 1990);
   const cover = g.media.find((m: any) => m.type === 'COVER');
-  const img = await fetch(`${base}${cover.url}?token=${adminToken}`);
+  const img = await fetch(`${base}${cover.url}?token=${adminFiles}`);
   assert.equal(img.status, 200);
   assert.ok(g.media.some((m: any) => m.type === 'MANUAL'));
 
-  try {
-    const head = await fetch('https://raw.githubusercontent.com', { method: 'HEAD' });
-    if (!head) throw new Error();
-  } catch {
-    t.skip('sin red');
-    return;
-  }
+  // libretro-thumbnails (mock): la portada de Mega Man 2 puede haberse bajado ya al anadirlo a una lista
   const mm2 = (await api('GET', `/games?q=${encodeURIComponent('Mega Man 2')}&systemId=${ctx.nesSystemId}`)).json.items.find((x: any) => x.title === 'Mega Man 2');
-  const lj = await waitJob((await api('POST', '/scrape', { gameIds: [mm2.id], sources: ['libretro'], types: ['COVER', 'SCREENSHOT', 'TITLE'] }, userToken)).json.id, userToken);
-  assert.ok(lj.result.media >= 1, JSON.stringify(lj));
+  await waitJob((await api('POST', '/scrape', { gameIds: [mm2.id], sources: ['libretro'], types: ['COVER', 'SCREENSHOT', 'TITLE'] }, userToken)).json.id, userToken);
+  const mm2d = (await api('GET', `/games/${mm2.id}`)).json;
+  assert.ok(mm2d.media.some((m: any) => m.type === 'COVER' && m.source === 'libretro'));
+  void t;
 });
 
 test('saves: subida, historial, restauracion, conversion y backups', async () => {
@@ -501,14 +656,14 @@ test('saves: subida, historial, restauracion, conversion y backups', async () =>
   assert.equal(save.gameId, ctx.smb3GameId, 'save identificado por nombre de rom');
   assert.equal(save.versions.length, 2);
   assert.equal(save.currentVersionId, b.json.versionId);
-  // Una version antigua no desplaza a la actual
+  // Sin relojes: la ultima subida pasa a ser la actual aunque su fecha sea anterior
   const old = await send(`${SMB3}.srm`, crypto.randomBytes(8192), 'ra-fceumm', now - 3600_000);
-  assert.notEqual((await api('GET', `/saves/${a.json.saveId}`, undefined, userToken)).json.currentVersionId, old.json.versionId);
+  assert.equal((await api('GET', `/saves/${a.json.saveId}`, undefined, userToken)).json.currentVersionId, old.json.versionId);
   // Restaurar v1
   const rest = await api('POST', `/saves/${a.json.saveId}/restore`, { versionId: a.json.versionId }, userToken);
   const cur = (await api('GET', `/saves/${a.json.saveId}`, undefined, userToken)).json;
   assert.equal(cur.currentVersionId, rest.json.versionId);
-  const dl = await fetch(`${base}/api/v1/saves/${a.json.saveId}/versions/${rest.json.versionId}/download?token=${userToken}`);
+  const dl = await fetch(`${base}/api/v1/saves/${a.json.saveId}/versions/${rest.json.versionId}/download?token=${userFiles}`);
   assert.ok(Buffer.from(await dl.arrayBuffer()).equals(v1));
   ctx.smbSaveId = a.json.saveId;
   // Otro usuario no puede verlo
@@ -518,7 +673,7 @@ test('saves: subida, historial, restauracion, conversion y backups', async () =>
   const gba = await send('Some GBA Game (USA).srm', crypto.randomBytes(32768), 'ra-mgba', now);
   const conv = await api('POST', `/saves/${gba.json.saveId}/convert`, { emulatorId: ctx.emus.mgba.id }, userToken);
   assert.equal(conv.status, 201);
-  const convDl = await fetch(`${base}/api/v1/saves/${conv.json.saveId}/versions/${conv.json.versionId}/download?token=${userToken}`);
+  const convDl = await fetch(`${base}/api/v1/saves/${conv.json.saveId}/versions/${conv.json.versionId}/download?token=${userFiles}`);
   assert.match(convDl.headers.get('content-disposition')!, /\.sav/);
 
   // Memory card PS1: srm -> mcd, gme, vmp
@@ -528,7 +683,7 @@ test('saves: subida, historial, restauracion, conversion y backups', async () =>
   crypto.randomBytes(8192).copy(card, 8192);
   const ps1 = await send('Final Fantasy VII (USA) (Disc 1).srm', card, 'ra-pcsx-rearmed', now);
   for (const [slug, size] of [['duckstation', 0x20000], ['dexdrive', 0x20000 + 3904], ['ps3-psp-vmp', 0x20080]] as const) {
-    const r = await fetch(`${base}/api/v1/saves/${ps1.json.saveId}/versions/${ps1.json.versionId}/download?emulator=${slug}&token=${userToken}`);
+    const r = await fetch(`${base}/api/v1/saves/${ps1.json.saveId}/versions/${ps1.json.versionId}/download?emulator=${slug}&token=${userFiles}`);
     const buf = Buffer.from(await r.arrayBuffer());
     assert.equal(buf.length, size, slug);
     if (slug === 'ps3-psp-vmp') {
@@ -559,12 +714,12 @@ test('saves: sincronizacion con dispositivos (pull, push, conflictos, reubicacio
   const state = saves.find((s: any) => s.kind === 'STATE' && s.baseName === contra);
   assert.equal(state.slot, 1);
 
-  // Conflicto: la consola modifica el save despues -> gana el mas reciente, el anterior queda en historial
+  // Solo cambia la consola: gana su version, la anterior queda en el historial (sin mirar fechas)
   const newer = crypto.randomBytes(8192);
   const f = path.join(root, 'saves/nes', `${SMB3}.srm`);
   fs.writeFileSync(f, newer);
-  const future = new Date(Date.now() + 60_000);
-  fs.utimesSync(f, future, future);
+  const past = new Date(Date.now() - 86400_000 * 365);
+  fs.utimesSync(f, past, past);
   const sync2 = await waitJob((await api('POST', `/saves/sync/${ctx.localDevice}`, { direction: 'pull' }, userToken)).json.id, userToken);
   assert.equal(sync2.result.pulled, 1);
   const smb = (await api('GET', `/saves/${ctx.smbSaveId}`, undefined, userToken)).json;
@@ -722,4 +877,563 @@ test('discos: RVZ de GameCube verificado contra Redump sin dolphin-tool', async 
   const f = (await api('GET', `/files?romPathId=${p.json.id}`)).json.items[0];
   assert.equal(f.sha1, h('sha1'));
   assert.equal(f.raHash, await raHashGamecubeFrom(async (pos, len) => iso.subarray(pos, pos + len)));
+});
+
+// ======================= Fase 2 =======================
+
+const md = (b: Buffer, a: string) => crypto.createHash(a).update(b).digest('hex');
+const crcHex = (b: Buffer) => (zlib.crc32(b) >>> 0).toString(16).padStart(8, '0');
+const prismaClient = async () => (await import('../src/lib/prisma.js')).prisma;
+
+async function lastJob(type: string, userId?: number) {
+  const prisma = await prismaClient();
+  return prisma.job.findFirst({ where: { type, ...(userId ? { userId } : {}) }, orderBy: { id: 'desc' } });
+}
+
+async function waitJobDone(id: number) {
+  const prisma = await prismaClient();
+  for (let i = 0; i < 1200; i++) {
+    const j = await prisma.job.findUniqueOrThrow({ where: { id } });
+    if (j.status === 'DONE') return j;
+    if (j.status === 'FAILED') throw new Error(`Job ${id} failed: ${j.message}\n${j.log}`);
+    await new Promise((r) => setTimeout(r, 250));
+  }
+  throw new Error('timeout');
+}
+
+test('fase2: destino final, subidas no verificadas y verificacion posterior', async () => {
+  const prisma = await prismaClient();
+  const nesTarget = path.join(DATA, 'target-nes');
+  fs.mkdirSync(nesTarget, { recursive: true });
+  const t = await api('POST', '/admin/paths', { label: 'NES destino', path: nesTarget, targetSystems: ['nes'], targetScheme: 'flat' });
+  assert.equal(t.status, 201);
+  ctx.nesTargetPath = nesTarget;
+  const before = (await api('GET', '/systems')).json.find((s: any) => s.slug === 'nes');
+
+  const rom = Buffer.concat([Buffer.from('NES\x1a\x02\x01\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00', 'latin1'), crypto.randomBytes(32768)]);
+  const send = (extra: Record<string, string>, buf = rom, name = 'Mi Homebrew (World).nes', token = userToken) => {
+    const fd = new FormData();
+    fd.append('file', new Blob([buf]), name);
+    for (const [k, v] of Object.entries(extra)) fd.append(k, v);
+    return api('POST', '/uploads/unverified', fd, token);
+  };
+  const up = await send({ systemId: String(ctx.nesSystemId), newGameTitle: 'Mi Homebrew', regions: 'World', revision: 'v1.0' });
+  assert.equal(up.status, 201, JSON.stringify(up.json));
+  assert.equal(up.json.match, 'UNVERIFIED');
+  assert.ok(fs.existsSync(path.join(nesTarget, 'Mi Homebrew (World).nes')), 'destino del sistema, esquema plano');
+  assert.equal((await send({ systemId: String(ctx.nesSystemId), newGameTitle: 'Otra' })).status, 409);
+  // No cuenta en el porcentaje; se muestra aparte
+  const after = (await api('GET', '/systems')).json.find((s: any) => s.slug === 'nes');
+  assert.equal(after.owned, before.owned);
+  assert.equal(after.roms, before.roms);
+  assert.equal(after.files.unverified, before.files.unverified + 1);
+  const g = (await api('GET', `/games/${up.json.gameId}`)).json;
+  assert.equal(g.roms[0].unverified, true);
+  assert.equal(g.roms[0].uploadedBy, 'player2');
+  // Hack no verificado de SNES: va a la ruta predeterminada (Subidas)
+  const snesHack = await send({ systemId: String(ctx.snesSystemId), newGameTitle: 'Juego Snes', kind: 'translation', hackName: 'Traduccion', hackVersion: '0.9', hackLanguage: 'Es' }, crypto.randomBytes(65536), 'juego-es.sfc');
+  assert.equal(snesHack.status, 201, JSON.stringify(snesHack.json));
+  assert.ok(fs.existsSync(path.join(DATA, 'uploads-target', 'snes', 'juego-es.sfc')));
+  // Sin destino ni predeterminada: DATA_DIR/library
+  const def = (await api('GET', '/admin/paths')).json.find((p: any) => p.isDefaultTarget);
+  await api('PATCH', `/admin/paths/${def.id}`, { isDefaultTarget: false });
+  const gbs = (await api('GET', '/systems')).json.find((s: any) => s.slug === 'gb');
+  const lib = await send({ systemId: String(gbs.id), newGameTitle: 'Homebrew GB' }, crypto.randomBytes(32768), 'hb.gb');
+  assert.equal(lib.status, 201);
+  assert.ok(fs.existsSync(path.join(DATA, 'library', 'gb', 'hb.gb')));
+  await api('PATCH', `/admin/paths/${def.id}`, { isDefaultTarget: true });
+
+  // Un DAT posterior con su checksum la verifica
+  const dat = `<?xml version="1.0"?><datafile><header><name>Nintendo - Nintendo Entertainment System</name><description>Homebrew test</description><version>1</version></header>
+    <game name="Mi Homebrew (World)"><description>Mi Homebrew (World)</description><rom name="Mi Homebrew (World).nes" size="${rom.length}" crc="${crcHex(rom)}" md5="${md5h(rom)}" sha1="${md(rom, 'sha1')}"/></game></datafile>`;
+  fs.writeFileSync(path.join(DATA, 'dats', 'homebrew-test.dat'), dat);
+  await waitJob((await api('POST', '/admin/dats/import-file', { file: 'homebrew-test.dat', systemId: ctx.nesSystemId, type: 'OTHER' })).json.id);
+  const f = await prisma.romFile.findUniqueOrThrow({ where: { id: up.json.file.id } });
+  assert.equal(f.status, 'MATCHED');
+  assert.equal((await api('GET', '/systems')).json.find((s: any) => s.slug === 'nes').owned, before.owned + 1);
+});
+
+function md5h(b: Buffer) {
+  return md(b, 'md5');
+}
+
+function ipsPatch(records: { offset: number; data: Buffer }[]) {
+  const parts = [Buffer.from('PATCH', 'latin1')];
+  for (const r of records) {
+    const h = Buffer.alloc(5);
+    h.writeUIntBE(r.offset, 0, 3);
+    h.writeUInt16BE(r.data.length, 3);
+    parts.push(h, r.data);
+  }
+  parts.push(Buffer.from('EOF', 'latin1'));
+  return Buffer.concat(parts);
+}
+
+function bpsVarint(n: number) {
+  const out: number[] = [];
+  for (;;) {
+    const x = n & 0x7f;
+    n = Math.floor(n / 128);
+    if (n === 0) {
+      out.push(0x80 | x);
+      break;
+    }
+    out.push(x);
+    n--;
+  }
+  return Buffer.from(out);
+}
+
+// BPS minimo: el destino entero como TargetRead
+function bpsPatch(source: Buffer, target: Buffer) {
+  const body = Buffer.concat([Buffer.from('BPS1', 'latin1'), bpsVarint(source.length), bpsVarint(target.length), bpsVarint(0), bpsVarint(((target.length - 1) << 2) | 1), target]);
+  const foot = Buffer.alloc(8);
+  foot.writeUInt32LE(zlib.crc32(source) >>> 0, 0);
+  foot.writeUInt32LE(zlib.crc32(target) >>> 0, 4);
+  const withFoot = Buffer.concat([body, foot]);
+  const pc = Buffer.alloc(4);
+  pc.writeUInt32LE(zlib.crc32(withFoot) >>> 0, 0);
+  return Buffer.concat([withFoot, pc]);
+}
+
+test('fase2: parches IPS/BPS, generacion bajo demanda y etiquetas', async () => {
+  const prisma = await prismaClient();
+  const base = fs.readFileSync(path.join(ROMS, 'nes', `${SMB3}.nes`));
+  const h = await api('POST', '/hacks', { gameId: ctx.smb3GameId, baseRomId: ctx.smb3RomId, title: 'Super Mario Bros. 3 Parcheado', hackName: 'Parcheado', version: '1.2' });
+  assert.equal(h.status, 201);
+  const ips = ipsPatch([{ offset: 0x20, data: Buffer.from('ROMMANCER', 'latin1') }]);
+  const fd = new FormData();
+  fd.append('file', new Blob([ips]), 'parche.ips');
+  const p = await api('POST', `/hacks/${h.json.id}/patches`, fd);
+  assert.equal(p.status, 201, JSON.stringify(p.json));
+  assert.equal(p.json.format, 'ips');
+  const expected = Buffer.from(base);
+  expected.write('ROMMANCER', 0x20, 'latin1');
+  // Con la base en la coleccion se conoce ya el checksum del resultado
+  assert.equal((await prisma.romHack.findUniqueOrThrow({ where: { id: h.json.id } })).sha1, md(expected, 'sha1'));
+  const g = (await api('GET', `/games/${ctx.smb3GameId}`)).json;
+  const hk = g.hacks.find((x: any) => x.id === h.json.id);
+  assert.equal(hk.canGenerate, true);
+  assert.equal(hk.label, 'Super Mario Bros. 3 (USA) Rev 1 + Parcheado v1.2');
+  // Descarga: se genera en el destino final del sistema y queda registrado
+  const dl = await fetch(`${base_()}/api/v1/hacks/${h.json.id}/download?token=${userFiles}`);
+  assert.equal(dl.status, 200);
+  assert.ok(Buffer.from(await dl.arrayBuffer()).equals(expected));
+  assert.ok(fs.existsSync(path.join(ctx.nesTargetPath, 'Super Mario Bros. 3 Parcheado.nes')));
+  await fetch(`${base_()}/api/v1/hacks/${h.json.id}/download?token=${userFiles}`);
+  assert.equal(await prisma.romFile.count({ where: { romHackId: h.json.id } }), 1);
+
+  // BPS: la base se encuentra por el CRC del parche y una base distinta se rechaza
+  const target = Buffer.from(base);
+  target.write('BPS!', 0x40, 'latin1');
+  const h2 = await api('POST', '/hacks', { gameId: ctx.smb3GameId, title: 'SMB3 BPS', hackName: 'BPS', version: '2.0' });
+  const fd2 = new FormData();
+  fd2.append('file', new Blob([bpsPatch(base, target)]), 'p.bps');
+  const p2 = await api('POST', `/hacks/${h2.json.id}/patches`, fd2);
+  assert.equal(p2.json.baseRomId, ctx.smb3RomId);
+  assert.equal(p2.json.baseCrc32, crcHex(base));
+  const fd3 = new FormData();
+  fd3.append('file', new Blob([bpsPatch(crypto.randomBytes(100), Buffer.from('x'))]), 'bad.bps');
+  const h3 = await api('POST', '/hacks', { gameId: ctx.smb3GameId, baseRomId: ctx.smb3RomId, title: 'SMB3 Malo' });
+  await api('POST', `/hacks/${h3.json.id}/patches`, fd3);
+  assert.equal((await fetch(`${base_()}/api/v1/hacks/${h3.json.id}/download?token=${userFiles}`)).status, 409);
+  // En una lista: el hack se genera al resolver los ficheros
+  const l = await api('POST', '/lists', { name: 'Hacks' }, userToken);
+  await api('POST', `/lists/${l.json.id}/items`, { items: [{ hackId: h2.json.id }] }, userToken);
+  const files = (await api('GET', `/lists/${l.json.id}/files`, undefined, userToken)).json;
+  assert.equal(files.missing.length, 0);
+  assert.ok(fs.readFileSync(files.items[0].files[0].absPath).equals(target));
+});
+
+function base_() {
+  return base;
+}
+
+test('fase2: multimedia al anadir a listas con cuenta propia, cuotas y TheGamesDB', async () => {
+  const prisma = await prismaClient();
+  const { env } = await import('../src/config/env.js');
+  // Credenciales globales presentes: un usuario normal nunca debe usarlas
+  env.screenscraper.user = 'global';
+  env.screenscraper.password = 'globalpass';
+  try {
+    const contra = (await api('GET', `/games?q=Contra&systemId=${ctx.nesSystemId}`)).json.items.find((x: any) => x.title === 'Contra');
+    const zelda = (await api('GET', `/games?q=Zelda&systemId=${ctx.nesSystemId}`)).json.items[0];
+    ctx.contraGameId = contra.id;
+    const l = await api('POST', '/lists', { name: 'Para scrapear' }, userToken);
+    const n = ssUsers.length;
+    await api('POST', `/lists/${l.json.id}/items`, { items: [{ gameId: contra.id }] }, userToken);
+    const j1 = await lastJob('scrape', userId);
+    assert.equal((j1!.params as any).mode, 'lists');
+    const r1 = await waitJobDone(j1!.id);
+    assert.equal((r1.result as any).noCredentials, true);
+    assert.equal(ssUsers.length, n, 'sin cuenta propia no se usa ScreenScraper');
+    // Con cuenta propia: se usa la suya
+    await api('PATCH', '/users/me', { ssUser: 'player2ss', ssPassword: 'x', tgdbApiKey: 'tgdb-user' }, userToken);
+    await api('POST', `/lists/${l.json.id}/items`, { items: [{ gameId: zelda.id }] }, userToken);
+    await waitJobDone((await lastJob('scrape', userId))!.id);
+    assert.ok(ssUsers.slice(n).length >= 1);
+    assert.ok(ssUsers.slice(n).every((u) => u === 'player2ss'), ssUsers.slice(n).join(','));
+    // Lo descargado es comun: el admin lo ve y no se vuelve a pedir
+    const zd = (await api('GET', `/games/${zelda.id}`)).json;
+    assert.ok(zd.media.some((m: any) => m.type === 'COVER' && m.source === 'screenscraper'));
+    const before = ssRequests;
+    await waitJob((await api('POST', `/scrape/game/${zelda.id}`, { types: ['COVER'] }, userToken)).json.id, userToken);
+    assert.equal(ssRequests, before);
+
+    // TheGamesDB como respaldo de la contraportada (ScreenScraper no la tiene en el mock)
+    const tj = await waitJob((await api('POST', `/scrape/game/${contra.id}`, { types: ['BOX_BACK'] }, userToken)).json.id, userToken);
+    assert.equal(tj.result.media, 1, JSON.stringify(tj.result));
+    const cd = (await api('GET', `/games/${contra.id}`)).json;
+    assert.equal(cd.tgdbGameId, 77);
+    assert.ok(cd.media.some((m: any) => m.type === 'BOX_BACK' && m.source === 'thegamesdb'));
+
+    // "No encontrado": se recuerda y no se repite
+    ssMode = 'notfound';
+    const mm = (await api('GET', `/games?q=Metroid&systemId=${ctx.nesSystemId}`)).json.items[0];
+    await waitJob((await api('POST', '/scrape', { gameIds: [mm.id], sources: ['screenscraper'], types: ['COVER'] })).json.id);
+    const c1 = ssRequests;
+    await waitJob((await api('POST', '/scrape', { gameIds: [mm.id], sources: ['screenscraper'], types: ['COVER'] })).json.id);
+    assert.equal(ssRequests, c1);
+    assert.ok(await prisma.scrapeMiss.findUnique({ where: { gameId_source: { gameId: mm.id, source: 'screenscraper' } } }));
+
+    // Cuota: al acercarse al limite diario se para y lo pendiente se reanuda otro dia
+    ssMode = 'quota';
+    const ids = (await api('GET', `/games?systemId=${ctx.nesSystemId}&status=owned&pageSize=3`)).json.items.map((x: any) => x.id);
+    const qj = await waitJob((await api('POST', '/scrape', { gameIds: ids, sources: ['screenscraper'], types: ['COVER'], overwrite: true })).json.id);
+    assert.ok(qj.result.pausedUntil);
+    assert.equal(qj.result.pending.length, ids.length - 1);
+    const resumed = await prisma.job.findFirst({ where: { type: 'scrape', status: 'PENDING', runAfter: { gt: new Date() } } });
+    assert.ok(resumed);
+    const q = await prisma.scrapeQuota.findUnique({ where: { key: 'ss:user' } });
+    assert.equal(q!.maxPerDay, 100);
+    await prisma.job.delete({ where: { id: resumed!.id } });
+    await prisma.scrapeQuota.deleteMany();
+  } finally {
+    ssMode = 'normal';
+    env.screenscraper.user = '';
+    env.screenscraper.password = '';
+  }
+});
+
+test('fase2: sincronizacion global, ETag de GitHub, metadatos libretro y permanencia', async () => {
+  const prisma = await prismaClient();
+  const { env } = await import('../src/config/env.js');
+  const nesDat = fs.readFileSync(path.join(DATA, 'dats', 'nointro - Nintendo - Nintendo Entertainment System.dat'), 'utf8');
+  const nesName = 'Nintendo - Nintendo Entertainment System';
+  const lr = '/libretro/libretro-database/master/metadat';
+  ghFiles.set(`${lr}/no-intro/${nesName}.dat`, { body: nesDat, etag: '"v1"' });
+  ghFiles.set(`${lr}/hacks/${nesName}.dat`, { body: fs.readFileSync(path.join(DATA, 'dats', 'hacks - Nintendo - Nintendo Entertainment System.dat')), etag: '"h1"' });
+  const smbCrc = (await prisma.romPart.findFirstOrThrow({ where: { romId: ctx.smb3RomId } })).crc32;
+  ghFiles.set(`${lr}/developer/${nesName}.dat`, { body: `game (\n\tcomment "${SMB3}"\n\tdeveloper "Nintendo R&D4"\n\trom ( crc ${smbCrc} )\n)\n`, etag: '"d1"' });
+  ghFiles.set(`${lr}/genre/${nesName}.dat`, { body: `game (\n\tcomment "${SMB3}"\n\tgenre "Platform"\n)\ngame (\n\tcomment "Contra (USA)"\n\tgenre "Run and gun"\n)\n`, etag: '"g1"' });
+  ghFiles.set(`${lr}/franchise/${nesName}.dat`, { body: `game (\n\tcomment "${SMB3}"\n\tfranchise "Super Mario"\n)\n`, etag: '"f1"' });
+  // Edicion manual del genero de Contra: libretro no la pisa
+  await api('PATCH', `/games/${ctx.contraGameId}`, { genre: 'Accion (manual)' });
+
+  const r = await api('POST', '/admin/sync', { sources: ['libretro'], system: 'nes' });
+  assert.equal(r.status, 202, JSON.stringify(r.json));
+  // Forzar lo mismo enseguida no se permite; si hay una en curso tampoco
+  assert.equal((await api('POST', '/admin/sync', { sources: ['libretro'], system: 'nes' })).status, 409);
+  const done = await waitJob(r.json.id);
+  assert.equal(done.result.libretro.metaGames, 2, JSON.stringify(done.result));
+  assert.equal((await api('POST', '/admin/sync', { sources: ['libretro'], system: 'nes' })).status, 429);
+  const smb = (await api('GET', `/games/${ctx.smb3GameId}`)).json;
+  assert.equal(smb.developer, 'Nintendo EAD', 'ScreenScraper tiene prioridad sobre libretro');
+  assert.equal(smb.genre, 'Plataformas', 'tampoco pisa el genero de ScreenScraper');
+  assert.equal(smb.franchiseName, 'Super Mario');
+  assert.equal((await api('GET', `/games/${ctx.contraGameId}`)).json.genre, 'Accion (manual)');
+  assert.equal(hits[`gh:${lr}/no-intro/${nesName}.dat`], 1);
+
+  // Segunda pasada sin cambios: peticiones condicionales, nada se descarga
+  env.forceSyncMinMinutes = 0;
+  const r2 = await waitJob((await api('POST', '/admin/sync', { sources: ['libretro'], system: 'nes' })).json.id);
+  assert.equal(r2.result.libretro.dats, 0);
+  assert.equal(hits[`gh:${lr}/no-intro/${nesName}.dat`], 1);
+  assert.ok(hits.gh304 >= 5);
+
+  // El DAT cambia y ya no tiene Contra (USA): se conserva marcada como retirada
+  const contraRom = await prisma.rom.findFirstOrThrow({ where: { name: 'Contra (USA)', game: { systemId: ctx.nesSystemId } } });
+  const without = nesDat.replace(/game \(\r?\n\tname "Contra \(USA\)"[\s\S]*?\r?\n\)\r?\n/g, '');
+  assert.notEqual(without.length, nesDat.length);
+  ghFiles.set(`${lr}/no-intro/${nesName}.dat`, { body: without, etag: '"v2"' });
+  const r3 = await waitJob((await api('POST', '/admin/sync', { sources: ['libretro'], system: 'nes' })).json.id);
+  assert.equal(r3.result.libretro.dats, 1);
+  const kept = await prisma.rom.findUniqueOrThrow({ where: { id: contraRom.id } });
+  assert.equal(kept.removedFromSource, true);
+  const contraFile = await prisma.romFile.findFirst({ where: { romPart: { romId: contraRom.id } } });
+  assert.equal(contraFile?.status, 'MATCHED');
+  // Vuelve a aparecer: deja de estar retirada
+  ghFiles.set(`${lr}/no-intro/${nesName}.dat`, { body: nesDat, etag: '"v3"' });
+  await waitJob((await api('POST', '/admin/sync', { sources: ['libretro'], system: 'nes' })).json.id);
+  assert.equal((await prisma.rom.findUniqueOrThrow({ where: { id: contraRom.id } })).removedFromSource, false);
+
+  // No-Intro: se detecta paquete nuevo
+  const ni = await waitJob((await api('POST', '/admin/sync', { sources: ['nointro'] })).json.id);
+  assert.equal(ni.result.nointro.available, '2026-10-01');
+  const st = (await api('GET', '/admin/sync')).json;
+  assert.equal(st.nointro.available, '2026-10-01');
+  assert.ok(st.history.length >= 4);
+});
+
+test('fase2: agrupacion por evidencias (P/C de No-Intro, Retool, RA, ScreenScraper) y revision', async () => {
+  const prisma = await prismaClient();
+  const { env } = await import('../src/config/env.js');
+  env.forceSyncMinMinutes = 0;
+  const gb = (await api('GET', '/systems')).json.find((s: any) => s.slug === 'gb');
+  ctx.gbSystemId = gb.id;
+  const names = ['Alpha (Japan)', 'Beta Quest (USA)', 'Gamma (USA)', 'Gamma (Europe)', 'Delta (USA)', 'Delta Kun (Japan)', 'Epsilon (USA)', 'Zeta (Japan)', 'Super Mario Bros. 3 (World)'];
+  const bufs: Record<string, Buffer> = Object.fromEntries(names.map((n) => [n, crypto.randomBytes(32768)]));
+  ctx.gbBufs = bufs;
+  const games = names
+    .map((n, i) => {
+      const b = bufs[n];
+      const clone = n === 'Beta Quest (USA)' ? ' cloneofid="0001"' : '';
+      return `<game name="${n}" id="${String(i + 1).padStart(4, '0')}"${clone}><description>${n}</description><rom name="${n}.gb" size="${b.length}" crc="${crcHex(b)}" md5="${md5h(b)}" sha1="${md(b, 'sha1')}"/></game>`;
+    })
+    .join('\n');
+  const xml = `<?xml version="1.0"?><datafile><header><name>Nintendo - Game Boy (Parent-Clone)</name><description>Nintendo - Game Boy (Parent-Clone)</description><version>20260901-000000</version><homepage>No-Intro</homepage><url>https://www.no-intro.org</url></header>\n${games}\n</datafile>`;
+  // Paquete P/C de DAT-o-MATIC subido por el admin
+  const work = path.join(DATA, 'nointro-pack');
+  fs.mkdirSync(work, { recursive: true });
+  fs.writeFileSync(path.join(work, 'Nintendo - Game Boy (Parent-Clone) (20260901-000000).dat'), xml);
+  const zipFile = path.join(DATA, 'No-Intro Love Pack (PC XML) (2026-09-01).zip');
+  execSync(`7zz a -tzip "${zipFile}" .`, { cwd: work, stdio: 'ignore' });
+  const fd = new FormData();
+  fd.append('file', new Blob([fs.readFileSync(zipFile)]), path.basename(zipFile));
+  const pj = await waitJob((await api('POST', '/admin/sync/nointro-pack', fd)).json.id);
+  assert.deepEqual(pj.result.imported, ['gb']);
+  const ds = await prisma.datSource.findFirstOrThrow({ where: { systemId: gb.id, type: 'NOINTRO' } });
+  assert.equal(ds.priority, 10);
+  assert.equal((await api('GET', '/admin/sync')).json.nointro.imported, '2026-09-01');
+
+  const romOf = async (n: string) => prisma.rom.findFirstOrThrow({ where: { name: n, game: { systemId: gb.id } } });
+  const sameGame = async (a: string, b: string) => (await romOf(a)).gameId === (await romOf(b)).gameId;
+  // Parent/Clone une titulos distintos; padres con el mismo titulo quedan separados
+  assert.ok(await sameGame('Alpha (Japan)', 'Beta Quest (USA)'));
+  assert.ok(!(await sameGame('Gamma (USA)', 'Gamma (Europe)')));
+  assert.ok(!(await sameGame('Delta (USA)', 'Delta Kun (Japan)')));
+
+  // Retool (mock de GitHub): grupo curado
+  const rt = '/unexpectedpanda/retool-clonelists-metadata/main';
+  ghFiles.set(`${rt}/clonelists/Nintendo - Game Boy (No-Intro).json`, { body: JSON.stringify({ variants: [{ group: 'Delta', titles: [{ searchTerm: 'Delta' }, { searchTerm: 'Delta Kun' }] }] }), etag: '"r1"' });
+  ghFiles.set(`${rt}/metadata/Nintendo - Game Boy (No-Intro).json`, { body: JSON.stringify({ 'Delta Kun (Japan)': { localName: 'Deruta-kun' } }), etag: '"m1"' });
+  await waitJob((await api('POST', '/admin/sync', { sources: ['retool'], system: 'gb' })).json.id);
+  assert.ok(await sameGame('Delta (USA)', 'Delta Kun (Japan)'));
+  assert.equal((await romOf('Delta Kun (Japan)')).localTitle, 'Deruta-kun');
+
+  // RetroAchievements: mismo juego RA por hash (sincronizacion forzada solo de ese sistema)
+  raLists['4'] = [
+    { ID: 555, Title: 'Alpha', NumAchievements: 5, Hashes: [md5h(bufs['Alpha (Japan)'])] },
+    { ID: 556, Title: 'Epsilon', NumAchievements: 5, Hashes: [md5h(bufs['Epsilon (USA)']), md5h(bufs['Zeta (Japan)'])] },
+  ];
+  await waitJob((await api('POST', '/ra/sync', { systemId: gb.id })).json.id);
+  assert.equal(hits['ra:4'], 1);
+  assert.equal(Object.keys(hits).filter((k) => k.startsWith('ra:')).length, 1, 'una sola llamada, la del sistema pedido');
+  assert.ok(await sameGame('Epsilon (USA)', 'Zeta (Japan)'));
+
+  // ScreenScraper: la lista de roms del juego (por hash) une los dos Gamma
+  ssRomSha1s['Gamma'] = [md(bufs['Gamma (USA)'], 'sha1'), md(bufs['Gamma (Europe)'], 'sha1')];
+  await api('PATCH', '/users/me', { ssUser: 'user', ssPassword: 'pass' });
+  await waitJob((await api('POST', '/scrape', { gameIds: [(await romOf('Gamma (USA)')).gameId], sources: ['screenscraper'], types: ['COVER'] })).json.id);
+  const { resolveRomGroups } = await import('../src/modules/grouping/service.js');
+  await resolveRomGroups(gb.id);
+  assert.ok(await sameGame('Gamma (USA)', 'Gamma (Europe)'));
+
+  // Agrupacion solo por titulo (NES, sin Parent/Clone): confianza baja salvo con RA
+  const low = await api('GET', `/games?systemId=${ctx.nesSystemId}&lowConfidence=1&pageSize=1`);
+  assert.ok(low.json.total > 100);
+  assert.equal((await prisma.game.findUniqueOrThrow({ where: { id: ctx.smb3GameId } })).groupConfidence, 'high');
+
+  // Separar a mano contra la evidencia P/C: conflicto en la cola de revision
+  const alpha = await romOf('Alpha (Japan)');
+  const beta = await romOf('Beta Quest (USA)');
+  await api('POST', `/games/${alpha.gameId}/split`, { romIds: [beta.id] });
+  assert.ok(!(await sameGame('Alpha (Japan)', 'Beta Quest (USA)')));
+  const review = (await api('GET', '/admin/review?kind=conflict')).json;
+  const item = review.items.find((i: any) => i.roms.some((r: any) => r.id === beta.id));
+  assert.ok(item, JSON.stringify(review));
+  assert.equal((await api('POST', `/admin/review/${item.id}`, { action: 'same' })).status, 204);
+  assert.ok(await sameGame('Alpha (Japan)', 'Beta Quest (USA)'));
+});
+
+test('fase2: obras multiplataforma con Wikidata, sagas y listas por plataforma', async () => {
+  const prisma = await prismaClient();
+  const e = (q: string) => ({ value: `http://www.wikidata.org/entity/${q}` });
+  const v = (x: string) => ({ value: x });
+  wdBindings.Q186437 = {
+    props: [
+      { g: e('Q100'), label: v('Alpha Totally Different'), year: v('1990'), ras: v('555'), sss: v('') },
+      { g: e('Q200'), label: v('Gamma'), year: v('1991') },
+      { g: e('Q201'), label: v('Gamma'), year: v('1991') },
+      { g: e('Q300'), label: v('Delta'), year: v('1992') },
+      { g: e('Q400'), label: v('Super Mario Bros. 3'), year: v('1988'), series: e('Q500') },
+    ],
+    names: [
+      { g: e('Q100'), names: v('Alpha Totally Different') },
+      { g: e('Q200'), names: v('Gamma') },
+      { g: e('Q201'), names: v('Gamma') },
+      { g: e('Q300'), names: v('Delta|Deruta-kun') },
+      { g: e('Q400'), names: v('Super Mario Bros. 3|Super Mario Bros 3') },
+    ],
+  };
+  wdBindings.Q172742 = { props: [{ g: e('Q400'), label: v('Super Mario Bros. 3'), year: v('1988'), series: e('Q500') }], names: [{ g: e('Q400'), names: v('Super Mario Bros. 3') }] };
+  await waitJob((await api('POST', '/admin/sync', { sources: ['wikidata'], system: 'gb' })).json.id);
+  await waitJob((await api('POST', '/admin/sync', { sources: ['wikidata'], system: 'nes' })).json.id);
+  const gameOf = async (n: string) => (await prisma.rom.findFirstOrThrow({ where: { name: n, game: { systemId: ctx.gbSystemId } }, include: { game: true } })).game;
+  // Ancla exacta por id de RetroAchievements aunque el nombre no coincida
+  assert.equal((await gameOf('Alpha (Japan)')).wikidataId, 'Q100');
+  // Nombre unico en la plataforma (incluidos titulos locales de Retool)
+  assert.equal((await gameOf('Delta (USA)')).wikidataId, 'Q300');
+  // Ambiguo: a revision
+  const gamma = await gameOf('Gamma (USA)');
+  assert.equal(gamma.wikidataId, null);
+  const rv = (await api('GET', '/admin/review?kind=wikidata')).json.items.find((i: any) => i.gameId === gamma.id);
+  assert.equal(rv.payload.candidates.length, 2);
+  await api('POST', `/admin/review/${rv.id}`, { action: 'link', wikidataId: 'Q200' });
+  assert.equal((await gameOf('Gamma (USA)')).wikidataId, 'Q200');
+
+  // Obra con dos plataformas y saga
+  const smbGb = await gameOf('Super Mario Bros. 3 (World)');
+  const smbNes = await prisma.game.findUniqueOrThrow({ where: { id: ctx.smb3GameId } });
+  assert.ok(smbGb.workId && smbGb.workId === smbNes.workId);
+  const work = (await api('GET', `/works/${smbGb.workId}`)).json;
+  assert.deepEqual(work.games.map((g: any) => g.system.slug).sort(), ['gb', 'nes']);
+  assert.equal(work.franchise.name, 'Super Mario');
+  const fr = (await api('GET', `/franchises/${work.franchise.id}`)).json;
+  assert.deepEqual(fr.works.find((w: any) => w.id === work.id).missingPlatforms, ['gb']);
+  const detail = (await api('GET', `/games/${ctx.smb3GameId}`)).json;
+  assert.equal(detail.work.games[0].system.slug, 'gb');
+
+  // Lista con la obra y sublistas con preferencia de plataforma
+  const l = await api('POST', '/lists', { name: 'Obras' }, userToken);
+  await api('POST', `/lists/${l.json.id}/items`, { items: [{ workId: work.id }] }, userToken);
+  const items = (await api('GET', `/lists/${l.json.id}`, undefined, userToken)).json.items;
+  assert.equal(items[0].kind, 'work');
+  const gbFirst = await api('POST', `/lists/${l.json.id}/derive`, { name: 'GB primero', platforms: ['gb', 'nes'] }, userToken);
+  const gbList = (await api('GET', `/lists/${gbFirst.json.id}`, undefined, userToken)).json;
+  assert.equal(gbList.items[0].system.slug, 'gb');
+  const owned = await api('POST', `/lists/${l.json.id}/derive`, { name: 'Lo que tengo', platforms: ['gb', 'nes'], ownedOnly: true }, userToken);
+  const ownedList = (await api('GET', `/lists/${owned.json.id}`, undefined, userToken)).json;
+  assert.equal(ownedList.items[0].romId, ctx.smb3RomId);
+  // Exportar/importar conserva la obra
+  const exp = (await api('GET', `/lists/${l.json.id}/export`, undefined, userToken)).json;
+  assert.equal(exp.items[0].wikidataId, 'Q400');
+  assert.equal((await api('POST', '/lists/import', exp, userToken)).json.unresolved.length, 0);
+});
+
+test('fase2: saves por eventos con script (inicio, cierre, conflicto, sin red) y SD montada', async () => {
+  const prisma = await prismaClient();
+  const thor = (await api('GET', '/devices/consoles')).json.find((c: any) => c.name === 'AYN Thor');
+  const knulli = ctx.firmwares.find((f: any) => f.slug === 'knulli');
+  const root = path.join(DATA, 'agent-root');
+  fs.mkdirSync(path.join(root, 'roms/nes'), { recursive: true });
+  const romPath = path.join(root, 'roms/nes', `${SMB3}.nes`);
+  fs.writeFileSync(romPath, 'x');
+  const d = await api('POST', '/devices', { name: 'Thor ES', consoleId: thor.id, firmwareId: knulli.id, connType: 'AGENT', rootPath: root }, userToken);
+  assert.equal(d.status, 201, JSON.stringify(d.json));
+  const zr = await fetch(`${base}/api/v1/devices/${d.json.id}/agent-script`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${userToken}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ flavor: 'batocera', server: base }),
+  });
+  assert.equal(zr.status, 200);
+  const scripts = path.join(DATA, 'agent-userdata');
+  fs.mkdirSync(scripts, { recursive: true });
+  fs.writeFileSync(path.join(scripts, 's.zip'), Buffer.from(await zr.arrayBuffer()));
+  execSync('7zz x -y s.zip', { cwd: scripts, stdio: 'ignore' });
+  const hook = path.join(scripts, 'system/scripts/rommancer.sh');
+  // Asincrono: el servidor de la API corre en este mismo proceso
+  const run = async (event: string, rom = romPath) => {
+    try {
+      return (await execFileP('sh', [hook, event, 'a', 'b', 'c', rom], { timeout: 30_000, env: { ...process.env, SHELLOPTS: 'xtrace' } })).stdout;
+    } catch (e: any) {
+      throw new Error(`script ${event}: ${e.message}\n${String(e.stderr ?? '').slice(-4000)}`);
+    }
+  };
+  const saveFile = path.join(root, 'saves/nes', `${SMB3}.srm`);
+
+  // Inicio: el servidor entrega su version, ya en el formato del emulador del dispositivo
+  await run('gameStart');
+  const smb = (await api('GET', `/saves/${ctx.smbSaveId}`, undefined, userToken)).json;
+  const serverCur = await fetch(`${base}/api/v1/saves/${ctx.smbSaveId}/versions/${smb.currentVersionId}/download?token=${userFiles}`);
+  assert.ok(fs.readFileSync(saveFile).equals(Buffer.from(await serverCur.arrayBuffer())));
+  // Cierre: sube lo que cambio en el dispositivo
+  const played = crypto.randomBytes(8192);
+  fs.writeFileSync(saveFile, played);
+  await run('gameStop');
+  const s2 = (await api('GET', `/saves/${ctx.smbSaveId}`, undefined, userToken)).json;
+  const cur2 = s2.versions.find((v: any) => v.id === s2.currentVersionId);
+  assert.equal(cur2.sourceDevice?.id, d.json.id);
+  // Sin cambios: no crea versiones
+  const nv = s2.versions.length;
+  await run('gameStop');
+  assert.equal((await api('GET', `/saves/${ctx.smbSaveId}`, undefined, userToken)).json.versions.length, nv);
+
+  // Conflicto: cambian el servidor (web) y el dispositivo. No se pisa nada.
+  const fdw = new FormData();
+  fdw.append('file', new Blob([crypto.randomBytes(8192)]), `${SMB3}.srm`);
+  fdw.append('emulatorId', String(ctx.emus['ra-fceumm'].id));
+  await api('POST', '/saves/upload', fdw, userToken);
+  const local = crypto.randomBytes(8192);
+  fs.writeFileSync(saveFile, local);
+  await run('gameStart');
+  assert.ok(fs.readFileSync(saveFile).equals(local), 'el dispositivo conserva su version');
+  const conflicts = (await api('GET', '/saves/conflicts', undefined, userToken)).json;
+  assert.equal(conflicts.length, 1);
+  assert.equal(conflicts[0].device.id, d.json.id);
+  assert.equal((await api('POST', `/saves/conflicts/${conflicts[0].id}/resolve`, { keep: 'device' }, userToken)).status, 204);
+  const s3 = (await api('GET', `/saves/${ctx.smbSaveId}`, undefined, userToken)).json;
+  assert.equal(s3.currentVersionId, conflicts[0].deviceVersionId);
+  assert.equal((await api('GET', '/saves/conflicts', undefined, userToken)).json.length, 0);
+
+  // Sin red: no bloquea y se sube en el siguiente evento con red
+  const syncSh = path.join(scripts, 'system/scripts/rommancer/rommancer-sync.sh');
+  const original = fs.readFileSync(syncSh, 'utf8');
+  fs.writeFileSync(syncSh, original.replace(/^SERVER=".*"$/m, 'SERVER="http://127.0.0.1:9"'));
+  const offline = crypto.randomBytes(8192);
+  fs.writeFileSync(saveFile, offline);
+  const t0 = Date.now();
+  await run('gameStop');
+  assert.ok(Date.now() - t0 < 15_000);
+  fs.writeFileSync(syncSh, original);
+  const contraRom = path.join(root, 'roms/nes', 'Contra (USA).nes');
+  fs.writeFileSync(contraRom, 'x');
+  await run('gameStart', contraRom);
+  const s4 = (await api('GET', `/saves/${ctx.smbSaveId}`, undefined, userToken)).json;
+  const cur4 = s4.versions.find((v: any) => v.id === s4.currentVersionId);
+  const dl4 = await fetch(`${base}/api/v1/saves/${ctx.smbSaveId}/versions/${cur4.id}/download?token=${userFiles}`);
+  assert.ok(Buffer.from(await dl4.arrayBuffer()).equals(offline));
+
+  // Token revocado: el script deja de tener acceso
+  await api('DELETE', `/devices/${d.json.id}/token`, undefined, userToken);
+  const tok = original.match(/^TOKEN="(.*)"$/m)![1];
+  const m = await fetch(`${base}/api/v1/agent/manifest`, { headers: { 'X-Device-Token': tok, 'X-Rom-B64': Buffer.from(romPath).toString('base64') } });
+  assert.equal(m.status, 401);
+
+  // SD montada en el servidor: al aparecer se encola su sincronizacion
+  const { checkLocalDevices } = await import('../src/modules/saves/sync.js');
+  const sd = path.join(DATA, 'sd-montada');
+  const dev = await api('POST', '/devices', { name: 'SD', consoleId: thor.id, firmwareId: knulli.id, connType: 'LOCAL', rootPath: sd, syncSaves: true }, userToken);
+  await checkLocalDevices();
+  fs.mkdirSync(sd, { recursive: true });
+  const queued = await checkLocalDevices();
+  assert.deepEqual(queued, [dev.json.id]);
+  const job = await prisma.job.findFirstOrThrow({ where: { type: 'save-sync' }, orderBy: { id: 'desc' } });
+  await waitJobDone(job.id);
+});
+
+test('fase2: semilla acumulada con evidencias, wikidata, parches y multimedia grande', async () => {
+  const r = await waitJob((await api('POST', '/admin/seed/export')).json.id);
+  const seed = path.join(DATA, 'seed');
+  assert.ok(r.result.evidence >= 2);
+  const grouping = JSON.parse(fs.readFileSync(path.join(seed, 'grouping.json'), 'utf8'));
+  assert.ok(grouping.evidence.some((e: any) => e.source === 'retool'));
+  assert.ok(grouping.romRules.length >= 1);
+  assert.ok(grouping.misses.length >= 1);
+  const wd = JSON.parse(fs.readFileSync(path.join(seed, 'wikidata.json'), 'utf8'));
+  assert.ok(wd.items.length >= 5);
+  assert.ok(fs.existsSync(path.join(seed, 'patches', 'patches.json')));
+  assert.ok(fs.readdirSync(path.join(seed, 'media-large'), { recursive: true }).some((f) => String(f).endsWith('.pdf')));
+  const games = JSON.parse(fs.readFileSync(path.join(seed, 'games.json'), 'utf8'));
+  assert.ok(games.every((g: any) => g.roms.length >= 1));
 });

@@ -1,9 +1,10 @@
 import crypto from 'node:crypto';
-import type { DatType, System } from '@prisma/client';
+import type { DatType, Prisma, System } from '@prisma/client';
 import { prisma } from '../../lib/prisma.js';
 import { normalizeTitle, parseRomName } from '../../lib/romname.js';
 import { raHashFromDat } from '../../lib/rahash.js';
 import { parseDat, type DatFile, type DatGame, type DatRom } from './parser.js';
+import { replaceRomEvidence, resolveRomGroups, type EvidenceInput } from '../grouping/service.js';
 
 export interface ImportResult {
   datSourceId: number;
@@ -26,7 +27,8 @@ export async function detectSystem(dat: DatFile, fileName?: string): Promise<Sys
   const systems = await prisma.system.findMany();
   const candidates = [dat.name, dat.description, fileName?.replace(/\.(dat|xml)$/i, '')].filter(Boolean) as string[];
   for (const c of candidates) {
-    const clean = c.replace(/\s*\((Parent-Clone|\d{8}-\d+|[^)]*Headered[^)]*|Decrypted|Encrypted|BigEndian)\)/gi, '').trim().toLowerCase();
+    // Sin sufijos entre parentesis: (Parent-Clone), (Headered), (Decrypted), (LNX), (20261002-002752)...
+    const clean = c.replace(/(\s*\([^)]*\))+\s*$/g, '').trim().toLowerCase();
     for (const s of systems) {
       const names = [s.datName, ...((s.datAliases as string[] | null) ?? [])].map((n) => n.toLowerCase());
       if (names.some((n) => clean === n || clean.startsWith(n + ' ') || clean.startsWith(n + ' ('))) return s;
@@ -95,24 +97,38 @@ function buildParts(roms: DatRom[]): PartRow[] {
   });
 }
 
-export async function importDat(
-  text: string,
-  opts: { systemId?: number; type?: DatType; fileName?: string; force?: boolean } = {},
-): Promise<ImportResult> {
+export interface ImportOptions {
+  systemId?: number;
+  type?: DatType;
+  fileName?: string;
+  force?: boolean;
+  // Fuente principal (No-Intro oficial) frente a copias (libretro)
+  priority?: number;
+  // Recalcular agrupaciones al terminar (por defecto si)
+  resolve?: boolean;
+}
+
+/**
+ * Importa un DAT. Los datos son permanentes: nada se borra; las roms que desaparecen de la fuente
+ * se marcan como retiradas. Una rom con el mismo nombre en el mismo sistema es la misma rom aunque
+ * venga de otra fuente: se actualiza en lugar de duplicarse.
+ */
+export async function importDat(text: string, opts: ImportOptions = {}): Promise<ImportResult> {
   const fileSha1 = crypto.createHash('sha1').update(text).digest('hex');
   const dat = parseDat(text);
   const system = opts.systemId ? await prisma.system.findUniqueOrThrow({ where: { id: opts.systemId } }) : await detectSystem(dat, opts.fileName);
   if (!system) throw new Error(`Cannot detect system for DAT "${dat.name}"`);
   const type = opts.type ?? detectType(dat, opts.fileName);
   const name = dat.name || opts.fileName || 'DAT';
+  const priority = opts.priority ?? 0;
 
   const existing = await prisma.datSource.findUnique({ where: { systemId_type_name: { systemId: system.id, type, name } } });
   if (existing && existing.fileSha1 === fileSha1 && !opts.force) {
     return { datSourceId: existing.id, system: system.slug, type, name, games: 0, roms: existing.romCount, hacks: 0, skipped: true };
   }
   const source = existing
-    ? await prisma.datSource.update({ where: { id: existing.id }, data: { fileSha1: '', version: dat.version ?? null, importedAt: new Date(), fileName: opts.fileName ?? existing.fileName } })
-    : await prisma.datSource.create({ data: { systemId: system.id, type, name, version: dat.version ?? null, fileSha1: '', fileName: opts.fileName ?? null } });
+    ? await prisma.datSource.update({ where: { id: existing.id }, data: { fileSha1: '', version: dat.version ?? null, importedAt: new Date(), fileName: opts.fileName ?? existing.fileName, priority } })
+    : await prisma.datSource.create({ data: { systemId: system.id, type, name, version: dat.version ?? null, fileSha1: '', fileName: opts.fileName ?? null, priority } });
   // El sha1 se fija al terminar: si la importacion falla a medias, se reintentara entera
   const done = () => prisma.datSource.update({ where: { id: source.id }, data: { fileSha1 } });
 
@@ -122,130 +138,198 @@ export async function importDat(
     return r;
   }
 
-  const merged = mergeGames(dat.games);
-  // Padres antes que clones para que los clones hereden el juego del padre
-  const ordered = [...merged.values()].sort((a, b) => Number(!!a.cloneOf) - Number(!!b.cloneOf));
+  const merged = [...mergeGames(dat.games).values()];
   const isArcade = system.mediaType === 'arcade';
+  const now = new Date();
 
-  // 1. Juegos
-  const gameMap = new Map<string, number>();
-  for (const g of await prisma.game.findMany({ where: { systemId: system.id }, select: { id: true, titleNormalized: true } }))
-    gameMap.set(g.titleNormalized, g.id);
-
-  const romTitle = (g: DatGame) => parseRomName(isArcade && g.description ? g.description : g.name).title;
-  const romGameKey = new Map<string, string>();
-  const newGames = new Map<string, string>();
-  for (const g of ordered) {
-    let key: string;
-    if (g.cloneOf && romGameKey.has(g.cloneOf)) key = romGameKey.get(g.cloneOf)!;
-    else {
-      const title = romTitle(g);
-      key = normalizeTitle(title).slice(0, 255);
-      if (!gameMap.has(key) && !newGames.has(key)) newGames.set(key, title.slice(0, 255));
-    }
-    romGameKey.set(g.name, key);
+  // Roms ya conocidas del sistema (de cualquier fuente), por nombre
+  type Known = { id: number; gameId: number; datSourceId: number; priority: number; fields: Record<string, unknown> };
+  const known = new Map<string, Known>();
+  for (const r of await prisma.rom.findMany({
+    where: { game: { systemId: system.id } },
+    select: { id: true, name: true, gameId: true, datSourceId: true, regions: true, languages: true, revision: true, flags: true, isBios: true, raHash: true, serial: true, parentName: true, removedFromSource: true, datSource: { select: { priority: true } } },
+  })) {
+    const { id, name, gameId, datSourceId, datSource, ...fields } = r;
+    known.set(name, { id, gameId, datSourceId, priority: datSource.priority, fields });
   }
-  for (const c of chunk([...newGames.entries()], 1000)) {
-    await prisma.game.createMany({
-      data: c.map(([titleNormalized, title]) => ({ systemId: system.id, title, titleNormalized })),
-      skipDuplicates: true,
-    });
-  }
-  if (newGames.size)
-    for (const g of await prisma.game.findMany({ where: { systemId: system.id }, select: { id: true, titleNormalized: true } }))
-      gameMap.set(g.titleNormalized, g.id);
 
-  // 2. Roms
-  const romMap = new Map<string, number>();
-  for (const r of await prisma.rom.findMany({ where: { datSourceId: source.id }, select: { id: true, name: true } })) romMap.set(r.name, r.id);
-  const partsByRom = new Map<string, PartRow[]>();
-  const romRows = ordered.map((g) => {
+  // Juego provisional por titulo para las roms nuevas; el resolvedor de agrupaciones decide despues
+  const gameByTitle = new Map<string, number>();
+  for (const g of await prisma.game.findMany({ where: { systemId: system.id }, select: { id: true, titleNormalized: true }, orderBy: { id: 'asc' } }))
+    if (!gameByTitle.has(g.titleNormalized)) gameByTitle.set(g.titleNormalized, g.id);
+  const romTitle = (g: DatGame) => parseRomName(isArcade && g.description ? g.description : g.name).title.slice(0, 255);
+  const newTitles = new Map<string, string>();
+  for (const g of merged) {
+    if (known.has(g.name.slice(0, 255))) continue;
+    const t = romTitle(g);
+    const k = normalizeTitle(t).slice(0, 255);
+    if (!gameByTitle.has(k) && !newTitles.has(k)) newTitles.set(k, t);
+  }
+  for (const c of chunk([...newTitles.entries()], 1000)) {
+    await prisma.game.createMany({ data: c.map(([titleNormalized, title]) => ({ systemId: system.id, title, titleNormalized })) });
+  }
+  if (newTitles.size)
+    for (const g of await prisma.game.findMany({ where: { systemId: system.id, titleNormalized: { in: [...newTitles.keys()] } }, select: { id: true, titleNormalized: true }, orderBy: { id: 'asc' } }))
+      if (!gameByTitle.has(g.titleNormalized)) gameByTitle.set(g.titleNormalized, g.id);
+
+  let updated = 0;
+  const partsByName = new Map<string, PartRow[]>();
+  const toInsert: Prisma.RomCreateManyInput[] = [];
+  const same = (a: unknown, b: unknown) => JSON.stringify(a ?? null) === JSON.stringify(b ?? null);
+  for (const g of merged) {
+    const romName = g.name.slice(0, 255);
     const p = parseRomName(g.name);
     const parts = buildParts(g.roms);
-    partsByRom.set(g.name, parts);
     const first = parts[0];
-    return {
-      gameId: gameMap.get(romGameKey.get(g.name)!)!,
-      datSourceId: source.id,
-      name: g.name.slice(0, 255),
+    const fields: Record<string, unknown> = {
       regions: p.regions,
       languages: p.languages,
       revision: p.revision,
       flags: p.flags,
       isBios: !!g.isBios || /\[BIOS\]/.test(g.name),
       raHash: first && parts.length === 1 ? raHashFromDat(system.slug, first) : null,
+      serial: g.serial?.slice(0, 64) ?? null,
+      parentName: g.cloneOf?.slice(0, 255) ?? null,
+      removedFromSource: false,
     };
-  });
-  const toCreate = romRows.filter((r) => !romMap.has(r.name));
-  for (const c of chunk(toCreate, 1000)) await prisma.rom.createMany({ data: c, skipDuplicates: true });
-  const toUpdate = romRows.filter((r) => romMap.has(r.name));
-  for (const r of toUpdate) {
-    await prisma.rom.update({ where: { id: romMap.get(r.name)! }, data: { gameId: r.gameId, regions: r.regions, languages: r.languages, revision: r.revision, flags: r.flags, raHash: r.raHash } });
+    partsByName.set(romName, parts);
+    const k = known.get(romName);
+    if (k) {
+      // Solo se escribe lo que cambia; una fuente de mayor o igual prioridad pasa a ser la duena de la rom
+      const data: Record<string, unknown> = {};
+      for (const [key, v] of Object.entries(fields)) {
+        if ((key === 'serial' || key === 'raHash' || key === 'parentName') && v == null) continue;
+        if (!same(k.fields[key], v)) data[key] = v;
+      }
+      if (priority >= k.priority && k.datSourceId !== source.id) data.datSourceId = source.id;
+      if (Object.keys(data).length) {
+        await prisma.rom.update({ where: { id: k.id }, data });
+        updated++;
+      }
+    } else {
+      toInsert.push({ ...(fields as object), name: romName, datSourceId: source.id, gameId: gameByTitle.get(normalizeTitle(romTitle(g)).slice(0, 255))! } as Prisma.RomCreateManyInput);
+    }
   }
-  romMap.clear();
-  for (const r of await prisma.rom.findMany({ where: { datSourceId: source.id }, select: { id: true, name: true } })) romMap.set(r.name, r.id);
+  for (const c of chunk(toInsert, 1000)) await prisma.rom.createMany({ data: c });
+  const created = toInsert.length;
+  if (created) {
+    const names = toInsert.map((r) => r.name);
+    for (const c of chunk(names, 2000))
+      for (const r of await prisma.rom.findMany({ where: { name: { in: c }, game: { systemId: system.id } }, select: { id: true, name: true, gameId: true } }))
+        known.set(r.name, { id: r.id, gameId: r.gameId, datSourceId: source.id, priority, fields: {} });
+  }
+  // Fecha de ultima comprobacion de todas las roms presentes en la fuente
+  const presentIds = merged.map((g) => known.get(g.name.slice(0, 255))?.id).filter((x): x is number => !!x);
+  for (const c of chunk(presentIds, 5000)) await prisma.rom.updateMany({ where: { id: { in: c } }, data: { checkedAt: now } });
+  const partsByRom = new Map<number, PartRow[]>();
+  for (const [name, parts] of partsByName) partsByRom.set(known.get(name)!.id, parts);
 
-  // Roms que ya no estan en el DAT
-  const names = new Set(romRows.map((r) => r.name));
-  const stale = [...romMap.entries()].filter(([n]) => !names.has(n)).map(([, id]) => id);
-  for (const c of chunk(stale, 1000)) await prisma.rom.deleteMany({ where: { id: { in: c } } });
+  // Partes: se actualizan por nombre sin borrar (los ficheros escaneados siguen enlazados)
+  const existingParts = await prisma.romPart.findMany({ where: { romId: { in: [...partsByRom.keys()] } } });
+  const partIndex = new Map(existingParts.map((p) => [`${p.romId}|${p.name}`, p]));
+  const toCreate: (PartRow & { romId: number })[] = [];
+  for (const [romId, parts] of partsByRom) {
+    for (const p of parts) {
+      const row = { ...p, name: p.name.slice(0, 255) };
+      const ex = partIndex.get(`${romId}|${row.name}`);
+      if (!ex) toCreate.push({ ...row, romId });
+      else if (ex.sha1 !== row.sha1 || ex.crc32 !== row.crc32 || ex.md5 !== row.md5 || ex.size !== row.size || (row.headerlessSha1 && ex.headerlessSha1 !== row.headerlessSha1)) {
+        await prisma.romPart.update({
+          where: { id: ex.id },
+          data: {
+            size: row.size,
+            crc32: row.crc32 ?? ex.crc32,
+            md5: row.md5 ?? ex.md5,
+            sha1: row.sha1 ?? ex.sha1,
+            headerlessSize: row.headerlessSize ?? ex.headerlessSize,
+            headerlessCrc: row.headerlessCrc ?? ex.headerlessCrc,
+            headerlessMd5: row.headerlessMd5 ?? ex.headerlessMd5,
+            headerlessSha1: row.headerlessSha1 ?? ex.headerlessSha1,
+          },
+        });
+      }
+    }
+  }
+  for (const c of chunk(toCreate, 2000)) await prisma.romPart.createMany({ data: c });
 
-  // 3. Partes: se regeneran. Los RomFile pierden su enlace y se re-emparejan con rematch.
-  await prisma.romPart.deleteMany({ where: { rom: { datSourceId: source.id } } });
-  const partRows = [...partsByRom.entries()].flatMap(([romName, parts]) => {
-    const romId = romMap.get(romName.slice(0, 255));
-    return romId ? parts.map((p) => ({ ...p, romId, name: p.name.slice(0, 255) })) : [];
-  });
-  for (const c of chunk(partRows, 2000)) await prisma.romPart.createMany({ data: c });
+  // Retiradas de la fuente: se conservan marcadas
+  const names = new Set(merged.map((g) => g.name.slice(0, 255)));
+  const owned = await prisma.rom.findMany({ where: { datSourceId: source.id }, select: { id: true, name: true } });
+  const removed = owned.filter((r) => !names.has(r.name)).map((r) => r.id);
+  for (const c of chunk(removed, 1000)) await prisma.rom.updateMany({ where: { id: { in: c } }, data: { removedFromSource: true } });
 
-  await prisma.datSource.update({ where: { id: source.id }, data: { romCount: romRows.length } });
+  // Evidencias Parent/Clone: la clave es el padre (o la propia rom si es padre)
+  const pcSource = type === 'NOINTRO' && priority > 0 ? 'nointro-pc' : 'dat-clone';
+  const hasCloneInfo = merged.some((g) => g.cloneOf);
+  if (hasCloneInfo) {
+    const ev: EvidenceInput[] = [];
+    for (const g of merged) {
+      const romId = known.get(g.name.slice(0, 255))?.id;
+      if (romId) ev.push({ romId, systemId: system.id, key: `pc:${g.cloneOf ?? g.name}`, source: pcSource });
+    }
+    await replaceRomEvidence(system.id, pcSource, ev);
+  }
+
+  await prisma.datSource.update({ where: { id: source.id }, data: { romCount: merged.length } });
   await done();
-  // Limpieza de juegos vacios
-  await prisma.game.deleteMany({ where: { systemId: system.id, roms: { none: {} }, hacks: { none: {} }, listItems: { none: {} } } });
+  if (opts.resolve !== false) await resolveRomGroups(system.id);
 
-  return { datSourceId: source.id, system: system.slug, type, name, games: newGames.size, roms: romRows.length, hacks: 0, skipped: false };
+  return { datSourceId: source.id, system: system.slug, type, name, games: newTitles.size, roms: merged.length, hacks: 0, skipped: false, created, updated, removed: removed.length } as ImportResult;
 }
 
 async function importHacks(dat: DatFile, system: System, datSourceId: number, name: string): Promise<ImportResult> {
-  await prisma.romHack.deleteMany({ where: { datSourceId } });
+  const known = new Map((await prisma.romHack.findMany({ where: { datSourceId }, select: { id: true, title: true } })).map((h) => [h.title, h.id]));
+  const seen = new Set<number>();
   let count = 0;
   for (const g of dat.games) {
     const r = g.roms[0];
     if (!r) continue;
     const baseName = r.name.replace(/\.[^.]+$/, '');
-    const baseRom = await prisma.rom.findFirst({ where: { name: baseName, datSource: { systemId: system.id } } });
+    const baseRom = await prisma.rom.findFirst({ where: { name: baseName, game: { systemId: system.id } } });
     let gameId = baseRom?.gameId;
     if (!gameId) {
       const title = parseRomName(baseName).title;
       const key = normalizeTitle(title);
-      const game = await prisma.game.upsert({
-        where: { systemId_titleNormalized: { systemId: system.id, titleNormalized: key } },
-        create: { systemId: system.id, title, titleNormalized: key },
-        update: {},
-      });
+      const game = (await prisma.game.findFirst({ where: { systemId: system.id, titleNormalized: key }, orderBy: { id: 'asc' } })) ??
+        (await prisma.game.create({ data: { systemId: system.id, title, titleNormalized: key } }));
       gameId = game.id;
     }
     const by = g.name.match(/\[Hack by ([^\]]+)\]/);
     const ver = g.description?.match(/version \(([^)]+)\)/);
-    await prisma.romHack.create({
-      data: {
-        gameId,
-        baseRomId: baseRom?.id ?? null,
-        datSourceId,
-        type: /translation|\[T[+-]/i.test(g.name) ? 'TRANSLATION' : 'HACK',
-        title: g.name.replace(/\s*\[Hack by [^\]]+\]/, '').slice(0, 255),
-        author: by?.[1]?.slice(0, 255) ?? null,
-        version: ver?.[1] ?? null,
-        description: g.description ?? null,
-        sourceUrl: g.patch ?? null,
-        size: BigInt(r.size),
-        crc32: r.crc32,
-        md5: r.md5,
-        sha1: r.sha1,
-      },
-    });
+    const title = g.name.replace(/\s*\[Hack by [^\]]+\]/, '').slice(0, 255);
+    // Nombre corto del hack: lo que sigue al titulo del juego base ("Metroid - Rogue Dawn" -> "Rogue Dawn")
+    const baseTitle = parseRomName(baseName).title;
+    const hackName = title.startsWith(baseTitle + ' - ') ? title.slice(baseTitle.length + 3) : title;
+    const data = {
+      gameId,
+      baseRomId: baseRom?.id ?? null,
+      datSourceId,
+      type: /translation|\[T[+-]/i.test(g.name) ? ('TRANSLATION' as const) : ('HACK' as const),
+      title,
+      hackName: hackName.slice(0, 255),
+      author: by?.[1]?.slice(0, 255) ?? null,
+      version: ver?.[1] ?? null,
+      description: g.description ?? null,
+      sourceUrl: g.patch ?? null,
+      size: BigInt(r.size),
+      crc32: r.crc32,
+      md5: r.md5,
+      sha1: r.sha1,
+      removedFromSource: false,
+    };
+    const id = known.get(title);
+    if (id) {
+      await prisma.romHack.update({ where: { id }, data });
+      seen.add(id);
+    } else {
+      const h = await prisma.romHack.create({ data });
+      known.set(title, h.id);
+      seen.add(h.id);
+    }
     count++;
   }
+  const gone = [...known.values()].filter((id) => !seen.has(id));
+  if (gone.length) await prisma.romHack.updateMany({ where: { id: { in: gone } }, data: { removedFromSource: true } });
   await prisma.datSource.update({ where: { id: datSourceId }, data: { romCount: count } });
   return { datSourceId, system: system.slug, type: 'HACKS', name, games: 0, roms: 0, hacks: count, skipped: false };
 }

@@ -1,36 +1,69 @@
 import crypto from 'node:crypto';
 import bcrypt from 'bcryptjs';
-import { Router } from 'express';
+import { Router, type Request } from 'express';
 import { z } from 'zod';
+import type { User } from '@prisma/client';
 import { prisma } from '../../lib/prisma.js';
 import { sha256 } from '../../lib/crypto.js';
 import { HttpError, badRequest } from '../../lib/http.js';
-import { signAccess } from './middleware.js';
+import { DEFAULT_PERMISSIONS, normalizePermissions } from '../../lib/permissions.js';
+import { signAccess, signFiles } from './middleware.js';
 
 export const authRouter = Router();
 
 const REFRESH_DAYS = 30;
+const MAX_FAILS = 5;
+const WINDOW_MS = 15 * 60_000;
 
-async function issueTokens(user: { id: number; username: string; role: 'ADMIN' | 'USER' }) {
+// Limite de intentos fallidos por IP y por usuario, en memoria
+const fails = new Map<string, number[]>();
+
+function recent(key: string) {
+  const now = Date.now();
+  const list = (fails.get(key) ?? []).filter((t) => now - t < WINDOW_MS);
+  fails.set(key, list);
+  return list;
+}
+
+function checkLimit(keys: string[]) {
+  for (const k of keys) {
+    const list = recent(k);
+    if (list.length >= MAX_FAILS) {
+      const retry = Math.ceil((WINDOW_MS - (Date.now() - list[0])) / 1000);
+      throw new HttpError(429, `Too many attempts, retry in ${retry}s`);
+    }
+  }
+}
+
+export function resetLoginLimits() {
+  fails.clear();
+}
+
+const clientIp = (req: Request) => req.ip ?? req.socket.remoteAddress ?? 'unknown';
+
+export async function issueTokens(user: User) {
   const refresh = crypto.randomBytes(32).toString('hex');
   await prisma.refreshToken.create({
-    data: {
-      userId: user.id,
-      tokenHash: sha256(refresh),
-      expiresAt: new Date(Date.now() + REFRESH_DAYS * 86400_000),
-    },
+    data: { userId: user.id, tokenHash: sha256(refresh), expiresAt: new Date(Date.now() + REFRESH_DAYS * 86400_000) },
   });
   return {
     accessToken: signAccess(user),
+    filesToken: signFiles(user),
     refreshToken: refresh,
-    user: { id: user.id, username: user.username, role: user.role },
+    user: { id: user.id, username: user.username, role: user.role, mustChangePassword: user.mustChangePassword },
   };
 }
 
 authRouter.post('/login', async (req, res) => {
-  const { username, password } = z.object({ username: z.string(), password: z.string() }).parse(req.body);
+  const { username, password } = z.object({ username: z.string().max(191), password: z.string().max(512) }).parse(req.body);
+  const keys = [`ip:${clientIp(req)}`, `user:${username.toLowerCase()}`];
+  checkLimit(keys);
   const user = await prisma.user.findFirst({ where: { OR: [{ username }, { email: username }] } });
-  if (!user || !(await bcrypt.compare(password, user.passwordHash))) throw new HttpError(401, 'Invalid credentials');
+  if (!user || !(await bcrypt.compare(password, user.passwordHash))) {
+    for (const k of keys) recent(k).push(Date.now());
+    throw new HttpError(401, 'Invalid credentials');
+  }
+  for (const k of keys) fails.delete(k);
   res.json(await issueTokens(user));
 });
 
@@ -60,7 +93,7 @@ authRouter.post('/register', async (req, res) => {
       token: z.string(),
       username: z.string().min(3).max(64).regex(/^[a-zA-Z0-9_.-]+$/),
       email: z.email(),
-      password: z.string().min(8),
+      password: z.string().min(8).max(512),
       locale: z.enum(['es', 'en']).optional(),
     })
     .parse(req.body);
@@ -74,6 +107,7 @@ authRouter.post('/register', async (req, res) => {
         passwordHash: await bcrypt.hash(body.password, 10),
         role: inv.role,
         locale: body.locale ?? 'es',
+        permissions: inv.permissions ? normalizePermissions(inv.permissions) : DEFAULT_PERMISSIONS,
       },
     });
     await tx.invitation.update({ where: { id: inv.id }, data: { usedAt: new Date(), usedById: u.id } });

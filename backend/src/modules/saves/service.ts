@@ -53,7 +53,7 @@ export function parseSaveFile(name: string, emu: Emulator): { kind: SaveKind; sl
   return null;
 }
 
-export async function storeVersion(key: SaveKey, buf: Buffer, fileMtime: Date, opts: { sourceDeviceId?: number; note?: string; gameId?: number | null; romId?: number | null; force?: boolean } = {}) {
+export async function storeVersion(key: SaveKey, buf: Buffer, fileMtime: Date, opts: { sourceDeviceId?: number; note?: string; gameId?: number | null; romId?: number | null; force?: boolean; makeCurrent?: boolean } = {}) {
   const sha1 = crypto.createHash('sha1').update(buf).digest('hex');
   let save = await prisma.save.findUnique({
     where: { userId_emulatorId_kind_slot_baseName: key },
@@ -67,7 +67,10 @@ export async function storeVersion(key: SaveKey, buf: Buffer, fileMtime: Date, o
     });
   }
   const existing = save.versions.find((v) => v.sha1 === sha1);
-  if (existing && !opts.force) return { save, version: existing, created: false };
+  if (existing && !opts.force) {
+    if (opts.makeCurrent !== false && save.currentVersionId !== existing.id) await prisma.save.update({ where: { id: save.id }, data: { currentVersionId: existing.id } });
+    return { save, version: existing, created: false };
+  }
   const dir = path.join(env.savesDir, String(key.userId), String(save.id));
   await fs.promises.mkdir(dir, { recursive: true });
   const version = await prisma.saveVersion.create({
@@ -76,9 +79,9 @@ export async function storeVersion(key: SaveKey, buf: Buffer, fileMtime: Date, o
   const rel = path.join(String(key.userId), String(save.id), `${version.id}-${sha1.slice(0, 8)}.bin`);
   await fs.promises.writeFile(path.join(env.savesDir, rel), buf);
   await prisma.saveVersion.update({ where: { id: version.id }, data: { path: rel } });
-  // El mas reciente gana; las versiones anteriores quedan en el historial
-  const current = save.versions.find((v) => v.id === save!.currentVersionId);
-  if (!current || fileMtime >= current.fileMtime) await prisma.save.update({ where: { id: save.id }, data: { currentVersionId: version.id } });
+  // La version nueva pasa a ser la actual salvo que se indique lo contrario (conflictos).
+  // No se comparan fechas: los relojes de las portatiles no son fiables.
+  if (opts.makeCurrent !== false || !save.currentVersionId) await prisma.save.update({ where: { id: save.id }, data: { currentVersionId: version.id } });
   await pruneVersions(save.id);
   return { save, version: { ...version, path: rel }, created: true };
 }
@@ -86,8 +89,9 @@ export async function storeVersion(key: SaveKey, buf: Buffer, fileMtime: Date, o
 async function pruneVersions(saveId: number) {
   const save = await prisma.save.findUniqueOrThrow({ where: { id: saveId } });
   const old = await prisma.saveVersion.findMany({ where: { saveId }, orderBy: { createdAt: 'desc' }, skip: MAX_VERSIONS });
+  const keep = new Set((await prisma.saveConflict.findMany({ where: { saveId, resolvedAt: null } })).flatMap((c) => [c.deviceVersionId, c.serverVersionId]));
   for (const v of old) {
-    if (v.id === save.currentVersionId) continue;
+    if (v.id === save.currentVersionId || keep.has(v.id)) continue;
     await fs.promises.rm(path.join(env.savesDir, v.path), { force: true });
     await prisma.saveVersion.delete({ where: { id: v.id } });
   }

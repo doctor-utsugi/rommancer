@@ -1,35 +1,46 @@
 /**
- * Semilla de datos para nuevos despliegues: DATs importados, hashes de RetroAchievements y
- * metadatos/multimedia scrapeados. Se exporta desde una instancia y se aplica al arrancar otra,
- * sin volver a descargar nada.
+ * Semilla de datos para nuevos despliegues: todo lo obtenido de fuentes externas (acumulado, nunca se
+ * borra) y las decisiones manuales. Se exporta desde una instancia y se aplica al arrancar otra, sin
+ * volver a descargar nada.
  *
  * SEED_DIR/
  *   dats/<fichero>.dat        DATs tal cual
- *   dats/manifest.json        [{ file, system, type }]
+ *   dats/manifest.json        [{ file, system, type, priority }]
  *   ra.json                   { <slug>: [{ ID, Title, NumAchievements, ImageIcon, Hashes }] }
- *   games.json                [{ system, key, ...metadatos, media: [{ type, source, file, region }] }]
- *   media/<ruta>              ficheros multimedia (misma ruta relativa que DATA_DIR/media)
+ *   games.json                [{ system, roms, ...metadatos, media: [{ type, source, file, region }] }]
+ *   grouping.json             evidencias externas (Retool, ScreenScraper), reglas manuales y "no encontrados"
+ *   wikidata.json             subconjunto local de Wikidata (items y etiquetas)
+ *   patches/                  parches de romhacks + patches.json
+ *   retool/                   listas de clones y metadatos de Retool (repositorio congelado)
+ *   media/<ruta>              imagenes (misma ruta relativa que DATA_DIR/media)
+ *   media-large/<ruta>        manuales y videos
+ *
+ * Los juegos se identifican por los nombres de sus roms (los ids y titulos cambian entre instancias).
  */
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
-import type { DatType, MediaType } from '@prisma/client';
+import type { DatType, MediaType, Prisma } from '@prisma/client';
 import { env } from '../../config/env.js';
 import { prisma } from '../../lib/prisma.js';
 import { enqueue, type JobContext } from '../../lib/jobs.js';
 import { importDat } from '../dats/importer.js';
 import { storeRaGames } from '../ra/routes.js';
 import { rematchAll } from '../scanner/service.js';
+import { addRomEvidence, resolveRomGroups, type EvidenceSource } from '../grouping/service.js';
 
 interface ManifestEntry {
   file: string;
   system: string;
   type: DatType;
+  priority?: number;
 }
 
 interface SeedGame {
   system: string;
-  key: string;
+  // Antes: titulo normalizado. Ahora: nombres de roms del juego
+  key?: string;
+  roms?: string[];
   releaseYear: number | null;
   developer: string | null;
   publisher: string | null;
@@ -37,7 +48,29 @@ interface SeedGame {
   players: string | null;
   description: string | null;
   ssGameId: number | null;
-  media: { type: MediaType; source: string; file: string; region: string | null }[];
+  tgdbGameId?: number | null;
+  franchiseName?: string | null;
+  metaSources?: Record<string, string> | null;
+  media: { type: MediaType; source: string; file: string; region: string | null; language?: string | null }[];
+}
+
+interface SeedGrouping {
+  evidence: { system: string; rom: string; key: string; source: string }[];
+  romRules: { rule: string; a: string; b: string; system: string }[];
+  workRules: { rule: string; system: string; rom: string; wikidataId: string | null }[];
+  misses: { system: string; rom: string; source: string; at: string }[];
+}
+
+interface SeedPatch {
+  system: string;
+  hack: string;
+  format: string;
+  file: string;
+  sha1: string;
+  baseRom: string | null;
+  baseCrc32: string | null;
+  targetCrc32: string | null;
+  sourceUrl: string | null;
 }
 
 const exists = (p: string) => fs.promises.access(p).then(() => true, () => false);
@@ -51,12 +84,25 @@ async function copyIfMissing(src: string, dest: string) {
   return true;
 }
 
+// Manuales y videos van a media-large (ruta relativa en DATA_DIR/media: large/...)
+const seedMediaPath = (dir: string, rel: string) => (rel.startsWith('large' + path.sep) || rel.startsWith('large/') ? path.join(dir, 'media-large', rel.slice(6)) : path.join(dir, 'media', rel));
+
+// Roms de juegos de DATs (no subidas de usuarios) como identificador estable
+async function romNamesByGame(gameIds: number[]) {
+  const map = new Map<number, string[]>();
+  for (let i = 0; i < gameIds.length; i += 5000) {
+    const roms = await prisma.rom.findMany({ where: { gameId: { in: gameIds.slice(i, i + 5000) }, datSource: { type: { not: 'USER' } } }, select: { gameId: true, name: true }, orderBy: { id: 'asc' } });
+    for (const r of roms) map.set(r.gameId, [...(map.get(r.gameId) ?? []), r.name]);
+  }
+  return map;
+}
+
 export async function exportSeed(ctx?: JobContext) {
   const dir = env.seedDir;
   await fs.promises.mkdir(path.join(dir, 'dats'), { recursive: true });
 
   // DATs: se localiza el fichero por nombre o, si no consta, por sha1 entre los descargados
-  const sources = await prisma.datSource.findMany({ include: { system: true } });
+  const sources = await prisma.datSource.findMany({ where: { type: { not: 'USER' } }, include: { system: true } });
   const datFiles = (await fs.promises.readdir(env.datsDir).catch(() => [] as string[])).filter((f) => /\.(dat|xml)$/i.test(f));
   const bySha: Map<string, string> = new Map();
   const manifest: ManifestEntry[] = [];
@@ -67,16 +113,19 @@ export async function exportSeed(ctx?: JobContext) {
       file = bySha.get(s.fileSha1) ?? null;
     }
     if (!file) {
-      ctx?.log(`DAT file not found for ${s.system.slug} ${s.type} "${s.name}"`);
-      continue;
-    }
-    await fs.promises.copyFile(path.join(env.datsDir, file), path.join(dir, 'dats', file));
-    manifest.push({ file, system: s.system.slug, type: s.type });
+      // Puede estar ya en la semilla (aplicada desde otra instancia)
+      if (s.fileName && (await exists(path.join(dir, 'dats', path.basename(s.fileName))))) file = path.basename(s.fileName);
+      else {
+        ctx?.log(`DAT file not found for ${s.system.slug} ${s.type} "${s.name}"`);
+        continue;
+      }
+    } else await fs.promises.copyFile(path.join(env.datsDir, file), path.join(dir, 'dats', file));
+    manifest.push({ file, system: s.system.slug, type: s.type, priority: s.priority });
   }
   await fs.promises.writeFile(path.join(dir, 'dats', 'manifest.json'), JSON.stringify(manifest, null, 1));
 
   // RetroAchievements
-  const raGames = await prisma.raGame.findMany({ include: { system: { select: { slug: true } }, hashes: true } });
+  const raGames = await prisma.raGame.findMany({ include: { system: { select: { slug: true } }, hashes: true }, orderBy: { id: 'asc' } });
   const ra: Record<string, unknown[]> = {};
   for (const g of raGames)
     (ra[g.system.slug] ??= []).push({ ID: g.id, Title: g.title, NumAchievements: g.numAchievements, ImageIcon: g.imageIcon, Hashes: g.hashes.map((h) => h.hash) });
@@ -84,22 +133,26 @@ export async function exportSeed(ctx?: JobContext) {
 
   // Metadatos y multimedia
   const games = await prisma.game.findMany({
-    where: { OR: [{ scrapedAt: { not: null } }, { media: { some: {} } }] },
+    where: { OR: [{ scrapedAt: { not: null } }, { media: { some: {} } }, { developer: { not: null } }, { releaseYear: { not: null } }, { genre: { not: null } }, { franchiseName: { not: null } }, { tgdbGameId: { not: null } }] },
     include: { system: { select: { slug: true } }, media: true },
+    orderBy: { id: 'asc' },
   });
+  const names = await romNamesByGame(games.map((g) => g.id));
   const out: SeedGame[] = [];
   let copied = 0;
   for (const [i, g] of games.entries()) {
+    const roms = names.get(g.id);
+    if (!roms?.length) continue;
     const media: SeedGame['media'] = [];
     for (const m of g.media) {
       const src = path.join(env.mediaDir, m.path);
       if (!(await exists(src))) continue;
-      if (await copyIfMissing(src, path.join(dir, 'media', m.path))) copied++;
-      media.push({ type: m.type, source: m.source, file: m.path, region: m.region });
+      if (await copyIfMissing(src, seedMediaPath(dir, m.path))) copied++;
+      media.push({ type: m.type, source: m.source, file: m.path, region: m.region, language: m.language });
     }
     out.push({
       system: g.system.slug,
-      key: g.titleNormalized,
+      roms,
       releaseYear: g.releaseYear,
       developer: g.developer,
       publisher: g.publisher,
@@ -107,12 +160,71 @@ export async function exportSeed(ctx?: JobContext) {
       players: g.players,
       description: g.description,
       ssGameId: g.ssGameId,
+      tgdbGameId: g.tgdbGameId,
+      franchiseName: g.franchiseName,
+      metaSources: (g.metaSources as Record<string, string> | null) ?? null,
       media,
     });
-    await ctx?.progress(i + 1, games.length, g.title);
+    if (i % 200 === 0) await ctx?.progress(i + 1, games.length, g.title);
   }
   await fs.promises.writeFile(path.join(dir, 'games.json'), JSON.stringify(out));
-  const res = { dats: manifest.length, raGames: raGames.length, games: out.length, mediaCopied: copied, dir };
+
+  // Agrupacion: evidencias que no se pueden regenerar desde los DATs y decisiones manuales
+  const romName = new Map<number, { name: string; slug: string }>();
+  const loadRoms = async (ids: number[]) => {
+    const missing = [...new Set(ids)].filter((id) => !romName.has(id));
+    for (let i = 0; i < missing.length; i += 5000)
+      for (const r of await prisma.rom.findMany({ where: { id: { in: missing.slice(i, i + 5000) } }, select: { id: true, name: true, game: { select: { system: { select: { slug: true } } } } } }))
+        romName.set(r.id, { name: r.name, slug: r.game.system.slug });
+  };
+  const evidence = await prisma.groupingEvidence.findMany({ where: { kind: 'rom-game', source: { in: ['retool', 'screenscraper', 'manual'] } } });
+  const rules = await prisma.groupingRule.findMany();
+  const misses = await prisma.scrapeMiss.findMany();
+  const missRoms = await prisma.rom.findMany({ where: { gameId: { in: misses.map((m) => m.gameId) } }, select: { id: true, gameId: true }, orderBy: { id: 'asc' } });
+  const gameRom = new Map<number, number>();
+  for (const r of missRoms) if (!gameRom.has(r.gameId)) gameRom.set(r.gameId, r.id);
+  const ruleGames = rules.filter((r) => r.aGameId).map((r) => r.aGameId!);
+  for (const r of await prisma.rom.findMany({ where: { gameId: { in: ruleGames } }, select: { id: true, gameId: true }, orderBy: { id: 'asc' } })) if (!gameRom.has(r.gameId)) gameRom.set(r.gameId, r.id);
+  await loadRoms([...evidence.map((e) => e.romId!).filter(Boolean), ...rules.flatMap((r) => [r.aRomId, r.bRomId]).filter((x): x is number => !!x), ...gameRom.values()]);
+  const grouping: SeedGrouping = {
+    evidence: evidence.filter((e) => e.romId && romName.has(e.romId)).map((e) => ({ system: romName.get(e.romId!)!.slug, rom: romName.get(e.romId!)!.name, key: e.key, source: e.source })),
+    romRules: rules
+      .filter((r) => r.kind === 'rom-game' && r.aRomId && r.bRomId && romName.has(r.aRomId) && romName.has(r.bRomId))
+      .map((r) => ({ rule: r.rule, a: romName.get(r.aRomId!)!.name, b: romName.get(r.bRomId!)!.name, system: romName.get(r.aRomId!)!.slug })),
+    workRules: rules
+      .filter((r) => r.kind === 'game-work' && r.aGameId && gameRom.has(r.aGameId))
+      .map((r) => ({ rule: r.rule, system: romName.get(gameRom.get(r.aGameId!)!)!.slug, rom: romName.get(gameRom.get(r.aGameId!)!)!.name, wikidataId: r.wikidataId })),
+    misses: misses.filter((m) => gameRom.has(m.gameId)).map((m) => ({ system: romName.get(gameRom.get(m.gameId)!)!.slug, rom: romName.get(gameRom.get(m.gameId)!)!.name, source: m.source, at: m.at.toISOString() })),
+  };
+  await fs.promises.writeFile(path.join(dir, 'grouping.json'), JSON.stringify(grouping));
+
+  // Wikidata
+  const wdItems = await prisma.wikidataItem.findMany({ orderBy: { qid: 'asc' } });
+  if (wdItems.length) {
+    const labels = await prisma.wikidataLabel.findMany({ orderBy: { qid: 'asc' } });
+    await fs.promises.writeFile(path.join(dir, 'wikidata.json'), JSON.stringify({ items: wdItems, labels }));
+  }
+
+  // Parches
+  const patches = await prisma.romPatch.findMany({ include: { hack: { include: { game: { include: { system: true } } } } } });
+  const seedPatches: SeedPatch[] = [];
+  const baseNames = new Map((await prisma.rom.findMany({ where: { id: { in: patches.map((p) => p.baseRomId).filter((x): x is number => !!x) } }, select: { id: true, name: true } })).map((r) => [r.id, r.name]));
+  for (const p of patches) {
+    const src = path.join(env.patchesDir, p.path);
+    if (!(await exists(src))) continue;
+    await copyIfMissing(src, path.join(dir, 'patches', p.path));
+    seedPatches.push({ system: p.hack.game.system.slug, hack: p.hack.title, format: p.format, file: p.path, sha1: p.sha1, baseRom: p.baseRomId ? baseNames.get(p.baseRomId) ?? null : null, baseCrc32: p.baseCrc32, targetCrc32: p.targetCrc32, sourceUrl: p.sourceUrl });
+  }
+  if (seedPatches.length) await fs.promises.writeFile(path.join(dir, 'patches', 'patches.json'), JSON.stringify(seedPatches, null, 1));
+
+  // Retool (congelado): copia de lo descargado
+  const retoolDir = path.join(env.dataDir, 'retool');
+  for (const f of await fs.promises.readdir(retoolDir).catch(() => [] as string[])) {
+    await fs.promises.mkdir(path.join(dir, 'retool'), { recursive: true });
+    await fs.promises.copyFile(path.join(retoolDir, f), path.join(dir, 'retool', f));
+  }
+
+  const res = { dats: manifest.length, raGames: raGames.length, games: out.length, mediaCopied: copied, evidence: grouping.evidence.length, wikidata: wdItems.length, patches: seedPatches.length, dir };
   ctx?.log(JSON.stringify(res));
   return res;
 }
@@ -121,19 +233,21 @@ export async function applySeed(ctx?: JobContext) {
   const dir = env.seedDir;
   if (!(await exists(dir))) return { skipped: 'no seed dir' };
   const systems = new Map((await prisma.system.findMany()).map((s) => [s.slug, s]));
-  const res = { datsImported: 0, datsSkipped: 0, raGames: 0, games: 0, media: 0 };
+  const res = { datsImported: 0, datsSkipped: 0, raGames: 0, games: 0, media: 0, evidence: 0, wikidata: 0, patches: 0 };
 
-  // 1. DATs (los de hacks al final para enlazarlos con las roms base)
+  // 1. DATs (por prioridad y los de hacks al final para enlazarlos con las roms base)
   const manifest = await readJson<ManifestEntry[]>(path.join(dir, 'dats', 'manifest.json'), []);
-  manifest.sort((a, b) => Number(a.type === 'HACKS') - Number(b.type === 'HACKS'));
+  manifest.sort((a, b) => Number(a.type === 'HACKS') - Number(b.type === 'HACKS') || (a.priority ?? 0) - (b.priority ?? 0));
+  const touched = new Set<number>();
   for (const [i, m] of manifest.entries()) {
     const system = systems.get(m.system);
     const file = path.join(dir, 'dats', m.file);
     if (!system || !(await exists(file))) continue;
-    const r = await importDat(await fs.promises.readFile(file, 'utf8'), { systemId: system.id, type: m.type, fileName: m.file });
+    const r = await importDat(await fs.promises.readFile(file, 'utf8'), { systemId: system.id, type: m.type, fileName: m.file, priority: m.priority ?? 0, resolve: false });
     if (r.skipped) res.datsSkipped++;
     else {
       res.datsImported++;
+      touched.add(system.id);
       ctx?.log(`Imported ${m.file}`);
       // Copia de trabajo para futuras exportaciones
       await copyIfMissing(file, path.join(env.datsDir, m.file));
@@ -151,33 +265,117 @@ export async function applySeed(ctx?: JobContext) {
     res.raGames += (await storeRaGames(s.id, games)).games;
   }
 
-  // 3. Metadatos y multimedia: solo se rellena lo que falta
+  // Indice nombre de rom -> rom (por sistema)
+  const romIndex = new Map<string, { id: number; gameId: number }>();
+  for (const r of await prisma.rom.findMany({ select: { id: true, gameId: true, name: true, game: { select: { system: { select: { slug: true } } } } } })) romIndex.set(`${r.game.system.slug}|${r.name}`, { id: r.id, gameId: r.gameId });
+  const romOf = (slug: string, name: string) => romIndex.get(`${slug}|${name}`);
+
+  // 3. Agrupacion: evidencias externas y reglas manuales, antes de resolver
+  const grouping = await readJson<SeedGrouping | null>(path.join(dir, 'grouping.json'), null);
+  if (grouping) {
+    const ev = grouping.evidence
+      .map((e) => ({ r: romOf(e.system, e.rom), e }))
+      .filter((x) => x.r)
+      .map((x) => ({ romId: x.r!.id, systemId: systems.get(x.e.system)!.id, key: x.e.key, source: x.e.source as EvidenceSource }));
+    await addRomEvidence(ev);
+    res.evidence = ev.length;
+    for (const r of grouping.romRules) {
+      const a = romOf(r.system, r.a);
+      const b = romOf(r.system, r.b);
+      if (!a || !b) continue;
+      if (await prisma.groupingRule.findFirst({ where: { kind: 'rom-game', OR: [{ aRomId: a.id, bRomId: b.id }, { aRomId: b.id, bRomId: a.id }] } })) continue;
+      await prisma.groupingRule.create({ data: { kind: 'rom-game', rule: r.rule, aRomId: a.id, bRomId: b.id } });
+    }
+    for (const s of systems.values()) touched.add(s.id);
+  }
+  for (const id of touched) await resolveRomGroups(id);
+
+  // Tras resolver, los juegos ya son los definitivos
+  for (const r of await prisma.rom.findMany({ select: { id: true, gameId: true, name: true, game: { select: { system: { select: { slug: true } } } } } })) romIndex.set(`${r.game.system.slug}|${r.name}`, { id: r.id, gameId: r.gameId });
+  if (grouping) {
+    for (const w of grouping.workRules) {
+      const r = romOf(w.system, w.rom);
+      if (!r || (await prisma.groupingRule.findFirst({ where: { kind: 'game-work', aGameId: r.gameId, wikidataId: w.wikidataId } }))) continue;
+      await prisma.groupingRule.create({ data: { kind: 'game-work', rule: w.rule, aGameId: r.gameId, wikidataId: w.wikidataId } });
+    }
+    for (const m of grouping.misses) {
+      const r = romOf(m.system, m.rom);
+      if (!r) continue;
+      await prisma.scrapeMiss.upsert({ where: { gameId_source: { gameId: r.gameId, source: m.source } }, create: { gameId: r.gameId, source: m.source, at: new Date(m.at) }, update: {} });
+    }
+  }
+
+  // 4. Metadatos y multimedia: solo se rellena lo que falta
   const seedGames = await readJson<SeedGame[]>(path.join(dir, 'games.json'), []);
   for (const sg of seedGames) {
     const s = systems.get(sg.system);
     if (!s) continue;
-    const game = await prisma.game.findUnique({ where: { systemId_titleNormalized: { systemId: s.id, titleNormalized: sg.key } }, include: { media: true } });
-    if (!game) continue;
+    let gameId: number | undefined;
+    for (const n of sg.roms ?? []) {
+      gameId = romOf(sg.system, n)?.gameId;
+      if (gameId) break;
+    }
+    if (!gameId && sg.key) gameId = (await prisma.game.findFirst({ where: { systemId: s.id, titleNormalized: sg.key }, orderBy: { id: 'asc' } }))?.id;
+    if (!gameId) continue;
+    const game = await prisma.game.findUniqueOrThrow({ where: { id: gameId }, include: { media: true } });
     const data: Record<string, unknown> = {};
-    for (const k of ['releaseYear', 'developer', 'publisher', 'genre', 'players', 'description', 'ssGameId'] as const)
+    for (const k of ['releaseYear', 'developer', 'publisher', 'genre', 'players', 'description', 'ssGameId', 'tgdbGameId', 'franchiseName'] as const)
       if (game[k] == null && sg[k] != null) data[k] = sg[k];
+    if (sg.metaSources && !game.metaSources) data.metaSources = sg.metaSources;
     if (Object.keys(data).length) {
       await prisma.game.update({ where: { id: game.id }, data: { ...data, scrapedAt: game.scrapedAt ?? new Date() } });
       res.games++;
     }
     for (const m of sg.media) {
       if (game.media.some((x) => x.type === m.type && x.source === m.source)) continue;
-      const src = path.join(dir, 'media', m.file);
+      const src = seedMediaPath(dir, m.file);
       if (!(await exists(src))) continue;
       // La ruta incluye el id del juego de la instancia original: se recoloca con el id local
-      const rel = path.join(s.slug, String(game.id), path.basename(m.file));
+      const large = m.file.startsWith('large/') || m.file.startsWith('large' + path.sep);
+      const rel = path.join(...(large ? ['large'] : []), s.slug, String(game.id), path.basename(m.file));
       await copyIfMissing(src, path.join(env.mediaDir, rel));
-      await prisma.media.create({ data: { gameId: game.id, type: m.type, source: m.source, path: rel, region: m.region } });
+      const size = (await fs.promises.stat(src)).size;
+      await prisma.media.create({ data: { gameId: game.id, type: m.type, source: m.source, path: rel, region: m.region, language: m.language ?? null, size } });
       res.media++;
     }
   }
 
+  // 5. Wikidata
+  const wd = await readJson<{ items: Prisma.WikidataItemCreateManyInput[]; labels: Prisma.WikidataLabelCreateManyInput[] } | null>(path.join(dir, 'wikidata.json'), null);
+  if (wd) {
+    const known = await prisma.wikidataItem.count();
+    if (known < wd.items.length) {
+      for (let i = 0; i < wd.items.length; i += 1000) {
+        const r = await prisma.wikidataItem.createMany({ data: wd.items.slice(i, i + 1000).map((x) => ({ ...x, modified: x.modified ? new Date(x.modified) : null, fetchedAt: x.fetchedAt ? new Date(x.fetchedAt) : undefined })), skipDuplicates: true });
+        res.wikidata += r.count;
+      }
+      await prisma.wikidataLabel.createMany({ data: wd.labels, skipDuplicates: true });
+    }
+  }
+
+  // 6. Parches
+  const patches = await readJson<SeedPatch[]>(path.join(dir, 'patches', 'patches.json'), []);
+  for (const p of patches) {
+    if (await prisma.romPatch.findUnique({ where: { sha1: p.sha1 } })) continue;
+    const s = systems.get(p.system);
+    const hack = s ? await prisma.romHack.findFirst({ where: { title: p.hack, game: { systemId: s.id } } }) : null;
+    if (!hack) continue;
+    const src = path.join(dir, 'patches', p.file);
+    if (!(await exists(src))) continue;
+    await copyIfMissing(src, path.join(env.patchesDir, p.file));
+    const base = p.baseRom ? romOf(p.system, p.baseRom) : null;
+    await prisma.romPatch.create({ data: { hackId: hack.id, format: p.format, path: p.file, size: (await fs.promises.stat(src)).size, sha1: p.sha1, baseRomId: base?.id ?? null, baseCrc32: p.baseCrc32, targetCrc32: p.targetCrc32, sourceUrl: p.sourceUrl } });
+    res.patches++;
+  }
+
+  // Retool: copia de trabajo
+  for (const f of await fs.promises.readdir(path.join(dir, 'retool')).catch(() => [] as string[])) await copyIfMissing(path.join(dir, 'retool', f), path.join(env.dataDir, 'retool', f));
+
   if (res.datsImported || res.raGames) await rematchAll();
+  if (res.wikidata) {
+    const { resolveWorks } = await import('../sync/wikidata.js');
+    await resolveWorks(undefined, ctx);
+  }
   ctx?.log(JSON.stringify(res));
   return res;
 }

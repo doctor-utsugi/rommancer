@@ -1,5 +1,7 @@
 // DATs publicos de libretro-database para todos los sistemas soportados
-const BASE = 'https://raw.githubusercontent.com/libretro/libretro-database/master/metadat';
+import { env } from '../../config/env.js';
+
+const BASE = `${env.github.rawUrl}/libretro/libretro-database/master/metadat`;
 
 export interface DatPreset {
   id: string;

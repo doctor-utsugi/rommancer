@@ -1,0 +1,3 @@
+-- AlterTable
+ALTER TABLE `DatSource` ADD COLUMN `priority` INTEGER NOT NULL DEFAULT 0;
+

@@ -4,7 +4,8 @@ import { prisma } from '../../lib/prisma.js';
 import { forbidden, notFound } from '../../lib/http.js';
 import { safeFileName } from '../../lib/romname.js';
 import type { AuthUser } from '../auth/middleware.js';
-import { ownedRomIds, pickRom, type RomPreference } from '../roms/service.js';
+import { ownedRomIds, pickFromWork, pickRom, type RomPreference } from '../roms/service.js';
+import { materializeHack } from '../patches/service.js';
 
 export async function loadList(id: number, user: AuthUser, edit = false): Promise<List> {
   const list = await prisma.list.findUnique({ where: { id }, include: { shares: true } });
@@ -17,9 +18,10 @@ export async function loadList(id: number, user: AuthUser, edit = false): Promis
   return list;
 }
 
-export function itemKey(i: { gameId?: number | null; romId?: number | null; hackId?: number | null }) {
+export function itemKey(i: { gameId?: number | null; romId?: number | null; hackId?: number | null; workId?: number | null }) {
   if (i.romId) return `r${i.romId}`;
   if (i.hackId) return `h${i.hackId}`;
+  if (i.workId) return `w${i.workId}`;
   if (i.gameId) return `g${i.gameId}`;
   throw new Error('Empty item');
 }
@@ -45,16 +47,19 @@ export async function resolveListFiles(listId: number, pref: RomPreference = {})
       game: { include: { system: true, roms: true } },
       rom: { include: { game: { include: { system: true } } } },
       hack: { include: { game: { include: { system: true } }, files: { include: { romPath: true } } } },
+      work: { include: { games: { include: { system: true, roms: true } } } },
     },
   });
-  const romIds = items.flatMap((i) => (i.rom ? [i.rom.id] : (i.game?.roms.map((r) => r.id) ?? [])));
-  const owned = await ownedRomIds({ romIds });
+  const romIds = items.flatMap((i) => (i.rom ? [i.rom.id] : (i.game?.roms.map((r) => r.id) ?? i.work?.games.flatMap((g) => g.roms.map((r) => r.id)) ?? [])));
+  // Listas y dispositivos usan tambien las roms no verificadas
+  const owned = await ownedRomIds({ romIds, include: 'any' });
   const out: TransferItem[] = [];
   const missing: { listItemId: number; title: string }[] = [];
 
   for (const it of items) {
     if (it.hack) {
-      const f = it.hack.files[0];
+      // Sin fichero pero con parche y base: se genera en su destino final
+      const f = it.hack.files[0] ?? (await materializeHack(it.hack.id).catch(() => null));
       if (!f) {
         missing.push({ listItemId: it.id, title: it.hack.title });
         continue;
@@ -70,9 +75,10 @@ export async function resolveListFiles(listId: number, pref: RomPreference = {})
       });
       continue;
     }
-    const rom = it.rom ?? (it.game ? pickRom(it.game.roms, effective, owned) : null);
-    const system = it.rom?.game.system ?? it.game?.system;
-    const title = it.rom?.name ?? it.game?.title ?? '?';
+    const fromWork = it.work ? pickFromWork(it.work.games, effective, owned) : null;
+    const rom = it.rom ?? (it.game ? pickRom(it.game.roms, effective, owned) : (fromWork?.rom ?? null));
+    const system = it.rom?.game.system ?? it.game?.system ?? fromWork?.game.system;
+    const title = it.rom?.name ?? it.game?.title ?? it.work?.title ?? '?';
     if (!rom || !system || !owned.has(rom.id)) {
       missing.push({ listItemId: it.id, title });
       continue;

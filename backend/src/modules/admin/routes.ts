@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { Router } from 'express';
+import { Prisma } from '@prisma/client';
 import multer from 'multer';
 import { z } from 'zod';
 import { env } from '../../config/env.js';
@@ -13,6 +14,9 @@ import { DAT_PRESETS } from '../dats/presets.js';
 import { applySeed, exportSeed, scheduleSeedExport } from '../seed/service.js';
 import { rematchAll, scanPath } from '../scanner/service.js';
 import { applyOrganize, planOrganize } from '../roms/organize.js';
+import { SOURCES, forceSync } from '../sync/service.js';
+import { addRomRule, resolveRomGroups } from '../grouping/service.js';
+import { resolveWorks } from '../sync/wikidata.js';
 
 registerJob('scan', async (ctx) => scanPath(ctx.params.romPathId, ctx, !!ctx.params.force));
 registerJob('rematch', async () => rematchAll());
@@ -32,7 +36,7 @@ registerJob('dat-import', async (ctx) => {
   } else {
     text = await fs.promises.readFile(file, 'utf8');
   }
-  const result = await importDat(text, { systemId, type, fileName: fileName ?? (file ? path.basename(file) : undefined), force: !!ctx.params.force });
+  const result = await importDat(text, { systemId, type, fileName: fileName ?? (file ? path.basename(file) : undefined), force: !!ctx.params.force, resolve: !ctx.params.skipRematch });
   ctx.log(`Imported: ${JSON.stringify(result)}`);
   if ((!result.skipped || ctx.params.forceRematch) && !ctx.params.skipRematch) {
     ctx.log('Rematching files');
@@ -50,7 +54,10 @@ const pathBody = z.object({
   label: z.string().min(1).max(128),
   path: z.string().min(1).max(700),
   systemId: z.number().int().nullable().optional(),
-  isUploadTarget: z.boolean().optional(),
+  // Destino de roms nuevas: sistemas que recibe, predeterminada para el resto y esquema de carpetas
+  targetSystems: z.array(z.string()).nullable().optional(),
+  isDefaultTarget: z.boolean().optional(),
+  targetScheme: z.string().max(32).optional(),
   readOnly: z.boolean().optional(),
 });
 
@@ -74,8 +81,8 @@ adminRouter.post('/paths', async (req, res) => {
   const body = pathBody.parse(req.body);
   const abs = path.resolve(body.path);
   await checkDir(abs);
-  if (body.isUploadTarget) await prisma.romPath.updateMany({ data: { isUploadTarget: false } });
-  res.status(201).json(await prisma.romPath.create({ data: { ...body, path: abs } }));
+  if (body.isDefaultTarget) await prisma.romPath.updateMany({ data: { isDefaultTarget: false } });
+  res.status(201).json(await prisma.romPath.create({ data: { ...body, targetSystems: body.targetSystems ?? undefined, path: abs } }));
 });
 
 adminRouter.patch('/paths/:id', async (req, res) => {
@@ -84,8 +91,9 @@ adminRouter.patch('/paths/:id', async (req, res) => {
     body.path = path.resolve(body.path);
     await checkDir(body.path);
   }
-  if (body.isUploadTarget) await prisma.romPath.updateMany({ data: { isUploadTarget: false } });
-  res.json(await prisma.romPath.update({ where: { id: intParam(req) }, data: body }));
+  if (body.isDefaultTarget) await prisma.romPath.updateMany({ data: { isDefaultTarget: false } });
+  const { targetSystems, ...rest } = body;
+  res.json(await prisma.romPath.update({ where: { id: intParam(req) }, data: { ...rest, ...(targetSystems !== undefined ? { targetSystems: targetSystems ?? Prisma.DbNull } : {}) } }));
 });
 
 adminRouter.delete('/paths/:id', async (req, res) => {
@@ -175,10 +183,9 @@ adminRouter.post('/dats/fetch-presets', async (req, res) => {
   res.status(202).json(jobs);
 });
 
-adminRouter.delete('/dats/:id', async (req, res) => {
-  await prisma.datSource.delete({ where: { id: intParam(req) } });
-  await prisma.game.deleteMany({ where: { roms: { none: {} }, hacks: { none: {} }, listItems: { none: {} } } });
-  res.status(202).json(await enqueue('rematch', {}, me(req).id));
+// Los datos externos son permanentes: un DAT no se borra (se reimporta o se actualiza)
+adminRouter.delete('/dats/:id', async () => {
+  throw badRequest('DATs are permanent');
 });
 
 adminRouter.post('/rematch', async (req, res) => {
@@ -202,6 +209,90 @@ adminRouter.get('/tools', async (_req, res) => {
     sevenZip: await hasTool(env.bins.sevenZip),
     screenscraper: !!(env.screenscraper.devId && env.screenscraper.user),
     retroachievements: !!env.ra.apiKey,
+    thegamesdb: !!env.tgdb.apiKey,
     seed: fs.existsSync(env.seedDir),
   });
+});
+
+// --- Sincronizacion de fuentes externas ---
+adminRouter.get('/sync', async (_req, res) => {
+  const [states, jobs] = await Promise.all([
+    prisma.sourceState.findMany({ orderBy: { key: 'asc' } }),
+    prisma.job.findMany({ where: { type: { in: ['external-sync', 'nointro-pack'] } }, orderBy: { id: 'desc' }, take: 20 }),
+  ]);
+  const nointro = { available: states.find((s) => s.key === 'nointro:available')?.version ?? null, imported: states.find((s) => s.key === 'nointro:imported')?.version ?? null };
+  res.json({ cron: env.externalSyncCron, sources: SOURCES, nointro, states, history: jobs });
+});
+
+adminRouter.post('/sync', async (req, res) => {
+  const body = z.object({ sources: z.array(z.enum(SOURCES)).min(1).default([...SOURCES]), system: z.string().optional() }).parse(req.body ?? {});
+  res.status(202).json(await forceSync(body.sources, body.system, me(req).id));
+});
+
+// Paquete diario P/C de DAT-o-MATIC descargado por el admin (la web no permite descargas automaticas)
+const packUpload = multer({ dest: path.join(env.tmpDir, 'uploads'), limits: { fileSize: 1024 * 1024 * 1024 } });
+adminRouter.post('/sync/nointro-pack', packUpload.single('file'), async (req, res) => {
+  if (!req.file) throw badRequest('Missing file');
+  const dest = path.join(env.tmpDir, `nointro-${path.basename(req.file.originalname).replace(/[^\w.() -]/g, '_')}`);
+  await fs.promises.rename(req.file.path, dest);
+  res.status(202).json(await enqueue('nointro-pack', { file: dest }, me(req).id));
+});
+
+// --- Revision de agrupaciones ---
+adminRouter.get('/review', async (req, res) => {
+  const q = z.object({ kind: z.string().optional(), status: z.string().default('open'), systemId: z.coerce.number().int().optional() }).parse(req.query);
+  const items = await prisma.reviewItem.findMany({
+    where: { status: q.status, ...(q.kind ? { kind: q.kind } : {}), ...(q.systemId ? { systemId: q.systemId } : {}) },
+    orderBy: { id: 'asc' },
+    take: 200,
+  });
+  const gameIds = items.map((i) => i.gameId).filter((x): x is number => !!x);
+  const romIds = items.flatMap((i) => ((i.payload as { romIds?: number[] }).romIds ?? []));
+  const [games, roms] = await Promise.all([
+    prisma.game.findMany({ where: { id: { in: gameIds } }, select: { id: true, title: true, system: { select: { slug: true } } } }),
+    prisma.rom.findMany({ where: { id: { in: romIds } }, select: { id: true, name: true, gameId: true } }),
+  ]);
+  const lowConfidence = await prisma.game.count({ where: { groupConfidence: 'low' } });
+  res.json({ lowConfidence, items: items.map((i) => ({ ...i, game: games.find((g) => g.id === i.gameId) ?? null, roms: roms.filter((r) => ((i.payload as { romIds?: number[] }).romIds ?? []).includes(r.id)) })) });
+});
+
+adminRouter.post('/review/:id', async (req, res) => {
+  const body = z
+    .object({
+      // conflict: same/different; wikidata: link (qid) / none
+      action: z.enum(['same', 'different', 'link', 'none', 'dismiss']),
+      wikidataId: z.string().regex(/^Q\d+$/).optional(),
+    })
+    .parse(req.body);
+  const item = await prisma.reviewItem.findUniqueOrThrow({ where: { id: intParam(req) } });
+  const u = me(req);
+  const payload = item.payload as { romIds?: number[]; candidates?: { qid: string }[] };
+  if (item.kind === 'conflict' && (body.action === 'same' || body.action === 'different') && payload.romIds?.length) {
+    await addRomRule(body.action, payload.romIds, u.id);
+    if (item.systemId) await resolveRomGroups(item.systemId);
+  }
+  if (item.kind === 'wikidata' && item.gameId) {
+    if (body.action === 'link' && body.wikidataId) {
+      await prisma.groupingRule.create({ data: { kind: 'game-work', rule: 'same', aGameId: item.gameId, wikidataId: body.wikidataId, userId: u.id } });
+    } else if (body.action === 'none') {
+      for (const c of payload.candidates ?? []) await prisma.groupingRule.create({ data: { kind: 'game-work', rule: 'different', aGameId: item.gameId, wikidataId: c.qid, userId: u.id } });
+    }
+    await resolveWorks(item.systemId ?? undefined);
+  }
+  await prisma.reviewItem.update({ where: { id: item.id }, data: { status: body.action === 'dismiss' ? 'dismissed' : 'resolved', resolvedAt: new Date(), resolvedBy: u.id } });
+  await scheduleSeedExport();
+  res.status(204).end();
+});
+
+// Enlace manual de un juego con un elemento de Wikidata (o desenlace)
+adminRouter.post('/games/:id/work', async (req, res) => {
+  const { wikidataId } = z.object({ wikidataId: z.string().regex(/^Q\d+$/).nullable() }).parse(req.body);
+  const game = await prisma.game.findUniqueOrThrow({ where: { id: intParam(req) } });
+  await prisma.groupingRule.deleteMany({ where: { kind: 'game-work', aGameId: game.id, rule: 'same' } });
+  if (wikidataId) await prisma.groupingRule.create({ data: { kind: 'game-work', rule: 'same', aGameId: game.id, wikidataId, userId: me(req).id } });
+  else {
+    if (game.wikidataId) await prisma.groupingRule.create({ data: { kind: 'game-work', rule: 'different', aGameId: game.id, wikidataId: game.wikidataId, userId: me(req).id } });
+    await prisma.game.update({ where: { id: game.id }, data: { workId: null, wikidataId: null } });
+  }
+  res.json(await resolveWorks(game.systemId));
 });

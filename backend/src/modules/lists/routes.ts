@@ -8,11 +8,13 @@ import { prisma } from '../../lib/prisma.js';
 import { badRequest, intParam } from '../../lib/http.js';
 import { safeFileName } from '../../lib/romname.js';
 import { extractEntryStream } from '../../lib/tools.js';
-import { me } from '../auth/middleware.js';
-import { ownedRomIds, pickRom, type RomPreference } from '../roms/service.js';
+import { me, requirePerm, type AuthUser } from '../auth/middleware.js';
+import { queueListScrape } from '../scrape/routes.js';
+import { ownedRomIds, pickFromWork, pickRom, type RomPreference } from '../roms/service.js';
 import { itemKey, loadList, resolveListFiles } from './service.js';
 
 export const listsRouter = Router();
+listsRouter.use(requirePerm('lists'));
 
 const listBody = z.object({
   name: z.string().min(1).max(191),
@@ -28,6 +30,7 @@ const prefSchema = z.object({
   ownedOnly: z.boolean().optional(),
   strictRegions: z.boolean().optional(),
   excludeFlags: z.array(z.string()).optional(),
+  platforms: z.array(z.string()).optional(),
 });
 
 listsRouter.get('/', async (req, res) => {
@@ -68,42 +71,55 @@ listsRouter.get('/:id', async (req, res) => {
         include: {
           game: { include: { system: { select: { slug: true, name: true } }, roms: { select: { id: true, name: true, regions: true, languages: true, flags: true, revision: true, raGameId: true, isBios: true } }, media: { where: { type: 'COVER' }, take: 1 } } },
           rom: { include: { game: { include: { system: { select: { slug: true, name: true } }, media: { where: { type: 'COVER' }, take: 1 } } } } },
-          hack: { include: { game: { include: { system: { select: { slug: true, name: true } } } }, _count: { select: { files: true } } } },
+          hack: { include: { game: { include: { system: { select: { slug: true, name: true } } } }, _count: { select: { files: true, patches: true } } } },
+          work: { include: { games: { include: { system: { select: { slug: true, name: true } }, roms: { select: { id: true, name: true, regions: true, languages: true, flags: true, revision: true, raGameId: true, isBios: true } }, media: { where: { type: 'COVER' }, take: 1 } } } } },
         },
       },
     },
   });
-  const romIds = full.items.flatMap((i) => (i.rom ? [i.rom.id] : (i.game?.roms.map((r) => r.id) ?? [])));
-  const owned = await ownedRomIds({ romIds });
+  const romIds = full.items.flatMap((i) => (i.rom ? [i.rom.id] : (i.game?.roms.map((r) => r.id) ?? i.work?.games.flatMap((g) => g.roms.map((r) => r.id)) ?? [])));
+  const owned = await ownedRomIds({ romIds, include: 'any' });
+  // Multimedia pendiente: juegos de la lista sin portada con una tarea de scraping en cola
+  const pendingScrape = await prisma.job.findMany({ where: { type: 'scrape', status: { in: ['PENDING', 'RUNNING'] }, userId: u.id }, select: { params: true } });
+  const pendingGames = new Set(pendingScrape.flatMap((j) => ((j.params as { gameIds?: number[] }).gameIds ?? [])));
   const pref = { ...((full.derivedFilter as RomPreference | null) ?? {}) };
   const share = full.shares.find((s) => s.userId === u.id);
   res.json({
     ...full,
     canEdit: full.ownerId === u.id || !!share?.canEdit || (full.isCollaborative && (full.visibility === 'PUBLIC' || !!share)),
     items: full.items.map((i) => {
-      const cover = i.game?.media[0] ?? i.rom?.game.media[0];
+      const workPick = i.work ? pickFromWork(i.work.games, { ...pref, ownedOnly: false }, owned) : null;
+      const cover = i.game?.media[0] ?? i.rom?.game.media[0] ?? workPick?.game.media[0] ?? i.work?.games.find((g) => g.media[0])?.media[0];
       let owned_ = false;
       let selectedRom = null;
       if (i.rom) owned_ = owned.has(i.rom.id);
+      else if (i.work) {
+        selectedRom = workPick ? { id: workPick.rom.id, name: workPick.rom.name, system: workPick.game.system.slug } : null;
+        owned_ = i.work.games.some((g) => g.roms.some((r) => owned.has(r.id)));
+      }
       else if (i.game) {
         const pick = pickRom(i.game.roms, { ...pref, ownedOnly: false }, owned);
         selectedRom = pick ? { id: pick.id, name: pick.name } : null;
         owned_ = i.game.roms.some((r) => owned.has(r.id));
-      } else if (i.hack) owned_ = i.hack._count.files > 0;
+      } else if (i.hack) owned_ = i.hack._count.files > 0 || i.hack._count.patches > 0;
+      const gameId = i.gameId ?? i.rom?.gameId ?? i.hack?.gameId ?? workPick?.game.id;
       return {
         id: i.id,
         position: i.position,
         note: i.note,
-        kind: i.rom ? 'rom' : i.hack ? 'hack' : 'game',
-        gameId: i.gameId ?? i.rom?.gameId ?? i.hack?.gameId,
+        kind: i.rom ? 'rom' : i.hack ? 'hack' : i.work ? 'work' : 'game',
+        gameId,
         romId: i.romId,
         hackId: i.hackId,
-        title: i.rom?.name ?? i.hack?.title ?? i.game?.title,
-        system: i.game?.system ?? i.rom?.game.system ?? i.hack?.game.system,
+        workId: i.workId,
+        platforms: i.work?.games.map((g) => g.system.slug),
+        title: i.rom?.name ?? i.hack?.title ?? i.game?.title ?? i.work?.title,
+        system: i.game?.system ?? i.rom?.game.system ?? i.hack?.game.system ?? workPick?.game.system ?? i.work?.games[0]?.system,
+        pendingMedia: !cover && !!gameId && pendingGames.has(gameId),
         cover: cover ? `/api/v1/media/${cover.id}` : null,
         owned: owned_,
         selectedRom,
-        ra: i.rom ? !!i.rom.raGameId : !!i.game?.roms.some((r) => r.raGameId),
+        ra: i.rom ? !!i.rom.raGameId : i.work ? !!workPick?.rom.raGameId : !!i.game?.roms.some((r) => r.raGameId),
       };
     }),
   });
@@ -131,24 +147,37 @@ const itemSchema = z
     gameId: z.number().int().optional(),
     romId: z.number().int().optional(),
     hackId: z.number().int().optional(),
+    workId: z.number().int().optional(),
     note: z.string().max(512).optional(),
   })
-  .refine((i) => i.gameId || i.romId || i.hackId, 'gameId, romId or hackId required');
+  .refine((i) => i.gameId || i.romId || i.hackId || i.workId, 'gameId, romId, hackId or workId required');
 
-async function addItems(listId: number, items: z.infer<typeof itemSchema>[]) {
+async function addItems(listId: number, items: z.infer<typeof itemSchema>[], user?: AuthUser) {
   const max = await prisma.listItem.aggregate({ where: { listId }, _max: { position: true } });
   let pos = (max._max.position ?? -1) + 1;
   const data = items.map((i) => ({
     listId,
-    gameId: i.romId || i.hackId ? null : i.gameId,
+    gameId: i.romId || i.hackId || i.workId ? null : i.gameId,
     romId: i.romId ?? null,
     hackId: i.romId ? null : (i.hackId ?? null),
+    workId: i.romId || i.hackId ? null : (i.workId ?? null),
     note: i.note,
     itemKey: itemKey(i),
     position: pos++,
   }));
   const r = await prisma.listItem.createMany({ data, skipDuplicates: true });
   await prisma.list.update({ where: { id: listId }, data: { updatedAt: new Date() } });
+  // Multimedia de lo anadido, con la cuenta del propio usuario
+  if (user && r.count) {
+    const gameIds = new Set<number>(items.map((i) => i.gameId).filter((x): x is number => !!x));
+    const romIds = items.map((i) => i.romId).filter((x): x is number => !!x);
+    const hackIds = items.map((i) => i.hackId).filter((x): x is number => !!x);
+    const workIds = items.map((i) => i.workId).filter((x): x is number => !!x);
+    if (romIds.length) (await prisma.rom.findMany({ where: { id: { in: romIds } }, select: { gameId: true } })).forEach((x) => gameIds.add(x.gameId));
+    if (hackIds.length) (await prisma.romHack.findMany({ where: { id: { in: hackIds } }, select: { gameId: true } })).forEach((x) => gameIds.add(x.gameId));
+    if (workIds.length) (await prisma.game.findMany({ where: { workId: { in: workIds } }, select: { id: true } })).forEach((x) => gameIds.add(x.id));
+    await queueListScrape(user, [...gameIds]);
+  }
   return r.count;
 }
 
@@ -156,7 +185,7 @@ listsRouter.post('/:id/items', async (req, res) => {
   const list = await loadList(intParam(req), me(req), true);
   const body = z.union([itemSchema, z.object({ items: z.array(itemSchema).max(10000) })]).parse(req.body);
   const items = 'items' in body ? body.items : [body];
-  res.status(201).json({ added: await addItems(list.id, items) });
+  res.status(201).json({ added: await addItems(list.id, items, me(req)) });
 });
 
 listsRouter.delete('/:id/items/:itemId', async (req, res) => {
@@ -207,15 +236,22 @@ async function deriveItems(sourceListId: number, pref: RomPreference) {
   const items = await prisma.listItem.findMany({
     where: { listId: sourceListId },
     orderBy: { position: 'asc' },
-    include: { game: { include: { roms: true } }, rom: { include: { game: { include: { roms: true } } } }, hack: true },
+    include: { game: { include: { roms: true } }, rom: { include: { game: { include: { roms: true } } } }, hack: true, work: { include: { games: { include: { system: true, roms: true } } } } },
   });
-  const allRomIds = items.flatMap((i) => (i.game ?? i.rom?.game)?.roms.map((r) => r.id) ?? []);
-  const owned = await ownedRomIds({ romIds: allRomIds });
+  const allRomIds = items.flatMap((i) => (i.game ?? i.rom?.game)?.roms.map((r) => r.id) ?? i.work?.games.flatMap((g) => g.roms.map((r) => r.id)) ?? []);
+  const owned = await ownedRomIds({ romIds: allRomIds, include: 'any' });
   const out: { romId?: number; hackId?: number }[] = [];
   const skipped: string[] = [];
   for (const i of items) {
     if (i.hack) {
       out.push({ hackId: i.hack.id });
+      continue;
+    }
+    if (i.work) {
+      // Obra: se elige plataforma segun la preferencia ordenada y despues region/idioma/RA
+      const w = pickFromWork(i.work.games, pref, owned);
+      if (w) out.push({ romId: w.rom.id });
+      else skipped.push(i.work.title);
       continue;
     }
     const game = i.game ?? i.rom?.game;
@@ -234,7 +270,7 @@ listsRouter.post('/:id/derive', async (req, res) => {
   const { name, ...pref } = body;
   const { items, skipped } = await deriveItems(src.id, pref);
   const list = await prisma.list.create({ data: { ownerId: u.id, name, parentListId: src.id, derivedFilter: pref } });
-  const added = await addItems(list.id, items);
+  const added = await addItems(list.id, items, me(req));
   res.status(201).json({ ...list, added, skipped });
 });
 
@@ -256,12 +292,14 @@ listsRouter.get('/:id/export', async (req, res) => {
       game: { include: { system: true } },
       rom: { include: { game: { include: { system: true } }, parts: { take: 1 } } },
       hack: { include: { game: { include: { system: true } } } },
+      work: { include: { games: { include: { system: true }, take: 1 } } },
     },
   });
   const rows = items.map((i) => ({
-    system: (i.game?.system ?? i.rom?.game.system ?? i.hack?.game.system)!.slug,
-    type: i.rom ? 'rom' : i.hack ? 'hack' : 'game',
-    title: i.game?.title ?? i.rom?.game.title ?? i.hack?.game.title,
+    system: (i.game?.system ?? i.rom?.game.system ?? i.hack?.game.system ?? i.work?.games[0]?.system)?.slug ?? '',
+    type: i.rom ? 'rom' : i.hack ? 'hack' : i.work ? 'work' : 'game',
+    title: i.game?.title ?? i.rom?.game.title ?? i.hack?.game.title ?? i.work?.title,
+    wikidataId: i.work?.wikidataId ?? undefined,
     rom: i.rom?.name,
     hack: i.hack?.title,
     sha1: i.rom?.parts[0]?.sha1 ?? i.hack?.sha1 ?? undefined,
@@ -286,7 +324,8 @@ listsRouter.post('/import', async (req, res) => {
       items: z.array(
         z.object({
           system: z.string(),
-          type: z.enum(['game', 'rom', 'hack']).default('game'),
+          type: z.enum(['game', 'rom', 'hack', 'work']).default('game'),
+          wikidataId: z.string().optional(),
           title: z.string().optional(),
           rom: z.string().optional(),
           hack: z.string().optional(),
@@ -300,6 +339,12 @@ listsRouter.post('/import', async (req, res) => {
   const unresolved: unknown[] = [];
   const { normalizeTitle } = await import('../../lib/romname.js');
   for (const it of body.items) {
+    if (it.type === 'work') {
+      const work = it.wikidataId ? await prisma.work.findUnique({ where: { wikidataId: it.wikidataId } }) : await prisma.work.findFirst({ where: { title: it.title ?? '' } });
+      if (work) resolved.push({ workId: work.id, note: it.note });
+      else unresolved.push(it);
+      continue;
+    }
     const system = await prisma.system.findUnique({ where: { slug: it.system } });
     if (!system) {
       unresolved.push(it);
@@ -322,18 +367,18 @@ listsRouter.post('/import', async (req, res) => {
     }
   }
   const list = await prisma.list.create({ data: { ownerId: u.id, name: body.name ?? 'Imported list', description: body.description ?? null } });
-  await addItems(list.id, resolved);
+  await addItems(list.id, resolved, u);
   res.status(201).json({ list, added: resolved.length, unresolved });
 });
 
-listsRouter.get('/:id/files', async (req, res) => {
+listsRouter.get('/:id/files', requirePerm('roms.download'), async (req, res) => {
   const list = await loadList(intParam(req), me(req));
   const pref = prefSchema.parse(req.query.pref ? JSON.parse(String(req.query.pref)) : {});
   res.json(await resolveListFiles(list.id, pref));
 });
 
 // Descarga zip de las roms de la lista, organizadas por carpeta de sistema o de firmware
-listsRouter.get('/:id/download', async (req, res) => {
+listsRouter.get('/:id/download', requirePerm('roms.download'), async (req, res) => {
   const list = await loadList(intParam(req), me(req));
   const fwSlug = typeof req.query.firmware === 'string' ? req.query.firmware : null;
   const fw = fwSlug ? await prisma.firmware.findUnique({ where: { slug: fwSlug } }) : null;

@@ -12,6 +12,7 @@ export interface DatGame {
   name: string;
   description?: string;
   cloneOf?: string;
+  serial?: string;
   isBios?: boolean;
   roms: DatRom[];
   patch?: string;
@@ -30,6 +31,8 @@ const hash = (v: unknown, len: number) => {
   return new RegExp(`^[0-9a-f]{${len}}$`).test(s) ? s : null;
 };
 
+const str = (v: unknown) => (typeof v === 'string' && v.trim() ? v.trim() : typeof v === 'number' ? String(v) : undefined);
+
 export function parseDat(text: string): DatFile {
   const t = text.trimStart();
   if (t.startsWith('<')) return parseXml(text);
@@ -46,7 +49,11 @@ function parseXml(text: string): DatFile {
   const df = doc.datafile ?? doc.mame ?? {};
   const header = df.header ?? {};
   const games: DatGame[] = [];
-  for (const g of [...(df.game ?? []), ...(df.machine ?? [])]) {
+  const all = [...(df.game ?? []), ...(df.machine ?? [])];
+  // Formato P/C moderno de No-Intro: id / cloneofid en lugar de cloneof
+  const idToName = new Map<string, string>();
+  for (const g of all) if (g.id != null) idToName.set(String(g.id), g.name);
+  for (const g of all) {
     const roms: DatRom[] = (g.rom ?? [])
       .filter((r: Record<string, string>) => r.status !== 'nodump')
       .map((r: Record<string, string>) => ({
@@ -59,7 +66,8 @@ function parseXml(text: string): DatFile {
     games.push({
       name: g.name,
       description: typeof g.description === 'string' ? g.description : undefined,
-      cloneOf: g.cloneof,
+      cloneOf: g.cloneof ?? (g.cloneofid != null ? idToName.get(String(g.cloneofid)) : undefined),
+      serial: str(g.serial) ?? str((g.rom ?? [])[0]?.serial),
       isBios: g.isbios === 'yes',
       roms,
     });
@@ -138,11 +146,48 @@ function parseClrMamePro(text: string): DatFile {
         name: s('name') ?? '',
         description: s('description'),
         cloneOf: s('cloneof'),
+        serial: s('serial') ?? (((node.rom ?? []) as Node[])[0]?.serial?.[0] as string | undefined),
         isBios: key === 'resource',
         roms,
         patch: s('patch'),
       });
     }
+  }
+  return out;
+}
+
+/** Entradas "game ( ... )" de un fichero clrmamepro como pares clave/valor simples (metadat de libretro). */
+export function parseClrMameEntries(text: string): Record<string, string>[] {
+  const tokens = tokenize(text);
+  const str = (t: string) => (t.startsWith('\u0000') ? t.slice(1) : t);
+  const out: Record<string, string>[] = [];
+  let pos = 0;
+  while (pos < tokens.length) {
+    const key = str(tokens[pos++]);
+    if (tokens[pos] !== '(') continue;
+    pos++;
+    const entry: Record<string, string> = {};
+    let depth = 1;
+    while (pos < tokens.length && depth > 0) {
+      const t = tokens[pos];
+      if (t === '(') {
+        depth++;
+        pos++;
+      } else if (t === ')') {
+        depth--;
+        pos++;
+      } else {
+        const k = str(t);
+        const v = tokens[pos + 1];
+        if (v !== undefined && v !== '(' && v !== ')') {
+          // Solo el primer nivel; en rom ( crc X ) se guarda como rom.crc
+          const name = depth === 1 ? k : `rom.${k}`;
+          if (!(name in entry)) entry[name] = str(v);
+          pos += 2;
+        } else pos++;
+      }
+    }
+    if (key === 'game') out.push(entry);
   }
   return out;
 }

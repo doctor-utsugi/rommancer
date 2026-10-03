@@ -7,12 +7,36 @@ import { env } from '../../config/env.js';
 import { prisma } from '../../lib/prisma.js';
 import { badRequest, forbidden, intParam } from '../../lib/http.js';
 import { enqueue } from '../../lib/jobs.js';
-import { me, type AuthUser } from '../auth/middleware.js';
+import { me, requirePerm, type AuthUser } from '../auth/middleware.js';
+import { resolveConflict } from './core.js';
 import { convertSave, type SaveFormat } from './convert.js';
 import { identifyRom, parseSaveFile, readVersion, storeVersion } from './service.js';
 import './sync.js';
 
 export const savesRouter = Router();
+savesRouter.use(requirePerm('saves'));
+
+savesRouter.get('/conflicts', async (req, res) => {
+  const u = me(req);
+  res.json(
+    await prisma.saveConflict.findMany({
+      where: { resolvedAt: null, save: { userId: u.id } },
+      include: { device: { select: { id: true, name: true } }, save: { include: { emulator: true, game: { select: { id: true, title: true } } } } },
+      orderBy: { createdAt: 'desc' },
+    }),
+  );
+});
+
+savesRouter.post('/conflicts/:id/resolve', async (req, res) => {
+  const { keep } = z.object({ keep: z.enum(['device', 'server']) }).parse(req.body);
+  try {
+    await resolveConflict(intParam(req), keep, me(req).id);
+  } catch (e) {
+    if (e instanceof Error && e.message === 'Forbidden') throw forbidden();
+    throw e;
+  }
+  res.status(204).end();
+});
 
 async function ownSave(id: number, u: AuthUser) {
   const s = await prisma.save.findUniqueOrThrow({ where: { id }, include: { emulator: true } });

@@ -14,8 +14,8 @@ const SEED = path.join(ROOT, 'seed');
 
 before(() => {
   const dbUrl = process.env.DATABASE_URL!.replace(/\/[^/?]+(\?.*)?$/, '/rommancer_test$1');
-  Object.assign(process.env, { DATABASE_URL: dbUrl, DATA_DIR: DATA, SEED_DIR: SEED, SEED_AUTO_EXPORT: 'false', SAVE_SYNC_CRON: '' });
-  execSync('npx prisma db push --force-reset --skip-generate', { cwd: path.join(ROOT, 'backend'), env: process.env, stdio: 'ignore' });
+  Object.assign(process.env, { DATABASE_URL: dbUrl, DATA_DIR: DATA, SEED_DIR: SEED, SEED_AUTO_EXPORT: 'false', EXTERNAL_SYNC_CRON: '' });
+  execSync('npx prisma migrate reset --force --skip-seed --skip-generate', { cwd: path.join(ROOT, 'backend'), env: process.env, stdio: 'ignore' });
   fs.rmSync(DATA, { recursive: true, force: true });
   fs.mkdirSync(DATA, { recursive: true });
 });
