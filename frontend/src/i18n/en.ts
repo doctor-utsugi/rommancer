@@ -1,4 +1,5 @@
 import type { Dict } from './es'
+import { enMore } from './more'
 
 export const en: Dict = {
   app: { name: 'Rommancer' },
@@ -242,6 +243,8 @@ export const en: Dict = {
     tooBig: 'Too big to check in the browser; validated on the server',
   },
   profile: {
+    mustChange: 'The initial password must be changed before continuing.',
+    passwordRule: 'At least 10 characters, different from the current and the initial one.',
     title: 'Profile',
     language: 'Language',
     changePassword: 'Change password',
@@ -276,6 +279,7 @@ export const en: Dict = {
     conflict: 'Conflict',
     filesTitle: 'Scanned files',
     MATCHED: 'Verified',
+    UNVERIFIED: 'Unverified',
     HACK: 'Romhack',
     UNKNOWN: 'Unknown',
     linkHack: 'Register as romhack',
@@ -331,6 +335,11 @@ export const en: Dict = {
       scrape: 'Scraping',
       'ra-sync': 'RA sync',
       'save-sync': 'Saves sync',
+      'external-sync': 'Sources synchronisation',
+      'hack-identify': 'Romhack identification',
+      'seed-export': 'Seed export',
+      'seed-apply': 'Seed apply',
     },
   },
+  more: enMore,
 }

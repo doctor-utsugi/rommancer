@@ -83,7 +83,7 @@ export async function resolveRomGroups(systemId?: number, ctx?: JobContext): Pro
   for (const system of systems) {
     const roms = await prisma.rom.findMany({
       where: { game: { systemId: system.id }, datSource: { type: { notIn: ['USER', 'HACKS'] } } },
-      select: { id: true, name: true, gameId: true, regions: true, raGameId: true, parentName: true },
+      select: { id: true, name: true, description: true, gameId: true, regions: true, raGameId: true, parentName: true },
     });
     if (!roms.length) continue;
     stats.systems++;
@@ -108,8 +108,8 @@ export async function resolveRomGroups(systemId?: number, ctx?: JobContext): Pro
     }
     for (const r of roms) {
       if (r.raGameId) add(`ra:${r.raGameId}`, 'ra', CONFIDENCE.ra, r.id);
-      // Arcade: los nombres de set no son titulos; se agrupa solo por clones del DAT
-      if (system.mediaType !== 'arcade' && !hasParentInfo.has(r.id)) add(`t:${normalizeTitle(parseRomName(r.name).title)}`, 'title', CONFIDENCE.title, r.id);
+      // En arcade el titulo esta en la descripcion (el nombre es el del set)
+      if (!hasParentInfo.has(r.id)) add(`t:${normalizeTitle(parseRomName(r.description ?? r.name).title)}`, 'title', CONFIDENCE.title, r.id);
     }
 
     const uf = new UnionFind();
@@ -168,7 +168,7 @@ export async function resolveRomGroups(systemId?: number, ctx?: JobContext): Pro
       if (target == null) {
         const best = comp.map((id) => byId.get(id)!).sort((a, b) => regionRank(a.regions as string[]) - regionRank(b.regions as string[]))[0];
         const parent = comp.map((id) => byId.get(id)!).find((r) => !r.parentName) ?? best;
-        const title = parseRomName(parent.name).title.slice(0, 255);
+        const title = parseRomName(parent.description ?? parent.name).title.slice(0, 255);
         const g = await prisma.game.create({ data: { systemId: system.id, title, titleNormalized: normalizeTitle(title).slice(0, 255) } });
         target = g.id;
         stats.gamesCreated++;

@@ -1,11 +1,17 @@
 import { useRef, useState } from 'react'
+import { useQuery } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
 import { Upload } from 'lucide-react'
-import { post, upload } from '@/lib/api'
+import { toast } from 'sonner'
+import { ApiError, get, post, upload, type Paged } from '@/lib/api'
+import { useAuth } from '@/lib/auth'
 import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
 import { Progress } from '@/components/ui/progress'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
-import { PageHeader, errMsg, formatBytes } from '@/components/common'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { Field, NativeSelect, PageHeader, SystemSelect, errMsg, formatBytes } from '@/components/common'
 
 const MAX_BROWSER_HASH = 1024 * 1024 * 1024
 
@@ -16,6 +22,7 @@ interface Row {
   state: State
   info?: string
   pct?: number
+  noMatch?: boolean
 }
 
 const hex = (b: ArrayBuffer) => [...new Uint8Array(b)].map((x) => x.toString(16).padStart(2, '0')).join('')
@@ -31,6 +38,39 @@ function headerSize(name: string, buf: Uint8Array): number {
 }
 
 export function UploadPage() {
+  const { t } = useTranslation()
+  const { can } = useAuth()
+  const [tab, setTab] = useState(can('roms.upload') ? 'verified' : 'unverified')
+  const [pending, setPending] = useState<File | null>(null)
+  return (
+    <div>
+      <PageHeader title={t('upload.title')} />
+      <Tabs value={tab} onValueChange={(v) => setTab(String(v))}>
+        <TabsList>
+          {can('roms.upload') && <TabsTrigger value="verified">{t('more.upload.verified')}</TabsTrigger>}
+          {can('roms.uploadUnverified') && <TabsTrigger value="unverified">{t('more.upload.unverified')}</TabsTrigger>}
+        </TabsList>
+        <TabsContent value="verified">
+          <VerifiedUpload
+            onUnverified={
+              can('roms.uploadUnverified')
+                ? (f) => {
+                    setPending(f)
+                    setTab('unverified')
+                  }
+                : undefined
+            }
+          />
+        </TabsContent>
+        <TabsContent value="unverified">
+          <UnverifiedUpload key={pending ? `${pending.name}:${pending.size}` : "none"} initial={pending} />
+        </TabsContent>
+      </Tabs>
+    </div>
+  )
+}
+
+function VerifiedUpload({ onUnverified }: { onUnverified?: (f: File) => void }) {
   const { t } = useTranslation()
   const [rows, setRows] = useState<Row[]>([])
   const [drag, setDrag] = useState(false)
@@ -61,7 +101,8 @@ export function UploadPage() {
       const r = await upload('/uploads', fd, (pct) => update(file, { pct }))
       update(file, { state: r.status === 'already-owned' ? 'alreadyOwned' : 'stored', info: r.file?.path })
     } catch (e) {
-      update(file, { state: 'rejected', info: errMsg(e) })
+      const noMatch = e instanceof ApiError && e.message === 'NO_MATCH'
+      update(file, { state: 'rejected', info: noMatch ? t('more.upload.noMatch') : errMsg(e), noMatch })
     }
   }
 
@@ -78,7 +119,6 @@ export function UploadPage() {
 
   return (
     <div>
-      <PageHeader title={t('upload.title')} />
       <p className="mb-4 max-w-3xl text-sm text-muted-foreground">{t('upload.help')}</p>
       <div
         className={`mb-6 flex cursor-pointer flex-col items-center justify-center gap-2 rounded-xl border-2 border-dashed p-10 text-sm text-muted-foreground transition-colors ${drag ? 'border-primary bg-muted' : ''}`}
@@ -118,12 +158,139 @@ export function UploadPage() {
                 <TableCell className="w-64">
                   <Badge variant={variant(r.state)}>{t(`upload.${r.state}`)}</Badge>
                   {r.state === 'uploading' && <Progress value={r.pct ?? 0} className="mt-1" />}
+                  {r.noMatch && onUnverified && (
+                    <Button variant="link" size="sm" onClick={() => onUnverified(r.file)}>
+                      {t('more.upload.useUnverified')}
+                    </Button>
+                  )}
                 </TableCell>
               </TableRow>
             ))}
           </TableBody>
         </Table>
       )}
+    </div>
+  )
+}
+
+function UnverifiedUpload({ initial }: { initial: File | null }) {
+  const { t } = useTranslation()
+  const [file, setFile] = useState<File | null>(initial)
+  const [systemId, setSystemId] = useState('')
+  const [mode, setMode] = useState<'existing' | 'new'>('existing')
+  const [q, setQ] = useState('')
+  const [gameId, setGameId] = useState('')
+  const [f, setF] = useState({ newGameTitle: '', kind: 'rom', name: '', regions: '', languages: '', revision: '', hackName: '', hackVersion: '', hackLanguage: '', author: '', baseRomId: '', sourceUrl: '' })
+  const [pct, setPct] = useState<number | null>(null)
+  const games = useQuery({
+    queryKey: ['upload-games', systemId, q],
+    queryFn: () => get<Paged<{ id: number; title: string }>>(`/games?systemId=${systemId}&q=${encodeURIComponent(q)}&pageSize=20`),
+    enabled: !!systemId && q.length > 1,
+  })
+  const submit = async () => {
+    const fd = new FormData()
+    fd.append('file', file!)
+    fd.append('systemId', systemId)
+    if (mode === 'existing') fd.append('gameId', gameId)
+    for (const [k, v] of Object.entries(f)) if (v && (mode === 'new' || k !== 'newGameTitle')) fd.append(k, v)
+    try {
+      setPct(0)
+      const r = await upload('/uploads/unverified', fd, setPct)
+      toast.success(`${t('upload.stored')}: ${r.file?.path ?? ''}`)
+      setFile(null)
+    } catch (e) {
+      toast.error(errMsg(e))
+    } finally {
+      setPct(null)
+    }
+  }
+  const set = (k: keyof typeof f) => (e: { target: { value: string } }) => setF({ ...f, [k]: e.target.value })
+  const hack = f.kind !== 'rom'
+  return (
+    <div className="max-w-2xl space-y-4">
+      <p className="text-sm text-muted-foreground">{t('more.upload.unverifiedHelp')}</p>
+      <Field label={t('common.upload')}>
+        <Input type="file" onChange={(e) => setFile(e.target.files?.[0] ?? null)} />
+        {file && <span className="text-xs text-muted-foreground">{file.name} · {formatBytes(file.size)}</span>}
+      </Field>
+      <Field label={t('common.system')}>
+        <SystemSelect value={systemId} onChange={setSystemId} onlyWithData={false} />
+      </Field>
+      <div className="flex gap-2">
+        <Button size="sm" variant={mode === 'existing' ? 'default' : 'outline'} onClick={() => setMode('existing')}>
+          {t('more.upload.existingGame')}
+        </Button>
+        <Button size="sm" variant={mode === 'new' ? 'default' : 'outline'} onClick={() => setMode('new')}>
+          {t('more.upload.newGame')}
+        </Button>
+      </div>
+      {mode === 'existing' ? (
+        <div className="grid gap-2">
+          <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder={t('more.upload.searchGame')} disabled={!systemId} />
+          <NativeSelect value={gameId} onChange={(e) => setGameId(e.target.value)}>
+            <option value="">-</option>
+            {games.data?.items.map((g) => (
+              <option key={g.id} value={g.id}>
+                {g.title}
+              </option>
+            ))}
+          </NativeSelect>
+        </div>
+      ) : (
+        <Field label={t('common.title')}>
+          <Input value={f.newGameTitle} onChange={set('newGameTitle')} />
+        </Field>
+      )}
+      <Field label={t('more.upload.kind')}>
+        <NativeSelect value={f.kind} onChange={set('kind')}>
+          {(['rom', 'hack', 'translation'] as const).map((k) => (
+            <option key={k} value={k}>
+              {t(`more.upload.kinds.${k}`)}
+            </option>
+          ))}
+        </NativeSelect>
+      </Field>
+      <Field label={t('more.upload.name')}>
+        <Input value={f.name} onChange={set('name')} />
+      </Field>
+      {!hack ? (
+        <div className="grid gap-3 md:grid-cols-3">
+          <Field label={t('more.upload.regions')}>
+            <Input value={f.regions} onChange={set('regions')} placeholder="Europe, USA" />
+          </Field>
+          <Field label={t('more.upload.languages')}>
+            <Input value={f.languages} onChange={set('languages')} placeholder="Es, En" />
+          </Field>
+          <Field label={t('more.upload.revision')}>
+            <Input value={f.revision} onChange={set('revision')} placeholder="Rev 1" />
+          </Field>
+        </div>
+      ) : (
+        <div className="grid gap-3 md:grid-cols-2">
+          <Field label={t('more.game.hackName')}>
+            <Input value={f.hackName} onChange={set('hackName')} />
+          </Field>
+          <Field label={t('more.upload.hackVersion')}>
+            <Input value={f.hackVersion} onChange={set('hackVersion')} />
+          </Field>
+          <Field label={t('more.upload.hackLanguage')}>
+            <Input value={f.hackLanguage} onChange={set('hackLanguage')} />
+          </Field>
+          <Field label={t('more.upload.author')}>
+            <Input value={f.author} onChange={set('author')} />
+          </Field>
+          <Field label={t('more.upload.baseRomId')}>
+            <Input value={f.baseRomId} onChange={set('baseRomId')} inputMode="numeric" />
+          </Field>
+          <Field label={t('more.game.sourceUrl')}>
+            <Input value={f.sourceUrl} onChange={set('sourceUrl')} />
+          </Field>
+        </div>
+      )}
+      {pct != null && <Progress value={pct} />}
+      <Button onClick={() => void submit()} disabled={!file || !systemId || (mode === 'existing' ? !gameId : !f.newGameTitle) || pct != null}>
+        {t('more.upload.submit')}
+      </Button>
     </div>
   )
 }

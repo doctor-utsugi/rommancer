@@ -226,7 +226,7 @@ adminRouter.get('/tools', async (_req, res) => {
 adminRouter.get('/sync', async (_req, res) => {
   const [states, jobs] = await Promise.all([
     prisma.sourceState.findMany({ orderBy: { key: 'asc' } }),
-    prisma.job.findMany({ where: { type: 'external-sync' }, orderBy: { id: 'desc' }, take: 20 }),
+    prisma.job.findMany({ where: { type: 'external-sync' }, orderBy: { id: 'desc' }, take: 20, omit: { log: true } }),
   ]);
   res.json({ cron: env.externalSyncCron, sources: SOURCES, states, history: jobs });
 });

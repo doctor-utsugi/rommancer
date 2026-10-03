@@ -17,13 +17,19 @@ const store = {
   get refresh() {
     return localStorage.getItem('refreshToken')
   },
-  set(access: string, refresh: string) {
+  // Token solo para ficheros (imagenes y descargas por URL)
+  get files() {
+    return localStorage.getItem('filesToken')
+  },
+  set(access: string, refresh: string, files?: string) {
     localStorage.setItem('accessToken', access)
     localStorage.setItem('refreshToken', refresh)
+    if (files) localStorage.setItem('filesToken', files)
   },
   clear() {
     localStorage.removeItem('accessToken')
     localStorage.removeItem('refreshToken')
+    localStorage.removeItem('filesToken')
   },
 }
 
@@ -42,7 +48,7 @@ async function tryRefresh(): Promise<boolean> {
     .then(async (r) => {
       if (!r.ok) return false
       const j = await r.json()
-      store.set(j.accessToken, j.refreshToken)
+      store.set(j.accessToken, j.refreshToken, j.filesToken)
       return true
     })
     .finally(() => {
@@ -87,7 +93,7 @@ export const del = <T = any>(p: string) => api<T>('DELETE', p)
 export function authUrl(path: string) {
   const full = path.startsWith('/api/') ? path : `${BASE}${path}`
   const sep = full.includes('?') ? '&' : '?'
-  return `${full}${sep}token=${encodeURIComponent(store.access ?? '')}`
+  return `${full}${sep}token=${encodeURIComponent(store.files ?? '')}`
 }
 
 /** Subida con progreso (XHR). */

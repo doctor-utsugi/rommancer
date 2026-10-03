@@ -3,6 +3,9 @@ import { useTranslation } from 'react-i18next'
 import {
   Activity,
   Cable,
+  GitMerge,
+  Library,
+  RefreshCw,
   Database,
   FileSearch,
   FolderSearch,
@@ -44,7 +47,7 @@ function Item({ to, icon: Icon, label }: { to: string; icon: typeof Home; label:
 
 export function Layout() {
   const { t } = useTranslation()
-  const { user, logout } = useAuth()
+  const { user, logout, can } = useAuth()
   const switchLang = async () => {
     const next = i18n.language === 'es' ? 'en' : 'es'
     await i18n.changeLanguage(next)
@@ -61,16 +64,19 @@ export function Layout() {
         <Item to="/games" icon={Gamepad2} label={t('nav.games')} />
         <Item to="/missing" icon={SearchX} label={t('nav.missing')} />
         <Item to="/hacks" icon={Puzzle} label={t('nav.hacks')} />
-        <Item to="/lists" icon={ListChecks} label={t('nav.lists')} />
-        <Item to="/devices" icon={Cable} label={t('nav.devices')} />
-        <Item to="/saves" icon={Save} label={t('nav.saves')} />
-        <Item to="/upload" icon={Upload} label={t('nav.upload')} />
+        <Item to="/franchises" icon={Library} label={t('more.nav.franchises')} />
+        {can('lists') && <Item to="/lists" icon={ListChecks} label={t('nav.lists')} />}
+        {(can('roms.download') || can('saves')) && <Item to="/devices" icon={Cable} label={t('nav.devices')} />}
+        {can('saves') && <Item to="/saves" icon={Save} label={t('nav.saves')} />}
+        {(can('roms.upload') || can('roms.uploadUnverified')) && <Item to="/upload" icon={Upload} label={t('nav.upload')} />}
         {user?.role === 'ADMIN' && (
           <>
             <p className="mt-4 px-3 text-xs font-medium tracking-wide text-muted-foreground uppercase">{t('nav.admin')}</p>
             <Item to="/admin/paths" icon={FolderSearch} label={t('nav.paths')} />
             <Item to="/admin/files" icon={FileSearch} label={t('nav.files')} />
             <Item to="/admin/dats" icon={Database} label={t('nav.dats')} />
+            <Item to="/admin/sync" icon={RefreshCw} label={t('more.nav.sync')} />
+            <Item to="/admin/review" icon={GitMerge} label={t('more.nav.review')} />
             <Item to="/admin/users" icon={Users} label={t('nav.users')} />
             <Item to="/admin/integrations" icon={Cable} label={t('nav.integrations')} />
             <Item to="/admin/jobs" icon={Activity} label={t('nav.jobs')} />

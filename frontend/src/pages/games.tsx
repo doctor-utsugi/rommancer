@@ -10,6 +10,7 @@ import { Checkbox } from '@/components/ui/checkbox'
 import { Input } from '@/components/ui/input'
 import { Empty, JobProgress, NativeSelect, PageHeader, Pagination, SystemSelect, useJob } from '@/components/common'
 import { AddToListButton } from '@/components/add-to-list'
+import { useAuth } from '@/lib/auth'
 
 interface GameRow {
   id: number
@@ -22,6 +23,8 @@ interface GameRow {
   ra: boolean
   hackCount: number
   releaseYear: number | null
+  unverifiedCount: number
+  groupConfidence: 'high' | 'low'
 }
 
 export function useRegions() {
@@ -30,6 +33,7 @@ export function useRegions() {
 
 export function GamesPage() {
   const { t } = useTranslation()
+  const { can } = useAuth()
   const [params, setParams] = useSearchParams()
   const systemId = params.get('systemId') ?? ''
   const status = params.get('status') ?? 'all'
@@ -55,6 +59,7 @@ export function GamesPage() {
   if (params.get('q')) query.set('q', params.get('q')!)
   if (region) query.set('region', region)
   if (ra) query.set('ra', '1')
+  for (const k of ['lowConfidence', 'workId', 'franchiseId']) if (params.get(k)) query.set(k, params.get(k)!)
   const { data, isFetching } = useQuery({
     queryKey: ['games', query.toString()],
     queryFn: () => get<Paged<GameRow>>(`/games?${query}`),
@@ -78,9 +83,11 @@ export function GamesPage() {
     <div>
       <PageHeader title={t('games.title')}>
         <AddToListButton items={[...selected].map((gameId) => ({ gameId }))} />
-        <Button variant="outline" size="sm" onClick={() => void scrape()} disabled={!data?.items.length}>
-          {t('games.scrape')}
-        </Button>
+        {can('scrape.bulk') && (
+          <Button variant="outline" size="sm" onClick={() => void scrape()} disabled={!data?.items.length}>
+            {t('games.scrape')}
+          </Button>
+        )}
       </PageHeader>
       <form
         className="mb-4 flex flex-wrap items-center gap-2"
@@ -146,6 +153,8 @@ export function GamesPage() {
                       </Badge>
                     )}
                     {g.hackCount > 0 && <Badge variant="secondary">{g.hackCount} hacks</Badge>}
+                    {g.unverifiedCount > 0 && <Badge variant="destructive">{t('more.tags.unverifiedCount', { count: g.unverifiedCount })}</Badge>}
+                    {g.groupConfidence === 'low' && <Badge variant="outline">{t('more.tags.lowConfidence')}</Badge>}
                   </div>
                 </div>
               </Link>

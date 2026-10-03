@@ -11,6 +11,9 @@ export interface Me {
   locale: string
   hasScreenScraper: boolean
   hasRetroAchievements: boolean
+  hasTheGamesDb: boolean
+  permissions: string[]
+  mustChangePassword: boolean
 }
 
 interface AuthCtx {
@@ -20,6 +23,7 @@ interface AuthCtx {
   register(data: { token: string; username: string; email: string; password: string }): Promise<void>
   logout(): Promise<void>
   reload(): Promise<void>
+  can(perm: string): boolean
 }
 
 const Ctx = createContext<AuthCtx>(null as unknown as AuthCtx)
@@ -58,12 +62,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     loading,
     async login(username, password) {
       const r = await api('POST', '/auth/login', { username, password })
-      tokens.set(r.accessToken, r.refreshToken)
+      tokens.set(r.accessToken, r.refreshToken, r.filesToken)
       await reload()
     },
     async register(data) {
       const r = await api('POST', '/auth/register', { ...data, locale: i18n.language })
-      tokens.set(r.accessToken, r.refreshToken)
+      tokens.set(r.accessToken, r.refreshToken, r.filesToken)
       await reload()
     },
     async logout() {
@@ -73,6 +77,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setUser(null)
     },
     reload,
+    can: (perm) => !!user && (user.role === 'ADMIN' || user.permissions?.includes(perm)),
   }
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>
 }

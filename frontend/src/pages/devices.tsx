@@ -3,7 +3,8 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
 import { Pencil, Plug, RefreshCw, Trash2 } from 'lucide-react'
 import { toast } from 'sonner'
-import { del, get, patch, post } from '@/lib/api'
+import { del, get, patch, post, tokens } from '@/lib/api'
+import { useAuth } from '@/lib/auth'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
@@ -20,6 +21,12 @@ export function DevicesPage() {
   const [editing, setEditing] = useState<any | null | undefined>(undefined)
   const [jobId, setJobId] = useState<number | null>(null)
   const job = useJob(jobId, [['devices'], ['saves']])
+  const { can } = useAuth()
+  const [scripts, setScripts] = useState<any | null>(null)
+  const revoke = async (id: number) => {
+    await del(`/devices/${id}/token`)
+    toast.success(t('common.saved'))
+  }
 
   const test = async (id: number) => {
     const r = await post(`/devices/${id}/test`)
@@ -73,23 +80,43 @@ export function DevicesPage() {
                 </p>
                 <p className="text-xs text-muted-foreground">
                   {t('devices.lastSync')}: {formatDate(d.lastSyncAt)}
+                  {d.connType === 'AGENT' && ` · ${t('more.devices.lastSeen')}: ${formatDate(d.lastSeenAt)}`}
                   {d.syncSaves && ` · ${t('devices.syncSaves')}`}
                 </p>
                 <div className="flex flex-wrap gap-1">
-                  <Button variant="outline" size="sm" onClick={() => void test(d.id)}>
-                    <Plug className="size-4" />
-                    {t('common.test')}
-                  </Button>
-                  <Button variant="outline" size="sm" onClick={() => void sync(d.id, 'both')}>
-                    <RefreshCw className="size-4" />
-                    {t('devices.syncNow')}
-                  </Button>
-                  <Button variant="ghost" size="sm" onClick={() => void sync(d.id, 'pull')}>
-                    {t('devices.pull')}
-                  </Button>
-                  <Button variant="ghost" size="sm" onClick={() => void sync(d.id, 'push')}>
-                    {t('devices.push')}
-                  </Button>
+                  {d.connType === 'AGENT' ? (
+                    can('saves') && (
+                      <>
+                        <Button variant="outline" size="sm" onClick={() => setScripts(d)}>
+                          {t('more.devices.scripts')}
+                        </Button>
+                        <Button variant="ghost" size="sm" onClick={() => void revoke(d.id)}>
+                          {t('more.devices.revoke')}
+                        </Button>
+                      </>
+                    )
+                  ) : (
+                    <>
+                      <Button variant="outline" size="sm" onClick={() => void test(d.id)}>
+                        <Plug className="size-4" />
+                        {t('common.test')}
+                      </Button>
+                      {can('saves') && (
+                        <>
+                          <Button variant="outline" size="sm" onClick={() => void sync(d.id, 'both')}>
+                            <RefreshCw className="size-4" />
+                            {t('devices.syncNow')}
+                          </Button>
+                          <Button variant="ghost" size="sm" onClick={() => void sync(d.id, 'pull')}>
+                            {t('devices.pull')}
+                          </Button>
+                          <Button variant="ghost" size="sm" onClick={() => void sync(d.id, 'push')}>
+                            {t('devices.push')}
+                          </Button>
+                        </>
+                      )}
+                    </>
+                  )}
                   <Button variant="ghost" size="icon-sm" onClick={() => setEditing(d)}>
                     <Pencil className="size-4" />
                   </Button>
@@ -103,7 +130,56 @@ export function DevicesPage() {
         </div>
       )}
       {editing !== undefined && <DeviceDialog device={editing} onClose={() => setEditing(undefined)} />}
+      {scripts && <ScriptsDialog device={scripts} onClose={() => setScripts(null)} />}
     </div>
+  )
+}
+
+function ScriptsDialog({ device, onClose }: { device: any; onClose(): void }) {
+  const { t } = useTranslation()
+  const [flavor, setFlavor] = useState(device.firmware.slug.includes('esde') || device.firmware.slug.includes('android') ? 'esde' : 'batocera')
+  const [server, setServer] = useState(location.origin)
+  const download = async () => {
+    try {
+      // Descarga con fetch para enviar el token de acceso en la cabecera
+      const r = await fetch(`/api/v1/devices/${device.id}/agent-script`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${tokens.access}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ flavor, server }),
+      })
+      if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error ?? r.statusText)
+      const url = URL.createObjectURL(await r.blob())
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `rommancer-${flavor}.zip`
+      a.click()
+      URL.revokeObjectURL(url)
+      onClose()
+    } catch (e) {
+      toast.error(errMsg(e))
+    }
+  }
+  return (
+    <Dialog open onOpenChange={(o) => !o && onClose()}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>{t('more.devices.scripts')}</DialogTitle>
+        </DialogHeader>
+        <p className="text-sm text-muted-foreground">{t('more.devices.scriptsHelp')}</p>
+        <Field label={t('more.devices.flavor')}>
+          <NativeSelect value={flavor} onChange={(e) => setFlavor(e.target.value)}>
+            <option value="esde">{t('more.devices.esde')}</option>
+            <option value="batocera">{t('more.devices.batocera')}</option>
+          </NativeSelect>
+        </Field>
+        <Field label={t('more.devices.server')}>
+          <Input value={server} onChange={(e) => setServer(e.target.value)} />
+        </Field>
+        <DialogFooter>
+          <Button onClick={() => void download()}>{t('common.download')}</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   )
 }
 
@@ -204,7 +280,9 @@ function DeviceDialog({ device, onClose }: { device: any | null; onClose(): void
             <NativeSelect value={form.connType} onChange={(e) => set('connType', e.target.value)}>
               <option value="LOCAL">{t('devices.LOCAL')}</option>
               <option value="SSH">{t('devices.SSH')}</option>
+              <option value="AGENT">{t('more.devices.AGENT')}</option>
             </NativeSelect>
+            <span className="text-xs text-muted-foreground">{form.connType === 'AGENT' ? t('more.devices.agentHelp') : form.connType === 'LOCAL' ? t('more.devices.mountedHelp') : ''}</span>
           </Field>
           <Field label={t('devices.root')}>
             <Input value={form.rootPath} onChange={(e) => set('rootPath', e.target.value)} placeholder={form.connType === 'SSH' ? '/storage' : '/Volumes/SD'} />

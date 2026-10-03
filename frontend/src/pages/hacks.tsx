@@ -57,7 +57,12 @@ export function HacksPage() {
             {data.items.map((h) => (
               <TableRow key={h.id}>
                 <TableCell>{h._count.files > 0 && <Check className="size-4 text-green-600" />}</TableCell>
-                <TableCell className="max-w-md truncate font-medium">{h.title}</TableCell>
+                <TableCell className="max-w-md">
+                  <p className="truncate font-medium" title={h.title}>
+                    {h.label}
+                  </p>
+                  {h.label !== h.title && <p className="truncate text-xs text-muted-foreground">{h.title}</p>}
+                </TableCell>
                 <TableCell>
                   {t(`game.hackType.${h.type}`)}
                   {h.language ? ` (${h.language})` : ''}

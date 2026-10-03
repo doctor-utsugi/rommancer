@@ -30,6 +30,7 @@ export function SavesPage() {
           {t('saves.upload')}
         </Button>
       </PageHeader>
+      <Conflicts />
       {!data?.length ? (
         <Empty />
       ) : (
@@ -270,5 +271,49 @@ function UploadDialog({ onClose }: { onClose(): void }) {
         </DialogFooter>
       </DialogContent>
     </Dialog>
+  )
+}
+
+function Conflicts() {
+  const { t } = useTranslation()
+  const qc = useQueryClient()
+  const { data, refetch } = useQuery({ queryKey: ['save-conflicts'], queryFn: () => get<any[]>('/saves/conflicts') })
+  if (!data?.length) return null
+  const resolve = async (id: number, keep: 'device' | 'server') => {
+    try {
+      await post(`/saves/conflicts/${id}/resolve`, { keep })
+      void refetch()
+      void qc.invalidateQueries({ queryKey: ['saves'] })
+    } catch (e) {
+      toast.error(errMsg(e))
+    }
+  }
+  const dl = (saveId: number, versionId: number) => authUrl(`/saves/${saveId}/versions/${versionId}/download`)
+  return (
+    <div className="mb-6 space-y-2 rounded-xl border border-amber-500/50 p-4">
+      <p className="font-medium">{t('more.saves.conflicts')}</p>
+      <p className="text-sm text-muted-foreground">{t('more.saves.conflictsAlert', { count: data.length })}</p>
+      {data.map((c) => (
+        <div key={c.id} className="flex flex-wrap items-center gap-2 border-t pt-2 text-sm">
+          <span className="font-medium">{c.save.game?.title ?? c.save.baseName}</span>
+          <Badge variant="outline">{t(`saves.kind.${c.save.kind}`)}</Badge>
+          <span className="text-muted-foreground">
+            {c.device.name} · {formatDate(c.createdAt)}
+          </span>
+          <a className="text-xs text-primary underline" href={dl(c.save.id, c.deviceVersionId)}>
+            {t('more.saves.deviceVersion')}
+          </a>
+          <a className="text-xs text-primary underline" href={dl(c.save.id, c.serverVersionId)}>
+            {t('more.saves.serverVersion')}
+          </a>
+          <Button size="sm" onClick={() => void resolve(c.id, 'device')}>
+            {t('more.saves.keepDevice')}
+          </Button>
+          <Button size="sm" variant="outline" onClick={() => void resolve(c.id, 'server')}>
+            {t('more.saves.keepServer')}
+          </Button>
+        </div>
+      ))}
+    </div>
   )
 }

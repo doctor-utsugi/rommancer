@@ -1,9 +1,8 @@
 import { useRef, useState } from 'react'
-import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { useQuery } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
-import { Trash2 } from 'lucide-react'
 import { toast } from 'sonner'
-import { del, get, post, upload } from '@/lib/api'
+import { get, post, upload } from '@/lib/api'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
@@ -14,7 +13,6 @@ const TYPES = ['NOINTRO', 'REDUMP', 'FBNEO', 'MAME', 'HACKS', 'OTHER']
 
 export function AdminDatsPage() {
   const { t } = useTranslation()
-  const qc = useQueryClient()
   const { data } = useQuery({ queryKey: ['dats'], queryFn: () => get<any[]>('/admin/dats') })
   const local = useQuery({ queryKey: ['dat-files'], queryFn: () => get<string[]>('/admin/dats/files') })
   const presets = useQuery({ queryKey: ['dat-presets'], queryFn: () => get<any[]>('/admin/dats/presets') })
@@ -167,22 +165,7 @@ export function AdminDatsPage() {
                 <TableCell>{d.version ?? '-'}</TableCell>
                 <TableCell>{d.romCount}</TableCell>
                 <TableCell className="text-xs">{formatDate(d.importedAt)}</TableCell>
-                <TableCell>
-                  <Button
-                    variant="ghost"
-                    size="icon-sm"
-                    onClick={() =>
-                      confirm(t('common.confirmDelete')) &&
-                      void go(async () => {
-                        const r = await del(`/admin/dats/${d.id}`)
-                        void qc.invalidateQueries({ queryKey: ['dats'] })
-                        return r
-                      })
-                    }
-                  >
-                    <Trash2 className="size-4" />
-                  </Button>
-                </TableCell>
+                <TableCell />
               </TableRow>
             ))}
           </TableBody>

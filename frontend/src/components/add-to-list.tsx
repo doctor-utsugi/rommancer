@@ -14,11 +14,14 @@ export interface ListItemRef {
   gameId?: number
   romId?: number
   hackId?: number
+  workId?: number
 }
 
 export function AddToListButton({ items, size = 'sm', label }: { items: ListItemRef[]; size?: 'sm' | 'icon-sm'; label?: boolean }) {
   const { t } = useTranslation()
+  const { can } = useAuth()
   const [open, setOpen] = useState(false)
+  if (!can('lists')) return null
   return (
     <>
       <Button variant="outline" size={size} onClick={() => setOpen(true)} title={t('games.addToList')} disabled={!items.length}>

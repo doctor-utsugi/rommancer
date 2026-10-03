@@ -147,7 +147,7 @@ export async function importDat(text: string, opts: ImportOptions = {}): Promise
   const known = new Map<string, Known>();
   for (const r of await prisma.rom.findMany({
     where: { game: { systemId: system.id } },
-    select: { id: true, name: true, gameId: true, datSourceId: true, regions: true, languages: true, revision: true, flags: true, isBios: true, raHash: true, serial: true, parentName: true, removedFromSource: true, datSource: { select: { priority: true } } },
+    select: { id: true, name: true, gameId: true, datSourceId: true, regions: true, languages: true, revision: true, flags: true, isBios: true, raHash: true, serial: true, parentName: true, description: true, removedFromSource: true, datSource: { select: { priority: true } } },
   })) {
     const { id, name, gameId, datSourceId, datSource, ...fields } = r;
     known.set(name, { id, gameId, datSourceId, priority: datSource.priority, fields });
@@ -190,6 +190,7 @@ export async function importDat(text: string, opts: ImportOptions = {}): Promise
       raHash: first && parts.length === 1 ? raHashFromDat(system.slug, first) : null,
       serial: g.serial?.slice(0, 64) ?? null,
       parentName: g.cloneOf?.slice(0, 255) ?? null,
+      description: isArcade && g.description ? g.description.slice(0, 255) : null,
       removedFromSource: false,
     };
     partsByName.set(romName, parts);
@@ -198,7 +199,7 @@ export async function importDat(text: string, opts: ImportOptions = {}): Promise
       // Solo se escribe lo que cambia; una fuente de mayor o igual prioridad pasa a ser la duena de la rom
       const data: Record<string, unknown> = {};
       for (const [key, v] of Object.entries(fields)) {
-        if ((key === 'serial' || key === 'raHash' || key === 'parentName') && v == null) continue;
+        if ((key === 'serial' || key === 'raHash' || key === 'parentName' || key === 'description') && v == null) continue;
         if (!same(k.fields[key], v)) data[key] = v;
       }
       if (priority >= k.priority && k.datSourceId !== source.id) data.datSourceId = source.id;

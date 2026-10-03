@@ -224,6 +224,8 @@ model Rom {
   serial            String?    @db.VarChar(64)
   // Titulo original (p.ej. japones) segun Retool
   localTitle        String?    @db.VarChar(255)
+  // Descripcion del DAT (en arcade es el titulo; el nombre es el del set)
+  description       String?    @db.VarChar(255)
   // Padre segun No-Intro Parent/Clone
   parentName        String?    @db.VarChar(255)
   // La fuente ya no la contiene; se conserva (datos permanentes)

@@ -11,7 +11,7 @@ import { Checkbox } from '@/components/ui/checkbox'
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
-import { Empty, Field, JobProgress, NativeSelect, PageHeader, SystemSelect, errMsg, formatDate, useJob } from '@/components/common'
+import { Empty, Field, JobProgress, NativeSelect, PageHeader, SystemSelect, errMsg, formatDate, useJob, useSystems } from '@/components/common'
 
 export function AdminPathsPage() {
   const { t } = useTranslation()
@@ -49,7 +49,8 @@ export function AdminPathsPage() {
                 <CardTitle className="flex items-center justify-between gap-2">
                   {p.label}
                   <span className="flex gap-1">
-                    {p.isUploadTarget && <Badge>{t('admin.uploadTarget')}</Badge>}
+                    {p.isDefaultTarget && <Badge>{t('more.paths.defaultTarget')}</Badge>}
+                    {(p.targetSystems ?? []).length > 0 && <Badge variant="secondary">{t('more.paths.targets')}: {(p.targetSystems as string[]).join(', ')}</Badge>}
                     {p.readOnly && <Badge variant="outline">{t('admin.readOnly')}</Badge>}
                   </span>
                 </CardTitle>
@@ -103,9 +104,13 @@ function PathDialog({ path, onClose }: { path: any | null; onClose(): void }) {
     label: path?.label ?? '',
     path: path?.path ?? '',
     systemId: path?.systemId ? String(path.systemId) : '',
-    isUploadTarget: path?.isUploadTarget ?? false,
+    targetSystems: (path?.targetSystems ?? []) as string[],
+    isDefaultTarget: path?.isDefaultTarget ?? false,
+    targetScheme: path?.targetScheme ?? 'system',
     readOnly: path?.readOnly ?? false,
   })
+  const systems = useSystems()
+  const fws = useQuery({ queryKey: ['firmwares'], queryFn: () => get<any[]>('/devices/firmwares') })
   const submit = async () => {
     const body = { ...form, systemId: form.systemId ? Number(form.systemId) : null }
     try {
@@ -119,7 +124,7 @@ function PathDialog({ path, onClose }: { path: any | null; onClose(): void }) {
   }
   return (
     <Dialog open onOpenChange={(o) => !o && onClose()}>
-      <DialogContent>
+      <DialogContent className="max-h-[90vh] overflow-auto">
         <DialogHeader>
           <DialogTitle>{path ? path.label : t('admin.newPath')}</DialogTitle>
         </DialogHeader>
@@ -133,10 +138,37 @@ function PathDialog({ path, onClose }: { path: any | null; onClose(): void }) {
           <Field label={t('admin.forcedSystem')}>
             <SystemSelect value={form.systemId} onChange={(v) => setForm({ ...form, systemId: v })} allLabel={t('admin.autoDetect')} onlyWithData={false} />
           </Field>
-          <label className="flex items-center gap-2 text-sm">
-            <Checkbox checked={form.isUploadTarget} onCheckedChange={(c) => setForm({ ...form, isUploadTarget: !!c })} />
-            {t('admin.uploadTarget')}
-          </label>
+          <fieldset className="grid gap-2 rounded-lg border p-3">
+            <legend className="px-1 text-sm font-medium">{t('more.paths.targets')}</legend>
+            <p className="text-xs text-muted-foreground">{t('more.paths.targetHelp')}</p>
+            <span className="text-sm">{t('more.paths.targetSystems')}</span>
+            <div className="grid max-h-40 grid-cols-2 gap-1 overflow-auto">
+              {systems.data?.map((s) => (
+                <label key={s.slug} className="flex items-center gap-2 text-xs">
+                  <Checkbox
+                    checked={form.targetSystems.includes(s.slug)}
+                    onCheckedChange={(c) => setForm({ ...form, targetSystems: c ? [...form.targetSystems, s.slug] : form.targetSystems.filter((x) => x !== s.slug) })}
+                  />
+                  {s.name}
+                </label>
+              ))}
+            </div>
+            <label className="flex items-center gap-2 text-sm">
+              <Checkbox checked={form.isDefaultTarget} onCheckedChange={(c) => setForm({ ...form, isDefaultTarget: !!c })} />
+              {t('more.paths.defaultTarget')}
+            </label>
+            <Field label={t('more.paths.scheme')}>
+              <NativeSelect value={form.targetScheme} onChange={(e) => setForm({ ...form, targetScheme: e.target.value })}>
+                <option value="system">{t('more.paths.schemeSystem')}</option>
+                <option value="flat">{t('more.paths.schemeFlat')}</option>
+                {fws.data?.map((f) => (
+                  <option key={f.slug} value={f.slug}>
+                    {f.name}
+                  </option>
+                ))}
+              </NativeSelect>
+            </Field>
+          </fieldset>
           <label className="flex items-center gap-2 text-sm">
             <Checkbox checked={form.readOnly} onCheckedChange={(c) => setForm({ ...form, readOnly: !!c })} />
             {t('admin.readOnly')}

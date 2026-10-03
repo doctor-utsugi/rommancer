@@ -47,7 +47,7 @@ export function AdminFilesPage() {
         </NativeSelect>
         <NativeSelect value={status} onChange={(e) => setStatus(e.target.value)}>
           <option value="">{t('common.all')}</option>
-          {['MATCHED', 'HACK', 'UNKNOWN'].map((s) => (
+          {['MATCHED', 'UNVERIFIED', 'HACK', 'UNKNOWN'].map((s) => (
             <option key={s} value={s}>
               {t(`admin.${s}`)}
             </option>
@@ -97,7 +97,8 @@ export function AdminFilesPage() {
                   </p>
                 </TableCell>
                 <TableCell>
-                  <Badge variant={f.status === 'UNKNOWN' ? 'outline' : 'secondary'}>{t(`admin.${f.status}`)}</Badge>
+                  <Badge variant={f.status === 'UNKNOWN' ? 'outline' : f.status === 'UNVERIFIED' ? 'destructive' : 'secondary'}>{t(`admin.${f.status}`)}</Badge>
+                  {f.uploadedBy && <p className="text-xs text-muted-foreground">{t('more.tags.uploadedBy', { user: f.uploadedBy })}</p>}
                 </TableCell>
                 <TableCell>{formatBytes(f.size)}</TableCell>
                 <TableCell className="font-mono text-xs">

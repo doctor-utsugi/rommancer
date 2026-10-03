@@ -1,3 +1,5 @@
+import { esMore } from './more'
+
 export const es = {
   app: { name: 'Rommancer' },
   common: {
@@ -240,6 +242,8 @@ export const es = {
     tooBig: 'Demasiado grande para comprobar en el navegador; se valida en el servidor',
   },
   profile: {
+    mustChange: 'La contraseña inicial debe cambiarse antes de continuar.',
+    passwordRule: 'Mínimo 10 caracteres, distinta de la actual y de la inicial.',
     title: 'Perfil',
     language: 'Idioma',
     changePassword: 'Cambiar contraseña',
@@ -274,6 +278,7 @@ export const es = {
     conflict: 'Conflicto',
     filesTitle: 'Ficheros escaneados',
     MATCHED: 'Verificada',
+    UNVERIFIED: 'No verificada',
     HACK: 'Romhack',
     UNKNOWN: 'Desconocida',
     linkHack: 'Registrar como romhack',
@@ -329,8 +334,13 @@ export const es = {
       scrape: 'Scraping',
       'ra-sync': 'Sincronización RA',
       'save-sync': 'Sincronización de saves',
+      'external-sync': 'Sincronización de fuentes',
+      'hack-identify': 'Identificación de romhacks',
+      'seed-export': 'Exportación de semilla',
+      'seed-apply': 'Aplicación de semilla',
     },
   },
+  more: esMore,
 }
 
 export type Dict = typeof es

@@ -12,7 +12,7 @@ import { Checkbox } from '@/components/ui/checkbox'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
-import { Empty, Field, JobProgress, NativeSelect, PageHeader, errMsg, useJob } from '@/components/common'
+import { Empty, Field, JobProgress, NativeSelect, PageHeader, errMsg, useJob, useSystems } from '@/components/common'
 import { ListFormDialog } from './lists'
 import { useRegions } from './games'
 
@@ -21,7 +21,7 @@ type DialogKind = 'edit' | 'share' | 'derive' | 'zip' | 'device' | null
 export function ListPage() {
   const { id } = useParams()
   const { t } = useTranslation()
-  const { user } = useAuth()
+  const { user, can } = useAuth()
   const nav = useNavigate()
   const qc = useQueryClient()
   const { data: list, refetch } = useQuery({ queryKey: ['list', String(id)], queryFn: () => get(`/lists/${id}`) })
@@ -104,15 +104,21 @@ export function ListPage() {
         <Button variant="outline" size="sm" nativeButton={false} render={<a href={authUrl(`/lists/${list.id}/export?format=txt`)} />}>
           {t('lists.exportTxt')}
         </Button>
-        <Button variant="outline" size="sm" onClick={() => setDialog('zip')}>
-          {t('lists.downloadZip')}
-        </Button>
-        <Button variant="outline" size="sm" onClick={() => void scrape()}>
-          {t('lists.scrape')}
-        </Button>
-        <Button size="sm" onClick={() => setDialog('device')}>
-          {t('lists.sendToDevice')}
-        </Button>
+        {can('roms.download') && (
+          <Button variant="outline" size="sm" onClick={() => setDialog('zip')}>
+            {t('lists.downloadZip')}
+          </Button>
+        )}
+        {can('scrape.bulk') && (
+          <Button variant="outline" size="sm" onClick={() => void scrape()}>
+            {t('lists.scrape')}
+          </Button>
+        )}
+        {can('roms.download') && (
+          <Button size="sm" onClick={() => setDialog('device')}>
+            {t('lists.sendToDevice')}
+          </Button>
+        )}
         {(isOwner || user?.role === 'ADMIN') && (
           <Button variant="destructive" size="sm" onClick={() => void remove()}>
             <Trash2 className="size-4" />
@@ -164,9 +170,15 @@ export function ListPage() {
                   </div>
                 </TableCell>
                 <TableCell className="max-w-md">
-                  <Link className="font-medium hover:underline" to={`/games/${i.gameId}`}>
+                  <Link className="font-medium hover:underline" to={i.kind === 'work' ? `/works/${i.workId}` : `/games/${i.gameId}`}>
                     {i.title}
                   </Link>
+                  {i.pendingMedia && (
+                    <Badge variant="outline" className="ml-2">
+                      {t('more.lists.pendingMedia')}
+                    </Badge>
+                  )}
+                  {i.kind === 'work' && i.platforms?.length > 0 && <p className="text-xs text-muted-foreground">{i.platforms.join(', ')}</p>}
                   {i.ra && (
                     <Badge variant="secondary" className="ml-2">
                       <Trophy className="size-3" />
@@ -174,7 +186,7 @@ export function ListPage() {
                   )}
                   {i.note && <p className="text-xs text-muted-foreground">{i.note}</p>}
                 </TableCell>
-                <TableCell>{t(`lists.kind.${i.kind}`)}</TableCell>
+                <TableCell>{i.kind === 'work' ? t('more.lists.work') : t(`lists.kind.${i.kind}`)}</TableCell>
                 <TableCell>{i.system?.name}</TableCell>
                 <TableCell className="max-w-xs truncate text-xs text-muted-foreground">{i.selectedRom?.name ?? '-'}</TableCell>
                 <TableCell>{i.owned ? <Check className="size-4 text-green-600" /> : <X className="size-4 text-muted-foreground" />}</TableCell>
@@ -275,9 +287,12 @@ function DeriveDialog({ list, onClose }: { list: any; onClose(): void }) {
   const [raOnly, setRaOnly] = useState(false)
   const [ownedOnly, setOwnedOnly] = useState(false)
   const [next, setNext] = useState('')
+  const systems = useSystems()
+  const [platforms, setPlatforms] = useState<string[]>([])
+  const hasWorks = list.items.some((i: any) => i.kind === 'work')
   const submit = async () => {
     try {
-      const r = await post(`/lists/${list.id}/derive`, { name, regions: pref, languages: langs, strictRegions: strict, raOnly, ownedOnly })
+      const r = await post(`/lists/${list.id}/derive`, { name, regions: pref, languages: langs, strictRegions: strict, raOnly, ownedOnly, ...(platforms.length ? { platforms } : {}) })
       toast.success(`${t('lists.added', { count: r.added })} · ${t('lists.skipped', { count: r.skipped.length })}`)
       nav(`/lists/${r.id}`)
       onClose()
@@ -325,6 +340,27 @@ function DeriveDialog({ list, onClose }: { list: any; onClose(): void }) {
               ))}
             </div>
           </Field>
+          {hasWorks && (
+            <Field label={t('more.lists.platforms')}>
+              <div className="flex flex-wrap gap-1">
+                {platforms.map((p, i) => (
+                  <Badge key={p} variant="secondary" className="cursor-pointer" onClick={() => setPlatforms(platforms.filter((x) => x !== p))}>
+                    {i + 1}. {systems.data?.find((s) => s.slug === p)?.name ?? p} <X className="size-3" />
+                  </Badge>
+                ))}
+              </div>
+              <NativeSelect value="" onChange={(e) => e.target.value && setPlatforms([...platforms, e.target.value])}>
+                <option value="">{t('more.lists.addPlatform')}</option>
+                {systems.data
+                  ?.filter((s) => s.roms > 0 && !platforms.includes(s.slug))
+                  .map((s) => (
+                    <option key={s.slug} value={s.slug}>
+                      {s.name}
+                    </option>
+                  ))}
+              </NativeSelect>
+            </Field>
+          )}
           <label className="flex items-center gap-2 text-sm">
             <Checkbox checked={strict} onCheckedChange={(c) => setStrict(!!c)} />
             {t('lists.strictRegions')}

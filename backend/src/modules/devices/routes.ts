@@ -19,7 +19,7 @@ export const devicesRouter = Router();
 // Dispositivos: para copiar roms (descargar) o para sincronizar saves
 devicesRouter.use(requirePerm('roms.download', 'saves'));
 
-const publicDevice = { sshPassword: true, sshKey: true } as const;
+const publicDevice = { sshPassword: true, sshKey: true, tokenHash: true } as const;
 
 // --- Catalogo de consolas y firmwares ---
 devicesRouter.get('/consoles', async (_req, res) => {

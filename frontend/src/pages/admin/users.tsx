@@ -10,7 +10,26 @@ import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
+import { Checkbox } from '@/components/ui/checkbox'
+import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Field, NativeSelect, PageHeader, errMsg, formatDate } from '@/components/common'
+
+export const PERMISSIONS = ['collection.view', 'lists', 'saves', 'roms.download', 'roms.upload', 'roms.uploadUnverified', 'scrape.lists', 'scrape.bulk']
+export const DEFAULT_PERMISSIONS = ['collection.view', 'lists', 'saves', 'scrape.lists']
+
+function PermsEditor({ value, onChange }: { value: string[]; onChange(v: string[]): void }) {
+  const { t } = useTranslation()
+  return (
+    <div className="grid gap-1 sm:grid-cols-2">
+      {PERMISSIONS.map((p) => (
+        <label key={p} className="flex items-center gap-2 text-sm">
+          <Checkbox checked={value.includes(p)} onCheckedChange={(c) => onChange(c ? [...value, p] : value.filter((x) => x !== p))} />
+          {t(`more.perms.${p}`)}
+        </label>
+      ))}
+    </div>
+  )
+}
 
 export function AdminUsersPage() {
   const { t } = useTranslation()
@@ -18,8 +37,10 @@ export function AdminUsersPage() {
   const qc = useQueryClient()
   const users = useQuery({ queryKey: ['users'], queryFn: () => get<any[]>('/users') })
   const invs = useQuery({ queryKey: ['invitations'], queryFn: () => get<any[]>('/invitations') })
-  const [form, setForm] = useState({ username: '', email: '', password: '', role: 'USER' })
+  const [form, setForm] = useState({ username: '', email: '', password: '', role: 'USER', permissions: DEFAULT_PERMISSIONS })
   const [invRole, setInvRole] = useState('USER')
+  const [invPerms, setInvPerms] = useState(DEFAULT_PERMISSIONS)
+  const [editing, setEditing] = useState<{ id: number; username: string; permissions: string[] } | null>(null)
   const act = async (fn: () => Promise<unknown>) => {
     try {
       await fn()
@@ -55,10 +76,15 @@ export function AdminUsersPage() {
           </Field>
           <Button onClick={() => void act(async () => {
             await post('/users', form)
-            setForm({ username: '', email: '', password: '', role: 'USER' })
+            setForm({ username: '', email: '', password: '', role: 'USER', permissions: DEFAULT_PERMISSIONS })
           })}>
             {t('common.create')}
           </Button>
+          {form.role === 'USER' && (
+            <div className="w-full">
+              <PermsEditor value={form.permissions} onChange={(permissions) => setForm({ ...form, permissions })} />
+            </div>
+          )}
         </CardContent>
       </Card>
       <Table>
@@ -67,6 +93,7 @@ export function AdminUsersPage() {
             <TableHead>{t('common.user')}</TableHead>
             <TableHead>{t('common.email')}</TableHead>
             <TableHead>{t('common.role')}</TableHead>
+            <TableHead>{t('more.perms.title')}</TableHead>
             <TableHead>{t('common.date')}</TableHead>
             <TableHead />
           </TableRow>
@@ -81,6 +108,16 @@ export function AdminUsersPage() {
                   <option>USER</option>
                   <option>ADMIN</option>
                 </NativeSelect>
+              </TableCell>
+              <TableCell className="max-w-xs text-xs">
+                {u.role === 'ADMIN' ? (
+                  t('common.all')
+                ) : (
+                  <button className="text-left hover:underline" onClick={() => setEditing({ id: u.id, username: u.username, permissions: u.permissions ?? [] })}>
+                    {(u.permissions ?? []).map((p: string) => t(`more.perms.${p}`)).join(', ') || '-'}
+                  </button>
+                )}
+                {u.mustChangePassword && <Badge variant="outline">{t('more.perms.mustChange')}</Badge>}
               </TableCell>
               <TableCell className="text-xs">{formatDate(u.createdAt)}</TableCell>
               <TableCell>
@@ -103,13 +140,18 @@ export function AdminUsersPage() {
                 <option>USER</option>
                 <option>ADMIN</option>
               </NativeSelect>
-              <Button size="sm" onClick={() => void act(() => post('/invitations', { role: invRole }))}>
+              <Button size="sm" onClick={() => void act(() => post('/invitations', { role: invRole, permissions: invPerms }))}>
                 {t('admin.newInvitation')}
               </Button>
             </span>
           </CardTitle>
         </CardHeader>
         <CardContent>
+          {invRole === 'USER' && (
+            <div className="mb-4">
+              <PermsEditor value={invPerms} onChange={setInvPerms} />
+            </div>
+          )}
           <Table>
             <TableBody>
               {invs.data?.map((i) => (
@@ -144,6 +186,28 @@ export function AdminUsersPage() {
           </Table>
         </CardContent>
       </Card>
+      <Dialog open={!!editing} onOpenChange={() => setEditing(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>
+              {t('more.perms.title')} · {editing?.username}
+            </DialogTitle>
+          </DialogHeader>
+          {editing && <PermsEditor value={editing.permissions} onChange={(permissions) => setEditing({ ...editing, permissions })} />}
+          <DialogFooter>
+            <Button
+              onClick={() =>
+                void act(async () => {
+                  await patch(`/users/${editing!.id}`, { permissions: editing!.permissions })
+                  setEditing(null)
+                })
+              }
+            >
+              {t('common.save')}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

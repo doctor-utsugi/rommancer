@@ -1,4 +1,5 @@
 import { Navigate, Route, Routes } from 'react-router'
+import { useTranslation } from 'react-i18next'
 import { useAuth } from '@/lib/auth'
 import { Layout } from '@/components/layout'
 import { LoginPage, RegisterPage } from '@/pages/auth'
@@ -19,9 +20,13 @@ import { AdminDatsPage } from '@/pages/admin/dats'
 import { AdminUsersPage } from '@/pages/admin/users'
 import { AdminJobsPage } from '@/pages/admin/jobs'
 import { AdminIntegrationsPage } from '@/pages/admin/integrations'
+import { AdminSyncPage } from '@/pages/admin/sync'
+import { AdminReviewPage } from '@/pages/admin/review'
+import { FranchisePage, FranchisesPage, WorkPage } from '@/pages/works'
 
 export function App() {
   const { user, loading } = useAuth()
+  const { t } = useTranslation()
   if (loading) return null
   if (!user)
     return (
@@ -29,6 +34,14 @@ export function App() {
         <Route path="/register/:token" element={<RegisterPage />} />
         <Route path="*" element={<LoginPage />} />
       </Routes>
+    )
+  // Contrasena inicial o debil: solo se permite cambiarla
+  if (user.mustChangePassword)
+    return (
+      <div className="mx-auto max-w-2xl p-6">
+        <p className="mb-4 rounded-lg border border-destructive/50 p-3 text-sm">{t('profile.mustChange')}</p>
+        <ProfilePage />
+      </div>
     )
   return (
     <Routes>
@@ -38,6 +51,9 @@ export function App() {
         <Route path="games/:id" element={<GamePage />} />
         <Route path="missing" element={<MissingPage />} />
         <Route path="hacks" element={<HacksPage />} />
+        <Route path="works/:id" element={<WorkPage />} />
+        <Route path="franchises" element={<FranchisesPage />} />
+        <Route path="franchises/:id" element={<FranchisePage />} />
         <Route path="lists" element={<ListsPage />} />
         <Route path="lists/:id" element={<ListPage />} />
         <Route path="devices" element={<DevicesPage />} />
@@ -52,6 +68,8 @@ export function App() {
             <Route path="admin/users" element={<AdminUsersPage />} />
             <Route path="admin/jobs" element={<AdminJobsPage />} />
             <Route path="admin/integrations" element={<AdminIntegrationsPage />} />
+            <Route path="admin/sync" element={<AdminSyncPage />} />
+            <Route path="admin/review" element={<AdminReviewPage />} />
           </>
         )}
         <Route path="*" element={<Navigate to="/" replace />} />
