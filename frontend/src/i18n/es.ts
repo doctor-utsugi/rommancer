@@ -91,9 +91,9 @@ export const es = {
   },
   games: {
     title: 'Juegos',
-    filterAll: 'Todos',
-    filterOwned: 'Tengo',
-    filterMissing: 'Me faltan',
+    filterAll: 'Todos los juegos',
+    filterOwned: 'Solo los que tengo',
+    filterMissing: "Los que me faltan",
     filterHacks: 'Con romhacks',
     raOnly: 'Con logros RA',
     anyRegion: 'Cualquier región',

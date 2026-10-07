@@ -92,9 +92,9 @@ export const en: Dict = {
   },
   games: {
     title: 'Games',
-    filterAll: 'All',
-    filterOwned: 'Owned',
-    filterMissing: 'Missing',
+    filterAll: 'All games',
+    filterOwned: 'Only what I have',
+    filterMissing: "What I'm missing",
     filterHacks: 'With romhacks',
     raOnly: 'With RA achievements',
     anyRegion: 'Any region',
