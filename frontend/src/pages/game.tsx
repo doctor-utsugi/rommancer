@@ -37,6 +37,19 @@ export function GamePage() {
   const [hack, setHack] = useState<any>(null)
   const [patchForm, setPatchForm] = useState<{ file: File | null; baseRomId: string; sourceUrl: string }>({ file: null, baseRomId: '', sourceUrl: '' })
   if (!g) return <p className="text-sm text-muted-foreground">{t('common.loading')}</p>
+  const owned = g.roms.some((r: any) => r.parts.some((p: any) => p.files.length)) || g.hacks.some((h: any) => h.files?.length)
+  // Files on the server, list entries and hand-uploaded records go; catalogue entries stay as not owned
+  const removeFromCollection = async (romId?: number) => {
+    if (!confirm(t(romId ? 'more.game.removeRomConfirm' : 'more.game.removeConfirm'))) return
+    try {
+      const r = await del<any>(`/games/${g.id}/collection${romId ? `?romId=${romId}` : ''}`)
+      toast.success(t('more.game.removed', { count: r.records }))
+      if (r.gameDeleted) nav('/games')
+      else void refetch()
+    } catch (e) {
+      toast.error(errMsg(e))
+    }
+  }
 
   const cover = g.media.find((m: any) => m.type === 'COVER')
   const images = g.media.filter((m: any) => !LARGE.includes(m.type))
@@ -165,6 +178,12 @@ export function GamePage() {
             ))}
             {admin && (
               <>
+                {owned && (
+                  <Button variant="outline" size="sm" className="text-destructive" onClick={() => void removeFromCollection()}>
+                    <Trash2 className="size-4" />
+                    {t('more.game.removeFromCollection')}
+                  </Button>
+                )}
                 <Button variant="ghost" size="sm" onClick={() => setDialog('merge')}>
                   {t('game.merge')}
                 </Button>
@@ -214,7 +233,7 @@ export function GamePage() {
                 <TableHead className="w-60">{t('game.flags')}</TableHead>
                 <TableHead className="w-40">{t('game.ra')}</TableHead>
                 <TableHead className="w-48">{t('game.files')}</TableHead>
-                <TableHead className="w-20" />
+                <TableHead className="w-28" />
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -267,6 +286,11 @@ export function GamePage() {
                       </Button>
                     )}
                     <AddToListButton items={[{ romId: r.id }]} size="icon-sm" />
+                    {admin && r.parts.some((p: any) => p.files.length) && (
+                      <Button variant="ghost" size="icon-sm" title={t('more.game.removeRom')} onClick={() => void removeFromCollection(r.id)}>
+                        <Trash2 className="size-4 text-destructive" />
+                      </Button>
+                    )}
                   </TableCell>
                 </TableRow>
               ))}

@@ -54,6 +54,11 @@ export const esMore = {
     baseEvidence: { dat: 'DAT', patch: 'parche', content: 'contenido', header: 'cabecera', manual: 'manual', title: 'solo título' },
   },
   game: {
+    removeFromCollection: 'Borrar de la colección',
+    removeRom: 'Borrar esta rom de la colección',
+    removeConfirm: 'Se borran del servidor los ficheros de este juego y se quita de todas las listas. Las consolas conservan lo que ya descargaron y los saves no se tocan. ¿Seguir?',
+    removeRomConfirm: 'Se borra del servidor el fichero de esta rom y se quita de todas las listas. ¿Seguir?',
+    removed: 'Borrado ({{count}} ficheros)',
     gallery: 'Galería',
     downloadMedia: 'Descargar multimedia',
     includeLarge: 'Incluir manual y vídeo',
@@ -243,6 +248,11 @@ export const enMore: typeof esMore = {
     baseEvidence: { dat: 'DAT', patch: 'patch', content: 'content', header: 'header', manual: 'manual', title: 'title only' },
   },
   game: {
+    removeFromCollection: 'Remove from collection',
+    removeRom: 'Remove this rom from the collection',
+    removeConfirm: "This game's files are deleted from the server and it leaves every list. Consoles keep what they downloaded and saves are untouched. Continue?",
+    removeRomConfirm: "This rom's file is deleted from the server and it leaves every list. Continue?",
+    removed: 'Removed ({{count}} files)',
     gallery: 'Gallery',
     downloadMedia: 'Download media',
     includeLarge: 'Include manual and video',

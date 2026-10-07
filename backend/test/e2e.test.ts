@@ -1759,3 +1759,19 @@ test('sync client: roms of assigned lists, save before a game, conflicts resolve
   assert.equal(fs.readFileSync(saveB, 'utf8'), 'A-AGAIN');
   assert.equal((await b.run('conflicts')).stdout.trim(), '');
 });
+
+test('collection: removing a hand-uploaded game deletes its file, list entries and records', async () => {
+  const { prisma } = await import('../src/lib/prisma.js');
+  const game = await prisma.game.findFirstOrThrow({ where: { title: 'Juego Snes' }, include: { hacks: { include: { files: { include: { romPath: true } } } }, roms: { include: { parts: { include: { files: { include: { romPath: true } } } } } } } });
+  const files = [...game.roms.flatMap((r) => r.parts.flatMap((p) => p.files)), ...game.hacks.flatMap((h) => h.files)];
+  assert.ok(files.length > 0);
+  const abs = files.map((f) => path.join(f.romPath.path, f.relativePath));
+  const list = await api('POST', '/lists', { name: 'to clean' });
+  await api('POST', `/lists/${list.json.id}/items`, { gameId: game.id });
+  const r = await api('DELETE', `/games/${game.id}/collection`);
+  assert.equal(r.status, 200, JSON.stringify(r.json));
+  assert.equal(r.json.gameDeleted, true);
+  for (const f of abs) assert.ok(!fs.existsSync(f), `${f} deleted`);
+  assert.equal((await api('GET', `/lists/${list.json.id}`)).json.items.length, 0);
+  assert.equal((await api('DELETE', `/games/${game.id}/collection`, undefined, userToken)).status, 403, 'admins only');
+});

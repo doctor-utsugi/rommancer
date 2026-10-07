@@ -595,13 +595,21 @@ class App:
         proc = subprocess.Popen(["sh", SCRIPT, command, *args], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
         s = self.screen
         while proc.poll() is None:
-            phase, done, total = "connecting", 0, 0
+            phase, done, total, parts = "connecting", 0, 0, []
             try:
                 with open(self.progress_file(), encoding="utf-8") as f:
                     parts = f.read().strip().split("\t")
                 phase, done, total = parts[0], int(parts[1]), int(parts[2])
             except (OSError, ValueError, IndexError):
                 pass
+            detail, share = "", (done / total if total else 0)
+            if phase == "roms-download" and len(parts) >= 6 and total:
+                # Finished roms plus what the current file has written so far
+                size = int(parts[3] or 0)
+                cur = os.path.getsize(parts[4]) if os.path.exists(parts[4]) else 0
+                file_share = min(cur / size, 1) if size else 0
+                share = ((done - 1) + file_share) / total
+                detail = f"{parts[5][:42]}  {int(file_share * 100)}%"
             s.frame(T["title"])
             s.sprite()
             x, width, y = s.left(), s.column(), int(s.h * 0.3)
@@ -614,9 +622,11 @@ class App:
             pygame.draw.rect(s.surf, (40, 44, 60), bar, border_radius=7)
             if total:
                 fill = bar.copy()
-                fill.w = max(14, int(bar.w * min(done, total) / total))
+                fill.w = max(14, int(bar.w * min(share, 1)))
                 pygame.draw.rect(s.surf, ACCENT, fill, border_radius=7)
-                s.text(f"{100 * done // total}%", (bar.right - 50, bar.bottom + 6), s.small, DIM)
+                s.text(f"{int(100 * share)}%", (bar.right - 50, bar.bottom + 6), s.small, DIM)
+            if detail:
+                s.text(detail, (x, bar.bottom + 6), s.small, DIM)
             s.flip()
             for _ in pygame.event.get():
                 pass

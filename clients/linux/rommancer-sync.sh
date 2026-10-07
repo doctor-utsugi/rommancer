@@ -432,7 +432,9 @@ cmd_roms() {
   total="$(grep -c . "$WORK/romplan")"; i=0; got=0; fail=0; have=0
   while IFS="$TAB" read -r kind dest size ref; do
     [ "$kind" = rom ] || continue
-    i=$((i + 1)); progress roms-download "$i" "$total"
+    i=$((i + 1))
+    # Extra fields for the screens: file size, partial file being written and rom name
+    printf 'roms-download\t%s\t%s\t%s\t%s\t%s\n' "$i" "$total" "$size" "$dest.part" "$(basename "$dest")" > "$WORK/progress.tmp" && mv "$WORK/progress.tmp" "$WORK/progress"
     if [ -f "$dest" ] && { [ "$size" = 0 ] || [ "$(stat -c %s "$dest" 2>/dev/null)" = "$size" ]; }; then have=$((have + 1)); continue; fi
     if [ "$size" -gt 0 ] && [ "$(free_bytes "$(dirname "$dest")")" -lt $((size + 52428800)) ]; then
       log "roms: not enough space for $(basename "$dest")"; fail=$((fail + 1)); break
@@ -561,7 +563,17 @@ with_progress() {
     line="$(cat "$WORK/progress" 2>/dev/null)"
     phase="$(printf '%s' "$line" | cut -f1)"; done_n="$(printf '%s' "$line" | cut -f2)"; total="$(printf '%s' "$line" | cut -f3)"
     text="$(t "p_$phase")"
-    [ -n "$total" ] && [ "$total" -gt 0 ] 2>/dev/null && text="$text $done_n/$total ($((done_n * 100 / total))%)"
+    if [ "$phase" = roms-download ] && [ "${total:-0}" -gt 0 ] 2>/dev/null; then
+      # Overall share counts the finished roms plus what the current file has written so far
+      fsize="$(printf '%s' "$line" | cut -f4)"; part="$(printf '%s' "$line" | cut -f5)"; name="$(printf '%s' "$line" | cut -f6)"
+      cur="$(stat -c %s "$part" 2>/dev/null || echo 0)"; filepct=0
+      [ "${fsize:-0}" -gt 0 ] 2>/dev/null && filepct=$((cur * 100 / fsize))
+      pct=$(( ((done_n - 1) * 100 + filepct) / total ))
+      bar="["; k=0; while [ "$k" -lt 10 ]; do if [ "$k" -lt $((pct / 10)) ]; then bar="$bar#"; else bar="$bar-"; fi; k=$((k + 1)); done; bar="$bar]"
+      text="$text $done_n/$total $bar $pct% $(printf '%s' "$name" | cut -c1-30) ($filepct%)"
+    elif [ -n "$total" ] && [ "$total" -gt 0 ] 2>/dev/null; then
+      text="$text $done_n/$total ($((done_n * 100 / total))%)"
+    fi
     [ "$text" != "$shown" ] && { panel "$title" "$text"; shown="$text"; }
     sleep 2
   done
