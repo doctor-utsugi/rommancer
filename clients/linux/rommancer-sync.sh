@@ -60,7 +60,7 @@ detect() {
     FW=muos; ROOT=/mnt/mmc
   elif [ -d /userdata/system ]; then
     ROOT=/userdata
-    if grep -qi knulli /usr/share/batocera/batocera.version /etc/issue 2>/dev/null; then FW=knulli; else FW=batocera; fi
+    if [ -d /usr/share/knulli ] || grep -qi knulli /etc/issue 2>/dev/null; then FW=knulli; else FW=batocera; fi
   elif grep -qi rocknix /etc/os-release 2>/dev/null; then
     FW=rocknix; ROOT=/storage
   else
