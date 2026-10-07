@@ -205,31 +205,32 @@ export function GamePage() {
           </TabsTrigger>
         </TabsList>
         <TabsContent value="roms">
-          <Table>
+          {/* Fixed layout: the name takes the free width and long texts truncate inside their column */}
+          <Table className="table-fixed">
             <TableHeader>
               <TableRow>
                 <TableHead className="w-8" />
                 <TableHead>{t('common.name')}</TableHead>
-                <TableHead>{t('game.flags')}</TableHead>
-                <TableHead>{t('game.ra')}</TableHead>
-                <TableHead>{t('game.files')}</TableHead>
-                <TableHead />
+                <TableHead className="w-60">{t('game.flags')}</TableHead>
+                <TableHead className="w-32">{t('game.ra')}</TableHead>
+                <TableHead className="w-48">{t('game.files')}</TableHead>
+                <TableHead className="w-20" />
               </TableRow>
             </TableHeader>
             <TableBody>
               {g.roms.map((r: any) => (
                 <TableRow key={r.id}>
                   <TableCell>{r.owned ? <Check className="size-4 text-green-600" /> : r.unverified && r.parts.some((p: any) => p.files.length) ? <Check className="size-4 text-amber-600" /> : <X className="size-4 text-muted-foreground" />}</TableCell>
-                  <TableCell className="max-w-md">
+                  <TableCell>
                     <p className="truncate font-medium" title={r.name}>
                       {r.name}
                     </p>
-                    <p className="text-xs text-muted-foreground">
+                    <p className="truncate text-xs text-muted-foreground" title={r.parts.map((p: any) => p.name).join(', ')}>
                       {r.datSource.type} · {r.parts.map((p: any) => `${p.name} (${formatBytes(Number(p.size))})`).join(', ')}
                       {r.localTitle ? ` · ${t('more.tags.localTitle')}: ${r.localTitle}` : ''}
                     </p>
                   </TableCell>
-                  <TableCell className="min-w-56">
+                  <TableCell className="whitespace-normal">
                     <div className="flex flex-wrap gap-1">
                       {(r.regions as string[]).map((x) => tag(x, 'secondary'))}
                       {/* One badge for all languages: a dozen separate ones squeeze the table */}
@@ -251,7 +252,7 @@ export function GamePage() {
                       '-'
                     )}
                   </TableCell>
-                  <TableCell className="max-w-xs text-xs text-muted-foreground">
+                  <TableCell className="text-xs text-muted-foreground">
                     {r.parts.flatMap((p: any) => p.files).map((f: any) => (
                       <p key={f.id} className="truncate" title={`${f.romPath.path}/${f.relativePath}`}>
                         {f.romPath.label}: {f.relativePath}
