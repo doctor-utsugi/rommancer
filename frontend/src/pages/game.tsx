@@ -212,7 +212,7 @@ export function GamePage() {
                 <TableHead className="w-8" />
                 <TableHead>{t('common.name')}</TableHead>
                 <TableHead className="w-60">{t('game.flags')}</TableHead>
-                <TableHead className="w-32">{t('game.ra')}</TableHead>
+                <TableHead className="w-40">{t('game.ra')}</TableHead>
                 <TableHead className="w-48">{t('game.files')}</TableHead>
                 <TableHead className="w-20" />
               </TableRow>

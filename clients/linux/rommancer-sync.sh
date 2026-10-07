@@ -57,8 +57,15 @@ set_setting() { grep -v "^$1=" "$SETTINGS" 2>/dev/null > "$WORK/settings"; echo 
 # Installer packages bring the server address (and a one-time enrolment token) next to the script
 [ -z "$SERVER" ] && [ -f "$DIR/server.txt" ] && SERVER="$(head -n 1 "$DIR/server.txt" | tr -d '\r ')"
 
-# http METHOD URL BODYFILE OUTFILE [HEADER...]; BODYFILE "-" = no body, OUTFILE "-" = stdout
+# http METHOD URL BODYFILE OUTFILE [HEADER...]; BODYFILE "-" = no body, OUTFILE "-" = stdout.
+# One retry: home routers drop the odd DNS lookup and a whole sync should not fail for it
 http() {
+  http_once "$@" && return 0
+  sleep 2
+  http_once "$@"
+}
+
+http_once() {
   m="$1"; u="$2"; body="$3"; out="$4"; shift 4
   [ -n "$TOKEN" ] && set -- "$@" "X-Device-Token: $TOKEN"
   n=$#
@@ -462,6 +469,8 @@ cmd_game_start() {
   return 0
 }
 
+cmd_all() { cmd_sync; [ "$AUTO_ROMS" = 1 ] && cmd_roms; return 0; }
+
 # conflict<TAB>id<TAB>game<TAB>kind<TAB>this device's date<TAB>server date<TAB>server's device
 cmd_conflicts() { need_link; http GET "$SERVER/api/v1/agent/conflicts" - -; }
 
@@ -607,7 +616,7 @@ cmd_setup() {
       if [ "$AUTO_ROMS" = 1 ]; then auto="$(t yes)"; else auto="$(t no)"; fi
       menu "Rommancer Sync" "$(t connected)" "$(t sync)" "$(t roms)" "$(t autoroms "$auto")" "$(t conflicts "$nconf")" "$(t status)" "$(t unlink)" "$(t quit)"; rc=$?
       case $rc in
-        0) with_progress "$(t sync)" cmd_sync ;;
+        0) with_progress "$(t sync)" cmd_all ;;
         1) with_progress "$(t roms)" cmd_roms ;;
         2) if [ "$AUTO_ROMS" = 1 ]; then AUTO_ROMS=0; else AUTO_ROMS=1; fi; set_setting AUTO_ROMS "$AUTO_ROMS" ;;
         3) setup_conflicts ;;
@@ -660,6 +669,8 @@ case "${1:-}" in
   setup) cmd_setup ;;
   update) cmd_update ;;
   roms) VERBOSE=1 cmd_roms ;;
+  # What "Sync now" does on screen: saves, then the lists' roms when AUTO_ROMS is on
+  all) VERBOSE=1; cmd_all ;;
   game-start) cmd_game_start "${2:-}" ;;
   conflicts) cmd_conflicts ;;
   resolve) cmd_resolve "${2:-}" "${3:-}" ;;

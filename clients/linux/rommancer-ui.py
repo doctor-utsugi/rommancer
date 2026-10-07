@@ -10,6 +10,7 @@ import re
 import ssl
 import subprocess
 import sys
+import threading
 import time
 import urllib.error
 import urllib.parse
@@ -362,6 +363,9 @@ class App:
         self.server = (saved or "https://").strip()
         self.script = [a.strip() for a in os.environ.get("ROMMANCER_UI_TEST", "").split(",") if a.strip()]
         self.clock = pygame.time.Clock()
+        # Conflicts are counted in the background so the menu never waits for the network
+        self.conflict_count = None
+        self.refresh_conflicts()
         pygame.key.set_repeat(300, 60)
 
     @staticmethod
@@ -393,9 +397,12 @@ class App:
                 return None
             time.sleep(0.016)
 
-    def menu(self, title, items, info=()):
+    def menu(self, title, items, info=(), refresh=None, refresh_index=None):
+        """REFRESH (optional) recomputes the label at REFRESH_INDEX on every frame, for values that arrive later."""
         sel = 0
         while True:
+            if refresh is not None:
+                items[refresh_index] = refresh()
             s = self.screen
             s.frame(title, T["menu_keys"])
             s.sprite()
@@ -574,7 +581,7 @@ class App:
         return os.path.join(os.environ.get("TMPDIR", "/tmp"), f"rommancer-{os.getuid()}", "progress")
 
     def sync_now(self):
-        self.run_with_progress("sync", T["syncing"])
+        self.run_with_progress("all", T["syncing"])
 
     def sync_roms(self):
         self.run_with_progress("roms", T["sync_roms"])
@@ -615,7 +622,7 @@ class App:
                 pass
             self.clock.tick(SPRITE_FPS)
         out = (proc.stdout.read() if proc.stdout else "").strip()
-        self.message(out.splitlines()[-1] if out else T["error"].format(msg="sync"))
+        self.message(" · ".join(out.splitlines()[-2:]) if out else T["error"].format(msg="sync"))
 
     def settings(self):
         cfg = {}
@@ -631,8 +638,20 @@ class App:
         subprocess.run(["sh", SCRIPT, "set", "AUTO_ROMS", "0" if on else "1"], capture_output=True, timeout=30)
 
     def conflicts(self):
-        out = subprocess.run(["sh", SCRIPT, "conflicts"], capture_output=True, text=True, timeout=60).stdout
+        try:
+            out = subprocess.run(["sh", SCRIPT, "conflicts"], capture_output=True, text=True, timeout=15, env={**os.environ, "HTTP_MAX": "5"}).stdout
+        except subprocess.TimeoutExpired:
+            return []
         return [line.split("\t") for line in out.splitlines() if line.startswith("conflict\t")]
+
+    def refresh_conflicts(self):
+        if not self.linked():
+            return
+
+        def work():
+            self.conflict_count = len(self.conflicts())
+
+        threading.Thread(target=work, daemon=True).start()
 
     def resolve_conflicts(self):
         while True:
@@ -667,9 +686,9 @@ class App:
             if self.linked():
                 info = [T["connected"].format(server=self.cfg.get("SERVER", "")), T["as"].format(user=self.cfg.get("USER", "?"))]
                 auto = T["yes"] if self.settings().get("AUTO_ROMS", "1") == "1" else T["no"]
-                n = len(self.conflicts())
+                n = "…" if self.conflict_count is None else self.conflict_count
                 items = [T["sync_now"], T["sync_roms"], T["auto_roms"].format(v=auto), T["conflicts"].format(n=n), T["status"], T["logout"], T["quit"]]
-                choice = self.menu(T["title"], items, info)
+                choice = self.menu(T["title"], items, info, refresh=lambda: T["conflicts"].format(n="…" if self.conflict_count is None else self.conflict_count), refresh_index=3)
                 actions = [self.sync_now, self.sync_roms, self.toggle_auto_roms, self.resolve_conflicts, self.status, self.logout]
             else:
                 choice = self.menu(T["title"], [f"{T['server']}: {self.server}", T["login"], T["signup"], T["quit"]])
@@ -677,6 +696,7 @@ class App:
             if choice is None or choice >= len(actions):
                 return
             actions[choice]()
+            self.refresh_conflicts()
 
     def edit_server(self):
         value = self.keyboard(T["server"], self.server)
