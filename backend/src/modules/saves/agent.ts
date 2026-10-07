@@ -58,6 +58,21 @@ function candidatePaths(ctx: RomCtx, emu: Emulator = ctx.emu) {
   return files;
 }
 
+const SHA1 = /^[0-9a-f]{40}$/;
+
+/** Game of a rom by its content (full or headerless sha1), whatever the file is called. */
+async function gameByHash(hashes: string[], systemId: number | undefined): Promise<{ gameId: number; romId: number | null } | null> {
+  const list = hashes.filter((h) => SHA1.test(h));
+  if (!list.length) return null;
+  const part = await prisma.romPart.findFirst({
+    where: { OR: [{ sha1: { in: list } }, { headerlessSha1: { in: list } }], ...(systemId ? { rom: { game: { systemId } } } : {}) },
+    select: { rom: { select: { id: true, gameId: true } } },
+  });
+  if (part) return { gameId: part.rom.gameId, romId: part.rom.id };
+  const hack = await prisma.romHack.findFirst({ where: { OR: [{ sha1: { in: list } }, { headerlessSha1: { in: list } }] }, select: { gameId: true } });
+  return hack ? { gameId: hack.gameId, romId: null } : null;
+}
+
 const coreLayout = (layout: { savesLayout: string }) => layout.savesLayout === 'core' || layout.savesLayout === 'rom-core';
 
 /** In per-core layouts the save's folder names the core, which may differ from the firmware default. */
@@ -75,12 +90,13 @@ async function emulatorForPath(ctx: RomCtx, filePath: string): Promise<Emulator>
  */
 agentRouter.post('/sync', express.text({ limit: '16mb', type: '*/*' }), async (req, res) => {
   const device = await deviceFromToken(req);
-  const roms: string[] = [];
+  // "rom<TAB>path[<TAB>sha1[<TAB>headerless sha1]]": the hashes identify roms with non-DAT names
+  const roms: { path: string; hashes: string[] }[] = [];
   const present = new Map<string, string>();
   for (const line of String(req.body ?? '').split('\n')) {
-    const [kind, p, h] = line.replace(/\r$/, '').split('\t');
-    if (kind === 'rom' && p) roms.push(p);
-    else if (kind === 'file' && p && /^[0-9a-f]{40}$/.test(h ?? '')) present.set(p, h);
+    const [kind, p, h, h2] = line.replace(/\r$/, '').split('\t');
+    if (kind === 'rom' && p) roms.push({ path: p, hashes: [h ?? '', h2 ?? ''].filter(Boolean) });
+    else if (kind === 'file' && p && SHA1.test(h ?? '')) present.set(p, h);
   }
   const userSaves = await prisma.save.findMany({ where: { userId: device.userId }, select: { baseName: true, gameId: true } });
   const savedNames = new Set(userSaves.map((s) => s.baseName));
@@ -88,7 +104,7 @@ agentRouter.post('/sync', express.text({ limit: '16mb', type: '*/*' }), async (r
   const systemIds = new Map<string, number | undefined>();
   const coreEmus = (await prisma.emulator.findMany({ where: { core: { not: null } } })) as Emulator[];
   const out: string[] = [];
-  for (const rom of roms) {
+  for (const { path: rom, hashes } of roms) {
     const ctx = await romContext(device, rom).catch(() => null);
     if (!ctx) continue;
     // Emulators whose save folder already holds files for this rom; the firmware default otherwise
@@ -100,10 +116,16 @@ agentRouter.post('/sync', express.text({ limit: '16mb', type: '*/*' }), async (r
     const candidates = emus.flatMap((e) => candidatePaths(ctx, e).map((f) => ({ ...f, emu: e })));
     const hasLocal = candidates.some((f) => present.has(f.path));
     if (!systemIds.has(ctx.slug)) systemIds.set(ctx.slug, (await prisma.system.findUnique({ where: { slug: ctx.slug } }))?.id);
-    // Cheap exact lookup; the scanned-file fallback of identifyRom is too slow for thousands of roms
-    const known = savedGames.size ? await prisma.rom.findFirst({ where: { name: ctx.baseName, game: { systemId: systemIds.get(ctx.slug) } }, select: { gameId: true } }) : null;
+    const systemId = systemIds.get(ctx.slug);
+    // Cheap exact lookups (name, then content hash); the scanned-file fallback of identifyRom is too slow for thousands of roms
+    const needGame = hasLocal || savedGames.size > 0;
+    const known = needGame
+      ? ((await prisma.rom.findFirst({ where: { name: ctx.baseName, game: { systemId } }, select: { gameId: true } })) ?? (await gameByHash(hashes, systemId)))
+      : null;
     if (!hasLocal && !savedNames.has(ctx.baseName) && !(known && savedGames.has(known.gameId))) continue;
-    const gameId = known?.gameId ?? (hasLocal ? ((await identifyRom(ctx.baseName, systemIds.get(ctx.slug)))?.gameId ?? null) : null);
+    const gameId = known?.gameId ?? (hasLocal ? ((await identifyRom(ctx.baseName, systemId))?.gameId ?? null) : null);
+    // Saves uploaded before the rom could be identified get their game now
+    if (gameId && hasLocal) await prisma.save.updateMany({ where: { userId: device.userId, baseName: ctx.baseName, gameId: null }, data: { gameId } });
     for (const f of candidates) {
       const save = await findLogicalSave(device.userId, f.emu, f.kind, f.slot, ctx.baseName, gameId);
       const deviceSha1 = present.get(f.path);
@@ -190,7 +212,9 @@ agentRouter.post('/upload', express.raw({ limit: '128mb', type: '*/*' }), async 
   if (!parsed) throw badRequest('Not a save file for this emulator');
   const buf = Buffer.isBuffer(req.body) ? req.body : Buffer.alloc(0);
   if (!buf.length) throw badRequest('Empty file');
-  const r = await receiveFromDevice(device, ctx.slug, emu, parsed.kind, parsed.slot, ctx.baseName, buf);
+  const systemId = (await prisma.system.findUnique({ where: { slug: ctx.slug } }))?.id;
+  const byHash = await gameByHash((req.header('x-rom-sha1') ?? '').split(',').map((h) => h.trim()), systemId);
+  const r = await receiveFromDevice(device, ctx.slug, emu, parsed.kind, parsed.slot, ctx.baseName, buf, byHash);
   await prisma.device.update({ where: { id: device.id }, data: { lastSyncAt: new Date() } });
   res.type('text/plain').send(`${r.action}\n`);
 });

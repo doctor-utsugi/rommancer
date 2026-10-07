@@ -24,6 +24,8 @@ WORK="${TMPDIR:-/tmp}/rommancer-$(id -u 2>/dev/null || echo 0)"
 LOCK="$WORK/lock"
 WATCH_SECONDS="${ROMMANCER_WATCH_SECONDS:-15}"
 FULL_SECONDS="${ROMMANCER_FULL_SECONDS:-300}"
+# Roms up to this size are hashed (once, cached) so games are recognised whatever their file name
+HASH_MAX="${ROMMANCER_HASH_MAX:-67108864}"
 TAB="$(printf '\t')"
 mkdir -p "$STATE" "$WORK"
 
@@ -173,14 +175,35 @@ urlenc() {
 
 need_link() { [ -n "$TOKEN" ] || { say "Not linked. Run: $0 link http://server:port"; exit 2; }; }
 
-# Hash with cache keyed by size and mtime (saves rarely change, states can be large)
+# Hash with cache keyed by size and mtime; SKIP > 0 hashes without that many leading bytes (rom headers)
 cached_sha1() {
-  f="$1"; meta="$(stat -c '%s %Y' "$f" 2>/dev/null)" || return 1
-  hit="$(grep -F "$f$TAB$meta$TAB" "$CACHE" 2>/dev/null | head -n 1 | cut -f3)"
+  f="$1"; skip="${2:-0}"; meta="$(stat -c '%s %Y' "$f" 2>/dev/null)" || return 1
+  key="$f"; [ "$skip" -gt 0 ] && key="$f#$skip"
+  hit="$(grep -F "$key$TAB$meta$TAB" "$CACHE" 2>/dev/null | head -n 1 | cut -f3)"
   if [ -n "$hit" ]; then printf '%s' "$hit"; return 0; fi
-  s="$(sha1 "$f")" || return 1
-  printf '%s\t%s\t%s\n' "$f" "$meta" "$s" >> "$CACHE"
+  if [ "$skip" -gt 0 ]; then s="$(tail -c +$((skip + 1)) "$f" | sha1sum | cut -d' ' -f1)"; else s="$(sha1 "$f")"; fi
+  [ -n "$s" ] || return 1
+  printf '%s\t%s\t%s\n' "$key" "$meta" "$s" >> "$CACHE"
   printf '%s' "$s"
+}
+
+# Bytes of header that DATs leave out, by extension (and the 512-byte SNES copier header by size)
+header_size() {
+  case "$(printf '%s' "$1" | tr 'A-Z' 'a-z')" in
+    *.nes|*.fds) echo 16 ;;
+    *.lnx) echo 64 ;;
+    *.a78) echo 128 ;;
+    *.smc|*.sfc|*.swc|*.fig) [ $(( $(stat -c %s "$1") % 1024 )) -eq 512 ] && echo 512 || echo 0 ;;
+    *) echo 0 ;;
+  esac
+}
+
+rom_line() {
+  f="$1"; size="$(stat -c %s "$f" 2>/dev/null)" || return 0
+  if [ "${size:-0}" -gt "$HASH_MAX" ]; then printf 'rom\t%s\n' "$f"; return 0; fi
+  full="$(cached_sha1 "$f")"; hs="$(header_size "$f")"; hl=""
+  [ "$hs" -gt 0 ] && hl="$(cached_sha1 "$f" "$hs")"
+  printf 'rom\t%s\t%s\t%s\n' "$f" "$full" "$hl"
 }
 
 is_save() {
@@ -206,7 +229,7 @@ build_request() {
   ROMS="$(field roms "$roots")"; EXTS="$(field exts "$roots")"
   find "$ROMS" -mindepth 2 -maxdepth 2 -type f 2>/dev/null | while IFS= read -r f; do
     case "$f" in */.*|*"$TAB"*) continue ;; esac
-    is_rom "$f" && printf 'rom\t%s\n' "$f" >> "$out"
+    is_rom "$f" && rom_line "$f" >> "$out"
   done
   printf '%s\n' "$roots" | sed -n "s/^saves$TAB//p" | while IFS= read -r d; do
     find "$d" -type f 2>/dev/null | while IFS= read -r f; do
@@ -233,7 +256,8 @@ cmd_sync() {
   while IFS="$TAB" read -r action p a b; do
     case "$action" in
       put)
-        if http POST "$SERVER/api/v1/agent/upload" "$p" - "X-Rom-B64: $(b64 "$a")" "X-Path-B64: $(b64 "$p")" >/dev/null; then ups=$((ups + 1)); else errs=$((errs + 1)); fi ;;
+        rh="$(grep -F "rom$TAB$a$TAB" "$req" | head -n 1 | cut -f3,4 | tr '\t' ',')"
+        if http POST "$SERVER/api/v1/agent/upload" "$p" - "X-Rom-B64: $(b64 "$a")" "X-Path-B64: $(b64 "$p")" "X-Rom-Sha1: $rh" >/dev/null; then ups=$((ups + 1)); else errs=$((errs + 1)); fi ;;
       get)
         mkdir -p "$(dirname "$p")"
         if http GET "$SERVER/api/v1/agent/file?v=$a" - "$p.rommancer-tmp" "X-Rom-B64: $(b64 "$b")" "X-Path-B64: $(b64 "$p")" && mv "$p.rommancer-tmp" "$p"; then

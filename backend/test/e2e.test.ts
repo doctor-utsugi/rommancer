@@ -1588,3 +1588,60 @@ test('sync client: installer package enrols the device by itself, once', async (
   const again = await fetch(`${base}/api/v1/link/enroll`, { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: `name=x&firmware=onion&root=/mnt/SDCARD&token=${encodeURIComponent(enrollToken)}` });
   assert.equal(again.status, 404);
 });
+
+test('sync client: login and sign-up typed on the console', async () => {
+  const post = (p: string, form: Record<string, string>) =>
+    fetch(`${base}/api/v1${p}`, { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams(form).toString() });
+  const parse = async (r: Response) => Object.fromEntries((await r.text()).trim().split('\n').map((l) => l.split('\t')));
+  const device = { name: 'console-ui', firmware: 'knulli', root: '/userdata', model: 'Anbernic RG40XX-V' };
+  await api('PUT', '/admin/settings/signup', { open: false });
+  assert.equal((await parse(await fetch(`${base}/api/v1/link/info`))).signup, '0');
+  assert.equal((await post('/link/signup', { ...device, username: 'consoleuser', email: 'consoleuser@example.com', password: 'console-password-1' })).status, 403);
+  await api('PUT', '/admin/settings/signup', { open: true });
+  assert.equal((await parse(await fetch(`${base}/api/v1/link/info`))).signup, '1');
+  const created = await post('/link/signup', { ...device, username: 'consoleuser', email: 'consoleuser@example.com', password: 'console-password-1' });
+  assert.equal(created.status, 201);
+  const c = await parse(created);
+  assert.equal(c.user, 'consoleuser');
+  const roots = await fetch(`${base}/api/v1/agent/roots`, { headers: { 'X-Device-Token': c.token } });
+  assert.equal(roots.status, 200, 'the new device token works');
+  await api('PUT', '/admin/settings/signup', { open: false });
+  assert.equal((await post('/link/login', { ...device, username: 'consoleuser', password: 'wrong-password' })).status, 401);
+  const logged = await post('/link/login', { ...device, username: 'consoleuser@example.com', password: 'console-password-1' });
+  assert.equal(logged.status, 200);
+  const l = await parse(logged);
+  assert.ok(l.token && l.token !== c.token, 'each login registers its own device');
+  assert.equal((await post('/link/login', { ...device, firmware: 'nope', username: 'consoleuser', password: 'console-password-1' })).status, 400);
+});
+
+test('sync client: roms with non-DAT names share saves by content hash', async () => {
+  const client = path.join(ROOT, 'clients/linux/rommancer-sync.sh');
+  const dir = path.join(DATA, 'sync-hash');
+  fs.rmSync(dir, { recursive: true, force: true });
+  const run = (name: string, args: string[], env: Record<string, string> = {}) =>
+    execFileP('sh', [client, ...args], { env: { ...process.env, ROMMANCER_STATE: path.join(dir, `${name}-state`), ...env } });
+  const enrol = async (name: string, firmware: string, root: string) => {
+    const r = await api('POST', '/link/claim', { name, firmware, root });
+    assert.equal(r.status, 201);
+    fs.mkdirSync(path.join(dir, `${name}-state`), { recursive: true });
+    fs.writeFileSync(path.join(dir, `${name}-state`, 'config'), `SERVER=${base}\nTOKEN=${r.json.token}\n`);
+  };
+  const smb3 = fs.readFileSync(path.join(ROMS, 'nes', `${SMB3}.nes`));
+  const onion = path.join(dir, 'onion');
+  const knulli = path.join(dir, 'knulli');
+  fs.mkdirSync(path.join(onion, 'Roms/FC'), { recursive: true });
+  fs.mkdirSync(path.join(onion, 'Saves/CurrentProfile/saves/FCEUmm'), { recursive: true });
+  fs.mkdirSync(path.join(knulli, 'roms/nes'), { recursive: true });
+  // GoodNES-style name on one console, a user's own name on the other: only the content matches the DAT
+  fs.writeFileSync(path.join(onion, 'Roms/FC', 'Super Mario Bros. 3 (U) (PRG1) [!].nes'), smb3);
+  fs.writeFileSync(path.join(knulli, 'roms/nes', 'smb3.nes'), smb3);
+  fs.writeFileSync(path.join(onion, 'Saves/CurrentProfile/saves/FCEUmm', 'Super Mario Bros. 3 (U) (PRG1) [!].srm'), 'WORLD-8');
+  await enrol('hash-onion', 'onion', onion);
+  await enrol('hash-knulli', 'knulli', knulli);
+  assert.match((await run('hash-onion', ['sync'])).stdout, /1 up, 0 down, 0 errors/);
+  assert.match((await run('hash-knulli', ['sync'])).stdout, /0 up, 1 down, 0 errors/);
+  assert.equal(fs.readFileSync(path.join(knulli, 'saves/nes', 'smb3.srm'), 'utf8'), 'WORLD-8');
+  const { prisma } = await import('../src/lib/prisma.js');
+  const save = await prisma.save.findFirstOrThrow({ where: { baseName: 'Super Mario Bros. 3 (U) (PRG1) [!]' }, include: { game: true } });
+  assert.equal(save.game?.title, 'Super Mario Bros. 3', 'the save knows its game from the rom hash');
+});

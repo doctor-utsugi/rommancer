@@ -109,9 +109,18 @@ export async function setBase(saveId: number, deviceId: number, versionId: numbe
  * Procesa un fichero recibido del dispositivo (subida al cerrar un juego o lectura por SD/SSH).
  * Devuelve el resultado para registro.
  */
-export async function receiveFromDevice(device: Device, systemSlug: string | null, emu: Emulator, kind: SaveKind, slot: number, baseName: string, buf: Buffer) {
+export async function receiveFromDevice(
+  device: Device,
+  systemSlug: string | null,
+  emu: Emulator,
+  kind: SaveKind,
+  slot: number,
+  baseName: string,
+  buf: Buffer,
+  known?: { gameId: number; romId: number | null } | null,
+) {
   const systemId = systemSlug ? (await prisma.system.findUnique({ where: { slug: systemSlug } }))?.id : undefined;
-  const ident = await identifyRom(baseName, systemId);
+  const ident = known ?? (await identifyRom(baseName, systemId));
   const save = await findLogicalSave(device.userId, emu, kind, slot, baseName, ident?.gameId ?? null);
   const deviceSha1 = sha1(buf);
   const d = await decide(save, device, emu, { sha1: deviceSha1 });
