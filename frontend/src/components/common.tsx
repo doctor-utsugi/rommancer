@@ -151,6 +151,7 @@ export interface System {
   id: number
   slug: string
   name: string
+  extensions?: string[]
   manufacturer: string
   games: number
   roms: number

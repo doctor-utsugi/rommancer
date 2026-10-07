@@ -11,7 +11,7 @@ import { Input } from '@/components/ui/input'
 import { Progress } from '@/components/ui/progress'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
-import { Field, NativeSelect, PageHeader, SystemSelect, errMsg, formatBytes } from '@/components/common'
+import { Field, NativeSelect, PageHeader, SystemSelect, errMsg, formatBytes, useSystems } from '@/components/common'
 
 const MAX_BROWSER_HASH = 1024 * 1024 * 1024
 
@@ -196,6 +196,20 @@ export function VerifiedUpload({
   )
 }
 
+const REGIONS = ['World', 'USA', 'Europe', 'Japan', 'Spain', 'France', 'Germany', 'Italy', 'UK', 'Australia', 'Brazil', 'Korea', 'China', 'Asia', 'Canada', 'Netherlands', 'Sweden', 'Russia', 'Taiwan', 'Hong Kong']
+
+/** What a No-Intro-style file name says: "Title (Europe) (En,Es) (Rev 1).gb" */
+function parseRomName(fileName: string) {
+  const ext = (fileName.match(/\.[^.]+$/)?.[0] ?? '').toLowerCase()
+  const base = fileName.slice(0, fileName.length - ext.length)
+  const tags = [...base.matchAll(/[([]([^)\]]+)[)\]]/g)].map((m) => m[1].trim())
+  const title = base.replace(/\s*[([].*$/, '').trim() || base
+  const regions = tags.filter((tag) => tag.split(/,\s*/).every((r) => REGIONS.includes(r))).flatMap((tag) => tag.split(/,\s*/))
+  const languages = tags.filter((tag) => /^[A-Z][a-z](-[A-Z][a-z]+)?(,[A-Z][a-z](-[A-Z][a-z]+)?)*$/.test(tag) && !REGIONS.includes(tag)).flatMap((tag) => tag.split(','))
+  const revision = tags.find((tag) => /^(Rev\s*\S+|v\d[\d.]*\w*)$/i.test(tag)) ?? ''
+  return { ext, title, regions, languages, revision }
+}
+
 function UnverifiedUpload({ initial }: { initial: File | null }) {
   const { t } = useTranslation()
   const [file, setFile] = useState<File | null>(initial)
@@ -210,6 +224,30 @@ function UnverifiedUpload({ initial }: { initial: File | null }) {
     queryFn: () => get<Paged<{ id: number; title: string }>>(`/games?systemId=${systemId}&q=${encodeURIComponent(q)}&pageSize=20`),
     enabled: !!systemId && q.length > 1,
   })
+  const systems = useSystems()
+  // Fill in what the file says: system by extension, game by title, regions, languages and version
+  useEffect(() => {
+    if (!file || !systems.data) return
+    const p = parseRomName(file.name)
+    const bySuffix = systems.data.filter((s) => s.extensions?.map((e) => e.toLowerCase()).includes(p.ext))
+    const sys = bySuffix.length === 1 ? String(bySuffix[0].id) : ''
+    setSystemId(sys)
+    setF((prev) => ({ ...prev, regions: p.regions.join(', '), languages: p.languages.join(', '), revision: p.revision, newGameTitle: p.title }))
+    setQ(p.title)
+    setGameId('')
+    setMode('new')
+    if (!sys) return
+    void get<Paged<{ id: number; title: string }>>(`/games?systemId=${sys}&q=${encodeURIComponent(p.title)}&pageSize=20`)
+      .then((r) => {
+        const same = r.items.find((g) => g.title.toLowerCase() === p.title.toLowerCase())
+        if (same) {
+          setMode('existing')
+          setGameId(String(same.id))
+        }
+      })
+      .catch(() => {})
+  }, [file, systems.data])
+
   const submit = async () => {
     const fd = new FormData()
     fd.append('file', file!)
