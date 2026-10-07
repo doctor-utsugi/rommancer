@@ -14,13 +14,15 @@ STATE="${ROMMANCER_STATE:-$DIR/.rommancer}"
 CONF="$STATE/config"
 CACHE="$STATE/hashes"
 LOG="$STATE/log"
-LOCK="$STATE/lock"
+# Transient files go to RAM: fewer writes to the SD card, and they survive a read-only card
+WORK="${TMPDIR:-/tmp}/rommancer-$(id -u 2>/dev/null || echo 0)"
+LOCK="$WORK/lock"
 WATCH_SECONDS="${ROMMANCER_WATCH_SECONDS:-15}"
 FULL_SECONDS="${ROMMANCER_FULL_SECONDS:-300}"
 TAB="$(printf '\t')"
-mkdir -p "$STATE"
+mkdir -p "$STATE" "$WORK"
 
-log() { printf '%s %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$*" >> "$LOG"; }
+log() { printf '%s %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$*" >> "$LOG" 2>/dev/null; }
 say() { printf '%s\n' "$*"; log "$*"; }
 b64() { printf '%s' "$1" | base64 | tr -d '\n'; }
 sha1() { sha1sum "$1" 2>/dev/null | cut -d' ' -f1; }
@@ -88,8 +90,8 @@ cmd_link() {
   detect
   TOKEN=""
   form="name=$(urlenc "$NAME")&firmware=$(urlenc "$FW")&root=$(urlenc "$ROOT")&model=$(urlenc "$MODEL")"
-  printf '%s' "$form" > "$STATE/form"
-  resp="$(http POST "$SERVER/api/v1/link/start" "$STATE/form" - "Content-Type: application/x-www-form-urlencoded")" || { say "Cannot reach $SERVER"; exit 1; }
+  printf '%s' "$form" > "$WORK/form"
+  resp="$(http POST "$SERVER/api/v1/link/start" "$WORK/form" - "Content-Type: application/x-www-form-urlencoded")" || { say "Cannot reach $SERVER"; exit 1; }
   code="$(field code "$resp")"; secret="$(field secret "$resp")"; url="$(field url "$resp")"; qr="$(field qr "$resp")"
   interval="$(field interval "$resp")"; expires="$(field expires "$resp")"
   show_code "$code" "$url" "$qr"
@@ -172,7 +174,11 @@ cmd_sync() {
   need_link
   if ! mkdir "$LOCK" 2>/dev/null; then log "sync already running"; return 0; fi
   trap 'rmdir "$LOCK" 2>/dev/null' EXIT INT TERM
-  req="$STATE/request"; plan="$STATE/plan"
+  req="$WORK/request"; plan="$WORK/plan"
+  if ! touch "$STATE/.write-test" 2>/dev/null; then
+    log "storage is read-only, skipping sync"; rmdir "$LOCK"; return 1
+  fi
+  rm -f "$STATE/.write-test"
   build_request "$req" || { log "server unreachable"; rmdir "$LOCK"; return 1; }
   http POST "$SERVER/api/v1/agent/sync" "$req" "$plan" || { log "sync request failed"; rmdir "$LOCK"; return 1; }
   ups=0; downs=0; errs=0
