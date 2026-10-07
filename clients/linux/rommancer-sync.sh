@@ -6,6 +6,7 @@
 #   rommancer-sync.sh enroll        pair with the one-time token of an installer package (enroll.txt)
 #   rommancer-sync.sh sync          one sync pass
 #   rommancer-sync.sh daemon        sync whenever a save changes, and every few minutes
+#   rommancer-sync.sh setup         on-screen setup with the gamepad (Onion)
 #   rommancer-sync.sh install       start the daemon at boot and sync when a game ends (Knulli, Batocera)
 #   rommancer-sync.sh status | unlink
 #   rommancer-sync.sh               link if needed, then start the daemon in the background
@@ -36,7 +37,9 @@ sha1() { sha1sum "$1" 2>/dev/null | cut -d' ' -f1; }
 
 SERVER=""
 TOKEN=""
+USER=""
 [ -f "$CONF" ] && . "$CONF"
+USER_NAME="$USER"
 # Installer packages bring the server address (and a one-time enrolment token) next to the script
 [ -z "$SERVER" ] && [ -f "$DIR/server.txt" ] && SERVER="$(head -n 1 "$DIR/server.txt" | tr -d '\r ')"
 
@@ -142,7 +145,7 @@ cmd_link() {
 }
 
 save_link() {
-  printf 'SERVER=%s\nTOKEN=%s\n' "$SERVER" "$TOKEN" > "$CONF"; chmod 600 "$CONF"
+  printf 'SERVER=%s\nTOKEN=%s\nUSER=%s\n' "$SERVER" "$TOKEN" "${USER_NAME:-}" > "$CONF"; chmod 600 "$CONF"
 }
 
 # One-time token from an installer package: the device registers itself, no code to type
@@ -242,7 +245,11 @@ build_request() {
 
 cmd_sync() {
   need_link
-  if ! mkdir "$LOCK" 2>/dev/null; then log "sync already running"; return 0; fi
+  if ! mkdir "$LOCK" 2>/dev/null; then
+    # Interactive syncs wait for the background one instead of doing nothing
+    [ -n "${VERBOSE:-}" ] || { log "sync already running"; return 0; }
+    n=0; while ! mkdir "$LOCK" 2>/dev/null; do sleep 1; n=$((n + 1)); [ "$n" -lt 600 ] || return 1; done
+  fi
   trap 'rmdir "$LOCK" 2>/dev/null' EXIT INT TERM
   req="$WORK/request"; plan="$WORK/plan"
   if ! touch "$STATE/.write-test" 2>/dev/null; then
@@ -315,10 +322,111 @@ cmd_install() {
     onion)
       boot=/mnt/SDCARD/.tmp_update/startup/rommancer-sync.sh
       mkdir -p "$(dirname "$boot")"
-      printf '#!/bin/sh\n[ -f "%s" ] && (cd "%s" && nohup sh "%s" daemon >/dev/null 2>&1 &)\n' "$self" "$DIR" "$self" > "$boot"
+      printf '#!/bin/sh\n[ -f "%s" ] && (cd "%s" && sh "%s" boot >/dev/null 2>&1 &)\n' "$self" "$DIR" "$self" > "$boot"
       say "Installed: daemon at boot ($boot)" ;;
     *) say "No automatic install for $FW yet; run '$self daemon' at startup" ;;
   esac
+}
+
+# ---------- setup screens with Onion's own menu (prompt) and on-screen keyboard (kbinput) ----------
+
+ONION_BIN="${ROMMANCER_ONION_BIN:-/mnt/SDCARD/.tmp_update/bin}"
+onion_ui() { bin="$1"; shift; LD_PRELOAD=/mnt/SDCARD/miyoo/lib/libpadsp.so "$ONION_BIN/$bin" "$@"; }
+
+# Menu: prints nothing, returns the index of the chosen item (255 = back)
+menu() { title="$1"; msg="$2"; shift 2; onion_ui prompt -t "$title" -m "$msg" "$@"; }
+
+# Keyboard: prints the text, fails when cancelled
+ask() {
+  onion_ui kbinput -i "$2" -t "$1" > "$WORK/kb" 2>/dev/null || return 1
+  tail -n 1 "$WORK/kb"
+}
+
+tr_es() { grep -qs '"language"[^,]*es' /appconfigs/system.json; }
+t() {
+  if tr_es; then
+    case "$1" in
+      server) echo "Servidor" ;; login) echo "Entrar" ;; signup) echo "Crear cuenta" ;; quit) echo "Salir" ;;
+      user) echo "USUARIO O EMAIL" ;; username) echo "USUARIO" ;; email) echo "EMAIL" ;; password) echo "CONTRASENA" ;;
+      sync) echo "Sincronizar ahora" ;; status) echo "Estado" ;; unlink) echo "Desconectar esta consola" ;;
+      connected) echo "Conectado a $SERVER como ${USER_NAME:-?}" ;; notlinked) echo "Esta consola no esta vinculada" ;;
+      badserver) echo "No hay un Rommancer en esa direccion" ;; badlogin) echo "Usuario o contrasena incorrectos" ;;
+      closed) echo "Este servidor no permite crear cuentas" ;; finished) echo "Listo. Los saves se sincronizan solos." ;;
+      syncing) echo "Sincronizando..." ;; *) echo "$1" ;;
+    esac
+  else
+    case "$1" in
+      server) echo "Server" ;; login) echo "Log in" ;; signup) echo "Create account" ;; quit) echo "Exit" ;;
+      user) echo "USERNAME OR EMAIL" ;; username) echo "USERNAME" ;; email) echo "EMAIL" ;; password) echo "PASSWORD" ;;
+      sync) echo "Sync now" ;; status) echo "Status" ;; unlink) echo "Unlink this console" ;;
+      connected) echo "Connected to $SERVER as ${USER_NAME:-?}" ;; notlinked) echo "This console is not linked" ;;
+      badserver) echo "No Rommancer at that address" ;; badlogin) echo "Wrong username or password" ;;
+      closed) echo "This server does not allow new accounts" ;; finished) echo "Done. Saves now sync by themselves." ;;
+      syncing) echo "Syncing..." ;; *) echo "$1" ;;
+    esac
+  fi
+}
+
+# POST a device form to /link/login or /link/signup and keep the token
+link_with() {
+  detect
+  form="name=$(urlenc "$NAME")&firmware=$(urlenc "$FW")&root=$(urlenc "$ROOT")&model=$(urlenc "$MODEL")$1"
+  printf '%s' "$form" > "$WORK/form"
+  TOKEN=""
+  resp="$(http POST "$SERVER/api/v1/link/$2" "$WORK/form" - "Content-Type: application/x-www-form-urlencoded")" || return 1
+  TOKEN="$(field token "$resp")"; USER_NAME="$(field user "$resp")"
+  [ -n "$TOKEN" ] || return 1
+  save_link
+}
+
+setup_after_link() {
+  panel "Rommancer Sync" "$(t syncing)"
+  VERBOSE=1 cmd_sync > "$WORK/first-sync" 2>&1
+  cmd_install > /dev/null 2>&1
+  if ! { [ -f "$STATE/pid" ] && kill -0 "$(cat "$STATE/pid")" 2>/dev/null; }; then
+    nohup sh "$DIR/$(basename "$0")" daemon >/dev/null 2>&1 &
+  fi
+  panel_close
+  panel "Rommancer Sync" "$(t finished) $(tail -n 1 "$WORK/first-sync")" wait
+}
+
+cmd_setup() {
+  [ -x "$ONION_BIN/prompt" ] && [ -x "$ONION_BIN/kbinput" ] || { say "setup needs Onion's prompt and kbinput"; exit 2; }
+  fix_clock
+  # An installer package links by itself with its token
+  if [ -z "$TOKEN" ] && [ -f "$DIR/enroll.txt" ] && cmd_enroll > /dev/null 2>&1; then setup_after_link; fi
+  [ -n "$SERVER" ] || SERVER="https://"
+  while :; do
+    if [ -n "$TOKEN" ]; then
+      menu "Rommancer Sync" "$(t connected)" "$(t sync)" "$(t status)" "$(t unlink)" "$(t quit)"; rc=$?
+      case $rc in
+        0) panel "Rommancer Sync" "$(t syncing)"; VERBOSE=1 cmd_sync > "$WORK/sync" 2>&1; panel_close
+           panel "Rommancer Sync" "$(tail -n 1 "$WORK/sync")" wait ;;
+        1) panel "$(t status)" "$(tail -n 4 "$LOG" 2>/dev/null | cut -c21- | tr '\n' ' ')" wait ;;
+        2) keep="$SERVER"; cmd_unlink > /dev/null; TOKEN=""; USER_NAME=""; SERVER="$keep" ;;
+        *) return 0 ;;
+      esac
+    else
+      menu "Rommancer Sync" "$(t notlinked)" "$(t server): $SERVER" "$(t login)" "$(t signup)" "$(t quit)"; rc=$?
+      case $rc in
+        0) v="$(ask "$(t server)" "$SERVER")" && SERVER="${v%/}" ;;
+        1|2)
+          info="$(http GET "$SERVER/api/v1/link/info" - -)" || { panel "Rommancer Sync" "$(t badserver)" wait; continue; }
+          if [ "$rc" -eq 1 ]; then
+            u="$(ask "$(t user)" "")" || continue
+            p="$(ask "$(t password)" "")" || continue
+            if link_with "&username=$(urlenc "$u")&password=$(urlenc "$p")" login; then setup_after_link; else panel "Rommancer Sync" "$(t badlogin)" wait; fi
+          else
+            [ "$(field signup "$info")" = 1 ] || { panel "Rommancer Sync" "$(t closed)" wait; continue; }
+            u="$(ask "$(t username)" "")" || continue
+            e="$(ask "$(t email)" "")" || continue
+            p="$(ask "$(t password)" "")" || continue
+            if link_with "&username=$(urlenc "$u")&email=$(urlenc "$e")&password=$(urlenc "$p")" signup; then setup_after_link; else panel "Rommancer Sync" "$(t badlogin)" wait; fi
+          fi ;;
+        *) return 0 ;;
+      esac
+    fi
+  done
 }
 
 cmd_status() {
@@ -340,6 +448,11 @@ case "${1:-}" in
   sync) VERBOSE=1 cmd_sync ;;
   daemon) cmd_daemon ;;
   install) cmd_install ;;
+  setup) cmd_setup ;;
+  boot)
+    # At power-on: sync in the background if linked (or linkable with a package token); never ask anything
+    [ -n "$TOKEN" ] || cmd_enroll > /dev/null 2>&1 || exit 0
+    nohup sh "$DIR/$(basename "$0")" daemon >/dev/null 2>&1 & ;;
   status) cmd_status ;;
   unlink) cmd_unlink ;;
   "")

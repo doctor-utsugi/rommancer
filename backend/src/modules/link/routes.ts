@@ -196,15 +196,18 @@ function packageFiles(flavor: 'onion' | 'knulli', server: string, enrollToken: s
     return [
       ...common(ONION_DIR),
       { name: `${ONION_DIR}/config.json`, content: JSON.stringify({ label: 'Rommancer Sync', icon: '../../Icons/Default/app/otaupdate.png', iconsel: '', launch: 'launch.sh', description: 'Sync saves with Rommancer' }, null, 2) + '\n' },
-      { name: `${ONION_DIR}/launch.sh`, content: '#!/bin/sh\ncd "$(dirname "$0")"\nsh rommancer-sync.sh > last-run.txt 2>&1\n', mode: 0o755 },
+      // The app opens the setup menu (server, log in or create account) with Onion's own menu and keyboard
+      { name: `${ONION_DIR}/launch.sh`, content: '#!/bin/sh\ncd "$(dirname "$0")"\nsh rommancer-sync.sh setup > last-run.txt 2>&1\n', mode: 0o755 },
       // Onion runs every script in .tmp_update/startup at boot: the device enrols and syncs without opening the app
-      { name: '.tmp_update/startup/rommancer-sync.sh', content: `#!/bin/sh\n[ -f /mnt/SDCARD/${ONION_DIR}/rommancer-sync.sh ] && (cd /mnt/SDCARD/${ONION_DIR} && nohup sh rommancer-sync.sh > last-run.txt 2>&1 &)\n`, mode: 0o755 },
+      { name: '.tmp_update/startup/rommancer-sync.sh', content: `#!/bin/sh\n[ -f /mnt/SDCARD/${ONION_DIR}/rommancer-sync.sh ] && (cd /mnt/SDCARD/${ONION_DIR} && sh rommancer-sync.sh boot > last-run.txt 2>&1 &)\n`, mode: 0o755 },
     ];
   }
   // Knulli/Batocera: unzip on the "share" (/userdata); the port runs once and installs boot and game hooks
   return [
     ...common('system/rommancer'),
-    { name: 'roms/ports/Rommancer Sync.sh', content: '#!/bin/sh\ncd /userdata/system/rommancer && sh rommancer-sync.sh > last-run.txt 2>&1\n', mode: 0o755 },
+    { name: 'system/rommancer/rommancer-ui.py', content: fs.readFileSync(path.join(CLIENT_DIR, 'rommancer-ui.py')), mode: 0o755 },
+    // The port opens the gamepad setup screen; with the package's token it links by itself first
+    { name: 'roms/ports/Rommancer Sync.sh', content: '#!/bin/sh\ncd /userdata/system/rommancer\n[ -f enroll.txt ] && sh rommancer-sync.sh enroll > last-run.txt 2>&1 && sh rommancer-sync.sh install >> last-run.txt 2>&1\npython3 rommancer-ui.py > ui-last-run.txt 2>&1\n', mode: 0o755 },
   ];
 }
 

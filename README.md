@@ -4,6 +4,10 @@ Gestor multiusuario de colecciones de roms: base de datos de juegos y roms a par
 
 Stack: Node 22 + Express + Prisma + MySQL 8.4 · React + TypeScript + Vite + shadcn/ui · Podman.
 
+## Rommancer Sync
+
+Sincronización de saves entre consolas (Onion, Knulli, Batocera, ROCKNIX, PC): ver [docs/sync.md](docs/sync.md).
+
 ## Estructura
 
 ```
