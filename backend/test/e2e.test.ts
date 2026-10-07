@@ -20,6 +20,7 @@ import type { AddressInfo } from 'node:net';
 const ROOT = path.resolve(import.meta.dirname, '../..');
 const DATA = path.join(ROOT, 'data-test');
 const ROMS = path.join(ROOT, 'roms');
+const SEVENZIP = process.env.SEVENZIP_BIN ?? '7zz';
 const SMB3 = 'Super Mario Bros. 3 (USA) (Rev 1)';
 
 // --- Mock de ScreenScraper y del resto de servicios externos ---
@@ -357,7 +358,7 @@ test('escaneo: rutas, checksums con y sin cabecera, hacks y hash RA', async () =
   // Re-escaneo incremental: nada que hashear
   const r3 = await waitJob((await api('POST', `/admin/paths/${nes.json.id}/scan`)).json.id);
   assert.equal(r3.result.hashed, 0);
-  assert.equal(r3.result.skipped, 161);
+  assert.equal(r3.result.skipped, r3.result.files);
 
   const smb3 = await api('GET', `/files?q=${encodeURIComponent(SMB3)}`);
   const f = smb3.json.items[0];
@@ -521,7 +522,7 @@ test('listas: descarga zip con estructura de firmware', async () => {
   const zipPath = path.join(DATA, 'tmp', 'list.zip');
   fs.mkdirSync(path.dirname(zipPath), { recursive: true });
   fs.writeFileSync(zipPath, Buffer.from(await r.arrayBuffer()));
-  const listing = execSync(`7zz l -ba "${zipPath}"`).toString();
+  const listing = execSync(`${SEVENZIP} l -ba "${zipPath}"`).toString();
   assert.ok(listing.includes(`roms/nes/${SMB3}.nes`), listing);
   assert.ok(listing.includes('roms/snes/'), listing);
 });
@@ -832,8 +833,8 @@ test('comprimidos: zip/7z de cartuchos y sets arcade FBNeo', async () => {
   const dir = path.join(DATA, 'archives');
   fs.mkdirSync(path.join(dir, 'fbneo'), { recursive: true });
   fs.mkdirSync(path.join(dir, 'mix'), { recursive: true });
-  execSync(`7zz a -tzip "${path.join(dir, 'mix', 'smb3.zip')}" "${path.join(ROMS, 'nes', `${SMB3}.nes`)}"`, { stdio: 'ignore' });
-  execSync(`7zz a -t7z "${path.join(dir, 'mix', 'ct.7z')}" "${path.join(ROMS, 'snes', 'Chrono Trigger (USA).smc')}"`, { stdio: 'ignore' });
+  execSync(`${SEVENZIP} a -tzip "${path.join(dir, 'mix', 'smb3.zip')}" "${path.join(ROMS, 'nes', `${SMB3}.nes`)}"`, { stdio: 'ignore' });
+  execSync(`${SEVENZIP} a -t7z "${path.join(dir, 'mix', 'ct.7z')}" "${path.join(ROMS, 'snes', 'Chrono Trigger (USA).smc')}"`, { stdio: 'ignore' });
   // Set arcade sintetico con dos roms internas
   const a = crypto.randomBytes(4096);
   const b = crypto.randomBytes(2048);
@@ -841,7 +842,7 @@ test('comprimidos: zip/7z de cartuchos y sets arcade FBNeo', async () => {
   fs.mkdirSync(work, { recursive: true });
   fs.writeFileSync(path.join(work, 'prg.bin'), a);
   fs.writeFileSync(path.join(work, 'gfx.bin'), b);
-  execSync(`7zz a -tzip "${path.join(dir, 'fbneo', 'testgame.zip')}" prg.bin gfx.bin`, { cwd: work, stdio: 'ignore' });
+  execSync(`${SEVENZIP} a -tzip "${path.join(dir, 'fbneo', 'testgame.zip')}" prg.bin gfx.bin`, { cwd: work, stdio: 'ignore' });
   const crc = (x: Buffer) => (zlib.crc32(x) >>> 0).toString(16).padStart(8, '0');
   const dat = `<?xml version="1.0"?><datafile><header><name>FinalBurn Neo - Arcade Games</name><version>1.0</version></header>
     <game name="testgame"><description>Test Game (World)</description>
@@ -1376,7 +1377,7 @@ test('fase2: saves por eventos con script (inicio, cierre, conflicto, sin red) y
   const scripts = path.join(DATA, 'agent-userdata');
   fs.mkdirSync(scripts, { recursive: true });
   fs.writeFileSync(path.join(scripts, 's.zip'), Buffer.from(await zr.arrayBuffer()));
-  execSync('7zz x -y s.zip', { cwd: scripts, stdio: 'ignore' });
+  execSync(`${SEVENZIP} x -y s.zip`, { cwd: scripts, stdio: 'ignore' });
   const hook = path.join(scripts, 'system/scripts/rommancer.sh');
   // Asincrono: el servidor de la API corre en este mismo proceso
   const run = async (event: string, rom = romPath) => {

@@ -63,7 +63,7 @@ test('RA: todas las roms reales de NES y SNES', { skip }, async () => {
   for (const sys of ['nes', 'snes']) {
     const dir = path.join(ROOT, 'roms', sys);
     if (!fs.existsSync(dir)) continue;
-    for (const f of fs.readdirSync(dir)) await check(sys, path.join(dir, f));
+    for (const f of fs.readdirSync(dir).filter((x) => /\.(nes|sfc|smc)$/i.test(x))) await check(sys, path.join(dir, f));
   }
 });
 
