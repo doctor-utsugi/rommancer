@@ -71,7 +71,7 @@ export function UploadPage() {
 }
 
 /** What an upload resolved to: the rom or romhack it is, whether it was stored now or already owned. */
-export type UploadResult = { romId?: number; hackId?: number }
+export type UploadResult = { romId?: number; gameId?: number; hackId?: number }
 
 export function VerifiedUpload({
   onUnverified,
@@ -103,7 +103,7 @@ export function VerifiedUpload({
         if (m.rom?.owned) {
           // Already in the collection: nothing is uploaded
           update(file, { state: 'alreadyOwned', info: m.rom.name })
-          onResolved?.({ romId: m.rom.id })
+          onResolved?.({ romId: m.rom.id, gameId: m.rom.game?.id })
           return
         }
         if (!m.accepted) {
@@ -116,7 +116,7 @@ export function VerifiedUpload({
       fd.append('file', file)
       const r = await upload('/uploads', fd, (pct) => update(file, { pct }))
       update(file, { state: r.status === 'already-owned' ? 'alreadyOwned' : 'stored', info: r.file?.path })
-      if (r.romId || r.hackId) onResolved?.({ romId: r.romId ?? undefined, hackId: r.hackId ?? undefined })
+      if (r.romId || r.hackId) onResolved?.({ romId: r.romId ?? undefined, gameId: r.gameId ?? undefined, hackId: r.hackId ?? undefined })
     } catch (e) {
       const noMatch = e instanceof ApiError && e.message === 'NO_MATCH'
       update(file, { state: 'rejected', info: noMatch ? t('more.upload.noMatch') : errMsg(e), noMatch })
@@ -192,6 +192,30 @@ export function VerifiedUpload({
           </TableBody>
         </Table>
       )}
+    </div>
+  )
+}
+
+/** Search the rom a hack is based on by name, within the chosen system */
+function BaseRomPicker({ systemId, value, onChange }: { systemId: string; value: string; onChange(v: string): void }) {
+  const { t } = useTranslation()
+  const [q, setQ] = useState('')
+  const found = useQuery({
+    queryKey: ['rom-search', systemId, q],
+    queryFn: () => get<{ id: number; name: string }[]>(`/rom-search?q=${encodeURIComponent(q)}${systemId ? `&systemId=${systemId}` : ''}`),
+    enabled: q.trim().length > 1,
+  })
+  return (
+    <div className="grid gap-2">
+      <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder={t('more.upload.searchRom')} />
+      <NativeSelect value={value} onChange={(e) => onChange(e.target.value)}>
+        <option value="">{found.data?.length ? t('more.upload.pickRom', { count: found.data.length }) : '-'}</option>
+        {found.data?.map((r) => (
+          <option key={r.id} value={r.id}>
+            {r.name}
+          </option>
+        ))}
+      </NativeSelect>
     </div>
   )
 }
@@ -340,8 +364,8 @@ function UnverifiedUpload({ initial }: { initial: File | null }) {
           <Field label={t('more.upload.author')}>
             <Input value={f.author} onChange={set('author')} />
           </Field>
-          <Field label={t('more.upload.baseRomId')}>
-            <Input value={f.baseRomId} onChange={set('baseRomId')} inputMode="numeric" />
+          <Field label={t('more.upload.baseRom')}>
+            <BaseRomPicker systemId={systemId} value={f.baseRomId} onChange={(v) => setF({ ...f, baseRomId: v })} />
           </Field>
           <Field label={t('more.game.sourceUrl')}>
             <Input value={f.sourceUrl} onChange={set('sourceUrl')} />

@@ -182,7 +182,8 @@ export function ListPage() {
             incoming={incoming}
             onResolved={(r) =>
               void run(async () => {
-                await post(`/lists/${list.id}/items`, r.hackId ? { hackId: r.hackId } : { romId: r.romId })
+                // As a game, so the list picks the best owned version; a specific rom only when the game is unknown
+                await post(`/lists/${list.id}/items`, r.hackId ? { hackId: r.hackId } : r.gameId ? { gameId: r.gameId } : { romId: r.romId })
               })
             }
           />
@@ -191,16 +192,16 @@ export function ListPage() {
       {!list.items.length ? (
         <Empty />
       ) : (
-        <Table>
+        <Table className="table-fixed">
           <TableHeader>
             <TableRow>
-              <TableHead className="w-12" />
+              <TableHead className="w-14" />
               <TableHead>{t('common.title')}</TableHead>
-              <TableHead>{t('common.type')}</TableHead>
-              <TableHead>{t('common.system')}</TableHead>
-              <TableHead>{t('lists.selected')}</TableHead>
-              <TableHead>{t('common.owned')}</TableHead>
-              <TableHead />
+              <TableHead className="w-24">{t('common.type')}</TableHead>
+              <TableHead className="w-36">{t('common.system')}</TableHead>
+              <TableHead className="w-56">{t('lists.selected')}</TableHead>
+              <TableHead className="w-24">{t('common.owned')}</TableHead>
+              <TableHead className="w-28" />
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -211,26 +212,27 @@ export function ListPage() {
                     {i.cover ? <img src={authUrl(i.cover)} alt="" className="h-full w-full object-cover" loading="lazy" /> : <ImageOff className="size-4 text-muted-foreground" />}
                   </div>
                 </TableCell>
-                <TableCell className="max-w-md">
-                  <Link className="font-medium hover:underline" to={i.kind === 'work' ? `/works/${i.workId}` : `/games/${i.gameId}`}>
+                <TableCell>
+                  <Link className="block truncate font-medium hover:underline" title={i.title} to={i.kind === 'work' ? `/works/${i.workId}` : `/games/${i.gameId}`}>
                     {i.title}
                   </Link>
-                  {i.pendingMedia && (
-                    <Badge variant="outline" className="ml-2">
-                      {t('more.lists.pendingMedia')}
-                    </Badge>
+                  {/* Badges go under the title so they never cover the next columns */}
+                  {(i.pendingMedia || i.ra) && (
+                    <div className="mt-1 flex flex-wrap gap-1">
+                      {i.pendingMedia && <Badge variant="outline">{t('more.lists.pendingMedia')}</Badge>}
+                      {i.ra && (
+                        <Badge variant="secondary">
+                          <Trophy className="size-3" />
+                        </Badge>
+                      )}
+                    </div>
                   )}
-                  {i.kind === 'work' && i.platforms?.length > 0 && <p className="text-xs text-muted-foreground">{i.platforms.join(', ')}</p>}
-                  {i.ra && (
-                    <Badge variant="secondary" className="ml-2">
-                      <Trophy className="size-3" />
-                    </Badge>
-                  )}
-                  {i.note && <p className="text-xs text-muted-foreground">{i.note}</p>}
+                  {i.kind === 'work' && i.platforms?.length > 0 && <p className="truncate text-xs text-muted-foreground">{i.platforms.join(', ')}</p>}
+                  {i.note && <p className="truncate text-xs text-muted-foreground">{i.note}</p>}
                 </TableCell>
                 <TableCell>{i.kind === 'work' ? t('more.lists.work') : t(`lists.kind.${i.kind}`)}</TableCell>
-                <TableCell>{i.system?.name}</TableCell>
-                <TableCell className="max-w-xs truncate text-xs text-muted-foreground">{i.selectedRom?.name ?? '-'}</TableCell>
+                <TableCell className="truncate" title={i.system?.name}>{i.system?.name}</TableCell>
+                <TableCell className="truncate text-xs text-muted-foreground" title={i.selectedRom?.name}>{i.selectedRom?.name ?? '-'}</TableCell>
                 <TableCell>{i.owned ? <Check className="size-4 text-green-600" /> : <X className="size-4 text-muted-foreground" />}</TableCell>
                 <TableCell>
                   {list.canEdit && (

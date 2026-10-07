@@ -91,6 +91,9 @@ export const esMore = {
     pendingMedia: 'Multimedia pendiente',
   },
   upload: {
+    baseRom: 'Rom base (de la que sale el hack)',
+    searchRom: 'Escribe parte del nombre de la rom',
+    pickRom: 'Elige entre {{count}} resultados',
     verified: 'Verificada',
     unverified: 'No verificada',
     unverifiedHelp: 'Para roms que no están en ninguna base de datos (homebrew, hacks, traducciones). Quedan marcadas como no verificadas y no cuentan en los porcentajes. Si un DAT posterior las incluye, pasan a verificadas.',
@@ -277,6 +280,9 @@ export const enMore: typeof esMore = {
     pendingMedia: 'Media pending',
   },
   upload: {
+    baseRom: 'Base rom (the one the hack comes from)',
+    searchRom: 'Type part of the rom name',
+    pickRom: 'Pick one of {{count}} results',
     verified: 'Verified',
     unverified: 'Unverified',
     unverifiedHelp: 'For roms that are in no database (homebrew, hacks, translations). They are marked as unverified and do not count in percentages. If a later DAT includes them, they become verified.',

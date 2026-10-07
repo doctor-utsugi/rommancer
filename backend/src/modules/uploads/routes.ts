@@ -83,7 +83,7 @@ uploadsRouter.post('/', requirePerm('roms.upload'), upload.single('file'), async
       destName = container ? part.name.replace(/\.[^.]+$/, '') + path.extname(original) : part.name;
       romId = part.romId;
       if (await prisma.romFile.findFirst({ where: { romPartId: part.id, status: 'MATCHED' } })) {
-        res.status(200).json({ status: 'already-owned', romId });
+        res.status(200).json({ status: 'already-owned', romId, gameId: (await prisma.rom.findUnique({ where: { id: romId }, select: { gameId: true } }))?.gameId });
         return;
       }
     } else if (m.romHackId) {
@@ -109,6 +109,7 @@ uploadsRouter.post('/', requirePerm('roms.upload'), upload.single('file'), async
       status: 'stored',
       match: m.status === 'UNKNOWN' ? 'RETROACHIEVEMENTS' : m.status,
       romId,
+      gameId: romId ? (await prisma.rom.findUnique({ where: { id: romId }, select: { gameId: true } }))?.gameId : undefined,
       hackId: m.romHackId ?? undefined,
       raGameId,
       file: { id: file.id, path: rel },
