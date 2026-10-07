@@ -229,10 +229,11 @@ export function GamePage() {
                       {r.localTitle ? ` · ${t('more.tags.localTitle')}: ${r.localTitle}` : ''}
                     </p>
                   </TableCell>
-                  <TableCell>
+                  <TableCell className="min-w-56">
                     <div className="flex flex-wrap gap-1">
                       {(r.regions as string[]).map((x) => tag(x, 'secondary'))}
-                      {(r.languages as string[]).map((x) => tag(x))}
+                      {/* One badge for all languages: a dozen separate ones squeeze the table */}
+                      {(r.languages as string[]).length > 0 && tag((r.languages as string[]).join(' · '))}
                       {g.showRevision && r.revision && tag(r.revision)}
                       {(r.flags as string[]).filter((f) => f !== 'unverified').map((f) => tag(f))}
                       {r.unverified && tag(`${t('more.tags.unverified')}${r.uploadedBy ? ` · ${t('more.tags.uploadedBy', { user: r.uploadedBy })}` : ''}`, 'destructive')}
