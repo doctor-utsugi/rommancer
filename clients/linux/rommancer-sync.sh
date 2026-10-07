@@ -109,7 +109,7 @@ detect() {
 }
 
 # Onion dialogs fit about 40 characters per line and turn a literal \n into a line break
-wrap() { printf '%s' "$1" | awk -v w=36 '{ n = split($0, a, " "); for (i = 1; i <= n; i++) { if (length(l) && length(l) + 1 + length(a[i]) > w) { o = o (o == "" ? "" : "\\n") l; l = a[i] } else l = (l == "" ? a[i] : l " " a[i]) } } END { o = o (o == "" ? "" : "\\n") l; printf "%s", o }'; }
+wrap() { printf '%s' "$1" | awk -v w=36 '{ n = split($0, a, " "); for (i = 1; i <= n; i++) { if (length(l) > 0 && length(l) + 1 + length(a[i]) > w) { if (o != "") o = o "\\n"; o = o l; l = a[i] } else if (l == "") l = a[i]; else l = l " " a[i] } } END { if (o != "") o = o "\\n"; o = o l; printf "%s", o }'; }
 
 # On-screen message on Onion (infoPanel); "wait" blocks until a button, otherwise it stays until dismissed
 panel() {
