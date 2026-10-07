@@ -1,7 +1,8 @@
 // Textos de la fase 2 (permisos, sincronizacion, revision, obras, dispositivos con scripts...)
 export const esMore = {
   listUpload: {
-    help: 'Arrastra roms aquí: las nuevas se guardan en la colección, las que ya tienes no se suben, y todas se añaden a esta lista.',
+    help: 'Arrastra roms a cualquier parte de la página: las nuevas se guardan en la colección, las que ya tienes no se suben, y todas se añaden a esta lista.',
+    dropHere: 'Suelta para añadir a la lista',
   },
   listDevices: {
     help: 'Las consolas marcadas mantienen esta lista: descargan solas las roms que les falten.',
@@ -186,7 +187,8 @@ export const esMore = {
 
 export const enMore: typeof esMore = {
   listUpload: {
-    help: 'Drop roms here: new ones are stored in the collection, ones you already have are not uploaded, and all of them are added to this list.',
+    help: 'Drop roms anywhere on the page: new ones are stored in the collection, ones you already have are not uploaded, and all of them are added to this list.',
+    dropHere: 'Drop to add to the list',
   },
   listDevices: {
     help: 'Checked consoles keep this list: they download the roms they lack by themselves.',

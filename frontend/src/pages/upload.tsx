@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
 import { Upload } from 'lucide-react'
@@ -73,7 +73,18 @@ export function UploadPage() {
 /** What an upload resolved to: the rom or romhack it is, whether it was stored now or already owned. */
 export type UploadResult = { romId?: number; hackId?: number }
 
-export function VerifiedUpload({ onUnverified, onResolved, compact }: { onUnverified?: (f: File) => void; onResolved?: (r: UploadResult) => void; compact?: boolean }) {
+export function VerifiedUpload({
+  onUnverified,
+  onResolved,
+  compact,
+  incoming,
+}: {
+  onUnverified?: (f: File) => void
+  onResolved?: (r: UploadResult) => void
+  compact?: boolean
+  /** Files dropped somewhere else on the page (a new array each time) */
+  incoming?: File[]
+}) {
   const { t } = useTranslation()
   const [rows, setRows] = useState<Row[]>([])
   const [drag, setDrag] = useState(false)
@@ -112,14 +123,19 @@ export function VerifiedUpload({ onUnverified, onResolved, compact }: { onUnveri
     }
   }
 
-  const add = (files: FileList | null) => {
-    if (!files) return
-    const list = [...files]
+  const add = (files: FileList | null) => files && addFiles([...files])
+
+  const addFiles = (list: File[]) => {
     setRows((rs) => [...list.map((file) => ({ file, state: 'checking' as State })), ...rs])
     void (async () => {
       for (const f of list) await process(f)
     })()
   }
+
+  useEffect(() => {
+    if (incoming?.length) addFiles(incoming)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [incoming])
 
   const variant = (s: State) => (s === 'stored' || s === 'matched' ? 'default' : s === 'rejected' ? 'destructive' : 'secondary')
 
@@ -136,6 +152,7 @@ export function VerifiedUpload({ onUnverified, onResolved, compact }: { onUnveri
         onDragLeave={() => setDrag(false)}
         onDrop={(e) => {
           e.preventDefault()
+          e.stopPropagation()
           setDrag(false)
           add(e.dataTransfer.files)
         }}

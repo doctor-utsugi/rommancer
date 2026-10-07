@@ -29,6 +29,8 @@ export function ListPage() {
   const [dialog, setDialog] = useState<DialogKind>(null)
   const [jobId, setJobId] = useState<number | null>(null)
   const job = useJob(jobId, [['list', String(id)]])
+  const [dragging, setDragging] = useState(false)
+  const [incoming, setIncoming] = useState<File[]>([])
   if (!list) return <p className="text-sm text-muted-foreground">{t('common.loading')}</p>
   const isOwner = list.ownerId === user?.id
 
@@ -68,8 +70,32 @@ export function ListPage() {
     })
   const scrape = async () => setJobId((await post('/scrape', { listId: list.id })).id)
 
+  const canDrop = (isOwner || list.isCollaborative) && can('roms.upload')
+  const onPageDrop = (e: React.DragEvent) => {
+    if (!canDrop || !e.dataTransfer.files.length) return
+    e.preventDefault()
+    setDragging(false)
+    setIncoming([...e.dataTransfer.files])
+  }
   return (
-    <div>
+    // The whole page takes dropped roms; the box below stays as a hint and a file picker
+    <div
+      className="relative min-h-[calc(100vh-4rem)]"
+      onDragOver={(e) => {
+        if (!canDrop || !e.dataTransfer.types.includes('Files')) return
+        e.preventDefault()
+        setDragging(true)
+      }}
+      onDragLeave={(e) => {
+        if (!e.currentTarget.contains(e.relatedTarget as Node)) setDragging(false)
+      }}
+      onDrop={onPageDrop}
+    >
+      {dragging && (
+        <div className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center rounded-xl border-2 border-dashed border-primary bg-background/80 text-lg font-medium">
+          {t('more.listUpload.dropHere')}
+        </div>
+      )}
       <PageHeader
         title={
           <span className="flex items-center gap-3">
@@ -148,11 +174,12 @@ export function ListPage() {
         </div>
       )}
       {/* Dropped roms: stored if new, discarded if already owned, and added to this list either way */}
-      {(isOwner || list.isCollaborative) && can('roms.upload') && (
+      {canDrop && (
         <div className="mb-4">
           <p className="mb-2 text-sm text-muted-foreground">{t('more.listUpload.help')}</p>
           <VerifiedUpload
             compact
+            incoming={incoming}
             onResolved={(r) =>
               void run(async () => {
                 await post(`/lists/${list.id}/items`, r.hackId ? { hackId: r.hackId } : { romId: r.romId })
