@@ -9,6 +9,8 @@
 #   rommancer-sync.sh status | unlink
 #   rommancer-sync.sh               link if needed, then start the daemon in the background
 set -u
+# Onion keeps curl (with TLS) and friends outside the default PATH
+[ -d /mnt/SDCARD/.tmp_update/bin ] && PATH="/mnt/SDCARD/.tmp_update/bin:$PATH"
 
 DIR="$(cd "$(dirname "$0")" && pwd)"
 STATE="${ROMMANCER_STATE:-$DIR/.rommancer}"
