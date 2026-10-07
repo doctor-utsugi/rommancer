@@ -227,21 +227,30 @@ is_rom() {
 }
 
 # Writes the sync request: every rom plus every save file with its sha1
+# Progress for the setup screens: "phase<TAB>done<TAB>total" in RAM
+progress() { printf '%s\t%s\t%s\n' "$1" "$2" "$3" > "$WORK/progress.tmp" && mv "$WORK/progress.tmp" "$WORK/progress"; }
+
+# Writes the sync request: every rom plus every save file with its sha1
 build_request() {
   out="$1"; : > "$out"
+  progress connecting 0 0
   roots="$(http GET "$SERVER/api/v1/agent/roots" - -)" || return 1
   ROMS="$(field roms "$roots")"; EXTS="$(field exts "$roots")"
-  find "$ROMS" -mindepth 2 -maxdepth 2 -type f 2>/dev/null | while IFS= read -r f; do
+  find "$ROMS" -mindepth 2 -maxdepth 2 -type f 2>/dev/null > "$WORK/roms"
+  total="$(wc -l < "$WORK/roms")"; i=0
+  while IFS= read -r f; do
+    i=$((i + 1)); [ $((i % 10)) -eq 0 ] && progress roms "$i" "$total"
     case "$f" in */.*|*"$TAB"*) continue ;; esac
     is_rom "$f" && rom_line "$f" >> "$out"
-  done
-  printf '%s\n' "$roots" | sed -n "s/^saves$TAB//p" | while IFS= read -r d; do
-    find "$d" -type f 2>/dev/null | while IFS= read -r f; do
-      case "$f" in */.*|*"$TAB"*) continue ;; esac
-      is_save "$f" || continue
-      s="$(cached_sha1 "$f")" && printf 'file\t%s\t%s\n' "$f" "$s" >> "$out"
-    done
-  done
+  done < "$WORK/roms"
+  printf '%s\n' "$roots" | sed -n "s/^saves$TAB//p" | while IFS= read -r d; do find "$d" -type f 2>/dev/null; done > "$WORK/saves"
+  total="$(wc -l < "$WORK/saves")"; i=0
+  while IFS= read -r f; do
+    i=$((i + 1)); [ $((i % 10)) -eq 0 ] && progress saves "$i" "$total"
+    case "$f" in */.*|*"$TAB"*) continue ;; esac
+    is_save "$f" || continue
+    s="$(cached_sha1 "$f")" && printf 'file\t%s\t%s\n' "$f" "$s" >> "$out"
+  done < "$WORK/saves"
 }
 
 cmd_sync() {
@@ -259,9 +268,11 @@ cmd_sync() {
   rm -f "$STATE/.write-test"
   fix_clock
   build_request "$req" || { log "server unreachable"; rmdir "$LOCK"; return 1; }
+  progress server 0 0
   http POST "$SERVER/api/v1/agent/sync" "$req" "$plan" || { log "sync request failed"; rmdir "$LOCK"; return 1; }
-  ups=0; downs=0; errs=0
+  ups=0; downs=0; errs=0; moved=0; total="$(grep -c . "$plan")"
   while IFS="$TAB" read -r action p a b; do
+    moved=$((moved + 1)); progress transfer "$moved" "$total"
     case "$action" in
       put)
         rh="$(grep -F "rom$TAB$a$TAB" "$req" | head -n 1 | cut -f3,4 | tr '\t' ',')"
@@ -273,6 +284,7 @@ cmd_sync() {
         else rm -f "$p.rommancer-tmp"; errs=$((errs + 1)); fi ;;
     esac
   done < "$plan"
+  progress finished "$ups" "$downs"
   log "sync: $ups up, $downs down, $errs errors"
   # The last log lines go to the server so problems can be seen without access to the device
   { tail -n 40 "$LOG"; [ -f "$DIR/last-run.txt" ] && { echo "--- last-run.txt"; tail -n 20 "$DIR/last-run.txt"; }; } > "$WORK/report" 2>/dev/null

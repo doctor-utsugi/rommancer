@@ -24,7 +24,7 @@ SCRIPT = os.path.join(HERE, "rommancer-sync.sh")
 CACERT = os.path.join(HERE, "cacert.pem")
 # Pre-rendered spinning save point (tools/render_savepoint.py): square frames side by side
 SPRITE = os.path.join(HERE, "savepoint.png")
-SPRITE_FPS = 12
+SPRITE_FPS = 60
 ES_INPUT = ["/userdata/system/configs/emulationstation/es_input.cfg", "/usr/share/emulationstation/es_input.cfg"]
 
 TEXTS = {
@@ -57,6 +57,11 @@ TEXTS = {
         "menu_keys": "A elegir   B atrás",
         "press": "Pulsa A para continuar",
         "nolog": "Todavía no hay registro",
+        "p_connecting": "Conectando con el servidor",
+        "p_roms": "Comprobando roms",
+        "p_saves": "Comprobando saves",
+        "p_server": "Preguntando al servidor",
+        "p_transfer": "Transfiriendo saves",
     },
     "en": {
         "title": "Rommancer Sync",
@@ -87,6 +92,11 @@ TEXTS = {
         "menu_keys": "A choose   B back",
         "press": "Press A to continue",
         "nolog": "No log yet",
+        "p_connecting": "Contacting the server",
+        "p_roms": "Checking roms",
+        "p_saves": "Checking saves",
+        "p_server": "Asking the server",
+        "p_transfer": "Transferring saves",
     },
 }
 
@@ -254,7 +264,9 @@ class Screen:
             strip = pygame.image.load(SPRITE).convert_alpha()
             side = strip.get_height()
             target = int(self.h * 0.5)
-            self.frames = [pygame.transform.smoothscale(strip.subsurface((i * side, 0, side, side)), (target, target)) for i in range(strip.get_width() // side)]
+            cells = [strip.subsurface((i * side, 0, side, side)) for i in range(strip.get_width() // side)]
+            # The strip is rendered at the 480p size: other screens get scaled copies
+            self.frames = cells if abs(target - side) < 8 else [pygame.transform.smoothscale(c, (target, target)) for c in cells]
 
     # Two columns: text on the left, the spinning save point on the right
     def left(self):
@@ -325,6 +337,7 @@ class App:
         saved = self.cfg.get("SERVER") or self._read(os.path.join(HERE, "server.txt"))
         self.server = (saved or "https://").strip()
         self.script = [a.strip() for a in os.environ.get("ROMMANCER_UI_TEST", "").split(",") if a.strip()]
+        self.clock = pygame.time.Clock()
         pygame.key.set_repeat(300, 60)
 
     @staticmethod
@@ -378,8 +391,9 @@ class App:
                     pygame.draw.rect(s.surf, ACCENT, r.inflate(20, 8), 2, border_radius=8)
                 y += int(s.font.get_linesize() * 1.4)
             s.flip()
-            a = self.next_action(timeout=1 / SPRITE_FPS)
+            a = self.next_action(timeout=0)
             if a is None:
+                self.clock.tick(SPRITE_FPS)
                 continue
             if a == "up":
                 sel = (sel - 1) % len(items)
@@ -447,8 +461,13 @@ class App:
                 s.text(line, (s.left(), y), s.font, color)
                 y += s.font.get_linesize()
             s.flip()
-            if not wait or self.next_action(timeout=1 / SPRITE_FPS) in ("a", "b", "start", "quit"):
+            if not wait:
                 return
+            a = self.next_action(timeout=0)
+            if a in ("a", "b", "start", "quit"):
+                return
+            if a is None:
+                self.clock.tick(SPRITE_FPS)
 
     # ---------- flows ----------
 
@@ -527,9 +546,45 @@ class App:
         except OSError as e:
             self.message(T["error"].format(msg=e), BAD)
 
+    def progress_file(self):
+        return os.path.join(os.environ.get("TMPDIR", "/tmp"), f"rommancer-{os.getuid()}", "progress")
+
     def sync_now(self):
-        self.message(T["syncing"], wait=False)
-        out = subprocess.run(["sh", SCRIPT, "sync"], capture_output=True, text=True, timeout=900).stdout.strip()
+        """Runs a sync in the background and shows its phase and percentage while it works."""
+        try:
+            os.remove(self.progress_file())
+        except OSError:
+            pass
+        proc = subprocess.Popen(["sh", SCRIPT, "sync"], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
+        s = self.screen
+        while proc.poll() is None:
+            phase, done, total = "connecting", 0, 0
+            try:
+                with open(self.progress_file(), encoding="utf-8") as f:
+                    parts = f.read().strip().split("\t")
+                phase, done, total = parts[0], int(parts[1]), int(parts[2])
+            except (OSError, ValueError, IndexError):
+                pass
+            s.frame(T["title"])
+            s.sprite()
+            x, width, y = s.left(), s.column(), int(s.h * 0.3)
+            s.text(T["syncing"], (x, y), s.font)
+            label = T.get(f"p_{phase}", "")
+            if total:
+                label += f"  {done}/{total}"
+            s.text(label, (x, y + s.font.get_linesize() * 1.5), s.small, DIM)
+            bar = pygame.Rect(x, y + int(s.font.get_linesize() * 2.6), width - 20, 14)
+            pygame.draw.rect(s.surf, (40, 44, 60), bar, border_radius=7)
+            if total:
+                fill = bar.copy()
+                fill.w = max(14, int(bar.w * min(done, total) / total))
+                pygame.draw.rect(s.surf, ACCENT, fill, border_radius=7)
+                s.text(f"{100 * done // total}%", (bar.right - 50, bar.bottom + 6), s.small, DIM)
+            s.flip()
+            for _ in pygame.event.get():
+                pass
+            self.clock.tick(SPRITE_FPS)
+        out = (proc.stdout.read() if proc.stdout else "").strip()
         self.message(out.splitlines()[-1] if out else T["error"].format(msg="sync"))
 
     def status(self):
