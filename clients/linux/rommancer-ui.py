@@ -22,6 +22,9 @@ import pygame  # noqa: E402
 HERE = os.path.dirname(os.path.abspath(__file__))
 SCRIPT = os.path.join(HERE, "rommancer-sync.sh")
 CACERT = os.path.join(HERE, "cacert.pem")
+# Pre-rendered spinning save point (tools/render_savepoint.py): square frames side by side
+SPRITE = os.path.join(HERE, "savepoint.png")
+SPRITE_FPS = 12
 ES_INPUT = ["/userdata/system/configs/emulationstation/es_input.cfg", "/usr/share/emulationstation/es_input.cfg"]
 
 TEXTS = {
@@ -246,6 +249,20 @@ class Screen:
         self.small = pygame.font.Font(None, int(24 * scale))
         self.shots = os.environ.get("ROMMANCER_UI_SHOTS")
         self.shot_n = 0
+        self.frames = []
+        if os.path.exists(SPRITE):
+            strip = pygame.image.load(SPRITE).convert_alpha()
+            side = strip.get_height()
+            target = int(self.h * 0.28)
+            self.frames = [pygame.transform.smoothscale(strip.subsurface((i * side, 0, side, side)), (target, target)) for i in range(strip.get_width() // side)]
+
+    def sprite(self, top):
+        """Draws the current rotation frame centred at TOP; returns the y below it."""
+        if not self.frames:
+            return top
+        img = self.frames[int(time.time() * SPRITE_FPS) % len(self.frames)]
+        self.surf.blit(img, img.get_rect(midtop=(self.w // 2, top)))
+        return top + img.get_height()
 
     def text(self, s, pos, font=None, color=FG, center=False):
         img = (font or self.font).render(s, True, color)
@@ -314,7 +331,9 @@ class App:
             return ""
 
     # Input: real events, or a scripted list in tests (ROMMANCER_UI_TEST="down,a,...")
-    def next_action(self):
+    def next_action(self, timeout=None):
+        """Next gamepad action; None when TIMEOUT seconds pass without one (to animate)."""
+        start = time.time()
         while True:
             if self.script:
                 time.sleep(0.05)
@@ -328,6 +347,8 @@ class App:
                 acts = self.pad.actions(event)
                 if acts:
                     return acts[0]
+            if timeout is not None and time.time() - start >= timeout:
+                return None
             time.sleep(0.016)
 
     def menu(self, title, items, info=()):
@@ -335,20 +356,22 @@ class App:
         while True:
             s = self.screen
             s.frame(title, T["menu_keys"])
-            y = int(s.h * 0.17)
+            y = s.sprite(int(s.h * 0.12)) + int(s.h * 0.02)
             for line in info:
                 for part in s.wrap(line, s.small, s.w - 60):
                     s.text(part, (s.w // 2, y), s.small, DIM, center=True)
                     y += s.small.get_linesize()
-            y += int(s.h * 0.03)
+            y += int(s.h * 0.02)
             for i, label in enumerate(items):
                 color = ACCENT if i == sel else FG
                 r = s.text(label, (s.w // 2, y), s.font, color, center=True)
                 if i == sel:
                     pygame.draw.rect(s.surf, ACCENT, r.inflate(24, 8), 2, border_radius=8)
-                y += int(s.font.get_linesize() * 1.5)
+                y += int(s.font.get_linesize() * 1.3)
             s.flip()
-            a = self.next_action()
+            a = self.next_action(timeout=1 / SPRITE_FPS)
+            if a is None:
+                continue
             if a == "up":
                 sel = (sel - 1) % len(items)
             elif a == "down":
@@ -407,14 +430,14 @@ class App:
 
     def message(self, text, color=FG, wait=True):
         s = self.screen
-        s.frame(T["title"], T["press"] if wait else "")
-        y = int(s.h * 0.35)
-        for line in s.wrap(text, s.font, s.w - 60):
-            s.text(line, (s.w // 2, y), s.font, color, center=True)
-            y += s.font.get_linesize()
-        s.flip()
-        while wait:
-            if self.next_action() in ("a", "b", "start", "quit"):
+        while True:
+            s.frame(T["title"], T["press"] if wait else "")
+            y = s.sprite(int(s.h * 0.14)) + int(s.h * 0.05)
+            for line in s.wrap(text, s.font, s.w - 60):
+                s.text(line, (s.w // 2, y), s.font, color, center=True)
+                y += s.font.get_linesize()
+            s.flip()
+            if not wait or self.next_action(timeout=1 / SPRITE_FPS) in ("a", "b", "start", "quit"):
                 return
 
     # ---------- flows ----------

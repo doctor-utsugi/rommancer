@@ -206,6 +206,8 @@ function packageFiles(flavor: 'onion' | 'knulli', server: string, enrollToken: s
   return [
     ...common('system/rommancer'),
     { name: 'system/rommancer/rommancer-ui.py', content: fs.readFileSync(path.join(CLIENT_DIR, 'rommancer-ui.py')), mode: 0o755 },
+    { name: 'system/rommancer/savepoint.png', content: fs.readFileSync(path.join(CLIENT_DIR, 'savepoint.png')) },
+    { name: 'system/rommancer/CREDITS.txt', content: fs.readFileSync(path.join(CLIENT_DIR, 'CREDITS.txt')) },
     // The port opens the gamepad setup screen; with the package's token it links by itself first
     { name: 'roms/ports/Rommancer Sync.sh', content: '#!/bin/sh\ncd /userdata/system/rommancer\n[ -f enroll.txt ] && sh rommancer-sync.sh enroll > last-run.txt 2>&1 && sh rommancer-sync.sh install >> last-run.txt 2>&1\npython3 rommancer-ui.py > ui-last-run.txt 2>&1\n', mode: 0o755 },
   ];

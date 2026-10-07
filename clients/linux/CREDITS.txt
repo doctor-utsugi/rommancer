@@ -1,0 +1,2 @@
+savepoint.png is rendered (tools/render_savepoint.py) from "Save Point" by FFVII-Collector,
+https://www.thingiverse.com/thing:3485640, licensed under Creative Commons Attribution (CC BY).

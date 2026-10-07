@@ -38,6 +38,11 @@ clock by NTP when it is clearly wrong (consoles without a battery-backed clock b
 
 Client commands: `setup`, `link SERVER`, `enroll`, `sync`, `daemon`, `boot`, `install`, `status`, `unlink`, `hints`.
 
+## Credits
+
+The spinning save point of the setup screen is pre-rendered by `tools/render_savepoint.py` from
+["Save Point" by FFVII-Collector](https://www.thingiverse.com/thing:3485640) (CC BY). The STL itself is not in the repo.
+
 ## Sync protocol
 
 All endpoints are under `/api/v1`. Console endpoints answer plain text, `key<TAB>value` per line, so busybox
