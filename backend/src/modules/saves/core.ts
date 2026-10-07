@@ -30,6 +30,9 @@ export function saveDirs(layout: DeviceLayout, slug: string, emu: Emulator) {
         return path.posix.join(root, emu.core ?? emu.name);
       case 'rom':
         return path.posix.join(layout.romsRoot, folder);
+      // RetroArch with saves next to the content, sorted by core (Android default)
+      case 'rom-core':
+        return path.posix.join(layout.romsRoot, folder, emu.core ?? emu.name);
       default:
         return root;
     }
@@ -50,8 +53,9 @@ export function deviceFileName(base: string, emu: Emulator, kind: SaveKind, slot
  */
 export async function findLogicalSave(userId: number, emu: Emulator, kind: SaveKind, slot: number, baseName: string, gameId: number | null) {
   const exact = await prisma.save.findFirst({ where: { userId, emulatorId: emu.id, kind, slot, OR: [{ baseName }, ...(gameId ? [{ gameId }] : [])] }, include: { emulator: true } });
-  if (exact || kind === 'STATE' || !gameId) return exact;
-  const others = await prisma.save.findMany({ where: { userId, kind, slot, gameId }, include: { emulator: true }, orderBy: { updatedAt: 'desc' } });
+  if (exact || kind === 'STATE') return exact;
+  // Unidentified roms (homebrew, odd names) still share by file name
+  const others = await prisma.save.findMany({ where: { userId, kind, slot, ...(gameId ? { gameId } : { baseName }) }, include: { emulator: true }, orderBy: { updatedAt: 'desc' } });
   return others.find((s) => family(s.emulator.saveFormat) === family(emu.saveFormat)) ?? null;
 }
 

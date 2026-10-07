@@ -42,7 +42,7 @@ const firmwareBody = z.object({
   savesRoot: z.string().max(255),
   statesRoot: z.string().max(255),
   biosRoot: z.string().max(255),
-  savesLayout: z.enum(['flat', 'system', 'core', 'rom']),
+  savesLayout: z.enum(['flat', 'system', 'core', 'rom', 'rom-core']),
   systemMap: z.record(z.string(), z.object({ folder: z.string(), emulator: z.string() })),
 });
 
@@ -82,7 +82,7 @@ const deviceBody = z.object({
       savesRoot: z.string().optional(),
       statesRoot: z.string().optional(),
       biosRoot: z.string().optional(),
-      savesLayout: z.enum(['flat', 'system', 'core', 'rom']).optional(),
+      savesLayout: z.enum(['flat', 'system', 'core', 'rom', 'rom-core']).optional(),
       systemMap: z.record(z.string(), z.object({ folder: z.string(), emulator: z.string() })).optional(),
     })
     .nullable()

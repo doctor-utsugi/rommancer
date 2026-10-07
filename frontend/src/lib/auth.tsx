@@ -21,6 +21,7 @@ interface AuthCtx {
   loading: boolean
   login(username: string, password: string): Promise<void>
   register(data: { token: string; username: string; email: string; password: string }): Promise<void>
+  signup(data: { username: string; email: string; password: string }): Promise<void>
   logout(): Promise<void>
   reload(): Promise<void>
   can(perm: string): boolean
@@ -62,6 +63,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     loading,
     async login(username, password) {
       const r = await api('POST', '/auth/login', { username, password })
+      tokens.set(r.accessToken, r.refreshToken, r.filesToken)
+      await reload()
+    },
+    async signup(data) {
+      const r = await api('POST', '/auth/signup', { ...data, locale: i18n.language })
       tokens.set(r.accessToken, r.refreshToken, r.filesToken)
       await reload()
     },

@@ -123,7 +123,7 @@ export interface FirmwareSeed {
   savesRoot: string;
   statesRoot: string;
   biosRoot: string;
-  savesLayout: 'flat' | 'system' | 'core' | 'rom';
+  savesLayout: 'flat' | 'system' | 'core' | 'rom' | 'rom-core';
   systemMap: Record<string, { folder: string; emulator: string }>;
 }
 
@@ -149,4 +149,5 @@ export const consoles = [
   { name: 'Powkiddy RGB30', manufacturer: 'Powkiddy', formFactor: 'handheld' },
   { name: 'Steam Deck', manufacturer: 'Valve', formFactor: 'handheld' },
   { name: 'PC', manufacturer: 'Generic', formFactor: 'desktop' },
+  { name: 'Other', manufacturer: 'Generic', formFactor: 'handheld' },
 ];

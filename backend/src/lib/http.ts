@@ -33,7 +33,12 @@ export function errorHandler(err: unknown, _req: Request, res: Response, _next: 
     res.status(err.status).json({ error: err.message });
     return;
   }
-  const e = err as { code?: string; message?: string };
+  const e = err as { code?: string; message?: string; status?: number; type?: string };
+  // body-parser errors (malformed JSON, payload too large) carry their own 4xx status
+  if (e?.type && e.status && e.status >= 400 && e.status < 500) {
+    res.status(e.status).json({ error: e.message ?? 'Bad request' });
+    return;
+  }
   if (e?.code === 'P2002') {
     res.status(409).json({ error: 'Already exists' });
     return;

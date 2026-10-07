@@ -99,6 +99,7 @@ model User {
   lists         List[]
   listShares    ListShare[]
   devices       Device[]
+  deviceLinks   DeviceLink[]
   saves         Save[]
   jobs          Job[]
   refreshTokens RefreshToken[]
@@ -753,4 +754,25 @@ model RomSignature {
   chunks    Int
   sample    Bytes    @db.MediumBlob
   createdAt DateTime @default(now())
+}
+
+// Pairing of a sync client by short code (device authorization flow)
+model DeviceLink {
+  id           Int       @id @default(autoincrement())
+  code         String    @unique @db.VarChar(16)
+  secretHash   String    @unique @db.Char(64)
+  deviceName   String    @db.VarChar(128)
+  firmwareHint String?   @db.VarChar(64)
+  rootHint     String?   @db.VarChar(512)
+  model        String?   @db.VarChar(128)
+  overrides    Json?
+  createdAt    DateTime  @default(now())
+  expiresAt    DateTime
+  approvedAt   DateTime?
+  deliveredAt  DateTime?
+  userId       Int?
+  deviceId     Int?
+  // Device token kept encrypted until the client collects it once
+  tokenEnc     String?   @db.Text
+  user         User?     @relation(fields: [userId], references: [id], onDelete: Cascade)
 }

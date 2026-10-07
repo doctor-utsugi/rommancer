@@ -29,6 +29,13 @@ function Shell({ title, children }: { title: string; children: React.ReactNode }
 }
 
 export function LoginPage() {
+  const config = useQuery({ queryKey: ['auth-config'], queryFn: () => get<{ signupOpen: boolean }>('/auth/config') })
+  const [signingUp, setSigningUp] = useState(false)
+  if (signingUp) return <SignupPage onBack={() => setSigningUp(false)} />
+  return <LoginForm onSignup={config.data?.signupOpen ? () => setSigningUp(true) : undefined} />
+}
+
+function LoginForm({ onSignup }: { onSignup?: () => void }) {
   const { t } = useTranslation()
   const { login } = useAuth()
   const [username, setUsername] = useState('')
@@ -59,6 +66,47 @@ export function LoginPage() {
         {error && <p className="text-sm text-destructive">{error}</p>}
         <Button type="submit" disabled={busy}>
           {t('auth.login')}
+        </Button>
+        {onSignup && (
+          <Button type="button" variant="link" onClick={onSignup}>
+            {t('more.link.noAccount')}
+          </Button>
+        )}
+      </form>
+    </Shell>
+  )
+}
+
+// Self-service sign-up, shown only when the admin opened it
+function SignupPage({ onBack }: { onBack(): void }) {
+  const { t } = useTranslation()
+  const { signup } = useAuth()
+  const [form, setForm] = useState({ username: '', email: '', password: '' })
+  const [error, setError] = useState('')
+  const submit = async (e: FormEvent) => {
+    e.preventDefault()
+    try {
+      await signup(form)
+    } catch (err) {
+      setError(errMsg(err))
+    }
+  }
+  return (
+    <Shell title={t('more.link.signup')}>
+      <form onSubmit={submit} className="grid gap-4">
+        <Field label={t('common.user')}>
+          <Input value={form.username} onChange={(e) => setForm({ ...form, username: e.target.value })} required minLength={3} autoFocus />
+        </Field>
+        <Field label={t('common.email')}>
+          <Input type="email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} required />
+        </Field>
+        <Field label={t('common.password')} hint={t('more.link.passwordMin')}>
+          <Input type="password" value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} required minLength={10} autoComplete="new-password" />
+        </Field>
+        {error && <p className="text-sm text-destructive">{error}</p>}
+        <Button type="submit">{t('more.link.signup')}</Button>
+        <Button type="button" variant="link" onClick={onBack}>
+          {t('more.link.haveAccount')}
         </Button>
       </form>
     </Shell>

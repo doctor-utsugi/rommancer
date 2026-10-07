@@ -18,6 +18,7 @@ import { SOURCES, forceSync } from '../sync/service.js';
 import { addRomRule, resolveRomGroups } from '../grouping/service.js';
 import { resolveWorks } from '../sync/wikidata.js';
 import { identifyHacks, linkFileAsHack } from '../hacks/identify.js';
+import { setSignupOpen, signupOpen } from '../auth/routes.js';
 
 registerJob('scan', async (ctx) => scanPath(ctx.params.romPathId, ctx, !!ctx.params.force));
 registerJob('rematch', async () => rematchAll());
@@ -311,4 +312,14 @@ adminRouter.post('/games/:id/work', async (req, res) => {
     await prisma.game.update({ where: { id: game.id }, data: { workId: null, wikidataId: null } });
   }
   res.json(await resolveWorks(game.systemId));
+});
+
+adminRouter.get('/settings/signup', async (_req, res) => {
+  res.json({ open: await signupOpen() });
+});
+
+adminRouter.put('/settings/signup', async (req, res) => {
+  const { open } = z.object({ open: z.boolean() }).parse(req.body);
+  await setSignupOpen(open);
+  res.json({ open });
 });

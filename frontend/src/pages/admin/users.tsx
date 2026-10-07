@@ -3,7 +3,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
 import { Copy, Trash2 } from 'lucide-react'
 import { toast } from 'sonner'
-import { del, get, patch, post } from '@/lib/api'
+import { del, get, patch, post, put } from '@/lib/api'
 import { useAuth } from '@/lib/auth'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -11,6 +11,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Checkbox } from '@/components/ui/checkbox'
+import { Switch } from '@/components/ui/switch'
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Field, NativeSelect, PageHeader, errMsg, formatDate } from '@/components/common'
 
@@ -37,6 +38,7 @@ export function AdminUsersPage() {
   const qc = useQueryClient()
   const users = useQuery({ queryKey: ['users'], queryFn: () => get<any[]>('/users') })
   const invs = useQuery({ queryKey: ['invitations'], queryFn: () => get<any[]>('/invitations') })
+  const signup = useQuery({ queryKey: ['signup-open'], queryFn: () => get<{ open: boolean }>('/admin/settings/signup') })
   const [form, setForm] = useState({ username: '', email: '', password: '', role: 'USER', permissions: DEFAULT_PERMISSIONS })
   const [invRole, setInvRole] = useState('USER')
   const [invPerms, setInvPerms] = useState(DEFAULT_PERMISSIONS)
@@ -54,6 +56,21 @@ export function AdminUsersPage() {
   return (
     <div className="space-y-6">
       <PageHeader title={t('admin.users')} />
+      <Card>
+        <CardContent className="flex items-center justify-between gap-4 pt-6">
+          <div>
+            <p className="font-medium">{t('more.signupOpen')}</p>
+            <p className="text-sm text-muted-foreground">{t('more.signupOpenHelp')}</p>
+          </div>
+          <Switch
+            checked={!!signup.data?.open}
+            onCheckedChange={(open) => act(async () => {
+              await put('/admin/settings/signup', { open })
+              void qc.invalidateQueries({ queryKey: ['signup-open'] })
+            })}
+          />
+        </CardContent>
+      </Card>
       <Card>
         <CardHeader>
           <CardTitle>{t('admin.newUser')}</CardTitle>

@@ -24,6 +24,8 @@ export const env = {
   encryptionKey: Buffer.from(secret('ENCRYPTION_KEY'), 'hex'),
   // Origenes web permitidos (CORS). Vacio: solo el mismo origen (la web servida por nginx o el proxy de Vite)
   corsOrigins: list(process.env.CORS_ORIGINS),
+  // Web address shown to sync clients for pairing (e.g. http://myserver:8080); guessed from the request if empty
+  publicUrl: (process.env.PUBLIC_URL ?? '').replace(/\/+$/, ''),
   dataDir,
   mediaDir: path.join(dataDir, 'media'),
   savesDir: path.join(dataDir, 'saves'),

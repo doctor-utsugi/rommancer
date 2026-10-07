@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { Link } from 'react-router'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
 import { Pencil, Plug, RefreshCw, Trash2 } from 'lucide-react'
@@ -49,6 +50,9 @@ export function DevicesPage() {
   return (
     <div>
       <PageHeader title={t('devices.title')}>
+        <Button size="sm" variant="outline" render={<Link to="/link" />} nativeButton={false}>
+          {t('more.link.title')}
+        </Button>
         <Button size="sm" onClick={() => setEditing(null)}>
           {t('devices.new')}
         </Button>
@@ -329,7 +333,7 @@ function DeviceDialog({ device, onClose }: { device: any | null; onClose(): void
               <Field label={t('devices.savesLayout')}>
                 <NativeSelect value={form.savesLayout} onChange={(e) => set('savesLayout', e.target.value)}>
                   <option value="">{t(`devices.layouts.${fw.savesLayout}`)} (firmware)</option>
-                  {['flat', 'system', 'core', 'rom'].map((l) => (
+                  {['flat', 'system', 'core', 'rom', 'rom-core'].map((l) => (
                     <option key={l} value={l}>
                       {t(`devices.layouts.${l}`)}
                     </option>

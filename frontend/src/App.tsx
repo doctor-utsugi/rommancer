@@ -23,6 +23,7 @@ import { AdminIntegrationsPage } from '@/pages/admin/integrations'
 import { AdminSyncPage } from '@/pages/admin/sync'
 import { AdminReviewPage } from '@/pages/admin/review'
 import { FranchisePage, FranchisesPage, WorkPage } from '@/pages/works'
+import { LinkPage } from '@/pages/link'
 
 export function App() {
   const { user, loading } = useAuth()
@@ -57,6 +58,7 @@ export function App() {
         <Route path="lists" element={<ListsPage />} />
         <Route path="lists/:id" element={<ListPage />} />
         <Route path="devices" element={<DevicesPage />} />
+        <Route path="link" element={<LinkPage />} />
         <Route path="saves" element={<SavesPage />} />
         <Route path="upload" element={<UploadPage />} />
         <Route path="profile" element={<ProfilePage />} />

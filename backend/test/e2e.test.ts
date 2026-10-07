@@ -1486,3 +1486,77 @@ test('fase2: semilla acumulada con evidencias, wikidata, parches y multimedia gr
   assert.equal(back.removedFromSource, true);
   assert.equal(back.parts[0].sha1, gone.parts[0].sha1);
 });
+
+test('sync client: pairing by code, whole-device sync with the shell client, sign-up', async () => {
+  const client = path.join(ROOT, 'clients/linux/rommancer-sync.sh');
+  const dir = path.join(DATA, 'sync-client');
+  fs.rmSync(dir, { recursive: true, force: true });
+  const run = (name: string, args: string[], env: Record<string, string> = {}) =>
+    execFileP('sh', [client, ...args], { env: { ...process.env, ROMMANCER_STATE: path.join(dir, `${name}-state`), ...env } });
+  const pair = async (name: string, firmware: string, root: string) => {
+    const linking = run(name, ['link', base], { ROMMANCER_NAME: name, ROMMANCER_FIRMWARE: firmware, ROMMANCER_ROOT: root });
+    const codeFile = path.join(dir, `${name}-state`, 'code.txt');
+    for (let i = 0; i < 50 && !fs.existsSync(codeFile); i++) await new Promise((r) => setTimeout(r, 100));
+    const code = fs.readFileSync(codeFile, 'utf8').split('\n')[0];
+    const info = await api('GET', `/link/${code}`);
+    assert.equal(info.json.deviceName, name);
+    assert.equal(info.json.rootHint, root);
+    assert.ok(info.json.suggestedFirmwareId, 'firmware detected by the client');
+    const ok = await api('POST', `/link/${code}/approve`, { name, consoleId: info.json.suggestedConsoleId, firmwareId: info.json.suggestedFirmwareId });
+    assert.equal(ok.status, 201);
+    assert.match((await linking).stdout, /Linked to/);
+    assert.equal((await api('POST', `/link/${code}/approve`, { name, consoleId: 1, firmwareId: 1 })).status, 404, 'a code is used once');
+    return ok.json.deviceId as number;
+  };
+  const rom = 'Advance Wars (USA)';
+  const onion = path.join(dir, 'onion');
+  const thor = path.join(dir, 'thor');
+  fs.mkdirSync(path.join(onion, 'Roms/GBA'), { recursive: true });
+  fs.mkdirSync(path.join(onion, 'Saves/CurrentProfile/saves/gpSP'), { recursive: true });
+  fs.mkdirSync(path.join(thor, 'ROMs/gba'), { recursive: true });
+  fs.writeFileSync(path.join(onion, 'Roms/GBA', `${rom}.gba`), crypto.randomBytes(4096));
+  fs.writeFileSync(path.join(thor, 'ROMs/gba', `${rom}.gba`), crypto.randomBytes(4096));
+  const onionSave = path.join(onion, 'Saves/CurrentProfile/saves/gpSP', `${rom}.srm`);
+  const thorSave = path.join(thor, 'ROMs/gba/mGBA', `${rom}.srm`);
+  fs.writeFileSync(onionSave, 'FROM-ONION');
+
+  await pair('onion', 'onion', onion);
+  const thorId = await pair('thor', 'android-esde', thor);
+  // Android RetroArch default: saves next to the content, one folder per core
+  assert.equal((await api('PATCH', `/devices/${thorId}`, { overrides: { savesLayout: 'rom-core' } })).status, 200);
+
+  // The save sits in the gpSP folder although the Onion template maps GBA to another core
+  assert.match((await run('onion', ['sync'])).stdout, /1 up, 0 down, 0 errors/);
+  assert.match((await run('thor', ['sync'])).stdout, /0 up, 1 down, 0 errors/);
+  assert.equal(fs.readFileSync(thorSave, 'utf8'), 'FROM-ONION');
+
+  fs.writeFileSync(thorSave, 'FROM-THOR-LONGER');
+  assert.match((await run('thor', ['sync'])).stdout, /1 up, 0 down/);
+  assert.match((await run('onion', ['sync'])).stdout, /0 up, 1 down/);
+  assert.equal(fs.readFileSync(onionSave, 'utf8'), 'FROM-THOR-LONGER');
+  assert.match((await run('onion', ['sync'])).stdout, /0 up, 0 down, 0 errors/, 'nothing to do when nothing changed');
+  assert.match((await run('thor', ['sync'])).stdout, /0 up, 0 down, 0 errors/);
+
+  // Both sides change: both versions are kept and the device keeps its own file
+  fs.writeFileSync(onionSave, 'ONION-2');
+  fs.writeFileSync(thorSave, 'THOR-2-LONGER');
+  await run('onion', ['sync']);
+  await run('thor', ['sync']);
+  assert.equal(fs.readFileSync(thorSave, 'utf8'), 'THOR-2-LONGER');
+  const conflicts = await api('GET', '/saves/conflicts');
+  assert.ok(conflicts.json.some((c: any) => c.deviceId === thorId && !c.resolvedAt));
+
+  // Bad token and the bundled client
+  const bad = await fetch(`${base}/api/v1/agent/roots`, { headers: { 'X-Device-Token': 'nope' } });
+  assert.equal(bad.status, 401);
+  assert.match(await (await fetch(`${base}/api/v1/link/client.sh`)).text(), /^#!\/bin\/sh/);
+
+  // Self-service sign-up only when the admin opens it, never as admin
+  const signup = (u: string) => fetch(`${base}/api/v1/auth/signup`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username: u, email: `${u}@example.com`, password: 'a-long-password-1' }) });
+  assert.equal((await signup('selfservice')).status, 403);
+  await api('PUT', '/admin/settings/signup', { open: true });
+  const created = await signup('selfservice');
+  assert.equal(created.status, 201);
+  assert.equal(((await created.json()) as any).user.role, 'USER');
+  await api('PUT', '/admin/settings/signup', { open: false });
+});

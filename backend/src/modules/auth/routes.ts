@@ -115,3 +115,37 @@ authRouter.post('/register', async (req, res) => {
   });
   res.status(201).json(await issueTokens(user));
 });
+
+const SIGNUP_KEY = 'signup.open';
+
+export async function signupOpen() {
+  return (await prisma.setting.findUnique({ where: { key: SIGNUP_KEY } }))?.value === 'true';
+}
+
+export async function setSignupOpen(open: boolean) {
+  await prisma.setting.upsert({ where: { key: SIGNUP_KEY }, create: { key: SIGNUP_KEY, value: String(open) }, update: { value: String(open) } });
+}
+
+authRouter.get('/config', async (_req, res) => {
+  res.json({ signupOpen: await signupOpen() });
+});
+
+// Self-service sign-up, only when the admin opened it; default permissions, never admin
+authRouter.post('/signup', async (req, res) => {
+  if (!(await signupOpen())) throw new HttpError(403, 'Sign-up is closed');
+  checkLimit([`signup:${clientIp(req)}`]);
+  const body = z
+    .object({
+      username: z.string().min(3).max(64).regex(/^[a-zA-Z0-9_.-]+$/),
+      email: z.email(),
+      password: z.string().min(10).max(512),
+      locale: z.enum(['es', 'en']).optional(),
+    })
+    .parse(req.body);
+  recent(`signup:${clientIp(req)}`).push(Date.now());
+  if (await prisma.user.findFirst({ where: { OR: [{ username: body.username }, { email: body.email }] } })) throw new HttpError(409, 'User already exists');
+  const user = await prisma.user.create({
+    data: { username: body.username, email: body.email, passwordHash: await bcrypt.hash(body.password, 10), role: 'USER', locale: body.locale ?? 'es', permissions: DEFAULT_PERMISSIONS },
+  });
+  res.status(201).json(await issueTokens(user));
+});

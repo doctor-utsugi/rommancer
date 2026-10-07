@@ -1,5 +1,20 @@
 // Textos de la fase 2 (permisos, sincronizacion, revision, obras, dispositivos con scripts...)
 export const esMore = {
+  link: {
+    title: 'Vincular dispositivo',
+    find: 'Buscar',
+    help: 'Introduce el código que muestra Rommancer Sync en la consola o el PC.',
+    invalid: 'Código no válido o caducado',
+    device: 'Dispositivo {{code}}',
+    approve: 'Vincular',
+    done: '"{{name}}" está vinculado. La consola empezará a sincronizar en unos segundos.',
+    signup: 'Crear cuenta',
+    haveAccount: 'Ya tengo cuenta',
+    noAccount: '¿No tienes cuenta? Créala',
+    passwordMin: 'Mínimo 10 caracteres',
+  },
+  signupOpen: 'Registro abierto',
+  signupOpenHelp: 'Cualquiera puede crear una cuenta (sin ser administrador) desde la web o desde Rommancer Sync.',
   perms: {
     title: 'Permisos',
     'collection.view': 'Ver colección',
@@ -160,6 +175,21 @@ export const esMore = {
 }
 
 export const enMore: typeof esMore = {
+  link: {
+    title: 'Link a device',
+    find: 'Find',
+    help: 'Enter the code that Rommancer Sync shows on the console or PC.',
+    invalid: 'Invalid or expired code',
+    device: 'Device {{code}}',
+    approve: 'Link',
+    done: '"{{name}}" is linked. The console will start syncing in a few seconds.',
+    signup: 'Create account',
+    haveAccount: 'I already have an account',
+    noAccount: "No account? Create one",
+    passwordMin: 'At least 10 characters',
+  },
+  signupOpen: 'Open sign-up',
+  signupOpenHelp: 'Anyone can create a (non-admin) account from the web or from Rommancer Sync.',
   perms: {
     title: 'Permissions',
     'collection.view': 'View collection',
