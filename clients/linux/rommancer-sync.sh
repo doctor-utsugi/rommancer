@@ -19,7 +19,7 @@ CLIENT_VERSION=20261007
 DIR="$(cd "$(dirname "$0")" && pwd)"
 STATE="${ROMMANCER_STATE:-$DIR/.rommancer}"
 CONF="$STATE/config"
-CACHE="$STATE/hashes"
+CACHE_DISK="$STATE/hashes"
 LOG="$STATE/log"
 # Transient files go to RAM: fewer writes to the SD card, and they survive a read-only card
 WORK="${TMPDIR:-/tmp}/rommancer-$(id -u 2>/dev/null || echo 0)"
@@ -30,6 +30,10 @@ FULL_SECONDS="${ROMMANCER_FULL_SECONDS:-300}"
 HASH_MAX="${ROMMANCER_HASH_MAX:-67108864}"
 TAB="$(printf '\t')"
 mkdir -p "$STATE" "$WORK"
+# Hashes are cached in RAM while syncing and written to the card once at the end: a console
+# switched off during thousands of small writes is how FAT cards end up read-only
+CACHE="$WORK/hashes"
+[ -f "$CACHE" ] || cp "$CACHE_DISK" "$CACHE" 2>/dev/null || : > "$CACHE"
 
 log() { printf '%s %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$*" >> "$LOG" 2>/dev/null; }
 say() { printf '%s\n' "$*"; log "$*"; }
@@ -251,6 +255,12 @@ build_request() {
     is_save "$f" || continue
     s="$(cached_sha1 "$f")" && printf 'file\t%s\t%s\n' "$f" "$s" >> "$out"
   done < "$WORK/saves"
+  save_cache
+}
+
+save_cache() {
+  cmp -s "$CACHE" "$CACHE_DISK" 2>/dev/null && return 0
+  cp "$CACHE" "$CACHE_DISK.new" 2>/dev/null && mv "$CACHE_DISK.new" "$CACHE_DISK"
 }
 
 cmd_sync() {
@@ -484,7 +494,7 @@ cmd_status() {
 
 cmd_unlink() {
   [ -f "$STATE/pid" ] && kill "$(cat "$STATE/pid")" 2>/dev/null
-  rm -f "$CONF" "$STATE/pid" "$CACHE"
+  rm -f "$CONF" "$STATE/pid" "$CACHE" "$CACHE_DISK"
   echo "Unlinked"
 }
 
