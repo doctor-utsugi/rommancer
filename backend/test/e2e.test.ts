@@ -1730,8 +1730,8 @@ test('sync client: roms of assigned lists, save before a game, conflicts resolve
   const forged = planText.split('\t')[3].trim().replace(/^[^.]+/, Buffer.from(JSON.stringify({ d: a.id, p: '/etc/passwd', e: null })).toString('base64url'));
   assert.equal((await fetch(`${base}/api/v1/agent/rom?f=${forged}`, { headers: { 'X-Device-Token': fs.readFileSync(path.join(dir, 'roms-a-state', 'config'), 'utf8').match(/TOKEN=(.*)/)![1] } })).status, 403);
 
-  assert.match((await a.run('roms')).stdout, /roms: [1-9]\d* downloaded, 0 failed/);
-  assert.match((await a.run('roms')).stdout, /roms: 0 downloaded, 0 failed/, 'nothing twice');
+  assert.match((await a.run('roms')).stdout, /roms: [1-9]\d* downloaded, 0 already here, 0 failed/);
+  assert.match((await a.run('roms')).stdout, /roms: 0 downloaded, [1-9]\d* already here, 0 failed/, 'nothing twice');
   await b.run('roms');
   const romA = fs.readdirSync(path.join(a.root, 'roms/nes')).find((f) => f.endsWith('.nes'))!;
   const romPath = (d: typeof a) => path.join(d.root, 'roms/nes', romA);

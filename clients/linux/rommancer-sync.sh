@@ -429,11 +429,11 @@ cmd_roms() {
   need_link
   progress roms-plan 0 0
   http GET "$SERVER/api/v1/agent/roms" - "$WORK/romplan" || { log "roms: server unreachable"; return 1; }
-  total="$(grep -c . "$WORK/romplan")"; i=0; got=0; fail=0
+  total="$(grep -c . "$WORK/romplan")"; i=0; got=0; fail=0; have=0
   while IFS="$TAB" read -r kind dest size ref; do
     [ "$kind" = rom ] || continue
     i=$((i + 1)); progress roms-download "$i" "$total"
-    if [ -f "$dest" ] && { [ "$size" = 0 ] || [ "$(stat -c %s "$dest" 2>/dev/null)" = "$size" ]; }; then continue; fi
+    if [ -f "$dest" ] && { [ "$size" = 0 ] || [ "$(stat -c %s "$dest" 2>/dev/null)" = "$size" ]; }; then have=$((have + 1)); continue; fi
     if [ "$size" -gt 0 ] && [ "$(free_bytes "$(dirname "$dest")")" -lt $((size + 52428800)) ]; then
       log "roms: not enough space for $(basename "$dest")"; fail=$((fail + 1)); break
     fi
@@ -445,8 +445,8 @@ cmd_roms() {
     fi
   done < "$WORK/romplan"
   progress roms-finished "$got" "$fail"
-  log "roms: $got downloaded, $fail failed, $total planned"
-  [ -n "${VERBOSE:-}" ] && printf 'roms: %s downloaded, %s failed\n' "$got" "$fail"
+  log "roms: $got downloaded, $have already here, $fail failed"
+  [ -n "${VERBOSE:-}" ] && printf 'roms: %s downloaded, %s already here, %s failed\n' "$got" "$have" "$fail"
   return 0
 }
 
