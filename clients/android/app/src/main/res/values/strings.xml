@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="server">Server address</string>
+    <string name="login">Log in</string>
+    <string name="signup">Create account</string>
+    <string name="user">Username or email</string>
+    <string name="username">Username</string>
+    <string name="email">Email</string>
+    <string name="password">Password</string>
+    <string name="have_account">I already have an account</string>
+    <string name="no_account">No account? Create one</string>
+    <string name="connected">Connected to %1$s as %2$s</string>
+    <string name="sync_now">Sync now</string>
+    <string name="unlink">Unlink this device</string>
+    <string name="syncing">Syncing…</string>
+    <string name="last_sync">Last sync: %1$s</string>
+    <string name="never">never</string>
+    <string name="background">Saves sync by themselves every 15 minutes.</string>
+    <string name="storage_title">Access to your files</string>
+    <string name="storage_text">Rommancer Sync needs access to all files to read the saves next to your roms (ROMs, RetroArch, PSP…).</string>
+    <string name="storage_grant">Allow access</string>
+    <string name="bad_server">No Rommancer at that address</string>
+    <string name="bad_login">Wrong username or password</string>
+    <string name="signup_closed">This server does not allow new accounts</string>
+    <string name="exists">That username or email already exists</string>
+</resources>
