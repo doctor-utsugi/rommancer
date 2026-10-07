@@ -18,6 +18,8 @@ COPY --from=build /app/node_modules node_modules
 COPY --from=build /app/backend/dist backend/dist
 COPY --from=build /app/backend/prisma backend/prisma
 COPY --from=build /app/backend/package.json backend/package.json
+# Sync client served at /api/v1/link/client.sh
+COPY clients clients
 WORKDIR /app/backend
 VOLUME /data
 EXPOSE 3000
