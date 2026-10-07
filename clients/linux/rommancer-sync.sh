@@ -5,6 +5,7 @@
 #   rommancer-sync.sh link SERVER   pair this device (shows a code to approve in the web app)
 #   rommancer-sync.sh sync          one sync pass
 #   rommancer-sync.sh daemon        sync whenever a save changes, and every few minutes
+#   rommancer-sync.sh install       start the daemon at boot and sync when a game ends (Knulli, Batocera)
 #   rommancer-sync.sh status | unlink
 #   rommancer-sync.sh               link if needed, then start the daemon in the background
 set -u
@@ -224,6 +225,26 @@ cmd_daemon() {
   done
 }
 
+# Boot and game-end hooks where the firmware offers them
+cmd_install() {
+  detect
+  self="$DIR/$(basename "$0")"
+  case "$FW" in
+    knulli|batocera)
+      boot=/userdata/system/custom.sh
+      if ! grep -qF "rommancer-sync" "$boot" 2>/dev/null; then
+        [ -f "$boot" ] || printf '#!/bin/sh\n' > "$boot"
+        printf '# rommancer-sync\n[ "$1" = start ] && nohup sh "%s" daemon >/dev/null 2>&1 &\n' "$self" >> "$boot"
+        chmod +x "$boot"
+      fi
+      mkdir -p /userdata/system/scripts
+      printf '#!/bin/sh\n# rommancer-sync: upload saves when a game ends\n[ "$1" = gameStop ] && nohup sh "%s" sync >/dev/null 2>&1 &\nexit 0\n' "$self" > /userdata/system/scripts/rommancer-sync.sh
+      chmod +x /userdata/system/scripts/rommancer-sync.sh
+      say "Installed: daemon at boot ($boot) and sync after each game" ;;
+    *) say "No automatic install for $FW yet; run '$self daemon' at startup" ;;
+  esac
+}
+
 cmd_status() {
   if [ -n "$TOKEN" ]; then echo "Linked to $SERVER"; else echo "Not linked"; fi
   if [ -f "$STATE/pid" ] && kill -0 "$(cat "$STATE/pid")" 2>/dev/null; then echo "Daemon running (pid $(cat "$STATE/pid"))"; else echo "Daemon stopped"; fi
@@ -240,12 +261,14 @@ case "${1:-}" in
   link) shift; cmd_link "${1:-}" ;;
   sync) VERBOSE=1 cmd_sync ;;
   daemon) cmd_daemon ;;
+  install) cmd_install ;;
   status) cmd_status ;;
   unlink) cmd_unlink ;;
   "")
     [ -n "$TOKEN" ] || cmd_link "${ROMMANCER_SERVER:-}"
     VERBOSE=1 cmd_sync
+    cmd_install
     nohup "$0" daemon >/dev/null 2>&1 &
     echo "Syncing in the background" ;;
-  *) echo "Usage: $0 [link SERVER|sync|daemon|status|unlink]"; exit 2 ;;
+  *) echo "Usage: $0 [link SERVER|sync|daemon|install|status|unlink]"; exit 2 ;;
 esac
