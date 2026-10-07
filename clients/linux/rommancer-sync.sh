@@ -99,13 +99,17 @@ detect() {
   NAME="${ROMMANCER_NAME:-$(hostname 2>/dev/null || echo device)}"
 }
 
+# Onion dialogs fit about 40 characters per line and turn a literal \n into a line break
+wrap() { printf '%s' "$1" | awk -v w=36 '{ n = split($0, a, " "); for (i = 1; i <= n; i++) { if (length(l) && length(l) + 1 + length(a[i]) > w) { o = o (o == "" ? "" : "\\n") l; l = a[i] } else l = (l == "" ? a[i] : l " " a[i]) } } END { o = o (o == "" ? "" : "\\n") l; printf "%s", o }'; }
+
 # On-screen message on Onion (infoPanel); "wait" blocks until a button, otherwise it stays until dismissed
 panel() {
   ip=/mnt/SDCARD/.tmp_update/bin/infoPanel
   [ -x "$ip" ] || return 0
   touch /tmp/dismiss_info_panel; sleep 0.2; rm -f /tmp/dismiss_info_panel
-  if [ "${3:-}" = wait ]; then (cd /mnt/SDCARD/.tmp_update && "$ip" -t "$1" -m "$2" >/dev/null 2>&1)
-  else (cd /mnt/SDCARD/.tmp_update && "$ip" -t "$1" -m "$2" --persistent >/dev/null 2>&1 &) fi
+  msg="$(wrap "$2")"
+  if [ "${3:-}" = wait ]; then (cd /mnt/SDCARD/.tmp_update && "$ip" -t "$1" -m "$msg" >/dev/null 2>&1)
+  else (cd /mnt/SDCARD/.tmp_update && "$ip" -t "$1" -m "$msg" --persistent >/dev/null 2>&1 &) fi
 }
 panel_close() { touch /tmp/dismiss_info_panel; }
 
@@ -391,7 +395,7 @@ onion_ui() {
 }
 
 # Menu: prints nothing, returns the index of the chosen item (255 = back)
-menu() { title="$1"; msg="$2"; shift 2; onion_ui prompt -t "$title" -m "$msg" "$@"; }
+menu() { title="$1"; msg="$(wrap "$2")"; shift 2; onion_ui prompt -t "$title" -m "$msg" "$@"; }
 
 # Keyboard: prints the text, fails when cancelled
 ask() {
@@ -406,9 +410,9 @@ t() {
       server) echo "Servidor" ;; login) echo "Entrar" ;; signup) echo "Crear cuenta" ;; quit) echo "Salir" ;;
       user) echo "USUARIO O EMAIL" ;; username) echo "USUARIO" ;; email) echo "EMAIL" ;; password) echo "CONTRASENA" ;;
       sync) echo "Sincronizar ahora" ;; status) echo "Estado" ;; unlink) echo "Desconectar esta consola" ;;
-      connected) echo "Conectado a $SERVER como ${USER_NAME:-?}" ;; notlinked) echo "Esta consola no esta vinculada" ;;
+      connected) echo "Conectado como ${USER_NAME:-?} a ${SERVER#*://}" ;; notlinked) echo "Esta consola no esta vinculada" ;;
       badserver) echo "No hay un Rommancer en esa direccion" ;; badlogin) echo "Usuario o contrasena incorrectos" ;;
-      closed) echo "Este servidor no permite crear cuentas" ;; finished) echo "Listo. Los saves se sincronizan solos." ;;
+      closed) echo "Este servidor no permite crear cuentas" ;; finished) echo "Listo. Sincronizacion automatica activada." ;;
       syncing) echo "Sincronizando..." ;; *) echo "$1" ;;
     esac
   else
@@ -416,9 +420,9 @@ t() {
       server) echo "Server" ;; login) echo "Log in" ;; signup) echo "Create account" ;; quit) echo "Exit" ;;
       user) echo "USERNAME OR EMAIL" ;; username) echo "USERNAME" ;; email) echo "EMAIL" ;; password) echo "PASSWORD" ;;
       sync) echo "Sync now" ;; status) echo "Status" ;; unlink) echo "Unlink this console" ;;
-      connected) echo "Connected to $SERVER as ${USER_NAME:-?}" ;; notlinked) echo "This console is not linked" ;;
+      connected) echo "Connected as ${USER_NAME:-?} to ${SERVER#*://}" ;; notlinked) echo "This console is not linked" ;;
       badserver) echo "No Rommancer at that address" ;; badlogin) echo "Wrong username or password" ;;
-      closed) echo "This server does not allow new accounts" ;; finished) echo "Done. Saves now sync by themselves." ;;
+      closed) echo "This server does not allow new accounts" ;; finished) echo "Done. Automatic sync is on." ;;
       syncing) echo "Syncing..." ;; *) echo "$1" ;;
     esac
   fi
