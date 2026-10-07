@@ -1560,3 +1560,31 @@ test('sync client: pairing by code, whole-device sync with the shell client, sig
   assert.equal(((await created.json()) as any).user.role, 'USER');
   await api('PUT', '/admin/settings/signup', { open: false });
 });
+
+test('sync client: installer package enrols the device by itself, once', async () => {
+  const dir = path.join(DATA, 'sync-installer');
+  fs.rmSync(dir, { recursive: true, force: true });
+  const sd = path.join(dir, 'sd');
+  fs.mkdirSync(path.join(sd, 'Roms/FC'), { recursive: true });
+  const r = await fetch(`${base}/api/v1/link/package/onion?token=${encodeURIComponent(adminFiles)}`);
+  assert.equal(r.status, 200);
+  const zip = path.join(dir, 'pkg.zip');
+  fs.writeFileSync(zip, Buffer.from(await r.arrayBuffer()));
+  execSync(`${SEVENZIP} x -y -o"${sd}" "${zip}"`, { stdio: 'ignore' });
+  const app = path.join(sd, 'App/RommancerSync');
+  for (const f of ['rommancer-sync.sh', 'cacert.pem', 'server.txt', 'enroll.txt', 'config.json', 'launch.sh']) assert.ok(fs.existsSync(path.join(app, f)), f);
+  assert.ok(fs.existsSync(path.join(sd, '.tmp_update/startup/rommancer-sync.sh')), 'Onion boot hook');
+  assert.equal(fs.readFileSync(path.join(app, 'server.txt'), 'utf8').trim(), process.env.PUBLIC_URL || base);
+  fs.writeFileSync(path.join(app, 'server.txt'), base + '\n');
+  const enrollToken = fs.readFileSync(path.join(app, 'enroll.txt'), 'utf8').trim();
+  const env = { ...process.env, ROMMANCER_STATE: path.join(dir, 'state'), ROMMANCER_FIRMWARE: 'onion', ROMMANCER_ROOT: sd, ROMMANCER_NAME: 'pkg-miyoo' };
+  const out = await execFileP('sh', [path.join(app, 'rommancer-sync.sh'), 'enroll'], { env });
+  assert.match(out.stdout, /Enrolled in .* as "pkg-miyoo" \(onion\)/);
+  assert.ok(!fs.existsSync(path.join(app, 'enroll.txt')), 'token removed after use');
+  const devices = await api('GET', '/devices');
+  assert.ok(devices.json.some((d: any) => d.name === 'pkg-miyoo' && d.connType === 'AGENT'));
+  assert.match((await execFileP('sh', [path.join(app, 'rommancer-sync.sh'), 'sync'], { env })).stdout, /0 errors/);
+  // The token works once
+  const again = await fetch(`${base}/api/v1/link/enroll`, { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: `name=x&firmware=onion&root=/mnt/SDCARD&token=${encodeURIComponent(enrollToken)}` });
+  assert.equal(again.status, 404);
+});

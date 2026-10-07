@@ -1,0 +1,542 @@
+#!/usr/bin/env python3
+"""Rommancer Sync setup screen for handhelds with Python + pygame (Knulli, Batocera, ROCKNIX).
+
+Everything is done with the gamepad: server address, log in or create an account, sync now,
+status and sign out. Syncing itself is done by rommancer-sync.sh next to this file.
+"""
+import json
+import os
+import re
+import ssl
+import subprocess
+import sys
+import time
+import urllib.error
+import urllib.parse
+import urllib.request
+import xml.etree.ElementTree as ET
+
+os.environ.setdefault("PYGAME_HIDE_SUPPORT_PROMPT", "1")
+import pygame  # noqa: E402
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+SCRIPT = os.path.join(HERE, "rommancer-sync.sh")
+CACERT = os.path.join(HERE, "cacert.pem")
+ES_INPUT = ["/userdata/system/configs/emulationstation/es_input.cfg", "/usr/share/emulationstation/es_input.cfg"]
+
+TEXTS = {
+    "es": {
+        "title": "Rommancer Sync",
+        "server": "Servidor",
+        "login": "Entrar",
+        "signup": "Crear cuenta",
+        "quit": "Salir",
+        "user": "Usuario o email",
+        "username": "Usuario",
+        "email": "Email",
+        "password": "Contraseña",
+        "connected": "Conectado a {server}",
+        "as": "como {user}",
+        "sync_now": "Sincronizar ahora",
+        "status": "Estado",
+        "logout": "Desconectar esta consola",
+        "syncing": "Sincronizando...",
+        "checking": "Conectando con el servidor...",
+        "no_server": "Primero escribe la dirección del servidor",
+        "bad_server": "No hay un Rommancer en esa dirección",
+        "bad_login": "Usuario o contraseña incorrectos",
+        "signup_closed": "Este servidor no permite crear cuentas",
+        "exists": "Ese usuario o email ya existe",
+        "error": "Error: {msg}",
+        "done": "Listo. Los saves se sincronizan solos en segundo plano.",
+        "logged_out": "Consola desconectada",
+        "keys": "A tecla  B borrar  X mayús  Y espacio  START aceptar  SELECT cancelar",
+        "menu_keys": "A elegir   B atrás",
+        "press": "Pulsa A para continuar",
+        "nolog": "Todavía no hay registro",
+    },
+    "en": {
+        "title": "Rommancer Sync",
+        "server": "Server",
+        "login": "Log in",
+        "signup": "Create account",
+        "quit": "Exit",
+        "user": "Username or email",
+        "username": "Username",
+        "email": "Email",
+        "password": "Password",
+        "connected": "Connected to {server}",
+        "as": "as {user}",
+        "sync_now": "Sync now",
+        "status": "Status",
+        "logout": "Unlink this console",
+        "syncing": "Syncing...",
+        "checking": "Contacting the server...",
+        "no_server": "Enter the server address first",
+        "bad_server": "No Rommancer at that address",
+        "bad_login": "Wrong username or password",
+        "signup_closed": "This server does not allow new accounts",
+        "exists": "That username or email already exists",
+        "error": "Error: {msg}",
+        "done": "Done. Saves now sync in the background.",
+        "logged_out": "Console unlinked",
+        "keys": "A key  B delete  X shift  Y space  START accept  SELECT cancel",
+        "menu_keys": "A choose   B back",
+        "press": "Press A to continue",
+        "nolog": "No log yet",
+    },
+}
+
+
+def system_language():
+    try:
+        with open("/userdata/system/batocera.conf", encoding="utf-8") as f:
+            m = re.search(r"^system\.language=(\w\w)", f.read(), re.M)
+            if m:
+                return m.group(1)
+    except OSError:
+        pass
+    return (os.environ.get("LANG") or "en")[:2]
+
+
+T = TEXTS.get(system_language(), TEXTS["en"])
+
+# ---------- device state, shared with rommancer-sync.sh ----------
+
+
+def hints():
+    out = subprocess.run(["sh", SCRIPT, "hints"], capture_output=True, text=True, timeout=30).stdout
+    return dict(line.split("\t", 1) for line in out.splitlines() if "\t" in line)
+
+
+def read_config(state):
+    cfg = {}
+    try:
+        with open(os.path.join(state, "config"), encoding="utf-8") as f:
+            for line in f:
+                if "=" in line:
+                    k, v = line.rstrip("\n").split("=", 1)
+                    cfg[k] = v
+    except OSError:
+        pass
+    return cfg
+
+
+def write_config(state, server, token, user):
+    os.makedirs(state, exist_ok=True)
+    path = os.path.join(state, "config")
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(f"SERVER={server}\nTOKEN={token}\nUSER={user}\n")
+    os.chmod(path, 0o600)
+
+
+# ---------- server ----------
+
+
+def ssl_context():
+    ctx = ssl.create_default_context()
+    if os.path.exists(CACERT):
+        ctx.load_verify_locations(CACERT)
+    return ctx
+
+
+class ApiError(Exception):
+    def __init__(self, status, message):
+        super().__init__(message)
+        self.status = status
+
+
+def call(server, path, form=None):
+    data = urllib.parse.urlencode(form).encode() if form is not None else None
+    req = urllib.request.Request(server.rstrip("/") + "/api/v1" + path, data=data)
+    try:
+        with urllib.request.urlopen(req, timeout=20, context=ssl_context()) as r:
+            body = r.read().decode()
+    except urllib.error.HTTPError as e:
+        raw = e.read().decode(errors="replace")
+        try:
+            msg = json.loads(raw).get("error", raw)
+        except ValueError:
+            msg = raw.strip()
+        raise ApiError(e.code, msg) from None
+    return dict(line.split("\t", 1) for line in body.splitlines() if "\t" in line)
+
+
+# ---------- input: the gamepad mapping EmulationStation already knows ----------
+
+
+def es_mapping(joy):
+    """Button/axis/hat ids of a joystick, by name, from EmulationStation's es_input.cfg."""
+    for path in ES_INPUT:
+        try:
+            root = ET.parse(path).getroot()
+        except (OSError, ET.ParseError):
+            continue
+        for cfg in root.iter("inputConfig"):
+            if cfg.get("type") != "joystick" or cfg.get("deviceName") != joy.get_name():
+                continue
+            return {i.get("name"): (i.get("type"), int(i.get("id")), int(i.get("value"))) for i in cfg.iter("input")}
+    return {}
+
+
+class Pad:
+    KEYS = {
+        pygame.K_UP: "up", pygame.K_DOWN: "down", pygame.K_LEFT: "left", pygame.K_RIGHT: "right",
+        pygame.K_RETURN: "a", pygame.K_BACKSPACE: "b", pygame.K_ESCAPE: "select", pygame.K_TAB: "x",
+        pygame.K_SPACE: "y", pygame.K_F1: "start",
+    }
+
+    def __init__(self):
+        pygame.joystick.init()
+        self.joys = [pygame.joystick.Joystick(i) for i in range(pygame.joystick.get_count())]
+        self.maps = {}
+        for j in self.joys:
+            m = es_mapping(j)
+            # Generic fallback: SDL's usual south/east buttons and the first hat
+            self.maps[j.get_instance_id()] = m or {"a": ("button", 0, 1), "b": ("button", 1, 1), "x": ("button", 2, 1), "y": ("button", 3, 1),
+                                                   "select": ("button", 6, 1), "start": ("button", 7, 1)}
+        self.axis_held = {}
+
+    def actions(self, event):
+        if event.type == pygame.KEYDOWN:
+            return [self.KEYS[event.key]] if event.key in self.KEYS else []
+        if event.type == pygame.TEXTINPUT:
+            return [("char", event.text)]
+        m = self.maps.get(getattr(event, "instance_id", None), {})
+        if event.type == pygame.JOYBUTTONDOWN:
+            return [name for name, (kind, ident, _) in m.items() if kind == "button" and ident == event.button]
+        if event.type == pygame.JOYHATMOTION:
+            x, y = event.value
+            return [d for d, ok in (("left", x < 0), ("right", x > 0), ("up", y > 0), ("down", y < 0)) if ok]
+        if event.type == pygame.JOYAXISMOTION:
+            key = (event.instance_id, event.axis)
+            direction = 0 if abs(event.value) < 0.6 else (1 if event.value > 0 else -1)
+            if direction == self.axis_held.get(key, 0):
+                return []
+            self.axis_held[key] = direction
+            if direction == 0:
+                return []
+            named = [n for n, (kind, ident, val) in m.items() if kind == "axis" and ident == event.axis and val == direction]
+            if named:
+                return named
+            return [("down" if direction > 0 else "up") if event.axis % 2 else ("right" if direction > 0 else "left")]
+        return []
+
+
+# ---------- drawing ----------
+
+BG = (18, 20, 28)
+FG = (235, 235, 240)
+DIM = (140, 145, 160)
+ACCENT = (110, 170, 255)
+BAD = (255, 120, 120)
+
+
+class Screen:
+    def __init__(self):
+        pygame.display.init()
+        pygame.font.init()
+        flags = 0 if os.environ.get("SDL_VIDEODRIVER") in ("dummy", "offscreen") else pygame.FULLSCREEN
+        self.surf = pygame.display.set_mode((640, 480) if flags == 0 else (0, 0), flags)
+        pygame.mouse.set_visible(False)
+        self.w, self.h = self.surf.get_size()
+        scale = self.h / 480
+        self.big = pygame.font.Font(None, int(44 * scale))
+        self.font = pygame.font.Font(None, int(32 * scale))
+        self.small = pygame.font.Font(None, int(24 * scale))
+        self.shots = os.environ.get("ROMMANCER_UI_SHOTS")
+        self.shot_n = 0
+
+    def text(self, s, pos, font=None, color=FG, center=False):
+        img = (font or self.font).render(s, True, color)
+        r = img.get_rect()
+        if center:
+            r.midtop = pos
+        else:
+            r.topleft = pos
+        self.surf.blit(img, r)
+        return r
+
+    def frame(self, title, footer=""):
+        self.surf.fill(BG)
+        self.text(title, (self.w // 2, int(self.h * 0.04)), self.big, ACCENT, center=True)
+        if footer:
+            self.text(footer, (self.w // 2, self.h - int(self.h * 0.07)), self.small, DIM, center=True)
+
+    def wrap(self, s, font, width):
+        lines, line = [], ""
+        for word in s.split():
+            test = (line + " " + word).strip()
+            if font.size(test)[0] > width and line:
+                lines.append(line)
+                line = word
+            else:
+                line = test
+        return lines + ([line] if line else [])
+
+    def flip(self):
+        pygame.display.flip()
+        if self.shots:
+            os.makedirs(self.shots, exist_ok=True)
+            pygame.image.save(self.surf, os.path.join(self.shots, f"{self.shot_n:03d}.png"))
+            self.shot_n += 1
+
+
+# ---------- the app ----------
+
+KEYBOARD = [
+    "1234567890",
+    "qwertyuiop",
+    "asdfghjkl@",
+    "zxcvbnm.-_",
+    ":/?=&+#!*~",
+]
+
+
+class App:
+    def __init__(self):
+        self.screen = Screen()
+        self.pad = Pad()
+        self.hints = hints()
+        self.state = self.hints.get("state") or os.path.join(HERE, ".rommancer")
+        self.cfg = read_config(self.state)
+        saved = self.cfg.get("SERVER") or self._read(os.path.join(HERE, "server.txt"))
+        self.server = (saved or "https://").strip()
+        self.script = [a.strip() for a in os.environ.get("ROMMANCER_UI_TEST", "").split(",") if a.strip()]
+        pygame.key.set_repeat(300, 60)
+
+    @staticmethod
+    def _read(path):
+        try:
+            with open(path, encoding="utf-8") as f:
+                return f.readline().strip()
+        except OSError:
+            return ""
+
+    # Input: real events, or a scripted list in tests (ROMMANCER_UI_TEST="down,a,...")
+    def next_action(self):
+        while True:
+            if self.script:
+                time.sleep(0.05)
+                a = self.script.pop(0)
+                return ("char", a[5:]) if a.startswith("type:") else a
+            if os.environ.get("ROMMANCER_UI_TEST") is not None:
+                return "quit"
+            for event in pygame.event.get():
+                if event.type == pygame.QUIT:
+                    return "quit"
+                acts = self.pad.actions(event)
+                if acts:
+                    return acts[0]
+            time.sleep(0.016)
+
+    def menu(self, title, items, info=()):
+        sel = 0
+        while True:
+            s = self.screen
+            s.frame(title, T["menu_keys"])
+            y = int(s.h * 0.17)
+            for line in info:
+                for part in s.wrap(line, s.small, s.w - 60):
+                    s.text(part, (s.w // 2, y), s.small, DIM, center=True)
+                    y += s.small.get_linesize()
+            y += int(s.h * 0.03)
+            for i, label in enumerate(items):
+                color = ACCENT if i == sel else FG
+                r = s.text(label, (s.w // 2, y), s.font, color, center=True)
+                if i == sel:
+                    pygame.draw.rect(s.surf, ACCENT, r.inflate(24, 8), 2, border_radius=8)
+                y += int(s.font.get_linesize() * 1.5)
+            s.flip()
+            a = self.next_action()
+            if a == "up":
+                sel = (sel - 1) % len(items)
+            elif a == "down":
+                sel = (sel + 1) % len(items)
+            elif a in ("a", "start"):
+                return sel
+            elif a in ("b", "quit"):
+                return None
+
+    def keyboard(self, title, value="", secret=False):
+        row, col, upper = 0, 0, False
+        while True:
+            s = self.screen
+            s.frame(title, T["keys"])
+            shown = "*" * len(value) if secret else value
+            box = pygame.Rect(30, int(s.h * 0.15), s.w - 60, int(s.font.get_linesize() * 1.4))
+            pygame.draw.rect(s.surf, (40, 44, 60), box, border_radius=8)
+            txt = shown + "_"
+            while s.font.size(txt)[0] > box.w - 20 and len(txt) > 1:
+                txt = txt[1:]
+            s.text(txt, (box.x + 10, box.y + 6))
+            kw, kh = (s.w - 60) // 10, int(s.h * 0.1)
+            for r, keys in enumerate(KEYBOARD):
+                for c, ch in enumerate(keys):
+                    ch = ch.upper() if upper else ch
+                    rect = pygame.Rect(30 + c * kw, int(s.h * 0.3) + r * kh, kw - 6, kh - 6)
+                    hot = (r, c) == (row, col)
+                    pygame.draw.rect(s.surf, ACCENT if hot else (50, 55, 72), rect, border_radius=6)
+                    img = s.font.render(ch, True, BG if hot else FG)
+                    s.surf.blit(img, img.get_rect(center=rect.center))
+            s.flip()
+            a = self.next_action()
+            if isinstance(a, tuple):
+                value += a[1]
+            elif a == "up":
+                row = (row - 1) % len(KEYBOARD)
+            elif a == "down":
+                row = (row + 1) % len(KEYBOARD)
+            elif a == "left":
+                col = (col - 1) % 10
+            elif a == "right":
+                col = (col + 1) % 10
+            elif a == "a":
+                ch = KEYBOARD[row][col]
+                value += ch.upper() if upper else ch
+            elif a == "b":
+                value = value[:-1]
+            elif a == "x":
+                upper = not upper
+            elif a == "y":
+                value += " "
+            elif a == "start":
+                return value
+            elif a in ("select", "quit"):
+                return None
+
+    def message(self, text, color=FG, wait=True):
+        s = self.screen
+        s.frame(T["title"], T["press"] if wait else "")
+        y = int(s.h * 0.35)
+        for line in s.wrap(text, s.font, s.w - 60):
+            s.text(line, (s.w // 2, y), s.font, color, center=True)
+            y += s.font.get_linesize()
+        s.flip()
+        while wait:
+            if self.next_action() in ("a", "b", "start", "quit"):
+                return
+
+    # ---------- flows ----------
+
+    def linked(self):
+        return bool(self.cfg.get("TOKEN"))
+
+    def device_form(self):
+        h = self.hints
+        return {"name": h.get("name", "console"), "firmware": h.get("firmware", ""), "root": h.get("root", ""), "model": h.get("model", "")}
+
+    def check_server(self):
+        if not self.server or self.server == "https://":
+            self.message(T["no_server"], BAD)
+            return None
+        self.message(T["checking"], wait=False)
+        try:
+            return call(self.server, "/link/info")
+        except (ApiError, OSError, ValueError):
+            self.message(T["bad_server"], BAD)
+            return None
+
+    def finish_link(self, resp):
+        write_config(self.state, self.server.rstrip("/"), resp["token"], resp.get("user", ""))
+        self.cfg = read_config(self.state)
+        testing = os.environ.get("ROMMANCER_UI_TEST") is not None
+        if not testing:
+            subprocess.run(["sh", SCRIPT, "install"], capture_output=True, timeout=60)
+        self.sync_now()
+        if not testing:
+            subprocess.Popen(["sh", SCRIPT, "daemon"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+        self.message(T["done"])
+
+    def api_error(self, e):
+        if e.status == 401:
+            return T["bad_login"]
+        if e.status == 403 and "Sign-up" in str(e):
+            return T["signup_closed"]
+        if e.status == 409:
+            return T["exists"]
+        return T["error"].format(msg=e)
+
+    def login(self):
+        if not self.check_server():
+            return
+        user = self.keyboard(T["user"])
+        if not user:
+            return
+        password = self.keyboard(T["password"], secret=True)
+        if password is None:
+            return
+        self.message(T["checking"], wait=False)
+        try:
+            self.finish_link(call(self.server, "/link/login", {**self.device_form(), "username": user, "password": password}))
+        except ApiError as e:
+            self.message(self.api_error(e), BAD)
+        except OSError as e:
+            self.message(T["error"].format(msg=e), BAD)
+
+    def signup(self):
+        info = self.check_server()
+        if not info:
+            return
+        if info.get("signup") != "1":
+            self.message(T["signup_closed"], BAD)
+            return
+        user = self.keyboard(T["username"])
+        email = user and self.keyboard(T["email"])
+        password = email and self.keyboard(T["password"], secret=True)
+        if not password:
+            return
+        self.message(T["checking"], wait=False)
+        try:
+            self.finish_link(call(self.server, "/link/signup", {**self.device_form(), "username": user, "email": email, "password": password}))
+        except ApiError as e:
+            self.message(self.api_error(e), BAD)
+        except OSError as e:
+            self.message(T["error"].format(msg=e), BAD)
+
+    def sync_now(self):
+        self.message(T["syncing"], wait=False)
+        out = subprocess.run(["sh", SCRIPT, "sync"], capture_output=True, text=True, timeout=900).stdout.strip()
+        self.message(out.splitlines()[-1] if out else T["error"].format(msg="sync"))
+
+    def status(self):
+        try:
+            with open(os.path.join(self.state, "log"), encoding="utf-8") as f:
+                lines = f.read().splitlines()[-6:]
+        except OSError:
+            lines = [T["nolog"]]
+        self.menu(T["status"], ["OK"], info=lines)
+
+    def logout(self):
+        subprocess.run(["sh", SCRIPT, "unlink"], capture_output=True, timeout=30)
+        self.cfg = {}
+        self.message(T["logged_out"])
+
+    def run(self):
+        while True:
+            if self.linked():
+                info = [T["connected"].format(server=self.cfg.get("SERVER", "")), T["as"].format(user=self.cfg.get("USER", "?"))]
+                choice = self.menu(T["title"], [T["sync_now"], T["status"], T["logout"], T["quit"]], info)
+                actions = [self.sync_now, self.status, self.logout]
+            else:
+                choice = self.menu(T["title"], [f"{T['server']}: {self.server}", T["login"], T["signup"], T["quit"]])
+                actions = [self.edit_server, self.login, self.signup]
+            if choice is None or choice >= len(actions):
+                return
+            actions[choice]()
+
+    def edit_server(self):
+        value = self.keyboard(T["server"], self.server)
+        if value:
+            self.server = value.strip()
+
+
+def main():
+    try:
+        App().run()
+    finally:
+        pygame.quit()
+
+
+if __name__ == "__main__":
+    sys.exit(main())

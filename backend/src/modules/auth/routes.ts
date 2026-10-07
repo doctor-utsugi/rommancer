@@ -54,8 +54,8 @@ export async function issueTokens(user: User) {
   };
 }
 
-authRouter.post('/login', async (req, res) => {
-  const { username, password } = z.object({ username: z.string().max(191), password: z.string().max(512) }).parse(req.body);
+/** Username or email + password, with the per-IP and per-user attempt limit. */
+export async function verifyCredentials(req: Request, username: string, password: string) {
   const keys = [`ip:${clientIp(req)}`, `user:${username.toLowerCase()}`];
   checkLimit(keys);
   const user = await prisma.user.findFirst({ where: { OR: [{ username }, { email: username }] } });
@@ -64,7 +64,12 @@ authRouter.post('/login', async (req, res) => {
     throw new HttpError(401, 'Invalid credentials');
   }
   for (const k of keys) fails.delete(k);
-  res.json(await issueTokens(user));
+  return user;
+}
+
+authRouter.post('/login', async (req, res) => {
+  const { username, password } = z.object({ username: z.string().max(191), password: z.string().max(512) }).parse(req.body);
+  res.json(await issueTokens(await verifyCredentials(req, username, password)));
 });
 
 authRouter.post('/refresh', async (req, res) => {
@@ -131,21 +136,24 @@ authRouter.get('/config', async (_req, res) => {
 });
 
 // Self-service sign-up, only when the admin opened it; default permissions, never admin
-authRouter.post('/signup', async (req, res) => {
+export const signupBody = z.object({
+  username: z.string().min(3).max(64).regex(/^[a-zA-Z0-9_.-]+$/),
+  email: z.email(),
+  password: z.string().min(10).max(512),
+  locale: z.enum(['es', 'en']).optional(),
+});
+
+/** Self-service account (default permissions, never admin) when the admin opened sign-up. */
+export async function selfSignup(req: Request, body: z.infer<typeof signupBody>) {
   if (!(await signupOpen())) throw new HttpError(403, 'Sign-up is closed');
   checkLimit([`signup:${clientIp(req)}`]);
-  const body = z
-    .object({
-      username: z.string().min(3).max(64).regex(/^[a-zA-Z0-9_.-]+$/),
-      email: z.email(),
-      password: z.string().min(10).max(512),
-      locale: z.enum(['es', 'en']).optional(),
-    })
-    .parse(req.body);
   recent(`signup:${clientIp(req)}`).push(Date.now());
   if (await prisma.user.findFirst({ where: { OR: [{ username: body.username }, { email: body.email }] } })) throw new HttpError(409, 'User already exists');
-  const user = await prisma.user.create({
+  return prisma.user.create({
     data: { username: body.username, email: body.email, passwordHash: await bcrypt.hash(body.password, 10), role: 'USER', locale: body.locale ?? 'es', permissions: DEFAULT_PERMISSIONS },
   });
-  res.status(201).json(await issueTokens(user));
+}
+
+authRouter.post('/signup', async (req, res) => {
+  res.status(201).json(await issueTokens(await selfSignup(req, signupBody.parse(req.body))));
 });

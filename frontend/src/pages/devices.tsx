@@ -4,7 +4,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
 import { Pencil, Plug, RefreshCw, Trash2 } from 'lucide-react'
 import { toast } from 'sonner'
-import { del, get, patch, post, tokens } from '@/lib/api'
+import { authUrl, del, get, patch, post, tokens } from '@/lib/api'
 import { useAuth } from '@/lib/auth'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -50,6 +50,12 @@ export function DevicesPage() {
   return (
     <div>
       <PageHeader title={t('devices.title')}>
+        <Button size="sm" variant="outline" nativeButton={false} render={<a href={authUrl('/link/package/onion')} />} title={t('more.link.installerHelp')}>
+          {t('more.link.installer', { os: 'Onion' })}
+        </Button>
+        <Button size="sm" variant="outline" nativeButton={false} render={<a href={authUrl('/link/package/knulli')} />} title={t('more.link.installerHelp')}>
+          {t('more.link.installer', { os: 'Knulli / Batocera' })}
+        </Button>
         <Button size="sm" variant="outline" render={<Link to="/link" />} nativeButton={false}>
           {t('more.link.title')}
         </Button>

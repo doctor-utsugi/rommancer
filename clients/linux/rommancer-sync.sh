@@ -3,12 +3,14 @@
 # POSIX sh for busybox: needs curl or wget, sha1sum and base64.
 #
 #   rommancer-sync.sh link SERVER   pair this device (shows a code to approve in the web app)
+#   rommancer-sync.sh enroll        pair with the one-time token of an installer package (enroll.txt)
 #   rommancer-sync.sh sync          one sync pass
 #   rommancer-sync.sh daemon        sync whenever a save changes, and every few minutes
 #   rommancer-sync.sh install       start the daemon at boot and sync when a game ends (Knulli, Batocera)
 #   rommancer-sync.sh status | unlink
 #   rommancer-sync.sh               link if needed, then start the daemon in the background
 set -u
+CLIENT_VERSION=20261007
 # Onion keeps curl (with TLS) and friends outside the default PATH
 [ -d /mnt/SDCARD/.tmp_update/bin ] && PATH="/mnt/SDCARD/.tmp_update/bin:$PATH"
 
@@ -33,6 +35,8 @@ sha1() { sha1sum "$1" 2>/dev/null | cut -d' ' -f1; }
 SERVER=""
 TOKEN=""
 [ -f "$CONF" ] && . "$CONF"
+# Installer packages bring the server address (and a one-time enrolment token) next to the script
+[ -z "$SERVER" ] && [ -f "$DIR/server.txt" ] && SERVER="$(head -n 1 "$DIR/server.txt" | tr -d '\r ')"
 
 # http METHOD URL BODYFILE OUTFILE [HEADER...]; BODYFILE "-" = no body, OUTFILE "-" = stdout
 http() {
@@ -56,7 +60,7 @@ http() {
 
 # Handhelds without a battery-backed clock boot in the past, and TLS then rejects valid certificates
 fix_clock() {
-  [ "$(date +%Y)" -ge 2026 ] && return 0
+  [ "$(date +%Y%m%d)" -ge "$CLIENT_VERSION" ] && return 0
   command -v ntpdate >/dev/null 2>&1 && ntpdate -u pool.ntp.org >/dev/null 2>&1 && log "clock set by NTP: $(date)"
   return 0
 }
@@ -85,13 +89,22 @@ detect() {
   NAME="${ROMMANCER_NAME:-$(hostname 2>/dev/null || echo device)}"
 }
 
+# On-screen message on Onion (infoPanel); "wait" blocks until a button, otherwise it stays until dismissed
+panel() {
+  ip=/mnt/SDCARD/.tmp_update/bin/infoPanel
+  [ -x "$ip" ] || return 0
+  touch /tmp/dismiss_info_panel; sleep 0.2; rm -f /tmp/dismiss_info_panel
+  if [ "${3:-}" = wait ]; then "$ip" -t "$1" -m "$2" >/dev/null 2>&1
+  else "$ip" -t "$1" -m "$2" --persistent >/dev/null 2>&1 & fi
+}
+panel_close() { touch /tmp/dismiss_info_panel; }
+
 # Shows the pairing code where the user can see it
 show_code() {
   msg="Open $2 and enter code $1"
   printf '\n  ==============================\n    Rommancer: %s\n  ==============================\n  %s\n  (or scan %s)\n\n' "$1" "$msg" "$3"
   printf '%s\n%s\n' "$1" "$msg" > "$STATE/code.txt"
-  ip=/mnt/SDCARD/.tmp_update/bin/infoPanel
-  [ -x "$ip" ] && "$ip" -t "Rommancer" -m "Code: $1  -  $2" --auto >/dev/null 2>&1 &
+  panel "Rommancer Sync" "Open $2 and enter code $1"
 }
 
 # ---------- commands ----------
@@ -117,12 +130,33 @@ cmd_link() {
       expired*) say "Code expired, run link again"; exit 1 ;;
       token*)
         TOKEN="$(field token "$r")"
-        printf 'SERVER=%s\nTOKEN=%s\n' "$SERVER" "$TOKEN" > "$CONF"; chmod 600 "$CONF"
+        save_link
         rm -f "$STATE/code.txt"
+        panel_close
         say "Linked to $SERVER as \"$NAME\" ($FW)"; return 0 ;;
     esac
   done
   say "Code expired, run link again"; exit 1
+}
+
+save_link() {
+  printf 'SERVER=%s\nTOKEN=%s\n' "$SERVER" "$TOKEN" > "$CONF"; chmod 600 "$CONF"
+}
+
+# One-time token from an installer package: the device registers itself, no code to type
+cmd_enroll() {
+  [ -n "$SERVER" ] && [ -f "$DIR/enroll.txt" ] || return 1
+  fix_clock
+  detect
+  TOKEN=""
+  form="name=$(urlenc "$NAME")&firmware=$(urlenc "$FW")&root=$(urlenc "$ROOT")&model=$(urlenc "$MODEL")&token=$(urlenc "$(head -n 1 "$DIR/enroll.txt" | tr -d '\r ')")"
+  printf '%s' "$form" > "$WORK/form"
+  resp="$(http POST "$SERVER/api/v1/link/enroll" "$WORK/form" - "Content-Type: application/x-www-form-urlencoded")" || { say "Enrolment failed (server unreachable or token already used)"; return 1; }
+  TOKEN="$(field token "$resp")"
+  [ -n "$TOKEN" ] || return 1
+  save_link
+  rm -f "$DIR/enroll.txt"
+  say "Enrolled in $SERVER as \"$NAME\" ($FW)"
 }
 
 field() { printf '%s\n' "$2" | sed -n "s/^$1$TAB//p" | head -n 1; }
@@ -254,6 +288,11 @@ cmd_install() {
       printf '#!/bin/sh\n# rommancer-sync: upload saves when a game ends\n[ "$1" = gameStop ] && nohup sh "%s" sync >/dev/null 2>&1 &\nexit 0\n' "$self" > /userdata/system/scripts/rommancer-sync.sh
       chmod +x /userdata/system/scripts/rommancer-sync.sh
       say "Installed: daemon at boot ($boot) and sync after each game" ;;
+    onion)
+      boot=/mnt/SDCARD/.tmp_update/startup/rommancer-sync.sh
+      mkdir -p "$(dirname "$boot")"
+      printf '#!/bin/sh\n[ -f "%s" ] && (cd "%s" && nohup sh "%s" daemon >/dev/null 2>&1 &)\n' "$self" "$DIR" "$self" > "$boot"
+      say "Installed: daemon at boot ($boot)" ;;
     *) say "No automatic install for $FW yet; run '$self daemon' at startup" ;;
   esac
 }
@@ -271,17 +310,27 @@ cmd_unlink() {
 }
 
 case "${1:-}" in
-  link) shift; cmd_link "${1:-}" ;;
+  link) shift; cmd_link "${1:-$SERVER}" ;;
+  enroll) cmd_enroll ;;
+  hints) detect; printf 'name\t%s\nfirmware\t%s\nroot\t%s\nmodel\t%s\nstate\t%s\n' "$NAME" "$FW" "$ROOT" "$MODEL" "$STATE" ;;
   sync) VERBOSE=1 cmd_sync ;;
   daemon) cmd_daemon ;;
   install) cmd_install ;;
   status) cmd_status ;;
   unlink) cmd_unlink ;;
   "")
-    [ -n "$TOKEN" ] || cmd_link "${ROMMANCER_SERVER:-}"
-    VERBOSE=1 cmd_sync
-    cmd_install
-    nohup "$0" daemon >/dev/null 2>&1 &
+    if [ -z "$TOKEN" ]; then
+      [ -n "${ROMMANCER_SERVER:-}" ] && SERVER="$ROMMANCER_SERVER"
+      cmd_enroll || cmd_link "$SERVER"
+    fi
+    panel "Rommancer Sync" "Syncing saves..."
+    VERBOSE=1 cmd_sync > "$WORK/first-sync" 2>&1; cat "$WORK/first-sync"
+    cmd_install > /dev/null
+    if ! { [ -f "$STATE/pid" ] && kill -0 "$(cat "$STATE/pid")" 2>/dev/null; }; then
+      nohup sh "$DIR/$(basename "$0")" daemon >/dev/null 2>&1 &
+    fi
+    panel_close
+    panel "Rommancer Sync" "Linked to $SERVER. $(tail -n 1 "$WORK/first-sync"). Saves now sync in the background." wait
     echo "Syncing in the background" ;;
   *) echo "Usage: $0 [link SERVER|sync|daemon|install|status|unlink]"; exit 2 ;;
 esac

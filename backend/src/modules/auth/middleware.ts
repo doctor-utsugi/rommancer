@@ -61,7 +61,7 @@ function toUser(p: Claims): AuthUser {
 }
 
 // Rutas que aceptan el token de ficheros en la URL
-const FILE_ROUTES = [/^\/media\/\d+$/, /^\/lists\/\d+\/(download|export)$/, /^\/saves\/\d+\/versions\/\d+\/download$/, /^\/hacks\/\d+\/download$/, /^\/roms\/\d+\/download$/];
+const FILE_ROUTES = [/^\/media\/\d+$/, /^\/lists\/\d+\/(download|export)$/, /^\/saves\/\d+\/versions\/\d+\/download$/, /^\/hacks\/\d+\/download$/, /^\/roms\/\d+\/download$/, /^\/link\/package\/[a-z]+$/];
 
 export function requireAuth(req: Request, _res: Response, next: NextFunction) {
   const h = req.headers.authorization;
