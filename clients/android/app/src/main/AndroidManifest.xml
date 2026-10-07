@@ -7,6 +7,7 @@
 
     <application
         android:allowBackup="false"
+        android:usesCleartextTraffic="true"
         android:icon="@android:drawable/stat_notify_sync"
         android:label="Rommancer Sync"
         android:theme="@android:style/Theme.Material.NoActionBar">

@@ -133,7 +133,7 @@ export const firmwares: FirmwareSeed[] = [
   { slug: 'batocera', name: 'Batocera', romsRoot: 'roms', savesRoot: 'saves', statesRoot: 'saves', biosRoot: 'bios', savesLayout: 'system', systemMap: map(batoceraFolders) },
   { slug: 'muos', name: 'muOS', romsRoot: 'ROMS', savesRoot: 'MUOS/save/file', statesRoot: 'MUOS/save/state', biosRoot: 'MUOS/bios', savesLayout: 'core', systemMap: map(muosFolders) },
   { slug: 'onion', name: 'Onion OS', romsRoot: 'Roms', savesRoot: 'Saves/CurrentProfile/saves', statesRoot: 'Saves/CurrentProfile/states', biosRoot: 'BIOS', savesLayout: 'core', systemMap: map(onionFolders) },
-  { slug: 'android-esde', name: 'Android (ES-DE + RetroArch)', romsRoot: 'ROMs', savesRoot: 'RetroArch/saves', statesRoot: 'RetroArch/states', biosRoot: 'RetroArch/system', savesLayout: 'flat', systemMap: map(esdeFolders, { psx: 'duckstation', gba: 'ra-mgba' }) },
+  { slug: 'android-esde', name: 'Android (ES-DE + RetroArch)', romsRoot: 'ROMs', savesRoot: 'RetroArch/saves', statesRoot: 'RetroArch/states', biosRoot: 'RetroArch/system', savesLayout: 'flat', systemMap: map(esdeFolders, { psx: 'duckstation', gba: 'ra-mgba', nds: 'melonds' }) },
   { slug: 'retroarch-desktop', name: 'RetroArch (Windows/Linux/macOS)', romsRoot: 'roms', savesRoot: 'saves', statesRoot: 'states', biosRoot: 'system', savesLayout: 'flat', systemMap: map(esdeFolders) },
   { slug: 'esde-desktop', name: 'ES-DE (escritorio)', romsRoot: 'ROMs', savesRoot: 'saves', statesRoot: 'states', biosRoot: 'bios', savesLayout: 'flat', systemMap: map(esdeFolders) },
 ];

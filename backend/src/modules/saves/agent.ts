@@ -9,7 +9,7 @@ import type { Device, Emulator, Firmware } from '@prisma/client';
 import { prisma } from '../../lib/prisma.js';
 import { sha256 } from '../../lib/crypto.js';
 import { HttpError, badRequest } from '../../lib/http.js';
-import { layoutOf } from '../devices/sink.js';
+import { layoutOf, type DeviceLayout } from '../devices/sink.js';
 import { contentFor, decide, deviceFileName, findLogicalSave, receiveFromDevice, saveDirs, setBase, sha1 } from './core.js';
 import { identifyRom, parseSaveFile } from './service.js';
 
@@ -73,6 +73,31 @@ async function gameByHash(hashes: string[], systemId: number | undefined): Promi
   return hack ? { gameId: hack.gameId, romId: null } : null;
 }
 
+/**
+ * RetroArch names each per-core save folder after the core and always uses .srm/.state, so a folder
+ * for a core we do not list yet (Mesen, Gearsystem, Beetle PSX...) becomes an emulator on first sight.
+ */
+async function registerUnknownCores(layout: DeviceLayout, root: string, files: Iterable<string>) {
+  if (!coreLayout(layout)) return;
+  const known = new Set((await prisma.emulator.findMany({ where: { core: { not: null } }, select: { core: true } })).map((e) => e.core));
+  const systemFolders = new Map(Object.entries(layout.systemMap).map(([slug, v]) => [v.folder, slug]));
+  const base = path.posix.join(root, layout.savesLayout === 'rom-core' ? layout.romsRoot : layout.savesRoot);
+  const found = new Map<string, string | undefined>();
+  for (const f of files) {
+    if (!f.startsWith(base + '/')) continue;
+    const parts = f.slice(base.length + 1).split('/');
+    // rom-core: <system>/<core>/<file>; core: <core>/<file>
+    const [system, core] = layout.savesLayout === 'rom-core' ? [parts[0], parts[1]] : [undefined, parts[0]];
+    if (parts.length !== (layout.savesLayout === 'rom-core' ? 3 : 2) || !core || core.startsWith('.') || known.has(core) || systemFolders.has(core)) continue;
+    found.set(core, system ? systemFolders.get(system) : undefined);
+  }
+  for (const [core, systemSlug] of found) {
+    const ps1 = systemSlug === 'psx' || /psx|pcsx|swanstation|duckstation/i.test(core);
+    const slug = 'ra-' + core.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+    await prisma.emulator.upsert({ where: { slug }, create: { slug, name: `RetroArch ${core}`, core, saveFormat: ps1 ? 'ps1card' : 'raw', saveExt: '.srm', stateExt: '.state' }, update: {} });
+  }
+}
+
 const coreLayout = (layout: { savesLayout: string }) => layout.savesLayout === 'core' || layout.savesLayout === 'rom-core';
 
 /** In per-core layouts the save's folder names the core, which may differ from the firmware default. */
@@ -102,6 +127,7 @@ agentRouter.post('/sync', express.text({ limit: '16mb', type: '*/*' }), async (r
   const savedNames = new Set(userSaves.map((s) => s.baseName));
   const savedGames = new Set(userSaves.map((s) => s.gameId).filter((g): g is number => g !== null));
   const systemIds = new Map<string, number | undefined>();
+  await registerUnknownCores(layoutOf(device), device.rootPath.replace(/\/+$/, ''), present.keys());
   const coreEmus = (await prisma.emulator.findMany({ where: { core: { not: null } } })) as Emulator[];
   const out: string[] = [];
   for (const { path: rom, hashes } of roms) {
@@ -126,12 +152,14 @@ agentRouter.post('/sync', express.text({ limit: '16mb', type: '*/*' }), async (r
     const gameId = known?.gameId ?? (hasLocal ? ((await identifyRom(ctx.baseName, systemId))?.gameId ?? null) : null);
     // Saves uploaded before the rom could be identified get their game now
     if (gameId && hasLocal) await prisma.save.updateMany({ where: { userId: device.userId, baseName: ctx.baseName, gameId: null }, data: { gameId } });
+    // Several cores with their own file for this game on this device: each keeps its own save
+    const exactOnly = emus.length > 1;
     for (const f of candidates) {
-      const save = await findLogicalSave(device.userId, f.emu, f.kind, f.slot, ctx.baseName, gameId);
+      const save = await findLogicalSave(device.userId, f.emu, f.kind, f.slot, ctx.baseName, gameId, exactOnly);
       const deviceSha1 = present.get(f.path);
       const d = await decide(save, device, f.emu, deviceSha1 ? { sha1: deviceSha1 } : null);
       if (d.action === 'download') out.push(`get\t${f.path}\t${d.versionId}\t${rom}`);
-      else if (d.action === 'upload' || d.action === 'conflict') out.push(`put\t${f.path}\t${rom}`);
+      else if (d.action === 'upload' || d.action === 'conflict') out.push(`put\t${f.path}\t${rom}${exactOnly ? '\t1' : ''}`);
       else if (d.action === 'adopt' && save) await setBase(save.id, device.id, save.currentVersionId, deviceSha1!);
     }
   }
@@ -214,7 +242,7 @@ agentRouter.post('/upload', express.raw({ limit: '128mb', type: '*/*' }), async 
   if (!buf.length) throw badRequest('Empty file');
   const systemId = (await prisma.system.findUnique({ where: { slug: ctx.slug } }))?.id;
   const byHash = await gameByHash((req.header('x-rom-sha1') ?? '').split(',').map((h) => h.trim()), systemId);
-  const r = await receiveFromDevice(device, ctx.slug, emu, parsed.kind, parsed.slot, ctx.baseName, buf, byHash);
+  const r = await receiveFromDevice(device, ctx.slug, emu, parsed.kind, parsed.slot, ctx.baseName, buf, byHash, req.header('x-save-exact') === '1');
   await prisma.device.update({ where: { id: device.id }, data: { lastSyncAt: new Date() } });
   res.type('text/plain').send(`${r.action}\n`);
 });

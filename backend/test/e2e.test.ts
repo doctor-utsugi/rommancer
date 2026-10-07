@@ -1645,3 +1645,31 @@ test('sync client: roms with non-DAT names share saves by content hash', async (
   const save = await prisma.save.findFirstOrThrow({ where: { baseName: 'Super Mario Bros. 3 (U) (PRG1) [!]' }, include: { game: true } });
   assert.equal(save.game?.title, 'Super Mario Bros. 3', 'the save knows its game from the rom hash');
 });
+
+test('sync client: several cores with their own file for one game keep separate saves', async () => {
+  const client = path.join(ROOT, 'clients/linux/rommancer-sync.sh');
+  const dir = path.join(DATA, 'sync-cores');
+  fs.rmSync(dir, { recursive: true, force: true });
+  const thor = path.join(dir, 'thor');
+  const r = await api('POST', '/link/claim', { name: 'cores-thor', firmware: 'android-esde', root: thor, overrides: JSON.stringify({ savesLayout: 'rom-core' }) });
+  assert.equal(r.status, 201);
+  const state = path.join(dir, 'state');
+  fs.mkdirSync(state, { recursive: true });
+  fs.writeFileSync(path.join(state, 'config'), `SERVER=${base}\nTOKEN=${r.json.token}\n`);
+  const run = () => execFileP('sh', [client, 'sync'], { env: { ...process.env, ROMMANCER_STATE: state } });
+  const rom = 'Some Game (USA)';
+  fs.mkdirSync(path.join(thor, 'ROMs/nes'), { recursive: true });
+  fs.writeFileSync(path.join(thor, 'ROMs/nes', `${rom}.nes`), crypto.randomBytes(2048));
+  // FCEUmm is known; "Mesen" is a core the server has never seen and registers on the fly
+  for (const [core, content] of [['FCEUmm', 'FCEUMM-SAVE'], ['Mesen', 'MESEN-SAVE']]) {
+    fs.mkdirSync(path.join(thor, 'ROMs/nes', core), { recursive: true });
+    fs.writeFileSync(path.join(thor, 'ROMs/nes', core, `${rom}.srm`), content);
+  }
+  assert.match((await run()).stdout, /2 up, 0 down, 0 errors/);
+  assert.match((await run()).stdout, /0 up, 0 down, 0 errors/, 'no core overwrites another');
+  assert.equal(fs.readFileSync(path.join(thor, 'ROMs/nes/FCEUmm', `${rom}.srm`), 'utf8'), 'FCEUMM-SAVE');
+  assert.equal(fs.readFileSync(path.join(thor, 'ROMs/nes/Mesen', `${rom}.srm`), 'utf8'), 'MESEN-SAVE');
+  const { prisma } = await import('../src/lib/prisma.js');
+  const saves = await prisma.save.findMany({ where: { baseName: rom }, include: { emulator: true } });
+  assert.deepEqual(saves.map((s) => s.emulator.core).sort(), ['FCEUmm', 'Mesen']);
+});

@@ -69,7 +69,10 @@ class SyncEngine(private val context: Context, private val store: Store) {
             try {
                 when (f[0]) {
                     "put" -> {
-                        val headers = mapOf("X-Rom-B64" to Api.b64(f[2]), "X-Path-B64" to Api.b64(f[1]), "X-Rom-Sha1" to (romHashes[f[2]] ?: ""))
+                        val headers = mapOf(
+                            "X-Rom-B64" to Api.b64(f[2]), "X-Path-B64" to Api.b64(f[1]),
+                            "X-Rom-Sha1" to (romHashes[f[2]] ?: ""), "X-Save-Exact" to (f.getOrNull(3) ?: "0"),
+                        )
                         api.text("/agent/upload", "POST", File(f[1]).readBytes(), headers)
                         up++
                     }

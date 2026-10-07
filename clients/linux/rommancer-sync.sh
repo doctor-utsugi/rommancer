@@ -264,7 +264,7 @@ cmd_sync() {
     case "$action" in
       put)
         rh="$(grep -F "rom$TAB$a$TAB" "$req" | head -n 1 | cut -f3,4 | tr '\t' ',')"
-        if http POST "$SERVER/api/v1/agent/upload" "$p" - "X-Rom-B64: $(b64 "$a")" "X-Path-B64: $(b64 "$p")" "X-Rom-Sha1: $rh" >/dev/null; then ups=$((ups + 1)); else errs=$((errs + 1)); fi ;;
+        if http POST "$SERVER/api/v1/agent/upload" "$p" - "X-Rom-B64: $(b64 "$a")" "X-Path-B64: $(b64 "$p")" "X-Rom-Sha1: $rh" "X-Save-Exact: ${b:-0}" >/dev/null; then ups=$((ups + 1)); else errs=$((errs + 1)); fi ;;
       get)
         mkdir -p "$(dirname "$p")"
         if http GET "$SERVER/api/v1/agent/file?v=$a" - "$p.rommancer-tmp" "X-Rom-B64: $(b64 "$b")" "X-Path-B64: $(b64 "$p")" && mv "$p.rommancer-tmp" "$p"; then

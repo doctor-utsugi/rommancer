@@ -31,8 +31,9 @@ export function saveDirs(layout: DeviceLayout, slug: string, emu: Emulator) {
       case 'rom':
         return path.posix.join(layout.romsRoot, folder);
       // RetroArch with saves next to the content, sorted by core (Android default)
+      // Standalone emulators (no core) keep their saves right next to the rom
       case 'rom-core':
-        return path.posix.join(layout.romsRoot, folder, emu.core ?? emu.name);
+        return emu.core ? path.posix.join(layout.romsRoot, folder, emu.core) : path.posix.join(layout.romsRoot, folder);
       default:
         return root;
     }
@@ -51,9 +52,10 @@ export function deviceFileName(base: string, emu: Emulator, kind: SaveKind, slot
  * compatible de otro emulador (asi un save de SNES de Snes9x sirve en cualquier dispositivo).
  * Los savestates solo valen para el mismo emulador.
  */
-export async function findLogicalSave(userId: number, emu: Emulator, kind: SaveKind, slot: number, baseName: string, gameId: number | null) {
+export async function findLogicalSave(userId: number, emu: Emulator, kind: SaveKind, slot: number, baseName: string, gameId: number | null, exactOnly = false) {
   const exact = await prisma.save.findFirst({ where: { userId, emulatorId: emu.id, kind, slot, OR: [{ baseName }, ...(gameId ? [{ gameId }] : [])] }, include: { emulator: true } });
-  if (exact || kind === 'STATE') return exact;
+  // exactOnly: the device keeps one file per emulator for this game, so they must not be merged
+  if (exact || kind === 'STATE' || exactOnly) return exact;
   // Unidentified roms (homebrew, odd names) still share by file name
   const others = await prisma.save.findMany({ where: { userId, kind, slot, ...(gameId ? { gameId } : { baseName }) }, include: { emulator: true }, orderBy: { updatedAt: 'desc' } });
   return others.find((s) => family(s.emulator.saveFormat) === family(emu.saveFormat)) ?? null;
@@ -118,10 +120,11 @@ export async function receiveFromDevice(
   baseName: string,
   buf: Buffer,
   known?: { gameId: number; romId: number | null } | null,
+  exactOnly = false,
 ) {
   const systemId = systemSlug ? (await prisma.system.findUnique({ where: { slug: systemSlug } }))?.id : undefined;
   const ident = known ?? (await identifyRom(baseName, systemId));
-  const save = await findLogicalSave(device.userId, emu, kind, slot, baseName, ident?.gameId ?? null);
+  const save = await findLogicalSave(device.userId, emu, kind, slot, baseName, ident?.gameId ?? null, exactOnly);
   const deviceSha1 = sha1(buf);
   const d = await decide(save, device, emu, { sha1: deviceSha1 });
   // Se guarda en el formato del save logico (si es de otro emulador compatible se convierte)
