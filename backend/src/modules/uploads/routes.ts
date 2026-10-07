@@ -109,6 +109,7 @@ uploadsRouter.post('/', requirePerm('roms.upload'), upload.single('file'), async
       status: 'stored',
       match: m.status === 'UNKNOWN' ? 'RETROACHIEVEMENTS' : m.status,
       romId,
+      hackId: m.romHackId ?? undefined,
       raGameId,
       file: { id: file.id, path: rel },
       owned: romId ? (await ownedRomIds({ romIds: [romId] })).has(romId) : undefined,

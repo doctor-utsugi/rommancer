@@ -13,6 +13,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Input } from '@/components/ui/input'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Empty, Field, JobProgress, NativeSelect, PageHeader, errMsg, useJob, useSystems } from '@/components/common'
+import { VerifiedUpload } from '@/pages/upload'
 import { ListFormDialog } from './lists'
 import { useRegions } from './games'
 
@@ -144,6 +145,20 @@ export function ListPage() {
       {jobId && (
         <div className="mb-4 max-w-md">
           <JobProgress job={job} />
+        </div>
+      )}
+      {/* Dropped roms: stored if new, discarded if already owned, and added to this list either way */}
+      {(isOwner || list.isCollaborative) && can('roms.upload') && (
+        <div className="mb-4">
+          <p className="mb-2 text-sm text-muted-foreground">{t('more.listUpload.help')}</p>
+          <VerifiedUpload
+            compact
+            onResolved={(r) =>
+              void run(async () => {
+                await post(`/lists/${list.id}/items`, r.hackId ? { hackId: r.hackId } : { romId: r.romId })
+              })
+            }
+          />
         </div>
       )}
       {!list.items.length ? (

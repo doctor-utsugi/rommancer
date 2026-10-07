@@ -70,7 +70,10 @@ export function UploadPage() {
   )
 }
 
-function VerifiedUpload({ onUnverified }: { onUnverified?: (f: File) => void }) {
+/** What an upload resolved to: the rom or romhack it is, whether it was stored now or already owned. */
+export type UploadResult = { romId?: number; hackId?: number }
+
+export function VerifiedUpload({ onUnverified, onResolved, compact }: { onUnverified?: (f: File) => void; onResolved?: (r: UploadResult) => void; compact?: boolean }) {
   const { t } = useTranslation()
   const [rows, setRows] = useState<Row[]>([])
   const [drag, setDrag] = useState(false)
@@ -87,7 +90,9 @@ function VerifiedUpload({ onUnverified }: { onUnverified?: (f: File) => void }) 
         const headerless = h ? { sha1: hex(await crypto.subtle.digest('SHA-1', buf.subarray(h))) } : undefined
         const m = await post('/roms/match', { sha1, size: file.size, headerless })
         if (m.rom?.owned) {
+          // Already in the collection: nothing is uploaded
           update(file, { state: 'alreadyOwned', info: m.rom.name })
+          onResolved?.({ romId: m.rom.id })
           return
         }
         if (!m.accepted) {
@@ -100,6 +105,7 @@ function VerifiedUpload({ onUnverified }: { onUnverified?: (f: File) => void }) 
       fd.append('file', file)
       const r = await upload('/uploads', fd, (pct) => update(file, { pct }))
       update(file, { state: r.status === 'already-owned' ? 'alreadyOwned' : 'stored', info: r.file?.path })
+      if (r.romId || r.hackId) onResolved?.({ romId: r.romId ?? undefined, hackId: r.hackId ?? undefined })
     } catch (e) {
       const noMatch = e instanceof ApiError && e.message === 'NO_MATCH'
       update(file, { state: 'rejected', info: noMatch ? t('more.upload.noMatch') : errMsg(e), noMatch })
@@ -119,9 +125,9 @@ function VerifiedUpload({ onUnverified }: { onUnverified?: (f: File) => void }) 
 
   return (
     <div>
-      <p className="mb-4 max-w-3xl text-sm text-muted-foreground">{t('upload.help')}</p>
+      {!compact && <p className="mb-4 max-w-3xl text-sm text-muted-foreground">{t('upload.help')}</p>}
       <div
-        className={`mb-6 flex cursor-pointer flex-col items-center justify-center gap-2 rounded-xl border-2 border-dashed p-10 text-sm text-muted-foreground transition-colors ${drag ? 'border-primary bg-muted' : ''}`}
+        className={`mb-6 flex cursor-pointer flex-col items-center justify-center gap-2 rounded-xl border-2 border-dashed ${compact ? 'p-5' : 'p-10'} text-sm text-muted-foreground transition-colors ${drag ? 'border-primary bg-muted' : ''}`}
         onClick={() => input.current?.click()}
         onDragOver={(e) => {
           e.preventDefault()
