@@ -54,6 +54,13 @@ http() {
   fi
 }
 
+# Handhelds without a battery-backed clock boot in the past, and TLS then rejects valid certificates
+fix_clock() {
+  [ "$(date +%Y)" -ge 2026 ] && return 0
+  command -v ntpdate >/dev/null 2>&1 && ntpdate -u pool.ntp.org >/dev/null 2>&1 && log "clock set by NTP: $(date)"
+  return 0
+}
+
 # ---------- detection ----------
 
 detect() {
@@ -92,6 +99,7 @@ show_code() {
 cmd_link() {
   [ -n "${1:-}" ] && SERVER="${1%/}"
   [ -n "$SERVER" ] || { say "Usage: $0 link http://server:port"; exit 2; }
+  fix_clock
   detect
   TOKEN=""
   form="name=$(urlenc "$NAME")&firmware=$(urlenc "$FW")&root=$(urlenc "$ROOT")&model=$(urlenc "$MODEL")"
@@ -184,6 +192,7 @@ cmd_sync() {
     log "storage is read-only, skipping sync"; rmdir "$LOCK"; return 1
   fi
   rm -f "$STATE/.write-test"
+  fix_clock
   build_request "$req" || { log "server unreachable"; rmdir "$LOCK"; return 1; }
   http POST "$SERVER/api/v1/agent/sync" "$req" "$plan" || { log "sync request failed"; rmdir "$LOCK"; return 1; }
   ups=0; downs=0; errs=0
