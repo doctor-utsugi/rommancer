@@ -8,6 +8,7 @@
 #   rommancer-sync.sh daemon        sync whenever a save changes, and every few minutes
 #   rommancer-sync.sh setup         on-screen setup with the gamepad (Onion)
 #   rommancer-sync.sh install       start the daemon at boot and sync when a game ends (Knulli, Batocera)
+#   rommancer-sync.sh update        fetch a newer client from the server (the daemon does it by itself)
 #   rommancer-sync.sh status | unlink
 #   rommancer-sync.sh               link if needed, then start the daemon in the background
 set -u
@@ -287,11 +288,37 @@ fingerprint() {
   done | cksum
 }
 
+# Self-update from the server: files whose sha1 differs from the server's copy are replaced.
+# rename() keeps the running shell on the old inode; prints "restart" when this script changed.
+cmd_update() {
+  need_link
+  man="$(http GET "$SERVER/api/v1/link/client/manifest" - -)" || return 1
+  printf '%s\n' "$man" | while IFS="$TAB" read -r kind name hash; do
+    [ "$kind" = file ] || continue
+    case "$name" in */*|.*|"") continue ;; esac
+    target="$DIR/$name"
+    # Only what this device uses: the script always, the setup app's files where the app is installed
+    case "$name" in
+      rommancer-sync.sh|cacert.pem) ;;
+      *) [ -f "$DIR/rommancer-ui.py" ] || continue ;;
+    esac
+    [ -f "$target" ] && [ "$(sha1 "$target")" = "$hash" ] && continue
+    http GET "$SERVER/api/v1/link/client/file/$name" - "$WORK/update.tmp" || continue
+    [ "$(sha1 "$WORK/update.tmp")" = "$hash" ] || { log "update: bad download of $name"; continue; }
+    cp "$WORK/update.tmp" "$target.new" && chmod +x "$target.new" 2>/dev/null; mv "$target.new" "$target" && log "updated $name"
+    [ "$name" = rommancer-sync.sh ] && echo restart
+  done
+}
+
 cmd_daemon() {
   need_link
   echo $$ > "$STATE/pid"
   last=""; since=$FULL_SECONDS
   while :; do
+    # Each full pass also checks for a newer client and restarts into it
+    if [ "$since" -ge "$FULL_SECONDS" ] && [ "$(cmd_update 2>/dev/null)" = restart ]; then
+      exec sh "$DIR/$(basename "$0")" daemon
+    fi
     if [ -z "${SAVE_DIRS:-}" ]; then
       roots="$(http GET "$SERVER/api/v1/agent/roots" - -)" && { SAVE_DIRS="$(printf '%s\n' "$roots" | sed -n "s/^saves$TAB//p")"; EXTS="$(field exts "$roots")"; }
     fi
@@ -449,6 +476,7 @@ case "${1:-}" in
   daemon) cmd_daemon ;;
   install) cmd_install ;;
   setup) cmd_setup ;;
+  update) cmd_update ;;
   boot)
     # At power-on: sync in the background if linked (or linkable with a package token); never ask anything
     [ -n "$TOKEN" ] || cmd_enroll > /dev/null 2>&1 || exit 0

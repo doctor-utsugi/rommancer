@@ -1673,3 +1673,23 @@ test('sync client: several cores with their own file for one game keep separate 
   const saves = await prisma.save.findMany({ where: { baseName: rom }, include: { emulator: true } });
   assert.deepEqual(saves.map((s) => s.emulator.core).sort(), ['FCEUmm', 'Mesen']);
 });
+
+test('sync client: updates itself from the server', async () => {
+  const dir = path.join(DATA, 'sync-update');
+  fs.rmSync(dir, { recursive: true, force: true });
+  fs.mkdirSync(dir, { recursive: true });
+  const real = fs.readFileSync(path.join(ROOT, 'clients/linux/rommancer-sync.sh'), 'utf8');
+  // An older copy: same code, different bytes
+  fs.writeFileSync(path.join(dir, 'rommancer-sync.sh'), real.replace('CLIENT_VERSION=', '# old\nCLIENT_VERSION='));
+  const r = await api('POST', '/link/claim', { name: 'updater', firmware: 'knulli', root: dir });
+  const state = path.join(dir, 'state');
+  fs.mkdirSync(state, { recursive: true });
+  fs.writeFileSync(path.join(state, 'config'), `SERVER=${base}\nTOKEN=${r.json.token}\n`);
+  const run = () => execFileP('sh', [path.join(dir, 'rommancer-sync.sh'), 'update'], { env: { ...process.env, ROMMANCER_STATE: state } });
+  assert.equal((await run()).stdout.trim(), 'restart');
+  assert.equal(fs.readFileSync(path.join(dir, 'rommancer-sync.sh'), 'utf8'), real);
+  assert.ok(fs.existsSync(path.join(dir, 'cacert.pem')), 'missing support files are fetched');
+  assert.ok(!fs.existsSync(path.join(dir, 'savepoint.png')), 'setup-app files only where the app is installed');
+  assert.equal((await run()).stdout.trim(), '', 'nothing to do when up to date');
+  assert.equal((await fetch(`${base}/api/v1/link/client/file/..%2F.env`)).status, 404);
+});

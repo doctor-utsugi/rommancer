@@ -143,6 +143,20 @@ linkPublicRouter.post('/enroll', express.urlencoded({ extended: false, limit: '6
   res.send(text([['token', token], ['device', device.id]]));
 });
 
+// Self-update: devices compare these hashes with their copies and fetch what changed
+const CLIENT_FILES = ['rommancer-sync.sh', 'rommancer-ui.py', 'savepoint.png', 'cacert.pem', 'CREDITS.txt'];
+
+linkPublicRouter.get('/client/manifest', (_req, res) => {
+  const lines = CLIENT_FILES.filter((f) => fs.existsSync(path.join(CLIENT_DIR, f))).map((f) => `file\t${f}\t${crypto.createHash('sha1').update(fs.readFileSync(path.join(CLIENT_DIR, f))).digest('hex')}`);
+  res.type('text/plain').send(lines.join('\n') + '\n');
+});
+
+linkPublicRouter.get('/client/file/:name', (req, res) => {
+  const name = String(req.params.name);
+  if (!CLIENT_FILES.includes(name) || !fs.existsSync(path.join(CLIENT_DIR, name))) throw new HttpError(404, 'Unknown client file');
+  res.type('application/octet-stream').sendFile(path.join(CLIENT_DIR, name));
+});
+
 // The Linux client itself, so a device only needs: wget -O- SERVER/api/v1/link/client.sh | sh
 linkPublicRouter.get('/client.sh', (_req, res) => {
   if (!fs.existsSync(CLIENT_SCRIPT)) throw new HttpError(404, 'Client not bundled');
