@@ -117,7 +117,8 @@ panel() {
   [ -x "$ip" ] || return 0
   touch /tmp/dismiss_info_panel; sleep 0.2; rm -f /tmp/dismiss_info_panel
   msg="$(wrap "$2")"
-  if [ "${3:-}" = wait ]; then (cd /mnt/SDCARD/.tmp_update && "$ip" -t "$1" -m "$msg" >/dev/null 2>&1)
+  # A waiting panel opened right after a menu choice would take that same button press and close
+  if [ "${3:-}" = wait ]; then sleep 0.6; (cd /mnt/SDCARD/.tmp_update && "$ip" -t "$1" -m "$msg" >/dev/null 2>&1)
   else (cd /mnt/SDCARD/.tmp_update && "$ip" -t "$1" -m "$msg" --persistent >/dev/null 2>&1 &) fi
 }
 panel_close() { touch /tmp/dismiss_info_panel; }
@@ -278,11 +279,15 @@ save_cache() {
 
 cmd_sync() {
   need_link
+  # A sync asked for on screen goes first: background passes step aside while it waits
+  if [ -z "${VERBOSE:-}" ] && [ -f "$WORK/priority" ]; then log "background sync skipped (one was asked for on screen)"; return 0; fi
   if ! mkdir "$LOCK" 2>/dev/null; then
-    # Interactive syncs wait for the background one instead of doing nothing
     [ -n "${VERBOSE:-}" ] || { log "sync already running"; return 0; }
-    n=0; while ! mkdir "$LOCK" 2>/dev/null; do sleep 1; n=$((n + 1)); [ "$n" -lt 600 ] || return 1; done
+    touch "$WORK/priority"
+    progress waiting 0 0
+    n=0; while ! mkdir "$LOCK" 2>/dev/null; do sleep 1; n=$((n + 1)); [ "$n" -lt 600 ] || { rm -f "$WORK/priority"; return 1; }; done
   fi
+  rm -f "$WORK/priority"
   trap 'rmdir "$LOCK" 2>/dev/null' EXIT INT TERM
   req="$WORK/request"; plan="$WORK/plan"
   if ! touch "$STATE/.write-test" 2>/dev/null; then
@@ -350,6 +355,11 @@ cmd_update() {
 
 cmd_daemon() {
   need_link
+  # One daemon per device: a second one would keep taking the sync lock from the first
+  if [ -f "$STATE/pid" ]; then
+    other="$(cat "$STATE/pid")"
+    if [ "$other" != $$ ] && kill -0 "$other" 2>/dev/null && grep -q "rommancer-sync" "/proc/$other/cmdline" 2>/dev/null; then exit 0; fi
+  fi
   echo $$ > "$STATE/pid"
   cmd_install > /dev/null 2>&1
   last=""; since=$FULL_SECONDS
@@ -495,7 +505,10 @@ t() {
       syncing) echo "Sincronizando..." ;; roms) echo "Sincronizar roms" ;; autoroms) echo "Roms automaticas: $2" ;;
       yes) echo "si" ;; no) echo "no" ;; conflicts) echo "Conflictos ($2)" ;; noconflicts) echo "No hay conflictos" ;;
       keepdevice) echo "Quedarme con el de esta consola" ;; keepserver) echo "Usar el del servidor" ;;
-      conflictinfo) echo "$2: esta consola $3, servidor $4 ($5)" ;; *) echo "$1" ;;
+      conflictinfo) echo "$2: esta consola $3, servidor $4 ($5)" ;;
+      p_waiting) echo "Esperando a la sincronizacion en curso" ;; p_connecting) echo "Conectando" ;; p_roms) echo "Comprobando roms" ;;
+      p_saves) echo "Comprobando saves" ;; p_server) echo "Preguntando al servidor" ;; p_transfer) echo "Transfiriendo saves" ;;
+      p_roms-plan) echo "Preguntando que roms tocan" ;; p_roms-download) echo "Descargando roms" ;; p_*) echo "Trabajando..." ;; *) echo "$1" ;;
     esac
   else
     case "$1" in
@@ -508,7 +521,10 @@ t() {
       syncing) echo "Syncing..." ;; roms) echo "Sync roms" ;; autoroms) echo "Automatic roms: $2" ;;
       yes) echo "yes" ;; no) echo "no" ;; conflicts) echo "Conflicts ($2)" ;; noconflicts) echo "No conflicts" ;;
       keepdevice) echo "Keep this console's save" ;; keepserver) echo "Use the server's save" ;;
-      conflictinfo) echo "$2: this console $3, server $4 ($5)" ;; *) echo "$1" ;;
+      conflictinfo) echo "$2: this console $3, server $4 ($5)" ;;
+      p_waiting) echo "Waiting for the running sync" ;; p_connecting) echo "Connecting" ;; p_roms) echo "Checking roms" ;;
+      p_saves) echo "Checking saves" ;; p_server) echo "Asking the server" ;; p_transfer) echo "Transferring saves" ;;
+      p_roms-plan) echo "Asking which roms belong here" ;; p_roms-download) echo "Downloading roms" ;; p_*) echo "Working..." ;; *) echo "$1" ;;
     esac
   fi
 }
@@ -523,6 +539,26 @@ link_with() {
   TOKEN="$(field token "$resp")"; USER_NAME="$(field user "$resp")"
   [ -n "$TOKEN" ] || return 1
   save_link
+}
+
+# Runs a command in the background and keeps an Onion panel updated with its phase and percentage
+with_progress() {
+  title="$1"; shift
+  rm -f "$WORK/progress"
+  ( VERBOSE=1; "$@" > "$WORK/run-out" 2>&1 ) &
+  job=$!
+  shown=""
+  while kill -0 "$job" 2>/dev/null; do
+    line="$(cat "$WORK/progress" 2>/dev/null)"
+    phase="$(printf '%s' "$line" | cut -f1)"; done_n="$(printf '%s' "$line" | cut -f2)"; total="$(printf '%s' "$line" | cut -f3)"
+    text="$(t "p_$phase")"
+    [ -n "$total" ] && [ "$total" -gt 0 ] 2>/dev/null && text="$text $done_n/$total ($((done_n * 100 / total))%)"
+    [ "$text" != "$shown" ] && { panel "$title" "$text"; shown="$text"; }
+    sleep 2
+  done
+  wait "$job" 2>/dev/null
+  panel_close
+  panel "$title" "$(tail -n 1 "$WORK/run-out")" wait
 }
 
 setup_after_link() {
@@ -571,10 +607,8 @@ cmd_setup() {
       if [ "$AUTO_ROMS" = 1 ]; then auto="$(t yes)"; else auto="$(t no)"; fi
       menu "Rommancer Sync" "$(t connected)" "$(t sync)" "$(t roms)" "$(t autoroms "$auto")" "$(t conflicts "$nconf")" "$(t status)" "$(t unlink)" "$(t quit)"; rc=$?
       case $rc in
-        0) panel "Rommancer Sync" "$(t syncing)"; VERBOSE=1 cmd_sync > "$WORK/sync" 2>&1; panel_close
-           panel "Rommancer Sync" "$(tail -n 1 "$WORK/sync")" wait ;;
-        1) panel "Rommancer Sync" "$(t roms)..."; VERBOSE=1 cmd_roms > "$WORK/roms-out" 2>&1; panel_close
-           panel "Rommancer Sync" "$(tail -n 1 "$WORK/roms-out")" wait ;;
+        0) with_progress "$(t sync)" cmd_sync ;;
+        1) with_progress "$(t roms)" cmd_roms ;;
         2) if [ "$AUTO_ROMS" = 1 ]; then AUTO_ROMS=0; else AUTO_ROMS=1; fi; set_setting AUTO_ROMS "$AUTO_ROMS" ;;
         3) setup_conflicts ;;
         4) panel "$(t status)" "$(tail -n 4 "$LOG" 2>/dev/null | cut -c21- | tr '\n' ' ')" wait ;;
