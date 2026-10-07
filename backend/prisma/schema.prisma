@@ -475,6 +475,9 @@ model Device {
   tokenHash      String?           @unique @db.Char(64)
   tokenCreatedAt DateTime?
   lastSeenAt     DateTime?
+  // Tail of the client's log and its version, sent after each sync (remote troubleshooting)
+  lastLog        String?           @db.Text
+  clientVersion  String?           @db.VarChar(32)
   createdAt      DateTime          @default(now())
   user           User              @relation(fields: [userId], references: [id], onDelete: Cascade)
   console        Console           @relation(fields: [consoleId], references: [id])

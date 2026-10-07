@@ -100,8 +100,8 @@ panel() {
   ip=/mnt/SDCARD/.tmp_update/bin/infoPanel
   [ -x "$ip" ] || return 0
   touch /tmp/dismiss_info_panel; sleep 0.2; rm -f /tmp/dismiss_info_panel
-  if [ "${3:-}" = wait ]; then "$ip" -t "$1" -m "$2" >/dev/null 2>&1
-  else "$ip" -t "$1" -m "$2" --persistent >/dev/null 2>&1 & fi
+  if [ "${3:-}" = wait ]; then (cd /mnt/SDCARD/.tmp_update && "$ip" -t "$1" -m "$2" >/dev/null 2>&1)
+  else (cd /mnt/SDCARD/.tmp_update && "$ip" -t "$1" -m "$2" --persistent >/dev/null 2>&1 &) fi
 }
 panel_close() { touch /tmp/dismiss_info_panel; }
 
@@ -274,6 +274,9 @@ cmd_sync() {
     esac
   done < "$plan"
   log "sync: $ups up, $downs down, $errs errors"
+  # The last log lines go to the server so problems can be seen without access to the device
+  { tail -n 40 "$LOG"; [ -f "$DIR/last-run.txt" ] && { echo "--- last-run.txt"; tail -n 20 "$DIR/last-run.txt"; }; } > "$WORK/report" 2>/dev/null
+  http POST "$SERVER/api/v1/agent/log" "$WORK/report" - "X-Client-Version: $CLIENT_VERSION" >/dev/null 2>&1
   [ -n "${VERBOSE:-}" ] && printf 'sync: %s up, %s down, %s errors\n' "$ups" "$downs" "$errs"
   rmdir "$LOCK" 2>/dev/null
   trap - EXIT INT TERM
@@ -358,7 +361,12 @@ cmd_install() {
 # ---------- setup screens with Onion's own menu (prompt) and on-screen keyboard (kbinput) ----------
 
 ONION_BIN="${ROMMANCER_ONION_BIN:-/mnt/SDCARD/.tmp_update/bin}"
-onion_ui() { bin="$1"; shift; LD_PRELOAD=/mnt/SDCARD/miyoo/lib/libpadsp.so "$ONION_BIN/$bin" "$@"; }
+# Onion's tools load their theme and fonts relative to its system folder, like Onion's own scripts do
+onion_ui() {
+  bin="$1"; shift
+  ( cd "$ONION_BIN/.." 2>/dev/null || :; LD_PRELOAD=/mnt/SDCARD/miyoo/lib/libpadsp.so "$ONION_BIN/$bin" "$@" )
+  rc=$?; log "ui: $bin -> $rc"; return $rc
+}
 
 # Menu: prints nothing, returns the index of the chosen item (255 = back)
 menu() { title="$1"; msg="$2"; shift 2; onion_ui prompt -t "$title" -m "$msg" "$@"; }

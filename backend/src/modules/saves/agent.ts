@@ -167,6 +167,14 @@ agentRouter.post('/sync', express.text({ limit: '16mb', type: '*/*' }), async (r
   res.type('text/plain').send(out.join('\n') + (out.length ? '\n' : ''));
 });
 
+// Last lines of the client's log, kept for troubleshooting from the web app
+agentRouter.post('/log', express.text({ limit: '64kb', type: '*/*' }), async (req, res) => {
+  const device = await deviceFromToken(req);
+  const text = String(req.body ?? '').slice(-16_000);
+  await prisma.device.update({ where: { id: device.id }, data: { lastLog: text, clientVersion: (req.header('x-client-version') ?? '').slice(0, 32) || null } });
+  res.status(204).end();
+});
+
 // Folders the client must list: roms (to know what is installed) and save locations
 agentRouter.get('/roots', async (req, res) => {
   const device = await deviceFromToken(req);
