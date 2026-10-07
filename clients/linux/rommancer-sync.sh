@@ -41,6 +41,8 @@ http() {
   n=$#
   if command -v curl >/dev/null 2>&1; then
     while [ "$n" -gt 0 ]; do set -- "$@" -H "$1"; shift; n=$((n - 1)); done
+    # Some firmwares (Onion) ship curl without root certificates: use the bundle next to the script
+    [ -f "$DIR/cacert.pem" ] && set -- "$@" --cacert "$DIR/cacert.pem"
     [ "$body" != "-" ] && set -- "$@" --data-binary "@$body"
     if [ "$out" = "-" ]; then curl -fsS --connect-timeout 5 --max-time 120 -X "$m" "$@" "$u"
     else curl -fsS --connect-timeout 5 --max-time 120 -X "$m" "$@" -o "$out" "$u"; fi
