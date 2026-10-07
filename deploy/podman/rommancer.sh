@@ -11,8 +11,10 @@ WEB_PORT="${ROMMANCER_WEB_PORT:-8096}"
 NET=rommancer
 
 [ -f "$ENV_FILE" ] || { echo "Missing $ENV_FILE"; exit 1; }
-# shellcheck disable=SC1090
-. "$ENV_FILE"
+# Read only what the script needs: the file is a podman --env-file, not shell (values may hold spaces)
+envval() { sed -n "s/^$1=//p" "$ENV_FILE" | head -n 1; }
+MYSQL_ROOT_PASSWORD="$(envval MYSQL_ROOT_PASSWORD)"
+MYSQL_PASSWORD="$(envval MYSQL_PASSWORD)"
 
 case "${1:-}" in
   build)
