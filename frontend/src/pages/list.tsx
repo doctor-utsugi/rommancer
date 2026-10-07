@@ -419,12 +419,28 @@ function ZipDialog({ list, onClose }: { list: any; onClose(): void }) {
 
 function DeviceDialog({ list, onClose }: { list: any; onClose(): void }) {
   const { t } = useTranslation()
+  const qc = useQueryClient()
   const devices = useQuery({ queryKey: ['devices'], queryFn: () => get<any[]>('/devices') })
+  const assigned = useQuery({ queryKey: ['list-devices', list.id], queryFn: () => get<number[]>(`/devices/by-list/${list.id}`) })
+  const agents = devices.data?.filter((d) => d.connType === 'AGENT') ?? []
+  const others = devices.data?.filter((d) => d.connType !== 'AGENT') ?? []
+  const [picked, setPicked] = useState<number[] | null>(null)
+  const chosen = picked ?? assigned.data ?? []
   const [deviceId, setDeviceId] = useState('')
   const [overwrite, setOverwrite] = useState(false)
   const [dryRun, setDryRun] = useState(false)
   const [jobId, setJobId] = useState<number | null>(null)
   const job = useJob(jobId)
+  const saveConsoles = async () => {
+    try {
+      await put(`/devices/by-list/${list.id}`, { deviceIds: chosen })
+      void qc.invalidateQueries({ queryKey: ['list-devices', list.id] })
+      toast.success(t('more.listDevices.saved'))
+      onClose()
+    } catch (e) {
+      toast.error(errMsg(e))
+    }
+  }
   const start = async () => {
     try {
       const j = await post(`/devices/${deviceId}/transfer`, { listId: list.id, overwrite, dryRun })
@@ -440,31 +456,55 @@ function DeviceDialog({ list, onClose }: { list: any; onClose(): void }) {
           <DialogTitle>{t('lists.sendToDevice')}</DialogTitle>
         </DialogHeader>
         <div className="grid gap-4">
-          <Field label={t('lists.device')}>
-            <NativeSelect value={deviceId} onChange={(e) => setDeviceId(e.target.value)}>
-              <option value="">-</option>
-              {devices.data?.map((d) => (
-                <option key={d.id} value={d.id}>
-                  {d.name} ({d.console.name} · {d.firmware.name})
-                </option>
+          {/* Sync clients keep the list and fetch what they lack by themselves */}
+          {agents.length > 0 && (
+            <div className="grid gap-2">
+              <p className="text-sm text-muted-foreground">{t('more.listDevices.help')}</p>
+              {agents.map((d) => (
+                <label key={d.id} className="flex items-center gap-2 text-sm">
+                  <Checkbox
+                    checked={chosen.includes(d.id)}
+                    onCheckedChange={(c) => setPicked(c ? [...chosen, d.id] : chosen.filter((x) => x !== d.id))}
+                  />
+                  {d.name} <span className="text-muted-foreground">({d.console.name} · {d.firmware.name})</span>
+                </label>
               ))}
-            </NativeSelect>
-          </Field>
-          <label className="flex items-center gap-2 text-sm">
-            <Checkbox checked={overwrite} onCheckedChange={(c) => setOverwrite(!!c)} />
-            {t('lists.overwrite')}
-          </label>
-          <label className="flex items-center gap-2 text-sm">
-            <Checkbox checked={dryRun} onCheckedChange={(c) => setDryRun(!!c)} />
-            {t('lists.dryRun')}
-          </label>
-          <JobProgress job={job} />
+              <div className="flex justify-end">
+                <Button onClick={() => void saveConsoles()}>{t('common.save')}</Button>
+              </div>
+            </div>
+          )}
+          {/* SD card or SSH devices: one-off copy */}
+          {others.length > 0 && (
+            <div className="grid gap-3 border-t pt-4">
+              <p className="text-sm text-muted-foreground">{t('more.listDevices.copyHelp')}</p>
+              <Field label={t('lists.device')}>
+                <NativeSelect value={deviceId} onChange={(e) => setDeviceId(e.target.value)}>
+                  <option value="">-</option>
+                  {others.map((d) => (
+                    <option key={d.id} value={d.id}>
+                      {d.name} ({d.console.name} · {d.firmware.name})
+                    </option>
+                  ))}
+                </NativeSelect>
+              </Field>
+              <label className="flex items-center gap-2 text-sm">
+                <Checkbox checked={overwrite} onCheckedChange={(c) => setOverwrite(!!c)} />
+                {t('lists.overwrite')}
+              </label>
+              <label className="flex items-center gap-2 text-sm">
+                <Checkbox checked={dryRun} onCheckedChange={(c) => setDryRun(!!c)} />
+                {t('lists.dryRun')}
+              </label>
+              <JobProgress job={job} />
+              <div className="flex justify-end">
+                <Button onClick={() => void start()} disabled={!deviceId || (!!job && job.status === 'RUNNING')}>
+                  {t('common.apply')}
+                </Button>
+              </div>
+            </div>
+          )}
         </div>
-        <DialogFooter>
-          <Button onClick={() => void start()} disabled={!deviceId || (!!job && job.status === 'RUNNING')}>
-            {t('common.apply')}
-          </Button>
-        </DialogFooter>
       </DialogContent>
     </Dialog>
   )

@@ -9,6 +9,10 @@
 #   rommancer-sync.sh setup         on-screen setup with the gamepad (Onion)
 #   rommancer-sync.sh install       start the daemon at boot and sync when a game ends (Knulli, Batocera)
 #   rommancer-sync.sh update        fetch a newer client from the server (the daemon does it by itself)
+#   rommancer-sync.sh roms          download the roms of the lists assigned to this device
+#   rommancer-sync.sh conflicts | resolve ID device|server
+#   rommancer-sync.sh game-start ROM   fetch that rom's saves (called by firmware game events)
+#   rommancer-sync.sh set AUTO_ROMS 0|1
 #   rommancer-sync.sh status | unlink
 #   rommancer-sync.sh               link if needed, then start the daemon in the background
 set -u
@@ -45,6 +49,11 @@ TOKEN=""
 USER=""
 [ -f "$CONF" ] && . "$CONF"
 USER_NAME="$USER"
+# Per-device preferences kept apart from the link: AUTO_ROMS=1 downloads the lists' roms by itself
+SETTINGS="$STATE/settings"
+AUTO_ROMS=1
+[ -f "$SETTINGS" ] && . "$SETTINGS"
+set_setting() { grep -v "^$1=" "$SETTINGS" 2>/dev/null > "$WORK/settings"; echo "$1=$2" >> "$WORK/settings"; mv "$WORK/settings" "$SETTINGS"; }
 # Installer packages bring the server address (and a one-time enrolment token) next to the script
 [ -z "$SERVER" ] && [ -f "$DIR/server.txt" ] && SERVER="$(head -n 1 "$DIR/server.txt" | tr -d '\r ')"
 
@@ -58,8 +67,8 @@ http() {
     # Some firmwares (Onion) ship curl without root certificates: use the bundle next to the script
     [ -f "$DIR/cacert.pem" ] && set -- "$@" --cacert "$DIR/cacert.pem"
     [ "$body" != "-" ] && set -- "$@" --data-binary "@$body"
-    if [ "$out" = "-" ]; then curl -fsS --connect-timeout 5 --max-time 120 -X "$m" "$@" "$u"
-    else curl -fsS --connect-timeout 5 --max-time 120 -X "$m" "$@" -o "$out" "$u"; fi
+    if [ "$out" = "-" ]; then curl -fsS --connect-timeout 5 --max-time "${HTTP_MAX:-120}" -X "$m" "$@" "$u"
+    else curl -fsS --connect-timeout 5 --max-time "${HTTP_MAX:-1800}" -X "$m" "$@" -o "$out" "$u"; fi
   else
     # busybox wget: POST when there is a body, GET otherwise
     while [ "$n" -gt 0 ]; do set -- "$@" "--header=$1"; shift; n=$((n - 1)); done
@@ -342,6 +351,7 @@ cmd_update() {
 cmd_daemon() {
   need_link
   echo $$ > "$STATE/pid"
+  cmd_install > /dev/null 2>&1
   last=""; since=$FULL_SECONDS
   while :; do
     # Each full pass also checks for a newer client and restarts into it
@@ -353,7 +363,9 @@ cmd_daemon() {
     fi
     fp="$(fingerprint)"
     if [ "$fp" != "$last" ] || [ "$since" -ge "$FULL_SECONDS" ]; then
+      full=$since
       cmd_sync && { last="$(fingerprint)"; since=0; }
+      [ "$full" -ge "$FULL_SECONDS" ] && [ "$AUTO_ROMS" = 1 ] && cmd_roms > /dev/null 2>&1
     fi
     sleep "$WATCH_SECONDS"; since=$((since + WATCH_SECONDS))
   done
@@ -366,22 +378,89 @@ cmd_install() {
   case "$FW" in
     knulli|batocera)
       boot=/userdata/system/custom.sh
-      if ! grep -qF "rommancer-sync" "$boot" 2>/dev/null; then
-        [ -f "$boot" ] || printf '#!/bin/sh\n' > "$boot"
-        printf '# rommancer-sync\n[ "$1" = start ] && nohup sh "%s" daemon >/dev/null 2>&1 &\n' "$self" >> "$boot"
-        chmod +x "$boot"
-      fi
+      # Our lines in custom.sh are replaced on every install so updates change them too
+      [ -f "$boot" ] || printf '#!/bin/sh\n' > "$boot"
+      grep -v "rommancer-sync" "$boot" > "$WORK/custom.sh"
+      printf '[ "$1" = start ] && sh "%s" boot # rommancer-sync\n' "$self" >> "$WORK/custom.sh"
+      cmp -s "$WORK/custom.sh" "$boot" || { cat "$WORK/custom.sh" > "$boot"; chmod +x "$boot"; }
       mkdir -p /userdata/system/scripts
-      printf '#!/bin/sh\n# rommancer-sync: upload saves when a game ends\n[ "$1" = gameStop ] && nohup sh "%s" sync >/dev/null 2>&1 &\nexit 0\n' "$self" > /userdata/system/scripts/rommancer-sync.sh
+      # Batocera calls this with gameStart/gameStop, the system, emulator, core and rom; gameStart waits for us
+      printf '#!/bin/sh\n# rommancer-sync: fetch the save before a game, upload saves after it\ncase "$1" in\n  gameStart) sh "%s" game-start "$5" >/dev/null 2>&1 ;;\n  gameStop) nohup sh "%s" sync >/dev/null 2>&1 & ;;\nesac\nexit 0\n' "$self" "$self" > "$WORK/hook.sh"
+      cmp -s "$WORK/hook.sh" /userdata/system/scripts/rommancer-sync.sh || cat "$WORK/hook.sh" > /userdata/system/scripts/rommancer-sync.sh
       chmod +x /userdata/system/scripts/rommancer-sync.sh
-      say "Installed: daemon at boot ($boot) and sync after each game" ;;
+      say "Installed: sync at boot ($boot), save fetched before each game and uploaded after it" ;;
     onion)
       boot=/mnt/SDCARD/.tmp_update/startup/rommancer-sync.sh
       mkdir -p "$(dirname "$boot")"
-      printf '#!/bin/sh\n[ -f "%s" ] && (cd "%s" && sh "%s" boot >/dev/null 2>&1 &)\n' "$self" "$DIR" "$self" > "$boot"
+      # Onion runs startup scripts one after another before its menu: "boot" waits for the first sync
+      printf '#!/bin/sh\n[ -f "%s" ] && (cd "%s" && sh "%s" boot >/dev/null 2>&1)\n' "$self" "$DIR" "$self" > "$WORK/boot.sh"
+      cmp -s "$WORK/boot.sh" "$boot" || cat "$WORK/boot.sh" > "$boot"
       say "Installed: daemon at boot ($boot)" ;;
     *) say "No automatic install for $FW yet; run '$self daemon' at startup" ;;
   esac
+}
+
+# ---------- roms of the lists assigned to this device ----------
+
+free_bytes() {
+  d="$1"; while [ ! -d "$d" ]; do d="$(dirname "$d")"; done
+  echo $(( $(df -k "$d" 2>/dev/null | awk 'NR == 2 { print $4 }') * 1024 ))
+}
+
+# Downloads the roms the server plans for this device and that are not here yet; never deletes
+cmd_roms() {
+  need_link
+  progress roms-plan 0 0
+  http GET "$SERVER/api/v1/agent/roms" - "$WORK/romplan" || { log "roms: server unreachable"; return 1; }
+  total="$(grep -c . "$WORK/romplan")"; i=0; got=0; fail=0
+  while IFS="$TAB" read -r kind dest size ref; do
+    [ "$kind" = rom ] || continue
+    i=$((i + 1)); progress roms-download "$i" "$total"
+    if [ -f "$dest" ] && { [ "$size" = 0 ] || [ "$(stat -c %s "$dest" 2>/dev/null)" = "$size" ]; }; then continue; fi
+    if [ "$size" -gt 0 ] && [ "$(free_bytes "$(dirname "$dest")")" -lt $((size + 52428800)) ]; then
+      log "roms: not enough space for $(basename "$dest")"; fail=$((fail + 1)); break
+    fi
+    mkdir -p "$(dirname "$dest")"
+    if http GET "$SERVER/api/v1/agent/rom?f=$ref" - "$dest.part" && { [ "$size" = 0 ] || [ "$(stat -c %s "$dest.part")" = "$size" ]; }; then
+      mv "$dest.part" "$dest"; got=$((got + 1))
+    else
+      rm -f "$dest.part"; fail=$((fail + 1))
+    fi
+  done < "$WORK/romplan"
+  progress roms-finished "$got" "$fail"
+  log "roms: $got downloaded, $fail failed, $total planned"
+  [ -n "${VERBOSE:-}" ] && printf 'roms: %s downloaded, %s failed\n' "$got" "$fail"
+  return 0
+}
+
+# Right before a game starts (Knulli/Batocera event): fetch the server's saves for that rom only
+cmd_game_start() {
+  rom="$1"; [ -n "$TOKEN" ] && [ -f "$rom" ] || return 0
+  fix_clock
+  HTTP_MAX=10
+  rh="X-Rom-B64: $(b64 "$rom")"
+  http GET "$SERVER/api/v1/agent/manifest" - "$WORK/gs-manifest" "$rh" || { log "game-start: offline, playing local save"; return 0; }
+  : > "$WORK/gs-present"
+  while IFS= read -r p; do [ -f "$p" ] && printf '%s\t%s\n' "$p" "$(sha1 "$p")" >> "$WORK/gs-present"; done < "$WORK/gs-manifest"
+  http POST "$SERVER/api/v1/agent/start" "$WORK/gs-present" "$WORK/gs-plan" "$rh" || return 0
+  while IFS="$TAB" read -r action p v; do
+    [ "$action" = get ] || continue
+    mkdir -p "$(dirname "$p")"
+    http GET "$SERVER/api/v1/agent/file?v=$v" - "$p.rommancer-tmp" "$rh" "X-Path-B64: $(b64 "$p")" && mv "$p.rommancer-tmp" "$p" && log "game-start: got $(basename "$p")"
+    rm -f "$p.rommancer-tmp"
+  done < "$WORK/gs-plan"
+  return 0
+}
+
+# conflict<TAB>id<TAB>game<TAB>kind<TAB>this device's date<TAB>server date<TAB>server's device
+cmd_conflicts() { need_link; http GET "$SERVER/api/v1/agent/conflicts" - -; }
+
+cmd_resolve() {
+  need_link
+  printf 'keep=%s' "$2" > "$WORK/resolve"
+  http POST "$SERVER/api/v1/agent/conflicts/$1" "$WORK/resolve" - "Content-Type: application/x-www-form-urlencoded" >/dev/null || return 1
+  log "conflict $1: kept $2"
+  VERBOSE=1 cmd_sync
 }
 
 # ---------- setup screens with Onion's own menu (prompt) and on-screen keyboard (kbinput) ----------
@@ -413,7 +492,10 @@ t() {
       connected) echo "Conectado como ${USER_NAME:-?} a ${SERVER#*://}" ;; notlinked) echo "Esta consola no esta vinculada" ;;
       badserver) echo "No hay un Rommancer en esa direccion" ;; badlogin) echo "Usuario o contrasena incorrectos" ;;
       closed) echo "Este servidor no permite crear cuentas" ;; finished) echo "Listo. Sincronizacion automatica activada." ;;
-      syncing) echo "Sincronizando..." ;; *) echo "$1" ;;
+      syncing) echo "Sincronizando..." ;; roms) echo "Sincronizar roms" ;; autoroms) echo "Roms automaticas: $2" ;;
+      yes) echo "si" ;; no) echo "no" ;; conflicts) echo "Conflictos ($2)" ;; noconflicts) echo "No hay conflictos" ;;
+      keepdevice) echo "Quedarme con el de esta consola" ;; keepserver) echo "Usar el del servidor" ;;
+      conflictinfo) echo "$2: esta consola $3, servidor $4 ($5)" ;; *) echo "$1" ;;
     esac
   else
     case "$1" in
@@ -423,7 +505,10 @@ t() {
       connected) echo "Connected as ${USER_NAME:-?} to ${SERVER#*://}" ;; notlinked) echo "This console is not linked" ;;
       badserver) echo "No Rommancer at that address" ;; badlogin) echo "Wrong username or password" ;;
       closed) echo "This server does not allow new accounts" ;; finished) echo "Done. Automatic sync is on." ;;
-      syncing) echo "Syncing..." ;; *) echo "$1" ;;
+      syncing) echo "Syncing..." ;; roms) echo "Sync roms" ;; autoroms) echo "Automatic roms: $2" ;;
+      yes) echo "yes" ;; no) echo "no" ;; conflicts) echo "Conflicts ($2)" ;; noconflicts) echo "No conflicts" ;;
+      keepdevice) echo "Keep this console's save" ;; keepserver) echo "Use the server's save" ;;
+      conflictinfo) echo "$2: this console $3, server $4 ($5)" ;; *) echo "$1" ;;
     esac
   fi
 }
@@ -451,6 +536,28 @@ setup_after_link() {
   panel "Rommancer Sync" "$(t finished) $(tail -n 1 "$WORK/first-sync")" wait
 }
 
+# Conflicts menu: pick one, then keep this console's save or the server's
+setup_conflicts() {
+  while :; do
+    grep '^conflict' "$WORK/conflicts" > "$WORK/conflicts.list" 2>/dev/null
+    n="$(grep -c . "$WORK/conflicts.list")"
+    [ "$n" -gt 0 ] || { panel "Rommancer Sync" "$(t noconflicts)" wait; return 0; }
+    set --
+    while IFS="$TAB" read -r _ id game rest; do set -- "$@" "$(printf '%s' "$game" | cut -c1-34)"; done < "$WORK/conflicts.list"
+    menu "$(t conflicts "$n")" "" "$@"; pick=$?
+    [ "$pick" -lt "$n" ] || return 0
+    line="$(sed -n "$((pick + 1))p" "$WORK/conflicts.list")"
+    id="$(printf '%s' "$line" | cut -f2)"; game="$(printf '%s' "$line" | cut -f3)"
+    mine="$(printf '%s' "$line" | cut -f5 | cut -c1-16 | tr T ' ')"; theirs="$(printf '%s' "$line" | cut -f6 | cut -c1-16 | tr T ' ')"; dev="$(printf '%s' "$line" | cut -f7)"
+    menu "$(t conflicts "$n")" "$(t conflictinfo "$game" "$mine" "$theirs" "$dev")" "$(t keepdevice)" "$(t keepserver)"; rc=$?
+    case $rc in
+      0) panel "Rommancer Sync" "$(t syncing)"; cmd_resolve "$id" device > "$WORK/sync" 2>&1; panel_close ;;
+      1) panel "Rommancer Sync" "$(t syncing)"; cmd_resolve "$id" server > "$WORK/sync" 2>&1; panel_close ;;
+    esac
+    cmd_conflicts > "$WORK/conflicts" 2>/dev/null || : > "$WORK/conflicts"
+  done
+}
+
 cmd_setup() {
   [ -x "$ONION_BIN/prompt" ] && [ -x "$ONION_BIN/kbinput" ] || { say "setup needs Onion's prompt and kbinput"; exit 2; }
   fix_clock
@@ -459,12 +566,19 @@ cmd_setup() {
   [ -n "$SERVER" ] || SERVER="https://"
   while :; do
     if [ -n "$TOKEN" ]; then
-      menu "Rommancer Sync" "$(t connected)" "$(t sync)" "$(t status)" "$(t unlink)" "$(t quit)"; rc=$?
+      cmd_conflicts > "$WORK/conflicts" 2>/dev/null || : > "$WORK/conflicts"
+      nconf="$(grep -c '^conflict' "$WORK/conflicts")"
+      if [ "$AUTO_ROMS" = 1 ]; then auto="$(t yes)"; else auto="$(t no)"; fi
+      menu "Rommancer Sync" "$(t connected)" "$(t sync)" "$(t roms)" "$(t autoroms "$auto")" "$(t conflicts "$nconf")" "$(t status)" "$(t unlink)" "$(t quit)"; rc=$?
       case $rc in
         0) panel "Rommancer Sync" "$(t syncing)"; VERBOSE=1 cmd_sync > "$WORK/sync" 2>&1; panel_close
            panel "Rommancer Sync" "$(tail -n 1 "$WORK/sync")" wait ;;
-        1) panel "$(t status)" "$(tail -n 4 "$LOG" 2>/dev/null | cut -c21- | tr '\n' ' ')" wait ;;
-        2) keep="$SERVER"; cmd_unlink > /dev/null; TOKEN=""; USER_NAME=""; SERVER="$keep" ;;
+        1) panel "Rommancer Sync" "$(t roms)..."; VERBOSE=1 cmd_roms > "$WORK/roms-out" 2>&1; panel_close
+           panel "Rommancer Sync" "$(tail -n 1 "$WORK/roms-out")" wait ;;
+        2) if [ "$AUTO_ROMS" = 1 ]; then AUTO_ROMS=0; else AUTO_ROMS=1; fi; set_setting AUTO_ROMS "$AUTO_ROMS" ;;
+        3) setup_conflicts ;;
+        4) panel "$(t status)" "$(tail -n 4 "$LOG" 2>/dev/null | cut -c21- | tr '\n' ' ')" wait ;;
+        5) keep="$SERVER"; cmd_unlink > /dev/null; TOKEN=""; USER_NAME=""; SERVER="$keep" ;;
         *) return 0 ;;
       esac
     else
@@ -511,10 +625,21 @@ case "${1:-}" in
   install) cmd_install ;;
   setup) cmd_setup ;;
   update) cmd_update ;;
+  roms) VERBOSE=1 cmd_roms ;;
+  game-start) cmd_game_start "${2:-}" ;;
+  conflicts) cmd_conflicts ;;
+  resolve) cmd_resolve "${2:-}" "${3:-}" ;;
+  set) set_setting "${2:-}" "${3:-}" ;;
   boot)
-    # At power-on: sync in the background if linked (or linkable with a package token); never ask anything
+    # At power-on: start syncing and give the first pass up to BOOT_WAIT seconds, so saves are
+    # current before a game can be opened; never asks anything
     [ -n "$TOKEN" ] || cmd_enroll > /dev/null 2>&1 || exit 0
-    nohup sh "$DIR/$(basename "$0")" daemon >/dev/null 2>&1 & ;;
+    rm -f "$WORK/progress"
+    nohup sh "$DIR/$(basename "$0")" daemon >/dev/null 2>&1 &
+    n=0; while [ "$n" -lt "${BOOT_WAIT:-25}" ]; do
+      grep -q '^finished' "$WORK/progress" 2>/dev/null && break
+      sleep 1; n=$((n + 1))
+    done ;;
   status) cmd_status ;;
   unlink) cmd_unlink ;;
   "")

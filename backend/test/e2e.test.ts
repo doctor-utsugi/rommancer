@@ -1693,3 +1693,69 @@ test('sync client: updates itself from the server', async () => {
   assert.equal((await run()).stdout.trim(), '', 'nothing to do when up to date');
   assert.equal((await fetch(`${base}/api/v1/link/client/file/..%2F.env`)).status, 404);
 });
+
+test('sync client: roms of assigned lists, save before a game, conflicts resolved on the console', async () => {
+  const client = path.join(ROOT, 'clients/linux/rommancer-sync.sh');
+  const dir = path.join(DATA, 'sync-roms');
+  fs.rmSync(dir, { recursive: true, force: true });
+  const make = async (name: string) => {
+    const root = path.join(dir, name);
+    const r = await api('POST', '/link/claim', { name, firmware: 'knulli', root });
+    const state = path.join(dir, `${name}-state`);
+    fs.mkdirSync(state, { recursive: true });
+    fs.writeFileSync(path.join(state, 'config'), `SERVER=${base}\nTOKEN=${r.json.token}\n`);
+    const run = (...args: string[]) => execFileP('sh', [client, ...args], { env: { ...process.env, ROMMANCER_STATE: state } });
+    return { id: r.json.deviceId as number, root, run };
+  };
+  // Start without the SMB3 saves of earlier tests, which would rightly turn A's first upload into a conflict
+  const { prisma } = await import('../src/lib/prisma.js');
+  const old = (await prisma.save.findMany({ where: { gameId: ctx.smb3GameId }, select: { id: true } })).map((x) => x.id);
+  await prisma.saveConflict.deleteMany({ where: { saveId: { in: old } } });
+  await prisma.saveDeviceState.deleteMany({ where: { saveId: { in: old } } });
+  await prisma.save.updateMany({ where: { id: { in: old } }, data: { currentVersionId: null } });
+  await prisma.saveVersion.deleteMany({ where: { saveId: { in: old } } });
+  await prisma.save.deleteMany({ where: { id: { in: old } } });
+  const a = await make('roms-a');
+  const b = await make('roms-b');
+  const list = await api('POST', '/lists', { name: 'Device roms' });
+  assert.equal((await api('POST', `/lists/${list.json.id}/items`, { gameId: ctx.smb3GameId })).status, 201);
+  // One list sent to several consoles at once
+  assert.equal((await api('PUT', `/devices/by-list/${list.json.id}`, { deviceIds: [a.id, b.id] })).status, 200);
+  assert.deepEqual((await api('GET', `/devices/by-list/${list.json.id}`)).json.sort(), [a.id, b.id].sort());
+
+  const plan = await fetch(`${base}/api/v1/agent/roms`, { headers: { 'X-Device-Token': fs.readFileSync(path.join(dir, 'roms-a-state', 'config'), 'utf8').match(/TOKEN=(.*)/)![1] } });
+  const planText = await plan.text();
+  assert.match(planText, /^rom\t.*\/roms\/nes\//m);
+  // A forged reference to another server file is refused
+  const forged = planText.split('\t')[3].trim().replace(/^[^.]+/, Buffer.from(JSON.stringify({ d: a.id, p: '/etc/passwd', e: null })).toString('base64url'));
+  assert.equal((await fetch(`${base}/api/v1/agent/rom?f=${forged}`, { headers: { 'X-Device-Token': fs.readFileSync(path.join(dir, 'roms-a-state', 'config'), 'utf8').match(/TOKEN=(.*)/)![1] } })).status, 403);
+
+  assert.match((await a.run('roms')).stdout, /roms: [1-9]\d* downloaded, 0 failed/);
+  assert.match((await a.run('roms')).stdout, /roms: 0 downloaded, 0 failed/, 'nothing twice');
+  await b.run('roms');
+  const romA = fs.readdirSync(path.join(a.root, 'roms/nes')).find((f) => f.endsWith('.nes'))!;
+  const romPath = (d: typeof a) => path.join(d.root, 'roms/nes', romA);
+  assert.ok(fs.existsSync(romPath(b)));
+
+  // A plays and saves; B fetches that save right before starting the game
+  const saveA = path.join(a.root, 'saves/nes', romA.replace(/\.nes$/, '.srm'));
+  fs.mkdirSync(path.dirname(saveA), { recursive: true });
+  fs.writeFileSync(saveA, 'FROM-A');
+  await a.run('sync');
+  await b.run('game-start', romPath(b));
+  const saveB = path.join(b.root, 'saves/nes', romA.replace(/\.nes$/, '.srm'));
+  assert.equal(fs.readFileSync(saveB, 'utf8'), 'FROM-A');
+  await b.run('sync');
+
+  // Both change it: B gets a conflict, lists it and keeps the server's version
+  fs.writeFileSync(saveA, 'A-AGAIN');
+  fs.writeFileSync(saveB, 'B-AGAIN-LONGER');
+  await a.run('sync');
+  await b.run('sync');
+  const conflicts = (await b.run('conflicts')).stdout.trim().split('\n').filter(Boolean);
+  assert.equal(conflicts.length, 1);
+  const id = conflicts[0].split('\t')[1];
+  assert.match((await b.run('resolve', id, 'server')).stdout, /0 up, 1 down/);
+  assert.equal(fs.readFileSync(saveB, 'utf8'), 'A-AGAIN');
+  assert.equal((await b.run('conflicts')).stdout.trim(), '');
+});

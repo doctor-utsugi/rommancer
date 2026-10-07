@@ -62,6 +62,17 @@ TEXTS = {
         "p_saves": "Comprobando saves",
         "p_server": "Preguntando al servidor",
         "p_transfer": "Transfiriendo saves",
+        "p_roms-plan": "Preguntando qué roms tocan",
+        "p_roms-download": "Descargando roms",
+        "sync_roms": "Sincronizar roms",
+        "auto_roms": "Roms automáticas: {v}",
+        "yes": "sí",
+        "no": "no",
+        "conflicts": "Conflictos ({n})",
+        "no_conflicts": "No hay conflictos",
+        "conflict_info": "{game}: esta consola guardó el {mine}; el servidor tiene una versión del {theirs} ({dev}).",
+        "keep_device": "Quedarme con el de esta consola",
+        "keep_server": "Usar el del servidor",
     },
     "en": {
         "title": "Rommancer Sync",
@@ -97,6 +108,17 @@ TEXTS = {
         "p_saves": "Checking saves",
         "p_server": "Asking the server",
         "p_transfer": "Transferring saves",
+        "p_roms-plan": "Asking which roms belong here",
+        "p_roms-download": "Downloading roms",
+        "sync_roms": "Sync roms",
+        "auto_roms": "Automatic roms: {v}",
+        "yes": "yes",
+        "no": "no",
+        "conflicts": "Conflicts ({n})",
+        "no_conflicts": "No conflicts",
+        "conflict_info": "{game}: this console saved on {mine}; the server has a version from {theirs} ({dev}).",
+        "keep_device": "Keep this console's save",
+        "keep_server": "Use the server's save",
     },
 }
 
@@ -389,7 +411,7 @@ class App:
                 r = s.text(label, (x + 10, y), s.font, color)
                 if i == sel:
                     pygame.draw.rect(s.surf, ACCENT, r.inflate(20, 8), 2, border_radius=8)
-                y += int(s.font.get_linesize() * 1.4)
+                y += int(s.font.get_linesize() * (1.4 if len(items) <= 5 else 1.12))
             s.flip()
             a = self.next_action(timeout=0)
             if a is None:
@@ -550,12 +572,18 @@ class App:
         return os.path.join(os.environ.get("TMPDIR", "/tmp"), f"rommancer-{os.getuid()}", "progress")
 
     def sync_now(self):
-        """Runs a sync in the background and shows its phase and percentage while it works."""
+        self.run_with_progress("sync", T["syncing"])
+
+    def sync_roms(self):
+        self.run_with_progress("roms", T["sync_roms"])
+
+    def run_with_progress(self, command, title, *args):
+        """Runs a client command in the background, showing its phase and percentage while it works."""
         try:
             os.remove(self.progress_file())
         except OSError:
             pass
-        proc = subprocess.Popen(["sh", SCRIPT, "sync"], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
+        proc = subprocess.Popen(["sh", SCRIPT, command, *args], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
         s = self.screen
         while proc.poll() is None:
             phase, done, total = "connecting", 0, 0
@@ -568,7 +596,7 @@ class App:
             s.frame(T["title"])
             s.sprite()
             x, width, y = s.left(), s.column(), int(s.h * 0.3)
-            s.text(T["syncing"], (x, y), s.font)
+            s.text(title, (x, y), s.font)
             label = T.get(f"p_{phase}", "")
             if total:
                 label += f"  {done}/{total}"
@@ -587,6 +615,38 @@ class App:
         out = (proc.stdout.read() if proc.stdout else "").strip()
         self.message(out.splitlines()[-1] if out else T["error"].format(msg="sync"))
 
+    def settings(self):
+        cfg = {}
+        try:
+            with open(os.path.join(self.state, "settings"), encoding="utf-8") as f:
+                cfg = dict(line.rstrip("\n").split("=", 1) for line in f if "=" in line)
+        except OSError:
+            pass
+        return cfg
+
+    def toggle_auto_roms(self):
+        on = self.settings().get("AUTO_ROMS", "1") == "1"
+        subprocess.run(["sh", SCRIPT, "set", "AUTO_ROMS", "0" if on else "1"], capture_output=True, timeout=30)
+
+    def conflicts(self):
+        out = subprocess.run(["sh", SCRIPT, "conflicts"], capture_output=True, text=True, timeout=60).stdout
+        return [line.split("\t") for line in out.splitlines() if line.startswith("conflict\t")]
+
+    def resolve_conflicts(self):
+        while True:
+            rows = self.conflicts()
+            if not rows:
+                self.message(T["no_conflicts"])
+                return
+            pick = self.menu(T["conflicts"].format(n=len(rows)), [r[2][:40] for r in rows])
+            if pick is None:
+                return
+            c = rows[pick]
+            info = T["conflict_info"].format(game=c[2], mine=c[4][:16].replace("T", " "), theirs=c[5][:16].replace("T", " "), dev=c[6])
+            choice = self.menu(T["conflicts"].format(n=len(rows)), [T["keep_device"], T["keep_server"]], info=[info])
+            if choice is not None:
+                self.run_with_progress("resolve", T["syncing"], c[1], "device" if choice == 0 else "server")
+
     def status(self):
         try:
             with open(os.path.join(self.state, "log"), encoding="utf-8") as f:
@@ -604,8 +664,11 @@ class App:
         while True:
             if self.linked():
                 info = [T["connected"].format(server=self.cfg.get("SERVER", "")), T["as"].format(user=self.cfg.get("USER", "?"))]
-                choice = self.menu(T["title"], [T["sync_now"], T["status"], T["logout"], T["quit"]], info)
-                actions = [self.sync_now, self.status, self.logout]
+                auto = T["yes"] if self.settings().get("AUTO_ROMS", "1") == "1" else T["no"]
+                n = len(self.conflicts())
+                items = [T["sync_now"], T["sync_roms"], T["auto_roms"].format(v=auto), T["conflicts"].format(n=n), T["status"], T["logout"], T["quit"]]
+                choice = self.menu(T["title"], items, info)
+                actions = [self.sync_now, self.sync_roms, self.toggle_auto_roms, self.resolve_conflicts, self.status, self.logout]
             else:
                 choice = self.menu(T["title"], [f"{T['server']}: {self.server}", T["login"], T["signup"], T["quit"]])
                 actions = [self.edit_server, self.login, self.signup]

@@ -1,5 +1,10 @@
 // Textos de la fase 2 (permisos, sincronizacion, revision, obras, dispositivos con scripts...)
 export const esMore = {
+  listDevices: {
+    help: 'Las consolas marcadas mantienen esta lista: descargan solas las roms que les falten.',
+    copyHelp: 'Copia puntual a un dispositivo por SD o SSH:',
+    saved: 'Consolas actualizadas',
+  },
   link: {
     title: 'Vincular dispositivo',
     find: 'Buscar',
@@ -177,6 +182,11 @@ export const esMore = {
 }
 
 export const enMore: typeof esMore = {
+  listDevices: {
+    help: 'Checked consoles keep this list: they download the roms they lack by themselves.',
+    copyHelp: 'One-off copy to an SD card or SSH device:',
+    saved: 'Consoles updated',
+  },
   link: {
     title: 'Link a device',
     find: 'Find',

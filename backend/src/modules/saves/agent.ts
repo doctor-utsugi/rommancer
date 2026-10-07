@@ -12,6 +12,12 @@ import { HttpError, badRequest } from '../../lib/http.js';
 import { layoutOf, type DeviceLayout } from '../devices/sink.js';
 import { contentFor, decide, deviceFileName, findLogicalSave, receiveFromDevice, saveDirs, setBase, sha1 } from './core.js';
 import { identifyRom, parseSaveFile } from './service.js';
+import fs from 'node:fs';
+import crypto from 'node:crypto';
+import { env } from '../../config/env.js';
+import { extractEntryStream } from '../../lib/tools.js';
+import { resolveListFiles } from '../lists/service.js';
+import { resolveConflict } from './core.js';
 
 export const agentRouter = Router();
 
@@ -173,6 +179,87 @@ agentRouter.post('/log', express.text({ limit: '64kb', type: '*/*' }), async (re
   const text = String(req.body ?? '').slice(-16_000);
   await prisma.device.update({ where: { id: device.id }, data: { lastLog: text, clientVersion: (req.header('x-client-version') ?? '').slice(0, 32) || null } });
   res.status(204).end();
+});
+
+// ---------- roms from the lists assigned to the device ----------
+
+/** Opaque, signed reference to a server file, so a device can only fetch what its plan offered. */
+function fileRef(deviceId: number, absPath: string, entry: string | null) {
+  const body = Buffer.from(JSON.stringify({ d: deviceId, p: absPath, e: entry })).toString('base64url');
+  const sig = crypto.createHmac('sha256', env.jwtSecret).update(body).digest('base64url').slice(0, 32);
+  return `${body}.${sig}`;
+}
+
+function readRef(ref: string, deviceId: number): { p: string; e: string | null } {
+  const [body, sig] = ref.split('.');
+  const expected = crypto.createHmac('sha256', env.jwtSecret).update(body ?? '').digest('base64url').slice(0, 32);
+  if (!body || !sig || sig.length !== expected.length || !crypto.timingSafeEqual(Buffer.from(sig), Buffer.from(expected))) throw new HttpError(403, 'Bad file reference');
+  const v = JSON.parse(Buffer.from(body, 'base64url').toString()) as { d: number; p: string; e: string | null };
+  if (v.d !== deviceId) throw new HttpError(403, 'Bad file reference');
+  return v;
+}
+
+/**
+ * Roms the device should have: "rom<TAB>destination<TAB>size<TAB>ref" per file (size 0 = unknown,
+ * for files inside archives). The client downloads the ones it lacks with GET /agent/rom?f=ref.
+ */
+agentRouter.get('/roms', async (req, res) => {
+  const device = await deviceFromToken(req);
+  const layout = layoutOf(device);
+  const root = device.rootPath.replace(/\/+$/, '');
+  const lists = await prisma.deviceList.findMany({ where: { deviceId: device.id }, select: { listId: true } });
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const { listId } of lists) {
+    const { items } = await resolveListFiles(listId);
+    for (const it of items) {
+      const folder = layout.systemMap[it.systemSlug]?.folder;
+      if (!folder) continue; // a system this firmware does not have
+      for (const f of it.files) {
+        const dest = path.posix.join(root, layout.romsRoot, folder, f.destName);
+        if (seen.has(dest)) continue;
+        seen.add(dest);
+        const size = f.archiveEntry ? 0 : ((await fs.promises.stat(f.absPath).catch(() => null))?.size ?? 0);
+        out.push(`rom\t${dest}\t${size}\t${fileRef(device.id, f.absPath, f.archiveEntry)}`);
+      }
+    }
+  }
+  res.type('text/plain').send(out.join('\n') + (out.length ? '\n' : ''));
+});
+
+agentRouter.get('/rom', async (req, res) => {
+  const device = await deviceFromToken(req);
+  const ref = readRef(String(req.query.f ?? ''), device.id);
+  res.type('application/octet-stream');
+  if (ref.e) extractEntryStream(ref.p, ref.e).on('error', () => res.destroy()).pipe(res);
+  else res.sendFile(ref.p);
+});
+
+// ---------- conflicts this device is part of ----------
+
+agentRouter.get('/conflicts', async (req, res) => {
+  const device = await deviceFromToken(req);
+  const rows = await prisma.saveConflict.findMany({ where: { deviceId: device.id, resolvedAt: null }, include: { save: true }, orderBy: { createdAt: 'desc' } });
+  const versions = await prisma.saveVersion.findMany({
+    where: { id: { in: rows.flatMap((c) => [c.deviceVersionId, c.serverVersionId]) } },
+    include: { sourceDevice: { select: { name: true } } },
+  });
+  const v = new Map(versions.map((x) => [x.id, x]));
+  // conflict<TAB>id<TAB>game<TAB>kind<TAB>this device's version date<TAB>server version date<TAB>server version's device
+  const lines = rows.map((c) =>
+    ['conflict', c.id, c.save.baseName, c.save.kind, v.get(c.deviceVersionId)?.createdAt.toISOString() ?? '-', v.get(c.serverVersionId)?.createdAt.toISOString() ?? '-', v.get(c.serverVersionId)?.sourceDevice?.name ?? '-'].join('\t'),
+  );
+  res.type('text/plain').send(lines.join('\n') + (lines.length ? '\n' : ''));
+});
+
+agentRouter.post('/conflicts/:id', express.urlencoded({ extended: false }), async (req, res) => {
+  const device = await deviceFromToken(req);
+  const keep = String(req.body?.keep ?? req.query.keep ?? '');
+  if (keep !== 'device' && keep !== 'server') throw badRequest('keep must be device or server');
+  const c = await prisma.saveConflict.findUnique({ where: { id: Number(req.params.id) } });
+  if (!c || c.deviceId !== device.id) throw new HttpError(404, 'Conflict not found');
+  await resolveConflict(c.id, keep, device.userId);
+  res.type('text/plain').send('resolved\n');
 });
 
 // Folders the client must list: roms (to know what is installed) and save locations

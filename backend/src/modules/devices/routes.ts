@@ -124,6 +124,44 @@ devicesRouter.patch('/:id', async (req, res) => {
   res.json(await prisma.device.update({ where: { id: d.id }, data: deviceData(body) as Prisma.DeviceUncheckedUpdateInput, omit: publicDevice }));
 });
 
+// The same assignment seen from a list: which of my sync clients keep it
+devicesRouter.get('/by-list/:listId', async (req, res) => {
+  const list = await loadList(intParam(req, 'listId'), me(req));
+  const rows = await prisma.deviceList.findMany({ where: { listId: list.id, device: { userId: me(req).id } }, select: { deviceId: true } });
+  res.json(rows.map((r) => r.deviceId));
+});
+
+devicesRouter.put('/by-list/:listId', requirePerm('roms.download'), async (req, res) => {
+  const list = await loadList(intParam(req, 'listId'), me(req));
+  const { deviceIds } = z.object({ deviceIds: z.array(z.number().int()).max(100) }).parse(req.body);
+  const mine = await prisma.device.findMany({ where: { userId: me(req).id, connType: 'AGENT' }, select: { id: true } });
+  const allowed = new Set(mine.map((d) => d.id));
+  if (deviceIds.some((id) => !allowed.has(id))) throw forbidden();
+  await prisma.$transaction([
+    prisma.deviceList.deleteMany({ where: { listId: list.id, deviceId: { in: [...allowed] } } }),
+    prisma.deviceList.createMany({ data: [...new Set(deviceIds)].map((deviceId) => ({ deviceId, listId: list.id })) }),
+  ]);
+  res.json({ deviceIds });
+});
+
+// Lists whose roms a sync client keeps on the device
+devicesRouter.get('/:id/lists', async (req, res) => {
+  const d = await ownDevice(intParam(req), me(req));
+  const rows = await prisma.deviceList.findMany({ where: { deviceId: d.id }, include: { list: { select: { id: true, name: true } } } });
+  res.json(rows.map((r) => r.list));
+});
+
+devicesRouter.put('/:id/lists', requirePerm('roms.download'), async (req, res) => {
+  const d = await ownDevice(intParam(req), me(req));
+  const { listIds } = z.object({ listIds: z.array(z.number().int()).max(100) }).parse(req.body);
+  for (const id of listIds) await loadList(id, me(req));
+  await prisma.$transaction([
+    prisma.deviceList.deleteMany({ where: { deviceId: d.id } }),
+    prisma.deviceList.createMany({ data: [...new Set(listIds)].map((listId) => ({ deviceId: d.id, listId })) }),
+  ]);
+  res.json({ listIds });
+});
+
 devicesRouter.delete('/:id', async (req, res) => {
   const d = await ownDevice(intParam(req), me(req));
   await prisma.device.delete({ where: { id: d.id } });

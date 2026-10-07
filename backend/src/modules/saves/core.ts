@@ -53,7 +53,10 @@ export function deviceFileName(base: string, emu: Emulator, kind: SaveKind, slot
  * Los savestates solo valen para el mismo emulador.
  */
 export async function findLogicalSave(userId: number, emu: Emulator, kind: SaveKind, slot: number, baseName: string, gameId: number | null, exactOnly = false) {
-  const exact = await prisma.save.findFirst({ where: { userId, emulatorId: emu.id, kind, slot, OR: [{ baseName }, ...(gameId ? [{ gameId }] : [])] }, include: { emulator: true } });
+  // Same rom name first; otherwise the most recently updated save of the same game
+  const exact =
+    (await prisma.save.findFirst({ where: { userId, emulatorId: emu.id, kind, slot, baseName }, include: { emulator: true } })) ??
+    (gameId ? await prisma.save.findFirst({ where: { userId, emulatorId: emu.id, kind, slot, gameId }, include: { emulator: true }, orderBy: { updatedAt: 'desc' } }) : null);
   // exactOnly: the device keeps one file per emulator for this game, so they must not be merged
   if (exact || kind === 'STATE' || exactOnly) return exact;
   // Unidentified roms (homebrew, odd names) still share by file name

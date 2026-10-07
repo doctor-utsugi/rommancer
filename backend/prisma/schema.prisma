@@ -395,6 +395,7 @@ model List {
   parent          List?       @relation("derived", fields: [parentListId], references: [id], onDelete: SetNull)
   children        List[]      @relation("derived")
   items           ListItem[]
+  devices         DeviceList[]
   shares          ListShare[]
 }
 
@@ -478,6 +479,7 @@ model Device {
   // Tail of the client's log and its version, sent after each sync (remote troubleshooting)
   lastLog        String?           @db.Text
   clientVersion  String?           @db.VarChar(32)
+  romLists       DeviceList[]
   createdAt      DateTime          @default(now())
   user           User              @relation(fields: [userId], references: [id], onDelete: Cascade)
   console        Console           @relation(fields: [consoleId], references: [id])
@@ -778,4 +780,14 @@ model DeviceLink {
   // Device token kept encrypted until the client collects it once
   tokenEnc     String?   @db.Text
   user         User?     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+// Lists whose roms a sync client keeps on its device
+model DeviceList {
+  deviceId Int
+  listId   Int
+  device   Device @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+  list     List   @relation(fields: [listId], references: [id], onDelete: Cascade)
+
+  @@id([deviceId, listId])
 }
