@@ -555,6 +555,9 @@ function Lists({ deviceId, name, onCopy }: { deviceId: number; name: string; onC
     void api<typeof lists>('GET', '/lists?scope=all').then(setLists)
     void api<{ id: number }[]>('GET', `/devices/${deviceId}/lists`).then((l) => setPicked(new Set(l.map((x) => x.id))))
   }, [deviceId])
+  const [systems, setSystems] = useState<{ slug: string; name: string; games: number; excluded: boolean }[]>([])
+  const loadSystems = useCallback(() => void api<typeof systems>('GET', `/devices/${deviceId}/list-systems`).then(setSystems), [deviceId])
+  useEffect(loadSystems, [loadSystems])
   if (!lists) return <p className="muted">…</p>
   if (!lists.length) return <p className="muted">{t('noLists')}</p>
   // Ticking a list subscribes the card right away; copying happens on the next sync (or now, with the button)
@@ -564,6 +567,13 @@ function Lists({ deviceId, name, onCopy }: { deviceId: number; name: string; onC
     else n.delete(id)
     setPicked(n)
     await api('PUT', `/devices/${deviceId}/lists`, { listIds: [...n] })
+    loadSystems()
+  }
+  // An override on top of the lists: the unticked systems are not copied to this card
+  const setCopied = async (slug: string, copy: boolean) => {
+    const excluded = systems.filter((s) => (s.slug === slug ? !copy : s.excluded)).map((s) => s.slug)
+    await api('PUT', `/devices/${deviceId}/excluded-systems`, { systems: excluded })
+    loadSystems()
   }
   return (
     <div className="panel">
@@ -576,6 +586,19 @@ function Lists({ deviceId, name, onCopy }: { deviceId: number; name: string; onC
           {picked.has(l.id) && <span className="accent small"> · {t('subscribed')}</span>}
         </label>
       ))}
+      {systems.length > 0 && (
+        <>
+          <h2>{t('systemsTitle')}</h2>
+          <p className="muted small">{t('systemsHelp')}</p>
+          {systems.map((s) => (
+            <label key={s.slug} className="check">
+              <input type="checkbox" checked={!s.excluded} onChange={(e) => void setCopied(s.slug, e.target.checked)} />
+              <span style={s.excluded ? { textDecoration: 'line-through', opacity: 0.6 } : undefined}>{s.name}</span>
+              <span className="muted small"> · {t('gamesN', { n: s.games })}</span>
+            </label>
+          ))}
+        </>
+      )}
       <button className="primary" disabled={!picked.size} onClick={onCopy}>
         {t('saveLists')}
       </button>

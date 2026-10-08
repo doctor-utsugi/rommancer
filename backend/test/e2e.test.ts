@@ -1923,4 +1923,13 @@ test('sync client: device inventory, fetching missing roms, sync on request, dir
   assert.deepEqual([own.have, own.total], [1, 1]);
   const byList = (await api('GET', `/devices/by-list/${sent.json.listId}/progress`)).json;
   assert.deepEqual(byList.map((x: any) => [x.deviceId, x.have, x.total]), [[id, 1, 1]]);
+
+  // Per-device override: NES left out, whatever the lists hold
+  assert.deepEqual((await api('GET', `/devices/${id}/list-systems`)).json.map((x: any) => [x.slug, x.games, x.excluded]), [['nes', 1, false]]);
+  assert.equal((await api('PUT', `/devices/${id}/excluded-systems`, { systems: ['nes'] })).status, 200);
+  assert.equal((await api('GET', `/devices/${id}/list-systems`)).json[0].excluded, true);
+  assert.equal((await agent('/roms')).trim(), '', 'no NES rom is offered to the device');
+  const left = (await api('GET', `/devices/${id}/lists-progress`)).json.find((l: any) => l.id === sent.json.listId);
+  assert.equal(left.total, 0);
+  await api('PUT', `/devices/${id}/excluded-systems`, { systems: [] });
 });

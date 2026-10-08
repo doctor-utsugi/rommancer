@@ -1,5 +1,11 @@
 // Textos de la fase 2 (permisos, sincronizacion, revision, obras, dispositivos con scripts...)
 export const esMore = {
+  excluded: {
+    title: 'Sistemas que se copian a este dispositivo',
+    help: 'Desmarca los sistemas cuyos juegos no quieres en este dispositivo aunque estén en sus listas. Las partidas se siguen sincronizando.',
+    games_one: '{{count}} juego',
+    games_other: '{{count}} juegos',
+  },
   offline: {
     badge: 'Sin conexión',
     help: 'Se sincroniza al conectar su tarjeta a un PC con la app: lo que ves es de la última conexión y lo que pidas se hará en la siguiente.',
@@ -298,6 +304,12 @@ export const esMore = {
 }
 
 export const enMore: typeof esMore = {
+  excluded: {
+    title: 'Systems copied to this device',
+    help: 'Untick the systems whose games you do not want on this device even if they are in its lists. Saves still sync.',
+    games_one: '{{count}} game',
+    games_other: '{{count}} games',
+  },
   offline: {
     badge: 'Offline',
     help: 'Syncs when its card is connected to a computer with the app: what you see is from the last connection and what you ask for happens at the next one.',

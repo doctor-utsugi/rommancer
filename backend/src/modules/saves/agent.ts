@@ -295,13 +295,15 @@ agentRouter.get('/roms', async (req, res) => {
   const layout = layoutOf(device);
   const root = device.rootPath.replace(/\/+$/, '');
   const lists = await prisma.deviceList.findMany({ where: { deviceId: device.id }, select: { listId: true } });
+  // Systems the user left out for this device, whatever its lists hold
+  const excluded = new Set(Array.isArray(device.excludedSystems) ? (device.excludedSystems as string[]) : []);
   const seen = new Set<string>();
   const out: string[] = [];
   for (const { listId } of lists) {
     const { items } = await resolveListFiles(listId);
     for (const it of items) {
       const folder = layout.systemMap[it.systemSlug]?.folder;
-      if (folder === undefined) continue; // a system this firmware does not have
+      if (folder === undefined || excluded.has(it.systemSlug)) continue; // a system this firmware does not have, or left out
       for (const f of it.files) {
         const dest = path.posix.join(root, layout.romsRoot, folder, f.destName);
         if (seen.has(dest)) continue;

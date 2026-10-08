@@ -4,7 +4,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
 import { Check, Download, Pause, Play, RefreshCw, Send, Terminal, X } from 'lucide-react'
 import { toast } from 'sonner'
-import { del, get, post, type Paged } from '@/lib/api'
+import { del, get, post, put, type Paged } from '@/lib/api'
 import { useAuth } from '@/lib/auth'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -259,6 +259,7 @@ export function DevicePage() {
               ))}
             </div>
           )}
+          <ExcludedSystems deviceId={String(id)} canEdit={can('roms.download')} onChange={() => void qc.invalidateQueries({ queryKey: ['device-lists', id] })} />
         </TabsContent>
 
         <TabsContent value="pulls">
@@ -545,4 +546,41 @@ function formatAgo(d: string | null, lang: string) {
   if (!d) return ''
   const min = Math.max(0, Math.round((Date.now() - new Date(d).getTime()) / 60_000))
   return new Intl.RelativeTimeFormat(lang, { numeric: 'auto' }).format(-min, 'minute')
+}
+
+/** Systems of the device's lists that are not copied to it: an override on top of its lists */
+function ExcludedSystems({ deviceId, canEdit, onChange }: { deviceId: string; canEdit: boolean; onChange: () => void }) {
+  const { t } = useTranslation()
+  const qc = useQueryClient()
+  const systems = useQuery({ queryKey: ['device-list-systems', deviceId], queryFn: () => get<{ slug: string; name: string; games: number; excluded: boolean }[]>(`/devices/${deviceId}/list-systems`) })
+  if (!systems.data?.length) return null
+  const toggle = async (slug: string, copy: boolean) => {
+    const excluded = systems.data!.filter((s) => (s.slug === slug ? !copy : s.excluded)).map((s) => s.slug)
+    try {
+      await put(`/devices/${deviceId}/excluded-systems`, { systems: excluded })
+      void qc.invalidateQueries({ queryKey: ['device-list-systems', deviceId] })
+      onChange()
+    } catch (e) {
+      toast.error(errMsg(e))
+    }
+  }
+  return (
+    <Card className="mt-4">
+      <CardHeader>
+        <CardTitle className="text-base">{t('more.excluded.title')}</CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-2 text-sm">
+        <p className="text-muted-foreground">{t('more.excluded.help')}</p>
+        <div className="grid gap-1 sm:grid-cols-2 lg:grid-cols-3">
+          {systems.data.map((s) => (
+            <label key={s.slug} className="flex items-center gap-2">
+              <Checkbox checked={!s.excluded} disabled={!canEdit} onCheckedChange={(c) => void toggle(s.slug, !!c)} />
+              <span className={s.excluded ? 'text-muted-foreground line-through' : ''}>{s.name}</span>
+              <span className="text-xs text-muted-foreground">· {t('more.excluded.games', { count: s.games })}</span>
+            </label>
+          ))}
+        </div>
+      </CardContent>
+    </Card>
+  )
 }

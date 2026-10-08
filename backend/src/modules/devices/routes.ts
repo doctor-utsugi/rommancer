@@ -202,6 +202,9 @@ devicesRouter.patch('/:id', async (req, res) => {
 const pathKey = (p: string) => crypto.createHash('sha1').update(p).digest('hex');
 
 /** Share of a list already on a device: items whose files are at their destination or whose game it has. */
+/** Systems the user left out of a device's lists */
+export const excludedOf = (d: { excludedSystems: unknown }) => new Set(Array.isArray(d.excludedSystems) ? (d.excludedSystems as string[]) : []);
+
 export async function listProgress(listId: number, device: Awaited<ReturnType<typeof ownDevice>>) {
   const layout = layoutOf(device);
   const root = device.rootPath.replace(/\/+$/, '');
@@ -213,9 +216,10 @@ export async function listProgress(listId: number, device: Awaited<ReturnType<ty
   const gameOf = new Map(roms.map((r) => [r.id, r.gameId]));
   let have = 0;
   let total = 0;
+  const excluded = excludedOf(device);
   for (const it of items) {
     const folder = layout.systemMap[it.systemSlug]?.folder;
-    if (folder === undefined) continue; // a system this console does not have
+    if (folder === undefined || excluded.has(it.systemSlug)) continue; // a system this console does not have, or left out
     total++;
     const there = it.files.some((f) => paths.has(pathKey(path.posix.join(root, layout.romsRoot, folder, f.destName))));
     if (there || (it.romId && games.has(gameOf.get(it.romId) ?? -1))) have++;
@@ -428,6 +432,27 @@ devicesRouter.put('/by-list/:listId', requirePerm('roms.download'), async (req, 
 });
 
 // Lists whose roms a sync client keeps on the device
+// Systems found in the device's lists (that its firmware can hold), with how many games each brings and
+// whether the user left it out for this device
+devicesRouter.get('/:id/list-systems', async (req, res) => {
+  const d = await ownDevice(intParam(req), me(req));
+  const layout = layoutOf(d);
+  const excluded = excludedOf(d);
+  const counts = new Map<string, number>();
+  for (const { listId } of await prisma.deviceList.findMany({ where: { deviceId: d.id }, select: { listId: true } })) {
+    for (const it of (await resolveListFiles(listId)).items) if (layout.systemMap[it.systemSlug]) counts.set(it.systemSlug, (counts.get(it.systemSlug) ?? 0) + 1);
+  }
+  const systems = await prisma.system.findMany({ where: { slug: { in: [...new Set([...counts.keys(), ...excluded])] } }, select: { slug: true, name: true } });
+  res.json(systems.map((s) => ({ slug: s.slug, name: s.name, games: counts.get(s.slug) ?? 0, excluded: excluded.has(s.slug) })).sort((a, b) => a.name.localeCompare(b.name)));
+});
+
+devicesRouter.put('/:id/excluded-systems', requirePerm('roms.download'), async (req, res) => {
+  const d = await ownDevice(intParam(req), me(req));
+  const { systems } = z.object({ systems: z.array(z.string().max(32)).max(200) }).parse(req.body);
+  await prisma.device.update({ where: { id: d.id }, data: { excludedSystems: [...new Set(systems)] } });
+  res.json({ systems });
+});
+
 devicesRouter.get('/:id/lists', async (req, res) => {
   const d = await ownDevice(intParam(req), me(req));
   const rows = await prisma.deviceList.findMany({ where: { deviceId: d.id }, include: { list: { select: { id: true, name: true } } } });
