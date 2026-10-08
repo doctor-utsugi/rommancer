@@ -355,10 +355,8 @@ export function DeviceConfigTab({ deviceId, canEdit }: { deviceId: number; canEd
                       <Button size="icon" variant="ghost" onClick={() => setOpen(v.id)} aria-label={t('more.config.open_copy')}>
                         <Pencil className="size-4" />
                       </Button>
-                      <Button size="icon" variant="ghost" asChild aria-label={t('more.config.download')}>
-                        <a href={authUrl(`/devices/${deviceId}/config/versions/${v.id}/zip`)}>
-                          <Download className="size-4" />
-                        </a>
+                      <Button size="icon" variant="ghost" nativeButton={false} render={<a href={authUrl(`/devices/${deviceId}/config/versions/${v.id}/zip`)} />} aria-label={t('more.config.download')}>
+                        <Download className="size-4" />
                       </Button>
                     </TableCell>
                   </TableRow>
