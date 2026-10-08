@@ -10,3 +10,7 @@ backend/scratch/
 tools/rcheevos/
 tools/rahash-cli/rahash
 .DS_Store
+clients/desktop/src-tauri/target/
+clients/desktop/src-tauri/gen/
+clients/desktop/release/
+*.tsbuildinfo

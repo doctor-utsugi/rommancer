@@ -157,6 +157,15 @@ linkPublicRouter.get('/client/file/:name', (req, res) => {
   res.type('application/octet-stream').sendFile(path.join(CLIENT_DIR, name));
 });
 
+// The desktop companion's installers (clients/desktop/build-release.sh puts them there)
+const DESKTOP_DIR = path.resolve(CLIENT_DIR, '../desktop/release');
+const DESKTOP_FILES = ['rommancer-desktop-setup.exe', 'rommancer-desktop.deb', 'rommancer-desktop.AppImage'];
+linkPublicRouter.get('/desktop/:name', (req, res) => {
+  const name = String(req.params.name);
+  if (!DESKTOP_FILES.includes(name) || !fs.existsSync(path.join(DESKTOP_DIR, name))) throw new HttpError(404, 'Not built yet');
+  res.download(path.join(DESKTOP_DIR, name), name);
+});
+
 // The Linux client itself, so a device only needs: wget -O- SERVER/api/v1/link/client.sh | sh
 linkPublicRouter.get('/client.sh', (_req, res) => {
   if (!fs.existsSync(CLIENT_SCRIPT)) throw new HttpError(404, 'Client not bundled');
@@ -186,7 +195,10 @@ linkRouter.post('/:code/approve', async (req, res) => {
 linkRouter.post('/claim', async (req, res) => {
   const h: Hints = hints.parse(req.body);
   if (!h.root) throw badRequest('Missing root');
-  const s = await suggest({ firmwareHint: h.firmware, model: h.model });
+  // The desktop companion lets the user pick the console and firmware of a card
+  const picked = z.object({ consoleId: z.coerce.number().int().optional(), firmwareId: z.coerce.number().int().optional() }).parse(req.body);
+  const guess = await suggest({ firmwareHint: h.firmware, model: h.model });
+  const s = { consoleId: picked.consoleId ?? guess.consoleId, firmwareId: picked.firmwareId ?? guess.firmwareId };
   if (!s.firmwareId || !s.consoleId) throw badRequest('Unknown firmware or console');
   const { device, token } = await createAgentDevice(me(req).id, { name: h.name, consoleId: s.consoleId, firmwareId: s.firmwareId, rootPath: h.root, overrides: parseOverrides(h.overrides) });
   res.status(201).json({ deviceId: device.id, token });

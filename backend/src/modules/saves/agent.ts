@@ -32,7 +32,13 @@ export const OPEN_PULL = ['pending', 'sending'];
 /** Transfers in progress, for the progress shown in the web app (bytes received so far) */
 export const pullTransfers = new Map<number, { received: number; size: number; startedAt: number }>();
 
-type AgentDevice = Device & { firmware: Firmware };
+/** homeRoot: the device's own root while a computer syncs its card under another one for this request */
+type AgentDevice = Device & { firmware: Firmware; homeRoot?: string };
+
+const ROOT = /^(\/|[A-Za-z]:\/)/;
+const trimRoot = (r: string) => r.replace(/\/+$/, '');
+/** A path under one root moved under another (same relative part) */
+const reroot = (p: string, from: string, to: string) => (p.startsWith(trimRoot(from) + '/') ? trimRoot(to) + p.slice(trimRoot(from).length) : p);
 
 const b64 = (v: string | undefined) => (v ? Buffer.from(v, 'base64').toString('utf8') : '');
 
@@ -41,10 +47,14 @@ async function deviceFromToken(req: Request): Promise<AgentDevice> {
   if (!token) throw new HttpError(401, 'Missing device token');
   const device = await prisma.device.findUnique({ where: { tokenHash: sha256(token) }, include: { firmware: true } });
   if (!device) throw new HttpError(401, 'Invalid device token');
-  // SD cards synced from a computer are mounted wherever the computer puts them: the client says where
+  // SD cards synced from a computer are mounted wherever the computer puts them: the client says where.
+  // A card that only lives in a computer moves its root for good; the card of a console that syncs by itself
+  // is only seen under the computer's mount for this request (its own paths stay the console's).
   const root = b64(req.header('x-device-root-b64'));
-  const moved = root.startsWith('/') && root.length <= 512 && root.replace(/\/+$/, '') !== device.rootPath.replace(/\/+$/, '');
+  const temp = b64(req.header('x-device-root-temp-b64'));
+  const moved = ROOT.test(root) && root.length <= 512 && trimRoot(root) !== trimRoot(device.rootPath);
   await prisma.device.update({ where: { id: device.id }, data: { lastSeenAt: new Date(), ...(moved ? { rootPath: root } : {}) } });
+  if (ROOT.test(temp) && temp.length <= 512) return { ...device, rootPath: temp, homeRoot: device.rootPath };
   return moved ? { ...device, rootPath: root } : device;
 }
 
@@ -136,7 +146,10 @@ async function storeSshOffer(device: AgentDevice, req: Request) {
 }
 
 /** Keeps the device's rom list (only names and hashes) and identifies each game by its content. */
-async function storeInventory(device: AgentDevice, roms: { path: string; hashes: string[] }[], allowPull: string | undefined) {
+async function storeInventory(device: AgentDevice, scanned: { path: string; hashes: string[] }[], allowPull: string | undefined) {
+  // Kept under the device's own root, so requests made later reach the console with its paths
+  const roms = device.homeRoot ? scanned.map((r) => ({ ...r, path: reroot(r.path, device.rootPath, device.homeRoot!) })) : scanned;
+  device = device.homeRoot ? { ...device, rootPath: device.homeRoot } : device;
   const layout = layoutOf(device);
   const base = path.posix.join(device.rootPath.replace(/\/+$/, ''), layout.romsRoot) + '/';
   const byFolder = new Map(Object.entries(layout.systemMap).map(([slug, v]) => [v.folder, slug]));
@@ -193,7 +206,8 @@ agentRouter.post('/sync', express.text({ limit: '16mb', type: '*/*' }), async (r
     if (kind === 'rom' && p) roms.push({ path: p, hashes: [h ?? '', h2 ?? ''].filter(Boolean) });
     else if (kind === 'file' && p && SHA1.test(h ?? '')) present.set(p, h);
   }
-  await storeInventory(device, roms, req.header('x-allow-pull'));
+  // An unreadable body (a client that sent no content type) must not wipe the device's list
+  if (typeof req.body === 'string' && req.body.length) await storeInventory(device, roms, req.header('x-allow-pull'));
   await storeSshOffer(device, req);
   const userSaves = await prisma.save.findMany({ where: { userId: device.userId }, select: { baseName: true, gameId: true } });
   const savedNames = new Set(userSaves.map((s) => s.baseName));
@@ -345,7 +359,8 @@ agentRouter.get('/poll', async (req, res) => {
 agentRouter.get('/pulls', async (req, res) => {
   const device = await deviceFromToken(req);
   const rows = await prisma.devicePull.findMany({ where: { deviceId: device.id, status: { in: OPEN_PULL } }, orderBy: { id: 'asc' }, take: 200 });
-  res.type('text/plain').send(rows.map((r) => `pull\t${r.id}\t${r.path}`).join('\n') + (rows.length ? '\n' : ''));
+  const here = (p: string) => (device.homeRoot ? reroot(p, device.homeRoot, device.rootPath) : p);
+  res.type('text/plain').send(rows.map((r) => `pull\t${r.id}\t${here(r.path)}`).join('\n') + (rows.length ? '\n' : ''));
 });
 
 /**
@@ -415,6 +430,12 @@ agentRouter.post('/pull/:id', async (req, res) => {
     pullTransfers.delete(pull.id);
     await fs.promises.rm(tmp, { force: true });
   }
+});
+
+// Which device a token belongs to (the desktop companion keeps only the token on the card)
+agentRouter.get('/whoami', async (req, res) => {
+  const device = await deviceFromToken(req);
+  res.type('text/plain').send(`id\t${device.id}\nname\t${device.name}\nfirmware\t${device.firmware.slug}\n`);
 });
 
 // The server's public key, which the client adds to the console's authorized_keys (when allowed there)

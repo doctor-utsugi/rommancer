@@ -1,5 +1,9 @@
 // Textos de la fase 2 (permisos, sincronizacion, revision, obras, dispositivos con scripts...)
 export const esMore = {
+  desktop: {
+    app: 'App de PC ({{os}})',
+    help: 'Sincroniza tarjetas SD y carpetas desde el ordenador (DS y consolas sin red), copia juegos y asigna listas. Se queda en la bandeja.',
+  },
   activity: {
     title_one: '{{count}} copia en curso',
     title_other: '{{count}} copias en curso',
@@ -289,6 +293,10 @@ export const esMore = {
 }
 
 export const enMore: typeof esMore = {
+  desktop: {
+    app: 'PC app ({{os}})',
+    help: 'Syncs SD cards and folders from the computer (DS and consoles without network), copies games and assigns lists. Stays in the tray.',
+  },
   activity: {
     title_one: '{{count}} copy in progress',
     title_other: '{{count}} copies in progress',

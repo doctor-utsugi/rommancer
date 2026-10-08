@@ -3,7 +3,8 @@
   "private": true,
   "workspaces": [
     "backend",
-    "frontend"
+    "frontend",
+    "clients/desktop"
   ],
   "scripts": {
     "db:up": "podman-compose up -d mysql",

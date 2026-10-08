@@ -57,6 +57,12 @@ export function DevicesPage() {
         <Button size="sm" variant="outline" nativeButton={false} render={<a href={authUrl('/link/package/knulli')} />} title={t('more.link.installerHelp')}>
           {t('more.link.installer', { os: 'Knulli / Batocera' })}
         </Button>
+        <Button size="sm" variant="outline" nativeButton={false} render={<a href="/api/v1/link/desktop/rommancer-desktop-setup.exe" />} title={t('more.desktop.help')}>
+          {t('more.desktop.app', { os: 'Windows' })}
+        </Button>
+        <Button size="sm" variant="outline" nativeButton={false} render={<a href="/api/v1/link/desktop/rommancer-desktop.deb" />} title={t('more.desktop.help')}>
+          {t('more.desktop.app', { os: 'Linux' })}
+        </Button>
         <Button size="sm" variant="outline" render={<Link to="/link" />} nativeButton={false}>
           {t('more.link.title')}
         </Button>

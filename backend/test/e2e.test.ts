@@ -1806,6 +1806,39 @@ test('collection: removing a hand-uploaded game deletes its file, list entries a
   assert.equal((await api('DELETE', `/games/${game.id}/collection`, undefined, userToken)).status, 403, 'admins only');
 });
 
+test('desktop companion: a console card synced from a computer keeps the console paths', async () => {
+  const dir = path.join(DATA, 'pc-mount');
+  fs.rmSync(dir, { recursive: true, force: true });
+  const consoleRoot = '/userdata';
+  const claim = await api('POST', '/link/claim', { name: 'console-card', firmware: 'knulli', root: consoleRoot });
+  const token = claim.json.token as string;
+  const id = claim.json.deviceId as number;
+  const mount = path.join(dir, 'SHARE');
+  const b64 = (s: string) => Buffer.from(s).toString('base64');
+  const agent = (p: string, init: RequestInit = {}) =>
+    fetch(`${base}/api/v1/agent${p}`, { ...init, headers: { 'X-Device-Token': token, 'X-Device-Root-Temp-B64': b64(mount), 'Content-Type': 'application/octet-stream', ...(init.headers ?? {}) } }).then((r) => r.text())
+
+  // The computer sees the card under its mount, only for its own requests
+  assert.match(await agent('/roots'), new RegExp(`roms\t${mount}/roms`));
+  const homebrew = `${mount}/roms/nes/Mount Homebrew (World).nes`;
+  await agent('/sync', { method: 'POST', body: `rom\t${homebrew}\t${'a'.repeat(40)}\n` });
+  const inv = (await api('GET', `/devices/${id}/inventory`)).json;
+  assert.deepEqual(inv.items.map((i: any) => i.path), ['/userdata/roms/nes/Mount Homebrew (World).nes'], 'stored with the console paths');
+  assert.equal((await api('GET', `/devices/${id}`)).json.rootPath, consoleRoot, 'the console root is untouched');
+
+  // A request made from the web reaches each side with its own paths
+  assert.equal((await api('POST', `/devices/${id}/pull`, {})).json.queued, 1);
+  assert.match(await agent('/pulls'), new RegExp(`\t${homebrew.replace(/[()]/g, '\\$&')}\n`));
+  const plain = await fetch(`${base}/api/v1/agent/pulls`, { headers: { 'X-Device-Token': token } }).then((r) => r.text());
+  assert.match(plain, /\t\/userdata\/roms\/nes\/Mount Homebrew/);
+  await api('DELETE', `/devices/${id}/pulls`);
+
+  // A body the server cannot read (no content type) does not wipe the list
+  await fetch(`${base}/api/v1/agent/sync`, { method: 'POST', headers: { 'X-Device-Token': token }, body: '' });
+  assert.equal((await api('GET', `/devices/${id}/inventory`)).json.items.length, 1);
+  assert.match(await agent('/whoami'), new RegExp(`id\t${id}\n`));
+});
+
 test('sync client: device inventory, fetching missing roms, sync on request, direct sends and list progress', async () => {
   const client = path.join(ROOT, 'clients/linux/rommancer-sync.sh');
   const dir = path.join(DATA, 'sync-inventory');
