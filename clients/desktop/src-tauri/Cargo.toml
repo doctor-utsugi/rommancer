@@ -27,6 +27,9 @@ base64 = "0.22"
 urlencoding = "2"
 anyhow = "1"
 
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
 [profile.release]
 # Small and lean: the app mostly sits in the tray
 opt-level = "s"

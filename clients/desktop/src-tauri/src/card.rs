@@ -157,7 +157,22 @@ pub fn list(folders: &[String]) -> Vec<Card> {
     out
 }
 
+/// Free and total bytes of the filesystem holding ROOT, asked of the folder itself (a disk list leaves out
+/// tmpfs, network shares and other filesystems that are not "physical", and would report the parent disk)
+#[cfg(unix)]
+pub fn space_of(root: &Path) -> Option<(u64, u64)> {
+    use std::os::unix::ffi::OsStrExt;
+    let c = std::ffi::CString::new(root.as_os_str().as_bytes()).ok()?;
+    let mut st: libc::statvfs = unsafe { std::mem::zeroed() };
+    if unsafe { libc::statvfs(c.as_ptr(), &mut st) } != 0 {
+        return None;
+    }
+    let frag = st.f_frsize as u64;
+    Some((st.f_bavail as u64 * frag, st.f_blocks as u64 * frag))
+}
+
 /// Free and total bytes of the disk holding ROOT (the mount point that contains it)
+#[cfg(not(unix))]
 pub fn space_of(root: &Path) -> Option<(u64, u64)> {
     let disks = sysinfo::Disks::new_with_refreshed_list();
     disks

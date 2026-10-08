@@ -80,11 +80,21 @@ export function StorageSetupPage() {
     setBusy(true)
     try {
       const created: number[] = []
+      // A retry after a failure halfway: folders created by the first attempt are reused, not refused as overlaps
+      const create = async (body: Record<string, unknown>) => {
+        try {
+          return (await post<any>('/admin/paths', body)).id as number
+        } catch (e) {
+          const [code, id, ...rest] = errMsg(e).split(':')
+          if (code === 'OVERLAP' && rest.join(':') === body.path) return Number(id)
+          throw e
+        }
+      }
       const toFolder = (f: string) => Object.entries(route).filter(([, v]) => v === f).map(([k]) => k)
       for (const f of folders) {
         const targets = toFolder(f)
         const general = generalPath.trim() === f
-        const rp = await post<any>('/admin/paths', {
+        const id = await create({
           label: f.split('/').filter(Boolean).pop() ?? f,
           path: f,
           readOnly: !targets.length && !general,
@@ -93,11 +103,10 @@ export function StorageSetupPage() {
           reservePercent: Number(reserve) || 5,
           folderSystems: overrides[f] && Object.keys(overrides[f]).length ? overrides[f] : null,
         })
-        created.push(rp.id)
+        created.push(id)
       }
       if (generalPath.trim() && !folders.includes(generalPath.trim())) {
-        const rp = await post<any>('/admin/paths', { label: 'Rommancer', path: generalPath.trim(), readOnly: false, isDefaultTarget: true, reservePercent: Number(reserve) || 5, create: true })
-        created.push(rp.id)
+        created.push(await create({ label: 'Rommancer', path: generalPath.trim(), readOnly: false, isDefaultTarget: true, reservePercent: Number(reserve) || 5, create: true }))
       }
       for (const id of created) await post(`/admin/paths/${id}/scan`, {})
       toast.success(t('more.setup.done', { count: created.length }))
