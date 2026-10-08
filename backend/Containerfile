@@ -3,6 +3,7 @@ WORKDIR /app
 COPY package.json package-lock.json ./
 COPY backend/package.json backend/
 COPY frontend/package.json frontend/
+COPY clients/desktop/package.json clients/desktop/
 RUN npm ci -w backend --include-workspace-root=false --no-audit --no-fund
 COPY backend backend
 RUN cd backend && npx prisma generate && npx tsc -p tsconfig.json && npm prune --omit=dev -w backend

@@ -6,3 +6,8 @@ roms
 .env
 .playwright-mcp
 backend/scratch
+clients/desktop/src-tauri/target
+clients/desktop/src-tauri/gen
+clients/desktop/release
+clients/android/app/build
+clients/android/.gradle
