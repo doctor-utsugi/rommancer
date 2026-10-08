@@ -555,8 +555,9 @@ function Lists({ deviceId, name, onCopy }: { deviceId: number; name: string; onC
     void api<typeof lists>('GET', '/lists?scope=all').then(setLists)
     void api<{ id: number }[]>('GET', `/devices/${deviceId}/lists`).then((l) => setPicked(new Set(l.map((x) => x.id))))
   }, [deviceId])
-  const [systems, setSystems] = useState<{ slug: string; name: string; games: number; excluded: boolean; folder: string }[]>([])
-  const loadSystems = useCallback(() => void api<typeof systems>('GET', `/devices/${deviceId}/list-systems`).then(setSystems), [deviceId])
+  const [systems, setSystems] = useState<SystemsInfo | null>(null)
+  const [choosing, setChoosing] = useState(false)
+  const loadSystems = useCallback(() => void api<SystemsInfo>('GET', `/devices/${deviceId}/list-systems`).then(setSystems), [deviceId])
   useEffect(loadSystems, [loadSystems])
   if (!lists) return <p className="muted">…</p>
   if (!lists.length) return <p className="muted">{t('noLists')}</p>
@@ -567,12 +568,6 @@ function Lists({ deviceId, name, onCopy }: { deviceId: number; name: string; onC
     else n.delete(id)
     setPicked(n)
     await api('PUT', `/devices/${deviceId}/lists`, { listIds: [...n] })
-    loadSystems()
-  }
-  // An override on top of the lists: the unticked systems are not copied to this card
-  const setCopied = async (slug: string, copy: boolean) => {
-    const excluded = systems.filter((s) => (s.slug === slug ? !copy : s.excluded)).map((s) => s.slug)
-    await api('PUT', `/devices/${deviceId}/excluded-systems`, { systems: excluded })
     loadSystems()
   }
   return (
@@ -586,25 +581,95 @@ function Lists({ deviceId, name, onCopy }: { deviceId: number; name: string; onC
           {picked.has(l.id) && <span className="accent small"> · {t('subscribed')}</span>}
         </label>
       ))}
-      {systems.length > 0 && (
-        <>
-          <h2>{t('systemsTitle')}</h2>
-          <p className="muted small">{t('systemsHelp')}</p>
-          {systems.map((s) => (
-            <label key={s.slug} className="check">
-              <input type="checkbox" checked={!s.excluded} onChange={(e) => void setCopied(s.slug, e.target.checked)} />
-              <span style={s.excluded ? { textDecoration: 'line-through', opacity: 0.6 } : undefined}>{s.name}</span>
-              <span className="muted small">
-                {' '}
-                · {t('gamesN', { n: s.games })} · {t('toFolder', { folder: s.folder || '/' })}
-              </span>
-            </label>
-          ))}
-        </>
+      {systems && systems.systems.length > 0 && (
+        <div className="row">
+          <button onClick={() => setChoosing(true)}>
+            {t('systemsButton', { copied: systems.systems.filter((x) => x.copied).length, total: systems.systems.length })}
+          </button>
+          {systems.systems.some((x) => x.fresh) && <span className="accent small">{t('freshCount', { n: systems.systems.filter((x) => x.fresh).length })}</span>}
+        </div>
+      )}
+      {choosing && systems && (
+        <SystemsDialog
+          deviceId={deviceId}
+          info={systems}
+          onClose={(saved) => {
+            setChoosing(false)
+            if (saved) loadSystems()
+          }}
+        />
       )}
       <button className="primary" disabled={!picked.size} onClick={onCopy}>
         {t('saveLists')}
       </button>
+    </div>
+  )
+}
+
+interface SystemsInfo {
+  newAuto: boolean
+  systems: { slug: string; name: string; games: number; folder: string; copied: boolean; fresh: boolean }[]
+}
+
+/** Every system of the card's lists: untick what should not be copied here, and choose what happens to new ones */
+function SystemsDialog({ deviceId, info, onClose }: { deviceId: number; info: SystemsInfo; onClose: (saved: boolean) => void }) {
+  const [copied, setCopied] = useState(new Set(info.systems.filter((s) => s.copied).map((s) => s.slug)))
+  const [newAuto, setNewAuto] = useState(info.newAuto)
+  const [error, setError] = useState('')
+  const save = async () => {
+    try {
+      await api('PUT', `/devices/${deviceId}/system-filter`, {
+        newAuto,
+        excluded: info.systems.filter((s) => !copied.has(s.slug)).map((s) => s.slug),
+        known: info.systems.map((s) => s.slug),
+      })
+      onClose(true)
+    } catch (e) {
+      setError(String(e))
+    }
+  }
+  return (
+    <div className="overlay" onClick={() => onClose(false)}>
+      <div className="panel dialog" onClick={(e) => e.stopPropagation()}>
+        <h2>{t('systemsTitle')}</h2>
+        <p className="muted small">{t('systemsHelp')}</p>
+        <div className="results">
+          {info.systems.map((s) => (
+            <label key={s.slug} className="check">
+              <input
+                type="checkbox"
+                checked={copied.has(s.slug)}
+                onChange={(e) => {
+                  const n = new Set(copied)
+                  if (e.target.checked) n.add(s.slug)
+                  else n.delete(s.slug)
+                  setCopied(n)
+                }}
+              />
+              <span style={copied.has(s.slug) ? undefined : { textDecoration: 'line-through', opacity: 0.6 }}>{s.name}</span>
+              <span className="muted small">
+                {' '}
+                · {t('gamesN', { n: s.games })} · {t('toFolder', { folder: s.folder || '/' })}
+              </span>
+              {s.fresh && <span className="accent small"> · {t('fresh')}</span>}
+            </label>
+          ))}
+        </div>
+        <label className="check top">
+          <input type="checkbox" checked={newAuto} onChange={(e) => setNewAuto(e.target.checked)} />
+          <span>
+            {t('newAuto')}
+            <span className="muted small block">{t('newAutoHelp')}</span>
+          </span>
+        </label>
+        {error && <p className="error">{error}</p>}
+        <div className="row end">
+          <button onClick={() => onClose(false)}>{t('cancel')}</button>
+          <button className="primary" onClick={() => void save()}>
+            {t('save')}
+          </button>
+        </div>
+      </div>
     </div>
   )
 }

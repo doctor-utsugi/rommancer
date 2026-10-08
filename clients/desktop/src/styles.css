@@ -335,3 +335,35 @@ button.card .muted {
   max-height: 320px;
   overflow-y: auto;
 }
+
+.overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.45);
+  display: grid;
+  place-items: center;
+  padding: 16px;
+  z-index: 10;
+}
+
+.panel.dialog {
+  width: 520px;
+  max-width: 100%;
+  max-height: calc(100vh - 32px);
+  overflow-y: auto;
+  margin: 0;
+}
+
+label.check.top {
+  align-items: flex-start;
+  border-top: 1px solid var(--border);
+  padding-top: 10px;
+}
+
+.block {
+  display: block;
+}
+
+.row.end {
+  justify-content: flex-end;
+}

@@ -167,3 +167,21 @@ export function layoutOf(device: Device & { firmware: Firmware }): DeviceLayout 
  * for systems the firmware does not list (a GBA flashcart holding Game Boy games for an emulator).
  */
 export const folderFor = (layout: DeviceLayout, slug: string) => layout.systemMap[slug]?.folder ?? slug;
+
+/**
+ * The user's override on top of a device's lists: systems left out, the systems there were when it was
+ * last saved, and whether systems that appear in the lists later are copied without asking.
+ */
+export interface SystemFilter {
+  newAuto: boolean;
+  excluded: string[];
+  known: string[];
+}
+
+export function systemFilterOf(d: { systemFilter: unknown }): SystemFilter {
+  const f = (d.systemFilter ?? {}) as Partial<SystemFilter>;
+  return { newAuto: f.newAuto ?? true, excluded: Array.isArray(f.excluded) ? f.excluded : [], known: Array.isArray(f.known) ? f.known : [] };
+}
+
+/** Whether a system's games are copied to the device */
+export const copiesSystem = (f: SystemFilter, slug: string) => !f.excluded.includes(slug) && (f.newAuto || f.known.includes(slug));

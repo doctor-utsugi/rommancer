@@ -548,41 +548,87 @@ function formatAgo(d: string | null, lang: string) {
   return new Intl.RelativeTimeFormat(lang, { numeric: 'auto' }).format(-min, 'minute')
 }
 
-/** Systems of the device's lists that are not copied to it: an override on top of its lists */
+interface ListSystems {
+  newAuto: boolean
+  systems: { slug: string; name: string; games: number; folder: string; copied: boolean; fresh: boolean }[]
+}
+
+/** Which systems of the device's lists are copied to it: a button with the count, and a dialog to choose */
 function ExcludedSystems({ deviceId, canEdit, onChange }: { deviceId: string; canEdit: boolean; onChange: () => void }) {
   const { t } = useTranslation()
   const qc = useQueryClient()
-  const systems = useQuery({ queryKey: ['device-list-systems', deviceId], queryFn: () => get<{ slug: string; name: string; games: number; excluded: boolean; folder: string }[]>(`/devices/${deviceId}/list-systems`) })
-  if (!systems.data?.length) return null
-  const toggle = async (slug: string, copy: boolean) => {
-    const excluded = systems.data!.filter((s) => (s.slug === slug ? !copy : s.excluded)).map((s) => s.slug)
+  const data = useQuery({ queryKey: ['device-list-systems', deviceId], queryFn: () => get<ListSystems>(`/devices/${deviceId}/list-systems`) })
+  const [open, setOpen] = useState(false)
+  const [copied, setCopied] = useState<Set<string>>(new Set())
+  const [newAuto, setNewAuto] = useState(true)
+  const systems = data.data?.systems ?? []
+  if (!systems.length) return null
+  const fresh = systems.filter((s) => s.fresh).length
+  const start = () => {
+    setCopied(new Set(systems.filter((s) => s.copied).map((s) => s.slug)))
+    setNewAuto(data.data!.newAuto)
+    setOpen(true)
+  }
+  const save = async () => {
     try {
-      await put(`/devices/${deviceId}/excluded-systems`, { systems: excluded })
+      await put(`/devices/${deviceId}/system-filter`, { newAuto, excluded: systems.filter((s) => !copied.has(s.slug)).map((s) => s.slug), known: systems.map((s) => s.slug) })
       void qc.invalidateQueries({ queryKey: ['device-list-systems', deviceId] })
       onChange()
+      setOpen(false)
     } catch (e) {
       toast.error(errMsg(e))
     }
   }
   return (
-    <Card className="mt-4">
-      <CardHeader>
-        <CardTitle className="text-base">{t('more.excluded.title')}</CardTitle>
-      </CardHeader>
-      <CardContent className="space-y-2 text-sm">
-        <p className="text-muted-foreground">{t('more.excluded.help')}</p>
-        <div className="grid gap-1 sm:grid-cols-2 lg:grid-cols-3">
-          {systems.data.map((s) => (
-            <label key={s.slug} className="flex items-center gap-2">
-              <Checkbox checked={!s.excluded} disabled={!canEdit} onCheckedChange={(c) => void toggle(s.slug, !!c)} />
-              <span className={s.excluded ? 'text-muted-foreground line-through' : ''}>{s.name}</span>
-              <span className="text-xs text-muted-foreground">
-                · {t('more.excluded.games', { count: s.games })} · {t('more.excluded.folder', { folder: s.folder || '/' })}
-              </span>
-            </label>
-          ))}
-        </div>
-      </CardContent>
-    </Card>
+    <div className="mt-4 flex items-center gap-3">
+      <Button variant="outline" size="sm" onClick={start}>
+        {t('more.excluded.button', { copied: systems.filter((s) => s.copied).length, total: systems.length })}
+      </Button>
+      {fresh > 0 && <Badge variant="secondary">{t('more.excluded.freshCount', { count: fresh })}</Badge>}
+      <Dialog open={open} onOpenChange={setOpen}>
+        <DialogContent className="sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle>{t('more.excluded.title')}</DialogTitle>
+          </DialogHeader>
+          <p className="text-sm text-muted-foreground">{t('more.excluded.help')}</p>
+          <div className="max-h-80 space-y-1 overflow-y-auto">
+            {systems.map((s) => (
+              <label key={s.slug} className="flex items-center gap-2 text-sm">
+                <Checkbox
+                  checked={copied.has(s.slug)}
+                  disabled={!canEdit}
+                  onCheckedChange={(c) => {
+                    const n = new Set(copied)
+                    if (c) n.add(s.slug)
+                    else n.delete(s.slug)
+                    setCopied(n)
+                  }}
+                />
+                <span className={copied.has(s.slug) ? '' : 'text-muted-foreground line-through'}>{s.name}</span>
+                <span className="text-xs text-muted-foreground">
+                  · {t('more.excluded.games', { count: s.games })} · {t('more.excluded.folder', { folder: s.folder || '/' })}
+                </span>
+                {s.fresh && <Badge variant="secondary">{t('more.excluded.fresh')}</Badge>}
+              </label>
+            ))}
+          </div>
+          <label className="flex items-start gap-2 border-t pt-3 text-sm">
+            <Checkbox checked={newAuto} disabled={!canEdit} onCheckedChange={(c) => setNewAuto(!!c)} />
+            <span>
+              {t('more.excluded.newAuto')}
+              <span className="block text-xs text-muted-foreground">{t('more.excluded.newAutoHelp')}</span>
+            </span>
+          </label>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setOpen(false)}>
+              {t('common.cancel')}
+            </Button>
+            <Button onClick={() => void save()} disabled={!canEdit}>
+              {t('common.save')}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </div>
   )
 }

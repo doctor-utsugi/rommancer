@@ -498,8 +498,8 @@ model Device {
   cardTokens     DeviceToken[]
   // Linked from the desktop companion: only known when its card is connected to a computer
   offline        Boolean           @default(false)
-  // System slugs whose games the device's lists do not copy to it (an override on top of its lists)
-  excludedSystems Json?
+  // Which systems of its lists are copied to the device: { newAuto, excluded, known } (see devices/sink.ts)
+  systemFilter   Json?
   createdAt      DateTime          @default(now())
   user           User              @relation(fields: [userId], references: [id], onDelete: Cascade)
   console        Console           @relation(fields: [consoleId], references: [id])

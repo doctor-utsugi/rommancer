@@ -2,7 +2,13 @@
 export const esMore = {
   excluded: {
     title: 'Sistemas que se copian a este dispositivo',
-    help: 'Desmarca los sistemas cuyos juegos no quieres en este dispositivo aunque estén en sus listas. Las partidas se siguen sincronizando.',
+    help: 'Todos los sistemas que tienen las listas suscritas. Desmarca los que no quieras en este dispositivo; las partidas se siguen sincronizando.',
+    button: 'Sistemas ({{copied}} de {{total}})',
+    fresh: 'nuevo',
+    freshCount_one: '{{count}} sistema nuevo sin copiar',
+    freshCount_other: '{{count}} sistemas nuevos sin copiar',
+    newAuto: 'Copiar automáticamente los sistemas nuevos que se añadan a estas listas',
+    newAutoHelp: 'Si lo desmarcas, un sistema que aparezca después en las listas llega desmarcado y no se copia hasta que lo marques.',
     games_one: '{{count}} juego',
     games_other: '{{count}} juegos',
     folder: 'a {{folder}}/',
@@ -307,7 +313,13 @@ export const esMore = {
 export const enMore: typeof esMore = {
   excluded: {
     title: 'Systems copied to this device',
-    help: 'Untick the systems whose games you do not want on this device even if they are in its lists. Saves still sync.',
+    help: 'Every system in the subscribed lists. Untick those you do not want on this device; saves still sync.',
+    button: 'Systems ({{copied}} of {{total}})',
+    fresh: 'new',
+    freshCount_one: '{{count}} new system not copied',
+    freshCount_other: '{{count}} new systems not copied',
+    newAuto: 'Copy new systems added to these lists automatically',
+    newAutoHelp: 'When unticked, a system that appears in the lists later arrives unticked and is not copied until you tick it.',
     games_one: '{{count}} game',
     games_other: '{{count}} games',
     folder: 'to {{folder}}/',

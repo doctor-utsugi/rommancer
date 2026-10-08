@@ -1932,11 +1932,20 @@ test('sync client: device inventory, fetching missing roms, sync on request, dir
   assert.deepEqual(byList.map((x: any) => [x.deviceId, x.have, x.total]), [[id, 1, 1]]);
 
   // Per-device override: NES left out, whatever the lists hold
-  assert.deepEqual((await api('GET', `/devices/${id}/list-systems`)).json.map((x: any) => [x.slug, x.games, x.excluded, x.folder]), [['nes', 1, false, 'roms/nes']]);
-  assert.equal((await api('PUT', `/devices/${id}/excluded-systems`, { systems: ['nes'] })).status, 200);
-  assert.equal((await api('GET', `/devices/${id}/list-systems`)).json[0].excluded, true);
+  let sys = (await api('GET', `/devices/${id}/list-systems`)).json;
+  assert.equal(sys.newAuto, true);
+  assert.deepEqual(sys.systems.map((x: any) => [x.slug, x.games, x.copied, x.folder, x.fresh]), [['nes', 1, true, 'roms/nes', false]]);
+  assert.equal((await api('PUT', `/devices/${id}/system-filter`, { newAuto: true, excluded: ['nes'], known: ['nes'] })).status, 200);
+  assert.equal((await api('GET', `/devices/${id}/list-systems`)).json.systems[0].copied, false);
   assert.equal((await agent('/roms')).trim(), '', 'no NES rom is offered to the device');
   const left = (await api('GET', `/devices/${id}/lists-progress`)).json.find((l: any) => l.id === sent.json.listId);
   assert.equal(left.total, 0);
-  await api('PUT', `/devices/${id}/excluded-systems`, { systems: [] });
+  // New systems not copied by themselves: a system the filter did not know arrives unticked, marked as new
+  await api('PUT', `/devices/${id}/system-filter`, { newAuto: false, excluded: [], known: [] });
+  sys = (await api('GET', `/devices/${id}/list-systems`)).json;
+  assert.deepEqual(sys.systems.map((x: any) => [x.slug, x.copied, x.fresh]), [['nes', false, true]]);
+  assert.equal((await agent('/roms')).trim(), '');
+  await api('PUT', `/devices/${id}/system-filter`, { newAuto: false, excluded: [], known: ['nes'] });
+  assert.notEqual((await agent('/roms')).trim(), '', 'once ticked it is copied');
+  await api('PUT', `/devices/${id}/system-filter`, { newAuto: true, excluded: [], known: ['nes'] });
 });

@@ -9,7 +9,7 @@ import type { Device, Emulator, Firmware } from '@prisma/client';
 import { prisma } from '../../lib/prisma.js';
 import { sha256 } from '../../lib/crypto.js';
 import { HttpError, badRequest } from '../../lib/http.js';
-import { folderFor, layoutOf, type DeviceLayout } from '../devices/sink.js';
+import { copiesSystem, folderFor, layoutOf, systemFilterOf, type DeviceLayout } from '../devices/sink.js';
 import { raDefaults } from '../../seed/data.js';
 import { contentFor, decide, deviceFileName, findLogicalSave, receiveFromDevice, saveDirs, setBase, sha1 } from './core.js';
 import { identifyRom, parseSaveFile } from './service.js';
@@ -329,15 +329,15 @@ agentRouter.get('/roms', async (req, res) => {
   const layout = layoutOf(device);
   const root = device.rootPath.replace(/\/+$/, '');
   const lists = await prisma.deviceList.findMany({ where: { deviceId: device.id }, select: { listId: true } });
-  // Systems the user left out for this device, whatever its lists hold
-  const excluded = new Set(Array.isArray(device.excludedSystems) ? (device.excludedSystems as string[]) : []);
+  // Systems the user left out for this device (or new ones, when they are not copied by themselves)
+  const filter = systemFilterOf(device);
   const seen = new Set<string>();
   const out: string[] = [];
   for (const { listId } of lists) {
     const { items } = await resolveListFiles(listId);
     for (const it of items) {
       // Any system goes: the user decides what a device holds (only the systems they left out are skipped)
-      if (excluded.has(it.systemSlug)) continue;
+      if (!copiesSystem(filter, it.systemSlug)) continue;
       const folder = folderFor(layout, it.systemSlug);
       for (const f of it.files) {
         const dest = path.posix.join(root, layout.romsRoot, folder, f.destName);

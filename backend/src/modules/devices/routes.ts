@@ -13,7 +13,7 @@ import { ZipArchive } from 'archiver';
 import { sha256 } from '../../lib/crypto.js';
 import { scriptFiles } from '../saves/script.js';
 import { loadList, resolveListFiles } from '../lists/service.js';
-import { folderFor, layoutOf, openSink } from './sink.js';
+import { copiesSystem, folderFor, layoutOf, openSink, systemFilterOf } from './sink.js';
 import { ownedGameIds, ownedRomIds } from '../roms/service.js';
 import { installClient, serverKey, syncOverSsh } from './ssh.js';
 import { OPEN_PULL, pullTransfers } from '../saves/agent.js';
@@ -202,9 +202,6 @@ devicesRouter.patch('/:id', async (req, res) => {
 const pathKey = (p: string) => crypto.createHash('sha1').update(p).digest('hex');
 
 /** Share of a list already on a device: items whose files are at their destination or whose game it has. */
-/** Systems the user left out of a device's lists */
-export const excludedOf = (d: { excludedSystems: unknown }) => new Set(Array.isArray(d.excludedSystems) ? (d.excludedSystems as string[]) : []);
-
 export async function listProgress(listId: number, device: Awaited<ReturnType<typeof ownDevice>>) {
   const layout = layoutOf(device);
   const root = device.rootPath.replace(/\/+$/, '');
@@ -216,9 +213,9 @@ export async function listProgress(listId: number, device: Awaited<ReturnType<ty
   const gameOf = new Map(roms.map((r) => [r.id, r.gameId]));
   let have = 0;
   let total = 0;
-  const excluded = excludedOf(device);
+  const filter = systemFilterOf(device);
   for (const it of items) {
-    if (excluded.has(it.systemSlug)) continue; // left out for this device
+    if (!copiesSystem(filter, it.systemSlug)) continue; // left out for this device
     const folder = folderFor(layout, it.systemSlug);
     total++;
     const there = it.files.some((f) => paths.has(pathKey(path.posix.join(root, layout.romsRoot, folder, f.destName))));
@@ -432,30 +429,40 @@ devicesRouter.put('/by-list/:listId', requirePerm('roms.download'), async (req, 
 });
 
 // Lists whose roms a sync client keeps on the device
-// Systems found in the device's lists (that its firmware can hold), with how many games each brings and
-// whether the user left it out for this device
+// Systems found in the device's lists, with how many games each brings, where they go and whether they are
+// copied; "fresh" ones appeared after the filter was last saved
 devicesRouter.get('/:id/list-systems', async (req, res) => {
   const d = await ownDevice(intParam(req), me(req));
   const layout = layoutOf(d);
-  const excluded = excludedOf(d);
+  const filter = systemFilterOf(d);
   const counts = new Map<string, number>();
   for (const { listId } of await prisma.deviceList.findMany({ where: { deviceId: d.id }, select: { listId: true } })) {
     for (const it of (await resolveListFiles(listId)).items) counts.set(it.systemSlug, (counts.get(it.systemSlug) ?? 0) + 1);
   }
-  const systems = await prisma.system.findMany({ where: { slug: { in: [...new Set([...counts.keys(), ...excluded])] } }, select: { slug: true, name: true } });
-  // folder: where its games go on the device (systems the firmware does not list get one named after them)
-  res.json(
-    systems
-      .map((s) => ({ slug: s.slug, name: s.name, games: counts.get(s.slug) ?? 0, excluded: excluded.has(s.slug), folder: path.posix.join(layout.romsRoot, folderFor(layout, s.slug)) }))
+  const systems = await prisma.system.findMany({ where: { slug: { in: [...counts.keys()] } }, select: { slug: true, name: true } });
+  const saved = d.systemFilter != null;
+  res.json({
+    newAuto: filter.newAuto,
+    systems: systems
+      .map((s) => ({
+        slug: s.slug,
+        name: s.name,
+        games: counts.get(s.slug) ?? 0,
+        folder: path.posix.join(layout.romsRoot, folderFor(layout, s.slug)),
+        copied: copiesSystem(filter, s.slug),
+        fresh: saved && !filter.known.includes(s.slug) && !filter.excluded.includes(s.slug),
+      }))
       .sort((a, b) => a.name.localeCompare(b.name)),
-  );
+  });
 });
 
-devicesRouter.put('/:id/excluded-systems', requirePerm('roms.download'), async (req, res) => {
+// Saves the filter: the systems unticked, and whether systems that appear later are copied by themselves
+devicesRouter.put('/:id/system-filter', requirePerm('roms.download'), async (req, res) => {
   const d = await ownDevice(intParam(req), me(req));
-  const { systems } = z.object({ systems: z.array(z.string().max(32)).max(200) }).parse(req.body);
-  await prisma.device.update({ where: { id: d.id }, data: { excludedSystems: [...new Set(systems)] } });
-  res.json({ systems });
+  const body = z.object({ newAuto: z.boolean(), excluded: z.array(z.string().max(32)).max(200), known: z.array(z.string().max(32)).max(200) }).parse(req.body);
+  const filter = { newAuto: body.newAuto, excluded: [...new Set(body.excluded)], known: [...new Set([...body.known, ...body.excluded])] };
+  await prisma.device.update({ where: { id: d.id }, data: { systemFilter: filter } });
+  res.json(filter);
 });
 
 devicesRouter.get('/:id/lists', async (req, res) => {
