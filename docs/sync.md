@@ -30,13 +30,38 @@ Alternatives for unattended setups:
 | Onion (Miyoo Mini) | `clients/linux/rommancer-sync.sh` | `rommancer-sync.sh setup`, built on Onion's `prompt` menu and `kbinput` keyboard |
 | Knulli, Batocera, ROCKNIX | `rommancer-sync.sh` + `rommancer-ui.py` | pygame app; buttons come from EmulationStation's `es_input.cfg` |
 | muOS, PCs | `rommancer-sync.sh` | command line (`link`, `sync`, `daemon`) |
-| Android | planned (Kotlin) | native screens |
+| Android | `clients/android` (Kotlin, Compose) | two-column screen like the pygame app, gamepad navigation |
+| SD card only (Nintendo DS with TWiLight Menu++, consoles without network) | `rommancer-sync.sh sd MOUNT` on a computer | command line |
 
 The shell client is POSIX `sh` for busybox: it needs `curl` (or `wget`), `sha1sum` and `base64`.
 It ships `cacert.pem` because some firmwares (Onion) have `curl` without root certificates, and it sets the
 clock by NTP when it is clearly wrong (consoles without a battery-backed clock boot in the past and TLS fails).
 
 Client commands: `setup`, `link SERVER`, `enroll`, `sync`, `daemon`, `boot`, `install`, `status`, `unlink`, `hints`.
+
+### When saves are uploaded
+
+- **Linux daemon**: checks sizes and mtimes of the save files every 15 s and syncs once they have stayed unchanged
+  for 3 s (an emulator may still be writing). Knulli/Batocera also sync right after a game ends (`gameStop` event)
+  and fetch the server's saves right before it starts.
+- **Android**: a foreground service (`WatchService`, with a silent notification) watches the save folders with
+  `FileObserver` and syncs 5 s after the last write; it also polls the server every 15 s for requests from the web
+  app and starts at boot. WorkManager runs a full pass every 15 minutes as a fallback. Menu: *Upload when saving*.
+
+### SD cards synced from a computer
+
+For consoles that only have an SD card, the card itself is the device:
+
+```
+rommancer-sync.sh sd /media/me/DSCARD link https://rommancer.example.com   # once: approve the code in the web app
+rommancer-sync.sh sd /media/me/DSCARD                                      # every time the card is inserted
+```
+
+The link, settings and hash cache live on the card (`.rommancer/`), so any computer with the script can sync it.
+A pass uploads changed saves, downloads newer ones, sends roms the server asked for and copies the roms of the
+card's lists. The mount point changes between computers: the client sends it in `X-Device-Root-B64` and the server
+updates the device's root before resolving paths. The default firmware is `nds-twilight` (roms in `roms/nds`, saves
+in `roms/nds/saves`, layout `rom-saves`); set `ROMMANCER_FIRMWARE`/`ROMMANCER_MODEL` for other cards.
 
 ## Credits
 

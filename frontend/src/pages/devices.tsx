@@ -348,7 +348,7 @@ function DeviceDialog({ device, onClose }: { device: any | null; onClose(): void
               <Field label={t('devices.savesLayout')}>
                 <NativeSelect value={form.savesLayout} onChange={(e) => set('savesLayout', e.target.value)}>
                   <option value="">{t(`devices.layouts.${fw.savesLayout}`)} (firmware)</option>
-                  {['flat', 'system', 'core', 'rom', 'rom-core'].map((l) => (
+                  {['flat', 'system', 'core', 'rom', 'rom-core', 'rom-saves'].map((l) => (
                     <option key={l} value={l}>
                       {t(`devices.layouts.${l}`)}
                     </option>

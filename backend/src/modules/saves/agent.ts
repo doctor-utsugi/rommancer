@@ -27,16 +27,19 @@ export const agentRouter = Router();
 
 type AgentDevice = Device & { firmware: Firmware };
 
+const b64 = (v: string | undefined) => (v ? Buffer.from(v, 'base64').toString('utf8') : '');
+
 async function deviceFromToken(req: Request): Promise<AgentDevice> {
   const token = req.header('x-device-token');
   if (!token) throw new HttpError(401, 'Missing device token');
   const device = await prisma.device.findUnique({ where: { tokenHash: sha256(token) }, include: { firmware: true } });
   if (!device) throw new HttpError(401, 'Invalid device token');
-  await prisma.device.update({ where: { id: device.id }, data: { lastSeenAt: new Date() } });
-  return device;
+  // SD cards synced from a computer are mounted wherever the computer puts them: the client says where
+  const root = b64(req.header('x-device-root-b64'));
+  const moved = root.startsWith('/') && root.length <= 512 && root.replace(/\/+$/, '') !== device.rootPath.replace(/\/+$/, '');
+  await prisma.device.update({ where: { id: device.id }, data: { lastSeenAt: new Date(), ...(moved ? { rootPath: root } : {}) } });
+  return moved ? { ...device, rootPath: root } : device;
 }
-
-const b64 = (v: string | undefined) => (v ? Buffer.from(v, 'base64').toString('utf8') : '');
 
 /** Sistema y emulador de una rom del dispositivo a partir de su carpeta. */
 async function romContext(device: AgentDevice, romPath: string) {

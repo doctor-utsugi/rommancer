@@ -123,7 +123,7 @@ export interface FirmwareSeed {
   savesRoot: string;
   statesRoot: string;
   biosRoot: string;
-  savesLayout: 'flat' | 'system' | 'core' | 'rom' | 'rom-core';
+  savesLayout: 'flat' | 'system' | 'core' | 'rom' | 'rom-core' | 'rom-saves';
   systemMap: Record<string, { folder: string; emulator: string }>;
 }
 
@@ -135,6 +135,8 @@ export const firmwares: FirmwareSeed[] = [
   { slug: 'onion', name: 'Onion OS', romsRoot: 'Roms', savesRoot: 'Saves/CurrentProfile/saves', statesRoot: 'Saves/CurrentProfile/states', biosRoot: 'BIOS', savesLayout: 'core', systemMap: map(onionFolders) },
   { slug: 'android-esde', name: 'Android (ES-DE + RetroArch)', romsRoot: 'ROMs', savesRoot: 'RetroArch/saves', statesRoot: 'RetroArch/states', biosRoot: 'RetroArch/system', savesLayout: 'flat', systemMap: map(esdeFolders, { psx: 'duckstation', gba: 'ra-mgba', nds: 'melonds' }) },
   { slug: 'retroarch-desktop', name: 'RetroArch (Windows/Linux/macOS)', romsRoot: 'roms', savesRoot: 'saves', statesRoot: 'states', biosRoot: 'system', savesLayout: 'flat', systemMap: map(esdeFolders) },
+  // SD card synced from a PC (no network on the console): TWiLight Menu++ keeps saves in a "saves" folder next to the roms
+  { slug: 'nds-twilight', name: 'Nintendo DS (TWiLight Menu++ SD card)', romsRoot: 'roms', savesRoot: 'roms', statesRoot: 'roms', biosRoot: '_nds', savesLayout: 'rom-saves', systemMap: map({ nds: 'nds' }, { nds: 'melonds' }) },
   { slug: 'esde-desktop', name: 'ES-DE (escritorio)', romsRoot: 'ROMs', savesRoot: 'saves', statesRoot: 'states', biosRoot: 'bios', savesLayout: 'flat', systemMap: map(esdeFolders) },
 ];
 
@@ -148,6 +150,9 @@ export const consoles = [
   { name: 'Miyoo Mini Plus', manufacturer: 'Miyoo', formFactor: 'handheld' },
   { name: 'Powkiddy RGB30', manufacturer: 'Powkiddy', formFactor: 'handheld' },
   { name: 'Steam Deck', manufacturer: 'Valve', formFactor: 'handheld' },
+  { name: 'Nintendo DS', manufacturer: 'Nintendo', formFactor: 'handheld' },
+  { name: 'Nintendo DSi', manufacturer: 'Nintendo', formFactor: 'handheld' },
+  { name: 'Nintendo 3DS', manufacturer: 'Nintendo', formFactor: 'handheld' },
   { name: 'PC', manufacturer: 'Generic', formFactor: 'desktop' },
   { name: 'Other', manufacturer: 'Generic', formFactor: 'handheld' },
 ];

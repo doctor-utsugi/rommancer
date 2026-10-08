@@ -15,18 +15,36 @@
 #   rommancer-sync.sh set AUTO_ROMS 0|1
 #   rommancer-sync.sh status | unlink
 #   rommancer-sync.sh               link if needed, then start the daemon in the background
+#
+#   rommancer-sync.sh sd MOUNT [link SERVER|sync|status|unlink]
+#                                   an SD card from a console without network (Nintendo DS with TWiLight
+#                                   Menu++...) mounted on this computer; the link lives on the card itself,
+#                                   so any computer with this script can sync it. Without a command: sync.
 set -u
 CLIENT_VERSION=20261008
 # Onion keeps curl (with TLS) and friends outside the default PATH
 [ -d /mnt/SDCARD/.tmp_update/bin ] && PATH="/mnt/SDCARD/.tmp_update/bin:$PATH"
 
 DIR="$(cd "$(dirname "$0")" && pwd)"
+SD=""
+if [ "${1:-}" = sd ]; then
+  [ -d "${2:-}" ] || { echo "Usage: $0 sd MOUNT [link SERVER|sync|status|unlink]"; exit 2; }
+  SD="$(cd "$2" && pwd)"; shift 2
+  [ $# -gt 0 ] || set -- all
+  # The card is the device: its link, settings and hashes travel with it
+  ROMMANCER_STATE="$SD/.rommancer"; ROMMANCER_ROOT="$SD"
+  ROMMANCER_FIRMWARE="${ROMMANCER_FIRMWARE:-nds-twilight}"
+  ROMMANCER_MODEL="${ROMMANCER_MODEL:-Nintendo DS}"
+  ROMMANCER_NAME="${ROMMANCER_NAME:-$ROMMANCER_MODEL SD}"
+fi
 STATE="${ROMMANCER_STATE:-$DIR/.rommancer}"
 CONF="$STATE/config"
 CACHE_DISK="$STATE/hashes"
 LOG="$STATE/log"
 # Transient files go to RAM: fewer writes to the SD card, and they survive a read-only card
 WORK="${TMPDIR:-/tmp}/rommancer-$(id -u 2>/dev/null || echo 0)"
+# Each card gets its own lock and progress, apart from a daemon this computer may be running
+[ -n "$SD" ] && WORK="$WORK-sd-$(printf '%s' "$SD" | cksum | cut -d' ' -f1)"
 LOCK="$WORK/lock"
 WATCH_SECONDS="${ROMMANCER_WATCH_SECONDS:-15}"
 FULL_SECONDS="${ROMMANCER_FULL_SECONDS:-300}"
@@ -70,6 +88,8 @@ http() {
 http_once() {
   m="$1"; u="$2"; body="$3"; out="$4"; shift 4
   [ -n "$TOKEN" ] && set -- "$@" "X-Device-Token: $TOKEN"
+  # The card may be mounted somewhere else than last time: the server rewrites its paths
+  [ -n "$SD" ] && [ -n "$TOKEN" ] && set -- "$@" "X-Device-Root-B64: $(b64 "$SD")"
   n=$#
   if command -v curl >/dev/null 2>&1; then
     while [ "$n" -gt 0 ]; do set -- "$@" -H "$1"; shift; n=$((n - 1)); done
@@ -112,6 +132,7 @@ detect() {
   fi
   [ -n "${ROMMANCER_FIRMWARE:-}" ] && FW="$ROMMANCER_FIRMWARE"
   [ -n "${ROMMANCER_ROOT:-}" ] && ROOT="$ROMMANCER_ROOT"
+  [ -n "${ROMMANCER_MODEL:-}" ] && MODEL="$ROMMANCER_MODEL"
   [ -z "$MODEL" ] && [ -r /sys/firmware/devicetree/base/model ] && MODEL="$(tr -d '\0' < /sys/firmware/devicetree/base/model)"
   [ -z "$MODEL" ] && [ -r /sys/class/dmi/id/product_name ] && MODEL="$(cat /sys/class/dmi/id/product_name)"
   NAME="${ROMMANCER_NAME:-$(hostname 2>/dev/null || echo device)}"
@@ -720,7 +741,12 @@ case "${1:-}" in
   update) cmd_update ;;
   roms) VERBOSE=1 cmd_roms ;;
   # What "Sync now" does on screen: saves, then the lists' roms when AUTO_ROMS is on
-  all) VERBOSE=1; cmd_all ;;
+  all)
+    VERBOSE=1
+    if [ -n "$SD" ] && [ -z "$TOKEN" ]; then echo "This card is not linked yet. Run: $0 sd $SD link http://server:port"; exit 2; fi
+    # A card only meets the server now and then: also send what the server asked for meanwhile
+    cmd_all; [ -n "$SD" ] && cmd_pulls
+    [ -n "$SD" ] && sync ;;
   game-start) cmd_game_start "${2:-}" ;;
   conflicts) cmd_conflicts ;;
   resolve) cmd_resolve "${2:-}" "${3:-}" ;;

@@ -30,6 +30,9 @@ export function saveDirs(layout: DeviceLayout, slug: string, emu: Emulator) {
         return path.posix.join(root, emu.core ?? emu.name);
       case 'rom':
         return path.posix.join(layout.romsRoot, folder);
+      // TWiLight Menu++ and some flashcarts: a "saves" folder inside each rom folder
+      case 'rom-saves':
+        return path.posix.join(layout.romsRoot, folder, 'saves');
       // RetroArch with saves next to the content, sorted by core (Android default)
       // Standalone emulators (no core) keep their saves right next to the rom
       case 'rom-core':

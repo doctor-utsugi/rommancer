@@ -198,7 +198,7 @@ export const es = {
     savesRoot: 'Carpeta de saves',
     statesRoot: 'Carpeta de savestates',
     savesLayout: 'Organización de saves',
-    layouts: { flat: 'Todo en una carpeta', system: 'Carpeta por sistema', core: 'Carpeta por core', rom: 'Junto a la rom' },
+    layouts: { flat: 'Todo en una carpeta', system: 'Carpeta por sistema', core: 'Carpeta por core', rom: 'Junto a la rom', 'rom-core': 'Junto a la rom, carpeta por core', 'rom-saves': 'Carpeta saves junto a las roms' },
     folders: 'Carpetas por sistema',
     emulator: 'Emulador',
     testOk: 'Conexión correcta',
