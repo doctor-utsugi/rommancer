@@ -69,6 +69,7 @@ TEXTS = {
         "sync_roms": "Sincronizar roms",
         "auto_roms": "Roms automáticas: {v}",
         "allow_pull": "El servidor puede traer juegos: {v}",
+        "allow_ssh": "Acceso SSH del servidor: {v}",
         "p_pulls": "Enviando juegos al servidor",
         "yes": "sí",
         "no": "no",
@@ -118,6 +119,7 @@ TEXTS = {
         "sync_roms": "Sync roms",
         "auto_roms": "Automatic roms: {v}",
         "allow_pull": "Server may fetch games: {v}",
+        "allow_ssh": "Server SSH access: {v}",
         "p_pulls": "Sending games to the server",
         "yes": "yes",
         "no": "no",
@@ -424,7 +426,7 @@ class App:
                 r = s.text(label, (x + 10, y), s.font, color)
                 if i == sel:
                     pygame.draw.rect(s.surf, ACCENT, r.inflate(20, 8), 2, border_radius=8)
-                y += int(s.font.get_linesize() * (1.4 if len(items) <= 5 else 1.12 if len(items) <= 7 else 1.0))
+                y += int(s.font.get_linesize() * (1.4 if len(items) <= 5 else 1.12 if len(items) <= 7 else 1.0 if len(items) <= 8 else 0.92))
             s.flip()
             a = self.next_action(timeout=0)
             if a is None:
@@ -657,6 +659,9 @@ class App:
     def toggle_allow_pull(self):
         self.toggle("ALLOW_PULL")
 
+    def toggle_allow_ssh(self):
+        self.toggle("ALLOW_SSH")
+
     def conflicts(self):
         try:
             out = subprocess.run(["sh", SCRIPT, "conflicts"], capture_output=True, text=True, timeout=15, env={**os.environ, "HTTP_MAX": "5"}).stdout
@@ -708,10 +713,11 @@ class App:
                 cfg = self.settings()
                 auto = T["yes"] if cfg.get("AUTO_ROMS", "1") == "1" else T["no"]
                 pull = T["yes"] if cfg.get("ALLOW_PULL", "1") == "1" else T["no"]
+                ssh = T["yes"] if cfg.get("ALLOW_SSH", "1") == "1" else T["no"]
                 n = "…" if self.conflict_count is None else self.conflict_count
-                items = [T["sync_now"], T["sync_roms"], T["auto_roms"].format(v=auto), T["allow_pull"].format(v=pull), T["conflicts"].format(n=n), T["status"], T["logout"], T["quit"]]
-                choice = self.menu(T["title"], items, info, refresh=lambda: T["conflicts"].format(n="…" if self.conflict_count is None else self.conflict_count), refresh_index=4)
-                actions = [self.sync_now, self.sync_roms, self.toggle_auto_roms, self.toggle_allow_pull, self.resolve_conflicts, self.status, self.logout]
+                items = [T["sync_now"], T["sync_roms"], T["auto_roms"].format(v=auto), T["allow_pull"].format(v=pull), T["allow_ssh"].format(v=ssh), T["conflicts"].format(n=n), T["status"], T["logout"], T["quit"]]
+                choice = self.menu(T["title"], items, info, refresh=lambda: T["conflicts"].format(n="…" if self.conflict_count is None else self.conflict_count), refresh_index=5)
+                actions = [self.sync_now, self.sync_roms, self.toggle_auto_roms, self.toggle_allow_pull, self.toggle_allow_ssh, self.resolve_conflicts, self.status, self.logout]
             else:
                 choice = self.menu(T["title"], [f"{T['server']}: {self.server}", T["login"], T["signup"], T["quit"]])
                 actions = [self.edit_server, self.login, self.signup]

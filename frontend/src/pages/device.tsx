@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react'
 import { Link, useParams } from 'react-router'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
-import { Check, Download, RefreshCw, Send, X } from 'lucide-react'
+import { Check, Download, RefreshCw, Send, Terminal, X } from 'lucide-react'
 import { toast } from 'sonner'
 import { get, post, type Paged } from '@/lib/api'
 import { useAuth } from '@/lib/auth'
@@ -33,7 +33,7 @@ interface InventoryItem {
 export function DevicePage() {
   const { id } = useParams()
   const { t } = useTranslation()
-  const { can } = useAuth()
+  const { can, user } = useAuth()
   const qc = useQueryClient()
   const device = useQuery({ queryKey: ['device', id], queryFn: () => get<any>(`/devices/${id}`) })
   const inventory = useQuery({ queryKey: ['device-inventory', id], queryFn: () => get<{ allowPull: boolean; inventoryAt: string | null; items: InventoryItem[] }>(`/devices/${id}/inventory`), refetchInterval: 15_000 })
@@ -80,6 +80,12 @@ export function DevicePage() {
             {t('more.device.send')}
           </Button>
         )}
+        {user?.role === 'ADMIN' && d.sshHost && d.clientPath && (
+          <Button size="sm" variant="outline" onClick={() => void act(() => post(`/devices/${id}/ssh-sync`, {}), () => t('more.device.sshAsked'))}>
+            <Terminal className="size-4" />
+            {t('more.device.sshSync')}
+          </Button>
+        )}
         {allowPull && missing > 0 && (
           <Button size="sm" onClick={() => void pull({})}>
             <Download className="size-4" />
@@ -92,6 +98,12 @@ export function DevicePage() {
         {d.clientVersion && ` · ${t('more.device.client')} ${d.clientVersion}`}
         {inventory.data?.inventoryAt && ` · ${t('more.device.inventoryAt')}: ${formatDate(inventory.data.inventoryAt)}`}
       </p>
+      {d.sshHost && (
+        <p className="text-sm text-muted-foreground">
+          {t('more.device.ssh', { address: `${d.sshUser ?? 'root'}@${d.sshHost}:${d.sshPort ?? 22}` })} · {t('more.device.sshAt')}: {formatDate(d.sshAt)}
+          {d.sshError && <span className="text-destructive"> · {d.sshError}</span>}
+        </p>
+      )}
       {!inventory.data?.allowPull && <p className="text-sm text-muted-foreground">{t('more.device.pullDisabled')}</p>}
 
       <Tabs defaultValue="games">

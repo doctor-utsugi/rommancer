@@ -21,7 +21,7 @@
 #                                   Menu++...) mounted on this computer; the link lives on the card itself,
 #                                   so any computer with this script can sync it. Without a command: sync.
 set -u
-CLIENT_VERSION=20261008
+CLIENT_VERSION=20261009
 # Onion keeps curl (with TLS) and friends outside the default PATH
 [ -d /mnt/SDCARD/.tmp_update/bin ] && PATH="/mnt/SDCARD/.tmp_update/bin:$PATH"
 
@@ -72,6 +72,9 @@ SETTINGS="$STATE/settings"
 AUTO_ROMS=1
 # ALLOW_PULL=1 lets the server fetch roms it lacks from this device (only when asked from the web app)
 ALLOW_PULL=1
+# ALLOW_SSH=1 adds the server's key to this console's SSH server, so the server can sync it while the
+# daemon is not running (asleep, not started yet); 0 removes the key
+ALLOW_SSH=1
 [ -f "$SETTINGS" ] && . "$SETTINGS"
 set_setting() { grep -v "^$1=" "$SETTINGS" 2>/dev/null > "$WORK/settings"; echo "$1=$2" >> "$WORK/settings"; mv "$WORK/settings" "$SETTINGS"; }
 # Installer packages bring the server address (and a one-time enrolment token) next to the script
@@ -327,7 +330,7 @@ cmd_sync() {
   fix_clock
   build_request "$req" || { log "server unreachable"; rmdir "$LOCK"; return 1; }
   progress server 0 0
-  http POST "$SERVER/api/v1/agent/sync" "$req" "$plan" "X-Allow-Pull: $ALLOW_PULL" || { log "sync request failed"; rmdir "$LOCK"; return 1; }
+  http POST "$SERVER/api/v1/agent/sync" "$req" "$plan" "X-Allow-Pull: $ALLOW_PULL" "X-Ssh: $(ssh_offer)" "X-Client-Path-B64: $(b64 "$DIR/$(basename "$0")")" || { log "sync request failed"; rmdir "$LOCK"; return 1; }
   ups=0; downs=0; errs=0; moved=0; total="$(grep -c . "$plan")"
   while IFS="$TAB" read -r action p a b; do
     moved=$((moved + 1)); progress transfer "$moved" "$total"
@@ -351,6 +354,31 @@ cmd_sync() {
   rmdir "$LOCK" 2>/dev/null
   trap - EXIT INT TERM
   return 0
+}
+
+# "user@address:port" when an SSH server listens here and the server's key is installed, "0" otherwise
+ssh_offer() {
+  [ -z "$SD" ] || return 0
+  home="$(awk -F: -v u="$(id -u)" '$3 == u { print $6; exit }' /etc/passwd 2>/dev/null)"; home="${home:-${HOME:-/root}}"
+  keys="$home/.ssh/authorized_keys"
+  if [ "$ALLOW_SSH" != 1 ]; then
+    grep -q rommancer-server "$keys" 2>/dev/null && { grep -v rommancer-server "$keys" > "$WORK/keys"; cat "$WORK/keys" > "$keys"; }
+    echo 0; return 0
+  fi
+  # Port 22 listening (0016 in hex, state 0A)
+  awk '$4 == "0A" && $2 ~ /:0016$/ { f = 1 } END { exit !f }' /proc/net/tcp /proc/net/tcp6 2>/dev/null || { echo 0; return 0; }
+  key="$(HTTP_MAX=10 http GET "$SERVER/api/v1/agent/ssh-key" - - 2>/dev/null)"
+  case "$key" in
+    ssh-*" rommancer-server")
+      # Replaces a key left by an earlier server
+      if ! grep -qxF "$key" "$keys" 2>/dev/null; then
+        mkdir -p "$home/.ssh" 2>/dev/null && chmod 700 "$home/.ssh" 2>/dev/null
+        { grep -v rommancer-server "$keys" 2>/dev/null; printf '%s\n' "$key"; } > "$WORK/keys" && cat "$WORK/keys" > "$keys" && chmod 600 "$keys" && log "ssh: server key added to $keys"
+      fi ;;
+  esac
+  addr="$(ip -4 route get 1.1.1.1 2>/dev/null | sed -n 's/.* src \([0-9.]*\).*/\1/p' | head -n 1)"
+  [ -n "$addr" ] || addr="$(hostname -i 2>/dev/null | cut -d' ' -f1)"
+  case "$addr" in ""|127.*) echo 0 ;; *) printf '%s@%s:22\n' "$(id -un 2>/dev/null || echo root)" "$addr" ;; esac
 }
 
 # Cheap change detector: sizes and mtimes of the save files
@@ -569,7 +597,7 @@ t() {
       badserver) echo "No hay un Rommancer en esa direccion" ;; badlogin) echo "Usuario o contrasena incorrectos" ;;
       closed) echo "Este servidor no permite crear cuentas" ;; finished) echo "Listo. Sincronizacion automatica activada." ;;
       syncing) echo "Sincronizando..." ;; roms) echo "Sincronizar roms" ;; autoroms) echo "Roms automaticas: $2" ;;
-      allowpull) echo "Servidor puede traer juegos: $2" ;; p_pulls) echo "Enviando juegos al servidor" ;;
+      allowpull) echo "Servidor puede traer juegos: $2" ;; allowssh) echo "Acceso SSH del servidor: $2" ;; p_pulls) echo "Enviando juegos al servidor" ;;
       yes) echo "si" ;; no) echo "no" ;; conflicts) echo "Conflictos ($2)" ;; noconflicts) echo "No hay conflictos" ;;
       keepdevice) echo "Quedarme con el de esta consola" ;; keepserver) echo "Usar el del servidor" ;;
       conflictinfo) echo "$2: esta consola $3, servidor $4 ($5)" ;;
@@ -586,7 +614,7 @@ t() {
       badserver) echo "No Rommancer at that address" ;; badlogin) echo "Wrong username or password" ;;
       closed) echo "This server does not allow new accounts" ;; finished) echo "Done. Automatic sync is on." ;;
       syncing) echo "Syncing..." ;; roms) echo "Sync roms" ;; autoroms) echo "Automatic roms: $2" ;;
-      allowpull) echo "Server may fetch games: $2" ;; p_pulls) echo "Sending games to the server" ;;
+      allowpull) echo "Server may fetch games: $2" ;; allowssh) echo "Server SSH access: $2" ;; p_pulls) echo "Sending games to the server" ;;
       yes) echo "yes" ;; no) echo "no" ;; conflicts) echo "Conflicts ($2)" ;; noconflicts) echo "No conflicts" ;;
       keepdevice) echo "Keep this console's save" ;; keepserver) echo "Use the server's save" ;;
       conflictinfo) echo "$2: this console $3, server $4 ($5)" ;;
@@ -684,15 +712,17 @@ cmd_setup() {
       nconf="$(grep -c '^conflict' "$WORK/conflicts")"
       if [ "$AUTO_ROMS" = 1 ]; then auto="$(t yes)"; else auto="$(t no)"; fi
       if [ "$ALLOW_PULL" = 1 ]; then pull="$(t yes)"; else pull="$(t no)"; fi
-      menu "Rommancer Sync" "$(t connected)" "$(t sync)" "$(t roms)" "$(t autoroms "$auto")" "$(t allowpull "$pull")" "$(t conflicts "$nconf")" "$(t status)" "$(t unlink)" "$(t quit)"; rc=$?
+      if [ "$ALLOW_SSH" = 1 ]; then ssh="$(t yes)"; else ssh="$(t no)"; fi
+      menu "Rommancer Sync" "$(t connected)" "$(t sync)" "$(t roms)" "$(t autoroms "$auto")" "$(t allowpull "$pull")" "$(t allowssh "$ssh")" "$(t conflicts "$nconf")" "$(t status)" "$(t unlink)" "$(t quit)"; rc=$?
       case $rc in
         0) with_progress "$(t sync)" cmd_all ;;
         1) with_progress "$(t roms)" cmd_roms ;;
         2) if [ "$AUTO_ROMS" = 1 ]; then AUTO_ROMS=0; else AUTO_ROMS=1; fi; set_setting AUTO_ROMS "$AUTO_ROMS" ;;
         3) if [ "$ALLOW_PULL" = 1 ]; then ALLOW_PULL=0; else ALLOW_PULL=1; fi; set_setting ALLOW_PULL "$ALLOW_PULL" ;;
-        4) setup_conflicts ;;
-        5) panel "$(t status)" "$(tail -n 4 "$LOG" 2>/dev/null | cut -c21- | tr '\n' ' ')" wait ;;
-        6) keep="$SERVER"; cmd_unlink > /dev/null; TOKEN=""; USER_NAME=""; SERVER="$keep" ;;
+        4) if [ "$ALLOW_SSH" = 1 ]; then ALLOW_SSH=0; else ALLOW_SSH=1; fi; set_setting ALLOW_SSH "$ALLOW_SSH" ;;
+        5) setup_conflicts ;;
+        6) panel "$(t status)" "$(tail -n 4 "$LOG" 2>/dev/null | cut -c21- | tr '\n' ' ')" wait ;;
+        7) keep="$SERVER"; cmd_unlink > /dev/null; TOKEN=""; USER_NAME=""; SERVER="$keep" ;;
         *) return 0 ;;
       esac
     else

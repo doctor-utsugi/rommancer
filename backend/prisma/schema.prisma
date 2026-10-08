@@ -485,6 +485,13 @@ model Device {
   // Set from the web app; the client syncs at its next poll and clears it
   wantSyncAt     DateTime?
   inventoryAt    DateTime?
+  // Where the client script lives on the device, so the server can run it over SSH when the device is quiet
+  clientPath     String?           @db.VarChar(512)
+  // The SSH address was typed in the web app: the one the console reports about itself does not replace it
+  sshManual      Boolean           @default(false)
+  // Last time the server reached the device over SSH, and why it failed if it did
+  sshAt          DateTime?
+  sshError       String?           @db.VarChar(255)
   inventory      DeviceRom[]
   pulls          DevicePull[]
   createdAt      DateTime          @default(now())

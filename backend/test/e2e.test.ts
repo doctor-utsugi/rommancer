@@ -2,6 +2,8 @@
  * Prueba de extremo a extremo de todos los flujos sobre una base de datos de test.
  * Requiere: MySQL de compose levantado, 7zz y chdman, ../roms/{nes,snes} y ../data/dats/*.dat.
  * Opcional: contenedor rommancer-sshd en 127.0.0.1:2222 (usuario device/device) para probar SFTP.
+ * Opcional: the same image on the host network, port 2224, to install and run the client over SSH:
+ *   podman run -d --name rommancer-sshd-host --network host localhost/rommancer-test-sshd /usr/sbin/sshd -D -e -p 2224
  */
 import { after, before, test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -189,9 +191,9 @@ async function waitJob(id: number, token = adminToken) {
   throw new Error('timeout');
 }
 
-const sshAvailable = () =>
+const sshAvailable = (port = 2222) =>
   new Promise<boolean>((resolve) => {
-    const s = net.connect(2222, '127.0.0.1');
+    const s = net.connect(port, '127.0.0.1');
     s.on('connect', () => {
       s.destroy();
       resolve(true);
@@ -584,6 +586,34 @@ test('dispositivos: SSH/SFTP', async (t) => {
   const tst = await api('POST', `/devices/${d.json.id}/test`, undefined, userToken);
   assert.equal(tst.json.ok, true);
   assert.ok(tst.json.romsFolders.includes('Nintendo NES-Famicom'));
+});
+
+test('dispositivos: el servidor instala el cliente por SSH y sincroniza la consola', async (t) => {
+  if (!(await sshAvailable(2224))) {
+    t.skip('rommancer-sshd-host no disponible');
+    return;
+  }
+  const consoles = (await api('GET', '/devices/consoles')).json;
+  const fw = ctx.firmwares.find((f: any) => f.slug === 'rocknix');
+  const body = { name: 'SSH only', consoleId: consoles.find((c: any) => c.name === 'Other').id, firmwareId: fw.id, host: '127.0.0.1', port: 2224, user: 'device', password: 'device', rootPath: `/home/device/sd-${Date.now()}`, server: base };
+  // Admins only: the server opens connections inside its network
+  assert.equal((await api('POST', '/devices/ssh-install', body, userToken)).status, 403);
+  const r = await api('POST', '/devices/ssh-install', body);
+  assert.equal(r.status, 201, JSON.stringify(r.json));
+  const d = (await api('GET', `/devices/${r.json.id}`)).json;
+  assert.equal(d.connType, 'AGENT');
+  assert.ok(d.clientPath.endsWith('/rommancer/rommancer-sync.sh'));
+  assert.ok(d.lastSeenAt, 'the client ran its first sync');
+  assert.equal(d.hasPassword, false, 'the password is dropped once the server key works');
+  assert.equal((await api('POST', `/devices/${d.id}/ssh-sync`, {})).status, 202);
+  for (let i = 0; i < 40 && !(await api('GET', `/devices/${d.id}`)).json.sshAt; i++) await new Promise((res) => setTimeout(res, 500));
+  const after = (await api('GET', `/devices/${d.id}`)).json;
+  assert.ok(after.sshAt, 'synced over SSH');
+  assert.equal(after.sshError, null);
+  // A wrong address leaves nothing behind
+  const bad = await api('POST', '/devices/ssh-install', { ...body, port: 1 });
+  assert.equal(bad.status, 400);
+  assert.equal((await api('GET', '/devices')).json.filter((x: any) => x.name === 'SSH only').length, 1);
 });
 
 test('subidas: validacion por hash (DAT, romhack, RetroAchievements)', async () => {

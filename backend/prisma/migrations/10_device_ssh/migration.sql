@@ -1,0 +1,5 @@
+-- AlterTable
+ALTER TABLE `Device` ADD COLUMN `clientPath` VARCHAR(512) NULL,
+    ADD COLUMN `sshManual` BOOLEAN NOT NULL DEFAULT false,
+    ADD COLUMN `sshAt` DATETIME(3) NULL,
+    ADD COLUMN `sshError` VARCHAR(255) NULL;

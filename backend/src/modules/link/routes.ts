@@ -25,7 +25,7 @@ export const linkRouter = Router();
 const CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 const CODE_TTL_MS = 15 * 60_000;
 const POLL_SECONDS = 3;
-const CLIENT_DIR = path.resolve(import.meta.dirname, '../../../../clients/linux');
+export const CLIENT_DIR = path.resolve(import.meta.dirname, '../../../../clients/linux');
 const CLIENT_SCRIPT = path.join(CLIENT_DIR, 'rommancer-sync.sh');
 const ENROLL_TTL_MS = 30 * 86400_000;
 
@@ -61,7 +61,7 @@ async function suggest(h: { firmwareHint?: string | null; model?: string | null 
   return { firmwareId: firmware?.id ?? null, consoleId: console?.id ?? null };
 }
 
-async function createAgentDevice(userId: number, data: { name: string; consoleId: number; firmwareId: number; rootPath: string; overrides?: Prisma.InputJsonValue }) {
+export async function createAgentDevice(userId: number, data: { name: string; consoleId: number; firmwareId: number; rootPath: string; overrides?: Prisma.InputJsonValue }) {
   const token = crypto.randomBytes(24).toString('base64url');
   const device = await prisma.device.create({
     data: { userId, name: data.name, consoleId: data.consoleId, firmwareId: data.firmwareId, connType: 'AGENT', rootPath: data.rootPath, overrides: data.overrides, syncSaves: true, tokenHash: sha256(token), tokenCreatedAt: new Date() },
@@ -69,7 +69,7 @@ async function createAgentDevice(userId: number, data: { name: string; consoleId
   return { device, token };
 }
 
-const publicBase = (req: Request) => env.publicUrl || `${req.get('x-forwarded-proto') ?? req.protocol}://${req.get('x-forwarded-host') ?? req.get('host')}`;
+export const publicBase = (req: Request) => env.publicUrl || `${req.get('x-forwarded-proto') ?? req.protocol}://${req.get('x-forwarded-host') ?? req.get('host')}`;
 
 const text = (lines: [string, string | number][]) => lines.map(([k, v]) => `${k}\t${v}`).join('\n') + '\n';
 

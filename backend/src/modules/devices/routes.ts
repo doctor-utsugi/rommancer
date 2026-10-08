@@ -15,12 +15,17 @@ import { scriptFiles } from '../saves/script.js';
 import { loadList, resolveListFiles } from '../lists/service.js';
 import { layoutOf, openSink } from './sink.js';
 import { ownedGameIds, ownedRomIds } from '../roms/service.js';
+import { installClient, serverKey, syncOverSsh } from './ssh.js';
+import { createAgentDevice, publicBase } from '../link/routes.js';
 
 export const devicesRouter = Router();
 // Dispositivos: para copiar roms (descargar) o para sincronizar saves
 devicesRouter.use(requirePerm('roms.download', 'saves'));
 
 const publicDevice = { sshPassword: true, sshKey: true, tokenHash: true } as const;
+
+/** Where each firmware's card or data lives, for consoles added over SSH */
+const DEFAULT_ROOTS: Record<string, string> = { onion: '/mnt/SDCARD', knulli: '/userdata', batocera: '/userdata', rocknix: '/storage', muos: '/mnt/mmc' };
 
 // --- Catalogo de consolas y firmwares ---
 devicesRouter.get('/consoles', async (_req, res) => {
@@ -116,6 +121,56 @@ devicesRouter.post('/', async (req, res) => {
   if (body.connType === 'LOCAL') body.rootPath = path.resolve(body.rootPath);
   const d = await prisma.device.create({ data: { ...(deviceData(body) as Prisma.DeviceUncheckedCreateInput), userId: me(req).id }, omit: publicDevice });
   res.status(201).json(d);
+});
+
+// --- The server's SSH access to consoles ---
+// Public key to add by hand to a console's authorized_keys (consoles with the app add it themselves)
+devicesRouter.get('/ssh-key', async (_req, res) => {
+  res.json({ publicKey: (await serverKey()).publicKey });
+});
+
+// A console that only offers SSH: the server installs the client on it and from then on syncs it.
+// Admins only: the server opens connections inside its own network
+devicesRouter.post('/ssh-install', requireAdmin, async (req, res) => {
+  const body = z
+    .object({
+      name: z.string().trim().min(1).max(128),
+      consoleId: z.number().int(),
+      firmwareId: z.number().int(),
+      host: z.string().trim().min(1).max(255),
+      port: z.number().int().min(1).max(65535).default(22),
+      user: z.string().trim().min(1).max(64).default('root'),
+      // Only to get in the first time; dropped once the server's key works
+      password: z.string().max(256).optional(),
+      rootPath: z.string().trim().max(512).optional(),
+      // Address the console uses to reach this server (a LAN one, say); the public one by default
+      server: z.string().trim().url().max(255).optional(),
+    })
+    .parse(req.body);
+  const firmware = await prisma.firmware.findUniqueOrThrow({ where: { id: body.firmwareId } });
+  const rootPath = body.rootPath || DEFAULT_ROOTS[firmware.slug];
+  if (!rootPath?.startsWith('/')) throw badRequest('Root folder required for this firmware');
+  const { device, token } = await createAgentDevice(me(req).id, { name: body.name, consoleId: body.consoleId, firmwareId: body.firmwareId, rootPath });
+  const withSsh = await prisma.device.update({
+    where: { id: device.id },
+    data: { sshManual: true, sshHost: body.host, sshPort: body.port, sshUser: body.user, sshPassword: body.password ? encrypt(body.password) : null },
+    include: { firmware: true },
+  });
+  try {
+    await installClient(withSsh, (body.server ?? publicBase(req)).replace(/\/+$/, ''), token);
+  } catch (e) {
+    await prisma.device.delete({ where: { id: device.id } });
+    throw badRequest(`Could not install over SSH: ${e instanceof Error ? e.message : e}`);
+  }
+  res.status(201).json({ id: device.id });
+});
+
+// Sync a quiet console now over SSH (the sweep does it by itself every few minutes)
+devicesRouter.post('/:id/ssh-sync', requireAdmin, async (req, res) => {
+  const d = await ownDevice(intParam(req), me(req));
+  if (!d.sshHost || !d.clientPath) throw badRequest('This console has no SSH access');
+  void syncOverSsh(d.id).catch(() => {});
+  res.status(202).json({ ok: true });
 });
 
 devicesRouter.get('/:id', async (req, res) => {

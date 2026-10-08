@@ -22,6 +22,8 @@ import os from 'node:os';
 import { pipeline } from 'node:stream/promises';
 import { normalizeTitle, parseRomName } from '../../lib/romname.js';
 import { ingestUnverified, ingestVerified } from '../uploads/ingest.js';
+import { serverKey } from '../devices/ssh.js';
+import type { Prisma } from '@prisma/client';
 
 export const agentRouter = Router();
 
@@ -111,6 +113,23 @@ async function registerUnknownCores(layout: DeviceLayout, root: string, files: I
   }
 }
 
+/**
+ * "X-Ssh: user@host:port" when the console runs an SSH server and accepts the server's key ("0" when the
+ * user turned that off); "X-Client-Path" is the script the server runs over SSH when the console is quiet.
+ */
+async function storeSshOffer(device: AgentDevice, req: Request) {
+  const offer = req.header('x-ssh');
+  const clientPath = b64(req.header('x-client-path-b64'));
+  if (offer === undefined && !clientPath) return;
+  const data: Prisma.DeviceUpdateInput = {};
+  if (clientPath.startsWith('/') && clientPath.length <= 512) data.clientPath = clientPath;
+  const m = offer?.match(/^([A-Za-z0-9._-]{1,64})@([A-Za-z0-9.:-]{1,255}):(\d{1,5})$/);
+  // Addresses typed in the web app win: behind NAT or a VPN the console does not know how it is reached
+  if (m && !device.sshManual) Object.assign(data, { sshUser: m[1], sshHost: m[2], sshPort: Number(m[3]) });
+  else if (offer === '0' && !device.sshManual) Object.assign(data, { sshHost: null });
+  if (Object.keys(data).length) await prisma.device.update({ where: { id: device.id }, data });
+}
+
 /** Keeps the device's rom list (only names and hashes) and identifies each game by its content. */
 async function storeInventory(device: AgentDevice, roms: { path: string; hashes: string[] }[], allowPull: string | undefined) {
   const layout = layoutOf(device);
@@ -170,6 +189,7 @@ agentRouter.post('/sync', express.text({ limit: '16mb', type: '*/*' }), async (r
     else if (kind === 'file' && p && SHA1.test(h ?? '')) present.set(p, h);
   }
   await storeInventory(device, roms, req.header('x-allow-pull'));
+  await storeSshOffer(device, req);
   const userSaves = await prisma.save.findMany({ where: { userId: device.userId }, select: { baseName: true, gameId: true } });
   const savedNames = new Set(userSaves.map((s) => s.baseName));
   const savedGames = new Set(userSaves.map((s) => s.gameId).filter((g): g is number => g !== null));
@@ -359,6 +379,12 @@ agentRouter.post('/pull/:id', async (req, res) => {
     await fs.promises.rm(tmp, { force: true });
   }
   res.type('text/plain').send(result + '\n');
+});
+
+// The server's public key, which the client adds to the console's authorized_keys (when allowed there)
+agentRouter.get('/ssh-key', async (req, res) => {
+  await deviceFromToken(req);
+  res.type('text/plain').send((await serverKey()).publicKey + '\n');
 });
 
 // Folders the client must list: roms (to know what is installed) and save locations

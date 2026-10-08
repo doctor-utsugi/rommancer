@@ -48,6 +48,25 @@ Client commands: `setup`, `link SERVER`, `enroll`, `sync`, `daemon`, `boot`, `in
   `FileObserver` and syncs 5 s after the last write; it also polls the server every 15 s for requests from the web
   app and starts at boot. WorkManager runs a full pass every 15 minutes as a fallback. Menu: *Upload when saving*.
 
+### The server's SSH channel
+
+The server can also reach a console itself, over SSH, and run the same client there (one sync algorithm,
+whichever side starts it):
+
+- **Consoles with the app**: when an SSH server listens on port 22 and *Server SSH access* is on (`ALLOW_SSH=1`,
+  the default), the client adds the server's public key (`GET /agent/ssh-key`) to the console's
+  `~/.ssh/authorized_keys` and reports `X-Ssh: user@address:22` and its own path (`X-Client-Path-B64`) on every sync.
+  Turning the option off removes the key and reports `X-Ssh: 0`.
+- **Consoles without the app**: Devices > *Add over SSH* (admins). The server logs in (password only the first time,
+  or the server key added by hand), copies the client and its link, installs the server key, hooks the client to
+  boot and runs a first sync; the password is then dropped. An address typed there is kept (`sshManual`) even when
+  the console reports another one (NAT, VPN).
+- **When**: every minute the server looks at admins' consoles with SSH whose daemon has been quiet for 2 minutes.
+  It runs `rommancer-sync.sh all` and `pulls` over SSH right away when the web app asked for something since the
+  last attempt (*Refresh now*, roms to bring), and every 10 minutes otherwise. *Sync over SSH* on the device page
+  runs it on demand. The client's own lock keeps an SSH run and the daemon from syncing at the same time.
+- The key pair (RSA, PKCS#1) is created on first use and kept encrypted in the `Setting` table.
+
 ### SD cards synced from a computer
 
 For consoles that only have an SD card, the card itself is the device:

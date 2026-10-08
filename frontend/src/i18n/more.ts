@@ -1,8 +1,28 @@
 // Textos de la fase 2 (permisos, sincronizacion, revision, obras, dispositivos con scripts...)
 export const esMore = {
+  ssh: {
+    add: 'Añadir por SSH',
+    help: 'Para consolas sin la app: el servidor instala el cliente por SSH y la sincroniza desde entonces',
+    intro: 'El servidor entra en la consola, instala el cliente de Rommancer y hace una primera sincronización. Después la mantiene al día por SSH cuando la consola no lo hace por su cuenta.',
+    host: 'Dirección IP o nombre',
+    port: 'Puerto',
+    user: 'Usuario',
+    password: 'Contraseña (solo la primera vez)',
+    root: 'Carpeta raíz',
+    rootAuto: 'la del firmware',
+    server: 'Dirección del servidor que usará la consola (opcional)',
+    keyHelp: 'Sin contraseña: añade antes esta clave al fichero ~/.ssh/authorized_keys de la consola. Con contraseña, el servidor pone la clave él mismo y olvida la contraseña.',
+    install: 'Instalar',
+    installing: 'Instalando…',
+    installed: 'Cliente instalado y primera sincronización hecha',
+  },
   device: {
     refresh: 'Actualizar ahora',
     refreshAsked: 'Pedido: la consola enviará su lista en unos segundos',
+    sshSync: 'Sincronizar por SSH',
+    sshAsked: 'El servidor está entrando en la consola por SSH',
+    ssh: 'SSH: {{address}}',
+    sshAt: 'último acceso por SSH',
     send: 'Enviar juegos',
     sendHelp: 'Elige juegos de la colección: van a la lista propia de esta consola, que los descarga sola.',
     searchOwned: 'Busca entre los juegos que tienes',
@@ -225,9 +245,29 @@ export const esMore = {
 }
 
 export const enMore: typeof esMore = {
+  ssh: {
+    add: 'Add over SSH',
+    help: 'For consoles without the app: the server installs the client over SSH and syncs it from then on',
+    intro: 'The server logs into the console, installs the Rommancer client and runs a first sync. Afterwards it keeps it up to date over SSH whenever the console does not do it by itself.',
+    host: 'IP address or name',
+    port: 'Port',
+    user: 'User',
+    password: 'Password (first time only)',
+    root: 'Root folder',
+    rootAuto: "the firmware's",
+    server: 'Server address the console will use (optional)',
+    keyHelp: "Without a password: first add this key to the console's ~/.ssh/authorized_keys. With a password, the server installs the key itself and forgets the password.",
+    install: 'Install',
+    installing: 'Installing…',
+    installed: 'Client installed and first sync done',
+  },
   device: {
     refresh: 'Refresh now',
     refreshAsked: 'Asked: the console will send its list within seconds',
+    sshSync: 'Sync over SSH',
+    sshAsked: 'The server is connecting to the console over SSH',
+    ssh: 'SSH: {{address}}',
+    sshAt: 'last SSH access',
     send: 'Send games',
     sendHelp: "Pick games of the collection: they go to this console's own list, which it downloads by itself.",
     searchOwned: 'Search the games you have',

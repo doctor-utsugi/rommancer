@@ -22,7 +22,8 @@ export function DevicesPage() {
   const [editing, setEditing] = useState<any | null | undefined>(undefined)
   const [jobId, setJobId] = useState<number | null>(null)
   const job = useJob(jobId, [['devices'], ['saves']])
-  const { can } = useAuth()
+  const { can, user } = useAuth()
+  const [sshAdd, setSshAdd] = useState(false)
   const [scripts, setScripts] = useState<any | null>(null)
   const revoke = async (id: number) => {
     await del(`/devices/${id}/token`)
@@ -59,10 +60,16 @@ export function DevicesPage() {
         <Button size="sm" variant="outline" render={<Link to="/link" />} nativeButton={false}>
           {t('more.link.title')}
         </Button>
+        {user?.role === 'ADMIN' && (
+          <Button size="sm" variant="outline" onClick={() => setSshAdd(true)} title={t('more.ssh.help')}>
+            {t('more.ssh.add')}
+          </Button>
+        )}
         <Button size="sm" onClick={() => setEditing(null)}>
           {t('devices.new')}
         </Button>
       </PageHeader>
+      {sshAdd && <SshInstallDialog onClose={() => setSshAdd(false)} />}
       {jobId && (
         <div className="mb-4 max-w-md">
           <JobProgress job={job} />
@@ -384,6 +391,106 @@ function DeviceDialog({ device, onClose }: { device: any | null; onClose(): void
           </Button>
           <Button onClick={() => void submit()} disabled={!form.name || !form.firmwareId || (!form.consoleId && !newConsole) || !form.rootPath}>
             {t('common.save')}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
+// A console that only offers SSH: the server installs the client on it and keeps it in sync from then on
+function SshInstallDialog({ onClose }: { onClose: () => void }) {
+  const { t } = useTranslation()
+  const qc = useQueryClient()
+  const consoles = useQuery({ queryKey: ['consoles'], queryFn: () => get<any[]>('/devices/consoles') })
+  const firmwares = useQuery({ queryKey: ['firmwares'], queryFn: () => get<any[]>('/devices/firmwares') })
+  const key = useQuery({ queryKey: ['ssh-key'], queryFn: () => get<{ publicKey: string }>('/devices/ssh-key') })
+  const [form, setForm] = useState({ name: '', consoleId: '', firmwareId: '', host: '', port: '22', user: 'root', password: '', rootPath: '', server: '' })
+  const [busy, setBusy] = useState(false)
+  const set = (k: keyof typeof form, v: string) => setForm((f) => ({ ...f, [k]: v }))
+  const install = async () => {
+    setBusy(true)
+    try {
+      await post('/devices/ssh-install', {
+        name: form.name,
+        consoleId: Number(form.consoleId),
+        firmwareId: Number(form.firmwareId),
+        host: form.host,
+        port: Number(form.port) || 22,
+        user: form.user || 'root',
+        password: form.password || undefined,
+        rootPath: form.rootPath || undefined,
+        server: form.server || undefined,
+      })
+      toast.success(t('more.ssh.installed'))
+      void qc.invalidateQueries({ queryKey: ['devices'] })
+      onClose()
+    } catch (e) {
+      toast.error(errMsg(e))
+    } finally {
+      setBusy(false)
+    }
+  }
+  return (
+    <Dialog open onOpenChange={(o) => !o && !busy && onClose()}>
+      <DialogContent className="sm:max-w-lg">
+        <DialogHeader>
+          <DialogTitle>{t('more.ssh.add')}</DialogTitle>
+        </DialogHeader>
+        <p className="text-sm text-muted-foreground">{t('more.ssh.intro')}</p>
+        <div className="grid gap-3 sm:grid-cols-2">
+          <Field label={t('common.name')}>
+            <Input value={form.name} onChange={(e) => set('name', e.target.value)} />
+          </Field>
+          <Field label={t('devices.console')}>
+            <NativeSelect value={form.consoleId} onChange={(e) => set('consoleId', e.target.value)}>
+              <option value="" />
+              {consoles.data?.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.name}
+                </option>
+              ))}
+            </NativeSelect>
+          </Field>
+          <Field label={t('devices.firmware')}>
+            <NativeSelect value={form.firmwareId} onChange={(e) => set('firmwareId', e.target.value)}>
+              <option value="" />
+              {firmwares.data?.map((f) => (
+                <option key={f.id} value={f.id}>
+                  {f.name}
+                </option>
+              ))}
+            </NativeSelect>
+          </Field>
+          <Field label={t('more.ssh.root')}>
+            <Input value={form.rootPath} placeholder={t('more.ssh.rootAuto')} onChange={(e) => set('rootPath', e.target.value)} />
+          </Field>
+          <Field label={t('more.ssh.host')}>
+            <Input value={form.host} placeholder="192.0.2.50" onChange={(e) => set('host', e.target.value)} />
+          </Field>
+          <Field label={t('more.ssh.port')}>
+            <Input value={form.port} inputMode="numeric" onChange={(e) => set('port', e.target.value)} />
+          </Field>
+          <Field label={t('more.ssh.user')}>
+            <Input value={form.user} onChange={(e) => set('user', e.target.value)} />
+          </Field>
+          <Field label={t('more.ssh.password')}>
+            <Input type="password" autoComplete="new-password" value={form.password} onChange={(e) => set('password', e.target.value)} />
+          </Field>
+          <div className="sm:col-span-2">
+            <Field label={t('more.ssh.server')}>
+              <Input value={form.server} placeholder={window.location.origin} onChange={(e) => set('server', e.target.value)} />
+            </Field>
+          </div>
+        </div>
+        <p className="text-xs text-muted-foreground">{t('more.ssh.keyHelp')}</p>
+        <Textarea readOnly rows={3} className="font-mono text-xs break-all" value={key.data?.publicKey ?? ''} onFocus={(e) => e.currentTarget.select()} />
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose} disabled={busy}>
+            {t('common.cancel')}
+          </Button>
+          <Button onClick={() => void install()} disabled={busy || !form.name || !form.consoleId || !form.firmwareId || !form.host}>
+            {busy ? t('more.ssh.installing') : t('more.ssh.install')}
           </Button>
         </DialogFooter>
       </DialogContent>
