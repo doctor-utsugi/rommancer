@@ -17,6 +17,9 @@ import { layoutOf, openSink } from './sink.js';
 import { ownedGameIds, ownedRomIds } from '../roms/service.js';
 import { installClient, serverKey, syncOverSsh } from './ssh.js';
 import { OPEN_PULL, pullTransfers } from '../saves/agent.js';
+
+/** Requests not finished yet, including paused ones (the console is only offered the open ones) */
+const QUEUED_PULL = [...OPEN_PULL, 'paused'];
 import { createAgentDevice, publicBase } from '../link/routes.js';
 
 export const devicesRouter = Router();
@@ -222,7 +225,7 @@ devicesRouter.get('/:id/inventory', async (req, res) => {
   const systems = await prisma.system.findMany({ select: { id: true, slug: true, name: true } });
   const sysName = new Map(systems.map((x) => [x.slug, x.name]));
   const sysById = new Map(systems.map((x) => [x.id, x]));
-  const pending = new Set((await prisma.devicePull.findMany({ where: { deviceId: d.id, status: { in: OPEN_PULL } }, select: { path: true } })).map((p) => p.path));
+  const pending = new Set((await prisma.devicePull.findMany({ where: { deviceId: d.id, status: { in: QUEUED_PULL } }, select: { path: true } })).map((p) => p.path));
   const sizes = await catalogSizes(rows);
   const romsBase = path.posix.join(d.rootPath.replace(/\/+$/, ''), layoutOf(d).romsRoot) + '/';
   const items = rows.map((r) => {
@@ -285,7 +288,7 @@ devicesRouter.post('/:id/pull', requirePerm('roms.upload'), async (req, res) => 
   });
   const ownedRoms = await ownedRomIds({ romIds: [...new Set(rows.flatMap((r) => (r.romId ? [r.romId] : [])))], include: 'any' });
   const ownedGames = await ownedGameIds();
-  const pending = new Set((await prisma.devicePull.findMany({ where: { deviceId: d.id, status: { in: OPEN_PULL } }, select: { path: true } })).map((p) => p.path));
+  const pending = new Set((await prisma.devicePull.findMany({ where: { deviceId: d.id, status: { in: QUEUED_PULL } }, select: { path: true } })).map((p) => p.path));
   // Explicit paths are fetched even if the game is owned (another version); bulk requests only bring what is missing
   const wanted = rows.filter((r) => !pending.has(r.path) && (body.paths || !((r.romId && ownedRoms.has(r.romId)) || (r.gameId && ownedGames.has(r.gameId)))));
   if (wanted.length) await prisma.devicePull.createMany({ data: wanted.map((r) => ({ deviceId: d.id, path: r.path })) });
@@ -306,7 +309,7 @@ async function catalogSizes(rows: { path: string; romId: number | null }[]) {
  */
 devicesRouter.get('/:id/pull-progress', async (req, res) => {
   const d = await ownDevice(intParam(req), me(req));
-  const oldestOpen = await prisma.devicePull.findFirst({ where: { deviceId: d.id, status: { in: OPEN_PULL } }, orderBy: { createdAt: 'asc' }, select: { createdAt: true } });
+  const oldestOpen = await prisma.devicePull.findFirst({ where: { deviceId: d.id, status: { in: QUEUED_PULL } }, orderBy: { createdAt: 'asc' }, select: { createdAt: true } });
   const since = oldestOpen?.createdAt ?? new Date(Date.now() - 3600_000);
   const pulls = await prisma.devicePull.findMany({ where: { deviceId: d.id, createdAt: { gte: since } }, orderBy: { id: 'asc' } });
   const sizes = await catalogSizes(await prisma.deviceRom.findMany({ where: { deviceId: d.id, path: { in: pulls.map((p) => p.path) } }, select: { path: true, romId: true } }));
@@ -320,7 +323,8 @@ devicesRouter.get('/:id/pull-progress', async (req, res) => {
     done: count('done'),
     failed: count('failed'),
     open: pulls.length - count('done') - count('failed'),
-    bytesTotal: bytes(['pending', 'sending', 'done', 'failed']),
+    paused: count('paused'),
+    bytesTotal: bytes(['pending', 'sending', 'paused', 'done', 'failed']),
     bytesDone: bytes(['done', 'failed']) + (live?.received ?? 0),
     current: sending && live ? { path: sending.path, name: path.posix.basename(sending.path), received: live.received, size: live.size || (sizes.get(sending.path) ?? 0), startedAt: live.startedAt } : null,
     // The daemon polls every 15 s; SSH lets the server resume by itself when the daemon is not running
@@ -334,8 +338,21 @@ devicesRouter.get('/:id/pull-progress', async (req, res) => {
 // Cancels what has not been sent yet (a transfer already under way finishes)
 devicesRouter.delete('/:id/pulls', async (req, res) => {
   const d = await ownDevice(intParam(req), me(req));
-  const r = await prisma.devicePull.deleteMany({ where: { deviceId: d.id, status: 'pending' } });
+  const r = await prisma.devicePull.deleteMany({ where: { deviceId: d.id, status: { in: ['pending', 'paused'] } } });
   res.json({ cancelled: r.count });
+});
+
+// Pause: the console stops being offered what is left (the file under way finishes); resume hands it back
+devicesRouter.post('/:id/pulls/pause', async (req, res) => {
+  const d = await ownDevice(intParam(req), me(req));
+  const r = await prisma.devicePull.updateMany({ where: { deviceId: d.id, status: 'pending' }, data: { status: 'paused' } });
+  res.json({ paused: r.count });
+});
+
+devicesRouter.post('/:id/pulls/resume', async (req, res) => {
+  const d = await ownDevice(intParam(req), me(req));
+  const r = await prisma.devicePull.updateMany({ where: { deviceId: d.id, status: 'paused' }, data: { status: 'pending' } });
+  res.json({ resumed: r.count });
 });
 
 devicesRouter.get('/:id/pulls', async (req, res) => {

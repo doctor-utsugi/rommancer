@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react'
 import { Link, useParams } from 'react-router'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
-import { Check, Download, RefreshCw, Send, Terminal, X } from 'lucide-react'
+import { Check, Download, Pause, Play, RefreshCw, Send, Terminal, X } from 'lucide-react'
 import { toast } from 'sonner'
 import { del, get, post, type Paged } from '@/lib/api'
 import { useAuth } from '@/lib/auth'
@@ -47,6 +47,7 @@ interface PullProgress {
   done: number
   failed: number
   open: number
+  paused: number
   bytesTotal: number
   bytesDone: number
   current: { path: string; name: string; received: number; size: number; startedAt: number } | null
@@ -145,7 +146,11 @@ export function DevicePage() {
           canPull={allowPull}
           onCopy={() => void pull({ identified: true })}
           onCopyRest={() => void pull({})}
-          onCancel={() => void act(() => del(`/devices/${id}/pulls`), (r) => t('more.hero.cancelled', { count: r.cancelled }))}
+          onCancel={() => {
+            if (confirm(t('more.hero.cancelConfirm'))) void act(() => del(`/devices/${id}/pulls`), (r) => t('more.hero.cancelled', { count: r.cancelled }))
+          }}
+          onPause={() => void act(() => post(`/devices/${id}/pulls/pause`, {}))}
+          onResume={() => void act(() => post(`/devices/${id}/pulls/resume`, {}))}
         />
       )}
 
@@ -360,6 +365,8 @@ function CollectionHero({
   onCopy,
   onCopyRest,
   onCancel,
+  onPause,
+  onResume,
 }: {
   summary: Summary
   progress?: PullProgress
@@ -367,6 +374,8 @@ function CollectionHero({
   onCopy: () => void
   onCopyRest: () => void
   onCancel: () => void
+  onPause: () => void
+  onResume: () => void
 }) {
   const { t } = useTranslation()
   const running = !!progress?.active
@@ -415,14 +424,16 @@ function CollectionHero({
             )}
           </div>
         )}
-        {progress && (running || finished) && <CopyProgress p={progress} onCancel={onCancel} divided={summary.newGames > 0} />}
+        {progress && (running || finished) && <CopyProgress p={progress} onCancel={onCancel} onPause={onPause} onResume={onResume} divided={summary.newGames > 0} />}
       </CardContent>
     </Card>
   )
 }
 
-function CopyProgress({ p, onCancel, divided }: { p: PullProgress; onCancel: () => void; divided: boolean }) {
+function CopyProgress({ p, onCancel, onPause, onResume, divided }: { p: PullProgress; onCancel: () => void; onPause: () => void; onResume: () => void; divided: boolean }) {
   const { t } = useTranslation()
+  // Paused: nothing left on offer to the console (a file under way may still be finishing)
+  const paused = p.paused > 0 && p.paused === p.open - (p.current ? 1 : 0)
   const files = p.done + p.failed
   const share = p.bytesTotal ? pct(p.bytesDone, p.bytesTotal) : pct(files, p.total)
   const cur = p.current
@@ -430,13 +441,26 @@ function CopyProgress({ p, onCancel, divided }: { p: PullProgress; onCancel: () 
     <div className={`space-y-2 ${divided ? 'border-t pt-4' : ''}`}>
       <div className="flex flex-wrap items-center justify-between gap-2 text-sm">
         <span className="font-medium">
-          {p.active ? t('more.hero.copying') : t('more.hero.copied')} · {t('more.hero.progressFiles', { done: files, total: p.total })}
+          {paused ? t('more.hero.paused') : p.active ? t('more.hero.copying') : t('more.hero.copied')} · {t('more.hero.progressFiles', { done: files, total: p.total })}
           {p.bytesTotal > 0 && ` · ${formatBytes(p.bytesDone)} / ${formatBytes(p.bytesTotal)}`}
         </span>
         {p.active && (
-          <Button size="sm" variant="ghost" onClick={onCancel}>
-            {t('more.hero.cancel')}
-          </Button>
+          <div className="flex gap-1">
+            {paused ? (
+              <Button size="sm" onClick={onResume}>
+                <Play className="size-4" />
+                {t('more.hero.resume')}
+              </Button>
+            ) : (
+              <Button size="sm" variant="outline" onClick={onPause}>
+                <Pause className="size-4" />
+                {t('more.hero.pause')}
+              </Button>
+            )}
+            <Button size="sm" variant="ghost" onClick={onCancel}>
+              {t('more.hero.cancel')}
+            </Button>
+          </div>
         )}
       </div>
       <Progress value={share} />
@@ -448,7 +472,8 @@ function CopyProgress({ p, onCancel, divided }: { p: PullProgress; onCancel: () 
           {cur.size > 0 && <Progress value={pct(cur.received, cur.size)} className="h-1" />}
         </div>
       )}
-      {p.active && !cur && (
+      {cur && paused && <p className="text-xs text-muted-foreground">{t('more.hero.pausing')}</p>}
+      {p.active && !cur && !paused && (
         <p className="text-xs text-muted-foreground">
           {p.online ? t('more.hero.waitingConsole') : p.viaSsh ? t('more.hero.offlineSsh', { when: formatDate(p.lastSeenAt) }) : t('more.hero.offline', { when: formatDate(p.lastSeenAt) })}
         </p>
