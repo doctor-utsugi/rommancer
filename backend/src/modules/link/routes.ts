@@ -57,7 +57,9 @@ async function suggest(h: { firmwareHint?: string | null; model?: string | null 
   const firmware = h.firmwareHint ? await prisma.firmware.findUnique({ where: { slug: h.firmwareHint } }) : null;
   const model = (h.model ?? '').toLowerCase().replace(/[_-]/g, ' ');
   const consoles = await prisma.console.findMany({ orderBy: { name: 'asc' } });
-  const console = consoles.find((c) => model && model.includes(c.name.toLowerCase())) ?? consoles.find((c) => c.name === 'Other') ?? null;
+  // The longest name that fits: "Miyoo Mini Plus" is not a "Miyoo Mini"
+  const fits = consoles.filter((c) => model && model.includes(c.name.toLowerCase())).sort((a, b) => b.name.length - a.name.length);
+  const console = fits[0] ?? consoles.find((c) => c.name === 'Other') ?? null;
   return { firmwareId: firmware?.id ?? null, consoleId: console?.id ?? null };
 }
 

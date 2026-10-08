@@ -90,6 +90,11 @@ function otherMocks(req: http.IncomingMessage, res: http.ServerResponse, url: UR
     res.end(PNG);
     return true;
   }
+  if (p === '/ra/dorequest.php') {
+    const f = new URLSearchParams(body);
+    if (f.get('r') === 'login2' && f.get('u') === 'raplayer' && f.get('p') === 'ra-secret-pass') return json(res, { Success: true, User: 'raplayer', Token: 'RATOKEN123' }), true;
+    return json(res, { Success: false, Error: 'Invalid user/password combination. Please try again.' }), true;
+  }
   if (p === '/ra/API_GetGameList.php') {
     hit(`ra:${url.searchParams.get('i')}`);
     return json(res, raLists[url.searchParams.get('i') ?? ''] ?? []), true;
@@ -2089,4 +2094,140 @@ test('sync client: device inventory, fetching missing roms, sync on request, dir
   await api('PUT', `/devices/${id}/system-filter`, { newAuto: false, excluded: [], known: ['nes'] });
   assert.notEqual((await agent('/roms')).trim(), '', 'once ticked it is copied');
   await api('PUT', `/devices/${id}/system-filter`, { newAuto: true, excluded: [], known: ['nes'] });
+});
+
+test('device config: your settings reach Knulli and Onion through the shell client; copies, edits and restores', async () => {
+  const client = path.join(ROOT, 'clients/linux/rommancer-sync.sh');
+  const dir = path.join(DATA, 'device-config');
+  fs.rmSync(dir, { recursive: true, force: true });
+  const sysroot = path.join(dir, 'onion-sys');
+  const run = (name: string, args: string[], env: Record<string, string> = {}) =>
+    execFileP('sh', [client, ...args], { env: { ...process.env, ROMMANCER_STATE: path.join(dir, `${name}-state`), ROMMANCER_ROOT: path.join(dir, name), ROMMANCER_SYSROOT: sysroot, ROMMANCER_WIFI_BANDS: '', ...env } });
+  const pair = async (name: string, firmware: string, root: string, model: string) => {
+    const linking = run(name, ['link', base], { ROMMANCER_NAME: name, ROMMANCER_FIRMWARE: firmware, ROMMANCER_ROOT: root, ROMMANCER_MODEL: model });
+    const codeFile = path.join(dir, `${name}-state`, 'code.txt');
+    for (let i = 0; i < 50 && !fs.existsSync(codeFile); i++) await new Promise((r) => setTimeout(r, 100));
+    const code = fs.readFileSync(codeFile, 'utf8').split('\n')[0];
+    const info = await api('GET', `/link/${code}`);
+    const ok = await api('POST', `/link/${code}/approve`, { name, consoleId: info.json.suggestedConsoleId, firmwareId: info.json.suggestedFirmwareId });
+    await linking;
+    return ok.json.deviceId as number;
+  };
+  const knulli = path.join(dir, 'knulli');
+  const conf = path.join(knulli, 'system/batocera.conf');
+  fs.mkdirSync(path.join(knulli, 'system/configs/emulationstation'), { recursive: true });
+  const original = '# Batocera settings\n#wifi.ssid=example\nwifi.enabled=1\nwifi.ssid=Old network\nwifi.key=old\\#key\naudio.volume=80\n';
+  fs.writeFileSync(conf, original);
+  fs.writeFileSync(path.join(knulli, 'system/configs/emulationstation/es_settings.cfg'), '<config><string name="Language" value="es_ES"/></config>\n');
+  const onion = path.join(dir, 'onion');
+  const raCfg = path.join(onion, 'RetroArch/.retroarch/retroarch.cfg');
+  fs.mkdirSync(path.dirname(raCfg), { recursive: true });
+  fs.writeFileSync(raCfg, 'video_smooth = "false"\ncheevos_enable = "false"\ncheevos_username = ""\n');
+  const wpa = path.join(sysroot, 'appconfigs/wpa_supplicant.conf');
+  fs.mkdirSync(path.dirname(wpa), { recursive: true });
+  fs.writeFileSync(wpa, 'ctrl_interface=/var/run/wpa_supplicant\nupdate_config=1\n\nnetwork={\n\tssid="Neighbour"\n\tpsk="theirs123"\n\tpriority=1\n}\n');
+
+  const kId = await pair('knulli', 'knulli', knulli, 'Anbernic RG40XX V');
+  const oId = await pair('onion', 'onion', onion, 'Miyoo Mini Plus');
+  const { prisma } = await import('../src/lib/prisma.js');
+
+  // Nothing to apply before the user has settings
+  assert.equal((await api('GET', `/devices/${kId}/config`)).json.settingsPending, false);
+  assert.equal((await api('PUT', '/settings/consoles/ra', { username: 'raplayer', password: 'wrong' })).status, 400);
+  const ra = await api('PUT', '/settings/consoles/ra', { username: 'raplayer', password: 'ra-secret-pass' });
+  assert.equal(ra.status, 200, JSON.stringify(ra.json));
+  assert.equal(ra.json.hasToken, true);
+  assert.equal((await api('POST', '/settings/consoles/wifi', { ssid: 'Casa', password: 'short' })).status, 400, 'WPA needs 8+ characters');
+  await api('POST', '/settings/consoles/wifi', { ssid: 'Casa', password: 'casa;password$1', band: 'dual' });
+  await api('POST', '/settings/consoles/wifi', { ssid: 'Piso 5G', password: 'piso5-password', band: '5' });
+  await api('POST', '/settings/consoles/wifi', { ssid: 'Oculta', password: 'oculta-pass', band: '2.4', hidden: true });
+  const settings = (await api('GET', '/settings/consoles')).json;
+  assert.equal(settings.ra.username, 'raplayer');
+  assert.equal(settings.wifi.length, 3);
+  assert.ok(!JSON.stringify(settings).includes('casa;password'), 'passwords never go back to the browser');
+
+  // Knulli: everything in batocera.conf; the network it uses now keeps a slot
+  assert.equal((await api('GET', `/devices/${kId}/config`)).json.settingsPending, true);
+  await run('knulli', ['config']);
+  let text = fs.readFileSync(conf, 'utf8');
+  assert.match(text, /^global\.retroachievements=1$/m);
+  assert.match(text, /^global\.retroachievements\.username=raplayer$/m);
+  assert.match(text, /^global\.retroachievements\.password=ra-secret-pass$/m);
+  assert.match(text, /^global\.retroachievements\.token=RATOKEN123$/m);
+  assert.match(text, /^wifi\.ssid=Casa$/m);
+  assert.equal(text.split('\n').find((l) => l.startsWith('wifi.key=')), 'wifi.key=casa\\;password\\$1', 'batocera.conf escapes ; and $');
+  assert.match(text, /^wifi2\.ssid=Piso 5G$/m);
+  assert.match(text, /^wifi3\.ssid=Old network$/m);
+  assert.match(text, /^wifi3\.key=old\\#key$/m);
+  assert.match(text, /^wifi\.hidden\.ssid=Oculta$/m);
+  assert.match(text, /^audio\.volume=80$/m, 'other settings stay');
+  assert.match(text, /^#wifi\.ssid=example$/m, 'comments stay');
+  let cfg = (await api('GET', `/devices/${kId}/config`)).json;
+  assert.equal(cfg.settingsPending, false);
+  assert.equal(cfg.settingsError, null);
+  const before = cfg.versions.find((v: any) => v.source === 'before');
+  assert.ok(before, 'a copy is taken before changing anything');
+
+  // A 2.4 GHz-only device loses the 5 GHz network; running again with nothing new changes nothing
+  await api('PATCH', `/devices/${kId}/config`, { wifiBands: '2.4' });
+  cfg = (await api('GET', `/devices/${kId}/config`)).json;
+  assert.deepEqual(cfg.wifiLeftOut, ['Piso 5G']);
+  assert.equal(cfg.settingsPending, true);
+  await run('knulli', ['config']);
+  text = fs.readFileSync(conf, 'utf8');
+  assert.doesNotMatch(text, /Piso 5G/);
+  assert.match(text, /^wifi2\.ssid=Old network$/m);
+  const versions = (await api('GET', `/devices/${kId}/config`)).json.versions.length;
+  await run('knulli', ['config']);
+  assert.equal((await api('GET', `/devices/${kId}/config`)).json.versions.length, versions, 'no copy when nothing changes');
+
+  // Onion: RetroArch gets the token (no password), wpa_supplicant keeps the neighbour's network
+  await run('onion', ['config']);
+  const ocfg = fs.readFileSync(raCfg, 'utf8');
+  assert.match(ocfg, /^cheevos_enable = "true"$/m);
+  assert.match(ocfg, /^cheevos_username = "raplayer"$/m);
+  assert.match(ocfg, /^cheevos_token = "RATOKEN123"$/m);
+  assert.match(ocfg, /^cheevos_password = ""$/m);
+  assert.match(ocfg, /^video_smooth = "false"$/m);
+  const w = fs.readFileSync(wpa, 'utf8');
+  assert.match(w, /ctrl_interface=\/var\/run\/wpa_supplicant/);
+  assert.match(w, /ssid="Casa"\n\tpsk="casa;password\$1"/);
+  assert.match(w, /ssid="Oculta"\n\tpsk="oculta-pass"\n\tscan_ssid=1/);
+  assert.doesNotMatch(w, /Piso 5G/, 'the Miyoo Mini Plus model is 2.4 GHz only');
+  assert.match(w, /ssid="Neighbour"/);
+  const oDev = await prisma.device.findUniqueOrThrow({ where: { id: oId } });
+  assert.ok(oDev.settingsHash, 'applied by the console itself');
+
+  // A copy on demand, read in the web app, downloaded, edited and put back
+  await api('POST', `/devices/${kId}/config/backup`);
+  await run('knulli', ['config']);
+  cfg = (await api('GET', `/devices/${kId}/config`)).json;
+  const backup = cfg.versions.find((v: any) => v.source === 'backup');
+  assert.ok(backup && backup.files >= 2, JSON.stringify(cfg.versions));
+  const es = await fetch(`${base}/api/v1/devices/${kId}/config/versions/${backup.id}/file?path=${encodeURIComponent('system/configs/emulationstation/es_settings.cfg')}`, { headers: { Authorization: `Bearer ${adminToken}` } });
+  assert.match(await es.text(), /es_ES/);
+  const zip = await fetch(`${base}/api/v1/devices/${kId}/config/versions/${backup.id}/zip`, { headers: { Authorization: `Bearer ${adminToken}` } });
+  assert.equal(zip.status, 200);
+  assert.equal(Buffer.from(await zip.arrayBuffer()).subarray(0, 2).toString(), 'PK');
+  const edit = await api('PUT', `/devices/${kId}/config/versions/${backup.id}/file`, { path: 'system/configs/emulationstation/es_settings.cfg', content: '<config><string name="Language" value="en_US"/></config>\n' });
+  assert.equal(edit.status, 201);
+  await run('knulli', ['config']);
+  assert.match(fs.readFileSync(path.join(knulli, 'system/configs/emulationstation/es_settings.cfg'), 'utf8'), /en_US/);
+  assert.match(fs.readFileSync(conf, 'utf8'), /Oculta/, 'only the edited file is written');
+
+  // The copy taken before the first change brings batocera.conf back; the next sync applies the settings again
+  await api('PATCH', `/devices/${kId}/config`, { keepSettings: false });
+  await api('POST', `/devices/${kId}/config/versions/${before.id}/restore`, { paths: ['system/batocera.conf'] });
+  await run('knulli', ['config']);
+  assert.equal(fs.readFileSync(conf, 'utf8'), original);
+  const ops = (await api('GET', `/devices/${kId}/config`)).json.ops;
+  assert.ok(ops.every((o: any) => o.status === 'done'), JSON.stringify(ops));
+
+  // Android hands the networks to the system: they come with their passwords and bands
+  const token = fs.readFileSync(path.join(dir, 'onion-state/config'), 'utf8').match(/TOKEN="?([^"\n]+)/)![1];
+  const nets = await (await fetch(`${base}/api/v1/agent/config/wifi`, { headers: { 'X-Device-Token': token } })).text();
+  const first = nets.split('\n')[0].split('\t');
+  assert.equal(Buffer.from(first[1], 'base64').toString(), 'Casa');
+  assert.equal(Buffer.from(first[2], 'base64').toString(), 'casa;password$1');
+  assert.equal(first[3], 'dual');
 });

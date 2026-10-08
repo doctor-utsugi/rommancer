@@ -266,6 +266,14 @@ private fun Linked(store: Store, onUnlinked: () -> Unit) {
         WatchService.start(context)
     }
 
+    // The user's WiFi networks: Android asks to save them in its own dialog
+    val wifiDone = stringResource(R.string.wifi_done)
+    val wifiNone = stringResource(R.string.wifi_none)
+    val wifiCancelled = stringResource(R.string.wifi_cancelled)
+    val addWifi = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { r ->
+        screen = Screen.Message(if (r.resultCode == android.app.Activity.RESULT_OK) wifiDone else wifiCancelled)
+    }
+
     // A newer app on the server: offered at the top of the menu
     var update by remember { mutableStateOf<Updater.Available?>(null) }
     LaunchedEffect(Unit) { update = withContext(Dispatchers.IO) { Updater.check(context, store) } }
@@ -310,6 +318,21 @@ private fun Linked(store: Store, onUnlinked: () -> Unit) {
                 settingsTick++
             }
             MenuItem(stringResource(R.string.allow_pull, if (store.allowPull) yes else no)) { store.allowPull = !store.allowPull; settingsTick++ }
+            if (WifiSetup.supported) {
+                val titleWifi = stringResource(R.string.add_wifi)
+                MenuItem(titleWifi) {
+                    screen = Screen.Working(titleWifi)
+                    scope.launch {
+                        val nets = withContext(Dispatchers.IO) { runCatching { WifiSetup.fetch(context, store) } }
+                        val intent = nets.getOrNull()?.let { WifiSetup.intent(it) }
+                        when {
+                            nets.isFailure -> screen = Screen.Message(nets.exceptionOrNull()?.message ?: "error")
+                            intent == null -> screen = Screen.Message(wifiNone)
+                            else -> addWifi.launch(intent)
+                        }
+                    }
+                }
+            }
             MenuItem(stringResource(R.string.conflicts, n)) { screen = Screen.Conflicts }
             MenuItem(stringResource(R.string.status)) { screen = Screen.Status }
             MenuItem(stringResource(R.string.unlink)) {

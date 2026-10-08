@@ -14,6 +14,8 @@ import { mediaRouter, scrapeRouter } from './modules/scrape/routes.js';
 import { raRouter } from './modules/ra/routes.js';
 import { savesRouter } from './modules/saves/routes.js';
 import { agentRouter } from './modules/saves/agent.js';
+import { configAgentRouter } from './modules/devconfig/agent.js';
+import { configRouter } from './modules/devconfig/routes.js';
 import { linkPublicRouter, linkRouter } from './modules/link/routes.js';
 import { env } from './config/env.js';
 import './modules/sync/service.js';
@@ -39,6 +41,7 @@ export function createApp() {
   });
   api.use('/auth', express.json({ limit: '1mb' }), authRouter);
   // Scripts de dispositivos: autenticados con su propio token
+  api.use('/agent/config', configAgentRouter);
   api.use('/agent', agentRouter);
   api.use('/link', linkPublicRouter);
   api.use(express.json({ limit: '10mb' }));
@@ -49,6 +52,7 @@ export function createApp() {
   api.use('/jobs', jobsRouter);
   api.use('/lists', listsRouter);
   api.use('/devices', devicesRouter);
+  api.use('/', configRouter);
   api.use('/uploads', uploadsRouter);
   api.use('/media', mediaRouter);
   api.use('/scrape', scrapeRouter);

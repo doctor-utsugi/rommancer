@@ -137,6 +137,7 @@ const es = {
   p_transfer: 'Pasando partidas',
   p_pulls: 'Enviando juegos al servidor',
   'p_roms-plan': 'Preguntando qué juegos tocan',
+  p_config: 'Aplicando la configuración de la consola',
   'p_roms-download': 'Copiando juegos',
 }
 
@@ -278,6 +279,7 @@ const en: typeof es = {
   p_transfer: 'Moving saves',
   p_pulls: 'Sending games to the server',
   'p_roms-plan': 'Asking which games go here',
+  p_config: 'Applying the console configuration',
   'p_roms-download': 'Copying games',
 }
 

@@ -9,6 +9,7 @@ import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Field, NativeSelect, PageHeader, errMsg } from '@/components/common'
+import { ConsoleSettingsCard } from '@/components/device-config'
 
 export function ProfilePage() {
   const { t } = useTranslation()
@@ -130,6 +131,7 @@ export function ProfilePage() {
         </CardContent>
       </Card>
       )}
+      {!locked && <ConsoleSettingsCard />}
     </div>
   )
 }

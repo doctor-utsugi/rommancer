@@ -16,6 +16,7 @@ import { Progress } from '@/components/ui/progress'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Empty, NativeSelect, PageHeader, errMsg, formatBytes, formatDate } from '@/components/common'
+import { DeviceConfigTab } from '@/components/device-config'
 
 interface InventoryItem {
   id: number
@@ -161,6 +162,7 @@ export function DevicePage() {
           <TabsTrigger value="games">{t('more.device.tabGames', { count: items.length })}</TabsTrigger>
           <TabsTrigger value="lists">{t('more.device.tabLists', { count: lists.data?.length ?? 0 })}</TabsTrigger>
           <TabsTrigger value="pulls">{t('more.device.tabPulls', { count: pulls.data?.filter((p) => p.status === 'pending').length ?? 0 })}</TabsTrigger>
+          <TabsTrigger value="config">{t('more.device.tabConfig')}</TabsTrigger>
         </TabsList>
 
         <TabsContent value="games">
@@ -261,6 +263,10 @@ export function DevicePage() {
           )}
           <ExcludedSystems deviceId={String(id)} canEdit={can('roms.download')} onChange={() => void qc.invalidateQueries({ queryKey: ['device-lists', id] })} />
           <DeviceSpace deviceId={String(id)} canEdit={can('roms.download')} />
+        </TabsContent>
+
+        <TabsContent value="config">
+          <DeviceConfigTab deviceId={Number(id)} canEdit={can('roms.download')} />
         </TabsContent>
 
         <TabsContent value="pulls">

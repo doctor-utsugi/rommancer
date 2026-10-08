@@ -36,6 +36,8 @@ pub struct Outcome {
     pub sent: u32,
     pub roms: u32,
     pub roms_failed: u32,
+    /// Configuration work done on the card (copies, the user's settings, restores)
+    pub config: u32,
 }
 
 pub struct Engine<'a> {
@@ -320,6 +322,66 @@ impl<'a> Engine<'a> {
                 Err(e) if e.to_string() == "cancelled" => return Err(e),
                 _ => out.roms_failed += 1,
             }
+        }
+        Ok(())
+    }
+
+    /// Configuration work the server asked for, on the card itself: send the files it names (relative to the
+    /// card root; the console's internal memory is out of reach from here), then write what it sends back
+    pub fn config(&mut self, out: &mut Outcome) -> Result<()> {
+        let sd = [("X-Channel", "sd".to_string())];
+        let root = PathBuf::from(&self.root);
+        let inside = |rel: &str| !rel.starts_with('/') && !rel.split('/').any(|c| c == "..");
+        for _ in 0..5 {
+            self.check()?;
+            let plan = pairs(&self.api.get_text_with("/agent/config/plan", &sd)?);
+            let Some(op) = plan.iter().find(|l| l.len() >= 2 && l[0] == "op").map(|l| l[1].clone()) else { return Ok(()) };
+            self.progress("config", 0, 0);
+            let mut files = Vec::new();
+            for l in plan.iter().filter(|l| l.len() >= 2 && inside(&l[1])) {
+                match l[0].as_str() {
+                    "get" => files.push(l[1].clone()),
+                    "dir" => {
+                        let mut found = Vec::new();
+                        walk(&root.join(&l[1]), &mut found);
+                        for f in found.into_iter().take(200) {
+                            if let Ok(rel) = f.strip_prefix(&root) {
+                                files.push(wire(rel));
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            for rel in &files {
+                let path = root.join(rel);
+                let headers = [("X-Path-B64", b64(rel))];
+                match fs::read(&path) {
+                    Ok(body) if path.is_file() => self.api.post_text(&format!("/agent/config/file/{op}"), body, &headers)?,
+                    _ => self.api.post_text(&format!("/agent/config/file/{op}"), Vec::new(), &[headers[0].clone(), ("X-Missing", "1".into())])?,
+                };
+            }
+            let puts: Vec<_> = pairs(&self.api.post_text(&format!("/agent/config/ready/{op}"), Vec::new(), &[])?).into_iter().filter(|l| l.len() >= 3 && l[0] == "put").collect();
+            if puts.is_empty() {
+                out.config += 1;
+                continue;
+            }
+            let mut failed = None;
+            for p in &puts {
+                if !inside(&p[2]) {
+                    failed = Some(p[2].clone());
+                    continue;
+                }
+                if self.api.download(&format!("/agent/config/out/{op}/{}", p[1]), &[], &root.join(&p[2]), &mut |_| {}, self.cancelled).is_err() {
+                    failed = Some(p[2].clone());
+                }
+            }
+            let body = match &failed {
+                None => "ok".to_string(),
+                Some(f) => format!("error\twriteFailed:{f}"),
+            };
+            self.api.post_text(&format!("/agent/config/done/{op}"), body.into_bytes(), &[])?;
+            out.config += 1;
         }
         Ok(())
     }

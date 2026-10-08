@@ -22,7 +22,7 @@
 #                                   Menu++...) mounted on this computer; the link lives on the card itself,
 #                                   so any computer with this script can sync it. Without a command: sync.
 set -u
-CLIENT_VERSION=20261008
+CLIENT_VERSION=20261009
 # Onion keeps curl (with TLS) and friends outside the default PATH
 [ -d /mnt/SDCARD/.tmp_update/bin ] && PATH="/mnt/SDCARD/.tmp_update/bin:$PATH"
 
@@ -335,7 +335,7 @@ cmd_sync() {
   progress server 0 0
   # Free and total bytes of the roms' storage: the server copies list roms only while a reserve is kept
   space="$(df -k "$ROMS" 2>/dev/null | awk 'NR == 2 { printf "%.0f %.0f", $4 * 1024, $2 * 1024 }')"
-  http POST "$SERVER/api/v1/agent/sync" "$req" "$plan" "X-Allow-Pull: $ALLOW_PULL" "X-Ssh: $(ssh_offer)" "X-Client-Path-B64: $(b64 "$DIR/$(basename "$0")")" "X-Space: ${space:-}" || { log "sync request failed"; rmdir "$LOCK"; return 1; }
+  http POST "$SERVER/api/v1/agent/sync" "$req" "$plan" "X-Allow-Pull: $ALLOW_PULL" "X-Ssh: $(ssh_offer)" "X-Client-Path-B64: $(b64 "$DIR/$(basename "$0")")" "X-Space: ${space:-}" "X-Wifi-Bands: $(wifi_bands)" || { log "sync request failed"; rmdir "$LOCK"; return 1; }
   ups=0; downs=0; errs=0; moved=0; total="$(grep -c . "$plan")"
   while IFS="$TAB" read -r action p a b; do
     moved=$((moved + 1)); progress transfer "$moved" "$total"
@@ -359,6 +359,65 @@ cmd_sync() {
   rmdir "$LOCK" 2>/dev/null
   trap - EXIT INT TERM
   return 0
+}
+
+# What the WiFi chip can use ("dual" or "2.4"), so the server only hands it networks it can see
+wifi_bands() {
+  [ -n "$SD" ] && return 0
+  [ -n "${ROMMANCER_WIFI_BANDS+set}" ] && { printf '%s' "$ROMMANCER_WIFI_BANDS"; return 0; }
+  if command -v iw >/dev/null 2>&1; then
+    f="$(iw list 2>/dev/null)"
+  elif command -v iwlist >/dev/null 2>&1; then
+    f="$(iwlist wlan0 freq 2>/dev/null | sed -n 's/.*: \([0-9]\)\.\([0-9]\{3\}\).* GHz.*/* \1\2 MHz/p')"
+  else return 0; fi
+  if printf '%s\n' "$f" | grep -q '\* 5[0-9][0-9][0-9]'; then echo dual
+  elif printf '%s\n' "$f" | grep -q '\* 24[0-9][0-9]'; then echo 2.4; fi
+}
+
+# Configuration work from the server (copies, settings, restores): send the files it names, write what it
+# sends back. Never while a game runs.
+# ROMMANCER_SYSROOT: where the console's own filesystem is (tests, or a mounted image)
+cfg_path() { case "$1" in /*) printf '%s%s' "${ROMMANCER_SYSROOT:-}" "$1" ;; *) printf '%s/%s' "${ROOT%/}" "$1" ;; esac; }
+cfg_send() {
+  cf="$(cfg_path "$2")"
+  if [ -f "$cf" ]; then http POST "$SERVER/api/v1/agent/config/file/$1" "$cf" - "X-Path-B64: $(b64 "$2")" "Content-Type: application/octet-stream" >/dev/null
+  else http POST "$SERVER/api/v1/agent/config/file/$1" - - "X-Path-B64: $(b64 "$2")" "X-Missing: 1" >/dev/null; fi
+}
+cmd_config() {
+  need_link
+  if playing; then log "config: a game is running, later"; return 0; fi
+  [ -n "${ROOT:-}" ] || detect
+  chan=agent; [ -n "$SD" ] && chan=sd
+  rounds=0
+  while [ "$rounds" -lt 5 ]; do
+    rounds=$((rounds + 1))
+    cplan="$WORK/config-plan"; cput="$WORK/config-put"
+    http GET "$SERVER/api/v1/agent/config/plan" - "$cplan" "X-Channel: $chan" || return 0
+    op="$(awk -F"$TAB" '$1 == "op" { print $2; exit }' "$cplan")"
+    [ -n "$op" ] || return 0
+    while IFS="$TAB" read -r kind cp _; do
+      case "$kind" in
+        get) cfg_send "$op" "$cp" ;;
+        dir)
+          base="$(cfg_path "$cp")"
+          find "$base" -type f 2>/dev/null | head -n 200 | while IFS= read -r cf2; do cfg_send "$op" "$cp${cf2#"$base"}"; done ;;
+      esac
+    done < "$cplan"
+    http POST "$SERVER/api/v1/agent/config/ready/$op" - "$cput" || return 1
+    [ -s "$cput" ] || { log "config: $op done, nothing to change"; continue; }
+    cerr=""
+    while IFS="$TAB" read -r kind n cp; do
+      [ "$kind" = put ] || continue
+      dest="$(cfg_path "$cp")"
+      mkdir -p "$(dirname "$dest")" 2>/dev/null
+      if http GET "$SERVER/api/v1/agent/config/out/$op/$n" - "$dest.rommancer-tmp" && mv "$dest.rommancer-tmp" "$dest"; then :
+      else rm -f "$dest.rommancer-tmp"; cerr="$cp"; fi
+    done < "$cput"
+    sync
+    if [ -z "$cerr" ]; then printf 'ok' > "$WORK/config-done"; else printf 'error\twriteFailed:%s' "$cerr" > "$WORK/config-done"; fi
+    http POST "$SERVER/api/v1/agent/config/done/$op" "$WORK/config-done" - "Content-Type: text/plain" >/dev/null
+    log "config: $op applied${cerr:+ (failed: $cerr)}"
+  done
 }
 
 # "user@address:port" when an SSH server listens here and the server's key is installed, "0" otherwise
@@ -448,6 +507,7 @@ cmd_daemon() {
     if [ "$fp" != "$last" ] || [ "$since" -ge "$FULL_SECONDS" ]; then
       full=$since
       cmd_sync && { last="$(fingerprint)"; since=0; }
+      [ "$full" -ge "$FULL_SECONDS" ] && cmd_config > /dev/null 2>&1
       [ "$full" -ge "$FULL_SECONDS" ] && [ "$AUTO_ROMS" = 1 ] && cmd_roms > /dev/null 2>&1
     fi
     sleep "$WATCH_SECONDS"; since=$((since + WATCH_SECONDS))
@@ -542,7 +602,7 @@ cmd_game_start() {
   return 0
 }
 
-cmd_all() { cmd_sync; [ "$AUTO_ROMS" = 1 ] && cmd_roms; return 0; }
+cmd_all() { cmd_sync; cmd_config; [ "$AUTO_ROMS" = 1 ] && cmd_roms; return 0; }
 
 # A copy for the server is under way (a lock whose process died does not count)
 pulls_running() { [ -f "$WORK/pull-lock/pid" ] && kill -0 "$(cat "$WORK/pull-lock/pid")" 2>/dev/null; }
@@ -807,6 +867,7 @@ case "${1:-}" in
   setup) cmd_setup ;;
   update) cmd_update ;;
   roms) VERBOSE=1 cmd_roms ;;
+  config) VERBOSE=1 cmd_config ;;
   # What "Sync now" does on screen: saves, then the lists' roms when AUTO_ROMS is on
   all)
     VERBOSE=1

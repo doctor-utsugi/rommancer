@@ -168,7 +168,15 @@ impl DeviceApi {
     }
 
     pub fn get_text(&self, path: &str) -> Result<String> {
-        Ok(Self::ok(self.req(reqwest::Method::GET, path).send()?)?.text()?)
+        self.get_text_with(path, &[])
+    }
+
+    pub fn get_text_with(&self, path: &str, headers: &[(&str, String)]) -> Result<String> {
+        let mut r = self.req(reqwest::Method::GET, path);
+        for (k, v) in headers {
+            r = r.header(*k, v);
+        }
+        Ok(Self::ok(r.send()?)?.text()?)
     }
 
     pub fn post_text(&self, path: &str, body: Vec<u8>, headers: &[(&str, String)]) -> Result<String> {

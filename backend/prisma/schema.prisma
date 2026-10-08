@@ -90,6 +90,9 @@ model User {
   ssPassword         String?  @db.Text
   raUser             String?  @db.Text
   raApiKey           String?  @db.Text
+  // RetroAchievements login for the consoles (some firmwares need the password itself) and the token RA gives for it
+  raPassword         String?  @db.Text
+  raToken            String?  @db.Text
   tgdbApiKey         String?  @db.Text
   // Lista de permisos (ver lib/permissions.ts). El admin los tiene todos.
   permissions        Json?
@@ -98,6 +101,7 @@ model User {
 
   lists         List[]
   listShares    ListShare[]
+  wifiNetworks  WifiNetwork[]
   devices       Device[]
   deviceLinks   DeviceLink[]
   saves         Save[]
@@ -335,7 +339,9 @@ model RomPath {
   files           RomFile[]
 }
 
-/** A file that disappeared: its hashes, kept for a while so the same file found elsewhere is not hashed again */
+/**
+ * A file that disappeared: its hashes, kept for a while so the same file found elsewhere is not hashed again
+ */
 model RomFileGone {
   id        Int      @id @default(autoincrement())
   quickHash String   @db.Char(40)
@@ -407,19 +413,19 @@ model Media {
 }
 
 model List {
-  id              Int         @id @default(autoincrement())
+  id              Int          @id @default(autoincrement())
   ownerId         Int
-  name            String      @db.VarChar(191)
-  description     String?     @db.Text
-  visibility      Visibility  @default(PRIVATE)
-  isCollaborative Boolean     @default(false)
+  name            String       @db.VarChar(191)
+  description     String?      @db.Text
+  visibility      Visibility   @default(PRIVATE)
+  isCollaborative Boolean      @default(false)
   parentListId    Int?
   derivedFilter   Json?
-  createdAt       DateTime    @default(now())
-  updatedAt       DateTime    @updatedAt
-  owner           User        @relation(fields: [ownerId], references: [id], onDelete: Cascade)
-  parent          List?       @relation("derived", fields: [parentListId], references: [id], onDelete: SetNull)
-  children        List[]      @relation("derived")
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
+  owner           User         @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  parent          List?        @relation("derived", fields: [parentListId], references: [id], onDelete: SetNull)
+  children        List[]       @relation("derived")
   items           ListItem[]
   devices         DeviceList[]
   shares          ListShare[]
@@ -460,6 +466,8 @@ model Console {
   name         String   @unique @db.VarChar(128)
   manufacturer String   @db.VarChar(64)
   formFactor   String   @default("handheld") @db.VarChar(32)
+  // WiFi bands of the model: none | 2.4 | dual; null = not known
+  wifiBands    String?  @db.VarChar(8)
   devices      Device[]
 }
 
@@ -480,66 +488,76 @@ model Firmware {
 }
 
 model Device {
-  id             Int               @id @default(autoincrement())
-  userId         Int
-  name           String            @db.VarChar(128)
-  consoleId      Int
-  firmwareId     Int
-  connType       ConnType
+  id              Int                   @id @default(autoincrement())
+  userId          Int
+  name            String                @db.VarChar(128)
+  consoleId       Int
+  firmwareId      Int
+  connType        ConnType
   // Raiz del dispositivo: path local (SD montada) o path remoto via SSH
-  rootPath       String            @db.VarChar(512)
-  sshHost        String?           @db.VarChar(255)
-  sshPort        Int?              @default(22)
-  sshUser        String?           @db.VarChar(64)
+  rootPath        String                @db.VarChar(512)
+  sshHost         String?               @db.VarChar(255)
+  sshPort         Int?                  @default(22)
+  sshUser         String?               @db.VarChar(64)
   // Cifrado
-  sshPassword    String?           @db.Text
-  sshKey         String?           @db.Text
+  sshPassword     String?               @db.Text
+  sshKey          String?               @db.Text
   // Sobrescribe campos de Firmware: { romsRoot, savesRoot, statesRoot, systemMap }
-  overrides      Json?
-  syncSaves      Boolean           @default(false)
-  lastSyncAt     DateTime?
+  overrides       Json?
+  syncSaves       Boolean               @default(false)
+  lastSyncAt      DateTime?
   // Token para scripts del dispositivo (sha256); null = sin token
-  tokenHash      String?           @unique @db.Char(64)
-  tokenCreatedAt DateTime?
-  lastSeenAt     DateTime?
+  tokenHash       String?               @unique @db.Char(64)
+  tokenCreatedAt  DateTime?
+  lastSeenAt      DateTime?
   // Tail of the client's log and its version, sent after each sync (remote troubleshooting)
-  lastLog        String?           @db.Text
-  clientVersion  String?           @db.VarChar(32)
-  romLists       DeviceList[]
+  lastLog         String?               @db.Text
+  clientVersion   String?               @db.VarChar(32)
+  romLists        DeviceList[]
   // The device lets the server fetch roms from it (client setting, reported on every sync)
-  allowPull      Boolean           @default(true)
+  allowPull       Boolean               @default(true)
   // Set from the web app; the client syncs at its next poll and clears it
-  wantSyncAt     DateTime?
-  inventoryAt    DateTime?
+  wantSyncAt      DateTime?
+  inventoryAt     DateTime?
   // Where the client script lives on the device, so the server can run it over SSH when the device is quiet
-  clientPath     String?           @db.VarChar(512)
+  clientPath      String?               @db.VarChar(512)
   // The SSH address was typed in the web app: the one the console reports about itself does not replace it
-  sshManual      Boolean           @default(false)
+  sshManual       Boolean               @default(false)
   // Last time the server reached the device over SSH, and why it failed if it did
-  sshAt          DateTime?
-  sshError       String?           @db.VarChar(255)
-  inventory      DeviceRom[]
-  pulls          DevicePull[]
+  sshAt           DateTime?
+  sshError        String?               @db.VarChar(255)
+  inventory       DeviceRom[]
+  pulls           DevicePull[]
   // Extra keys: SD cards of this device synced from a computer (the console keeps its own tokenHash)
-  cardTokens     DeviceToken[]
+  cardTokens      DeviceToken[]
   // Linked from the desktop companion: only known when its card is connected to a computer
-  offline        Boolean           @default(false)
+  offline         Boolean               @default(false)
   // Which systems and games of its lists are copied: { newAuto, excluded, known, excludedGames } (devices/sink.ts)
-  systemFilter   Json?
+  systemFilter    Json?
   // Free space kept on the device when copying list roms, its space as last reported by the client,
   // and what did not fit at the last copy ({ at, files, bytes })
-  reservePercent Int               @default(5)
-  spaceFree      BigInt?
-  spaceTotal     BigInt?
-  spaceAt        DateTime?
-  spaceShortfall Json?
-  createdAt      DateTime          @default(now())
-  user           User              @relation(fields: [userId], references: [id], onDelete: Cascade)
-  console        Console           @relation(fields: [consoleId], references: [id])
-  firmware       Firmware          @relation(fields: [firmwareId], references: [id])
-  saveVersions   SaveVersion[]
-  saveStates     SaveDeviceState[]
-  conflicts      SaveConflict[]
+  reservePercent  Int                   @default(5)
+  spaceFree       BigInt?
+  spaceTotal      BigInt?
+  spaceAt         DateTime?
+  spaceShortfall  Json?
+  // WiFi bands the device reported (or the user set: wifiBandsManual); null = the console model's
+  wifiBands       String?               @db.VarChar(8)
+  wifiBandsManual Boolean               @default(false)
+  // The user's settings (RetroAchievements, WiFi) are kept applied on it; what was last applied and when
+  keepSettings    Boolean               @default(true)
+  settingsHash    String?               @db.Char(40)
+  settingsAt      DateTime?
+  settingsError   String?               @db.VarChar(512)
+  configVersions  DeviceConfigVersion[]
+  configOps       DeviceConfigOp[]
+  createdAt       DateTime              @default(now())
+  user            User                  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  console         Console               @relation(fields: [consoleId], references: [id])
+  firmware        Firmware              @relation(fields: [firmwareId], references: [id])
+  saveVersions    SaveVersion[]
+  saveStates      SaveDeviceState[]
+  conflicts       SaveConflict[]
 }
 
 model Emulator {
@@ -847,18 +865,18 @@ model DeviceList {
 
 // Roms found on a device at its last full sync (only the list, not the files)
 model DeviceRom {
-  id             Int      @id @default(autoincrement())
+  id             Int     @id @default(autoincrement())
   deviceId       Int
   // sha1 of the path, for the unique key (paths are too long to index)
-  pathHash       String   @db.Char(40)
-  path           String   @db.VarChar(1024)
-  systemSlug     String?  @db.VarChar(32)
-  size           BigInt   @default(0)
-  sha1           String?  @db.Char(40)
-  headerlessSha1 String?  @db.Char(40)
+  pathHash       String  @db.Char(40)
+  path           String  @db.VarChar(1024)
+  systemSlug     String? @db.VarChar(32)
+  size           BigInt  @default(0)
+  sha1           String? @db.Char(40)
+  headerlessSha1 String? @db.Char(40)
   romId          Int?
   gameId         Int?
-  device         Device   @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+  device         Device  @relation(fields: [deviceId], references: [id], onDelete: Cascade)
 
   @@unique([deviceId, pathHash])
   @@index([gameId])
@@ -879,7 +897,9 @@ model DevicePull {
   @@index([deviceId, status])
 }
 
-/** A key for one SD card of a device, synced from a computer with the desktop companion */
+/**
+ * A key for one SD card of a device, synced from a computer with the desktop companion
+ */
 model DeviceToken {
   id        Int      @id @default(autoincrement())
   deviceId  Int
@@ -889,4 +909,61 @@ model DeviceToken {
   device    Device   @relation(fields: [deviceId], references: [id], onDelete: Cascade)
 
   @@index([deviceId])
+}
+
+/// A network the user's consoles should know
+model WifiNetwork {
+  id        Int      @id @default(autoincrement())
+  userId    Int
+  ssid      String   @db.VarChar(64)
+  // Encrypted; null = open network
+  password  String?  @db.Text
+  // 2.4 | 5 | dual (the same name on both bands)
+  band      String   @default("dual") @db.VarChar(8)
+  hidden    Boolean  @default(false)
+  // Lower first
+  priority  Int      @default(0)
+  createdAt DateTime @default(now())
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+/// A copy of a device's configuration files; contents live in DATA_DIR/device-config/blobs/<sha1>
+model DeviceConfigVersion {
+  id        Int      @id @default(autoincrement())
+  deviceId  Int
+  // backup (asked for) | before (taken before a change) | edit (made in the web app)
+  source    String   @db.VarChar(16)
+  note      String?  @db.VarChar(255)
+  // [{ path, sha1, size }]; paths relative to the device root, or absolute outside it
+  files     Json
+  bytes     Int      @default(0)
+  createdAt DateTime @default(now())
+  device    Device   @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+
+  @@index([deviceId, createdAt])
+}
+
+/// Work for a device's configuration: read its files (backup), apply the user's settings, or restore a version.
+/// Carried out by whichever channel reaches the device first: its client, SSH or its card on a computer.
+model DeviceConfigOp {
+  id        Int       @id @default(autoincrement())
+  deviceId  Int
+  // backup | settings | restore
+  kind      String    @db.VarChar(16)
+  // pending | collecting | applying | done | failed
+  status    String    @default("pending") @db.VarChar(16)
+  // restore: { versionId, paths? }; while running: { collected, writes, settingsHash }
+  payload   Json?
+  channel   String?   @db.VarChar(8)
+  error     String?   @db.VarChar(512)
+  // The copy taken by this operation
+  versionId Int?
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  doneAt    DateTime?
+  device    Device    @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+
+  @@index([deviceId, status])
 }

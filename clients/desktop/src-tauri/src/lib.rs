@@ -290,7 +290,7 @@ fn start_sync(app: &AppHandle, state: &AppState, root: String, roms: Option<bool
         let cache = data_dir(&app).join(format!("hashes-{}.tsv", link.token.chars().take(12).collect::<String>()));
         let mut engine = sync::Engine::new(device_api(&root, &link), root.clone(), cache, &report, &cancelled);
         let mut out = sync::Outcome::default();
-        let result = engine.sync(&mut out).and_then(|_| engine.pulls(&mut out)).and_then(|_| if with_roms { engine.roms(&mut out) } else { Ok(()) });
+        let result = engine.sync(&mut out).and_then(|_| engine.config(&mut out)).and_then(|_| engine.pulls(&mut out)).and_then(|_| if with_roms { engine.roms(&mut out) } else { Ok(()) });
         let fin = Finished { root: root.clone(), ok: result.is_ok(), message: result.err().map(|e| e.to_string()).unwrap_or_default(), outcome: out };
         app.state::<AppState>().running.lock().unwrap().remove(&root);
         let _ = app.emit("sync-finished", fin);

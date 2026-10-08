@@ -50,4 +50,8 @@
     <string name="watch_text">Los saves se suben al servidor en cuanto guardas</string>
     <string name="update_app">Actualizar la app (%1$s)</string>
     <string name="updating">Descargando la actualización…</string>
+    <string name="add_wifi">Añadir mis redes WiFi</string>
+    <string name="wifi_done">Redes guardadas. Android se conectará a ellas cuando estén a su alcance.</string>
+    <string name="wifi_none">No hay redes para este dispositivo en Rommancer (añádelas en tu perfil, en la web).</string>
+    <string name="wifi_cancelled">No se ha guardado ninguna red.</string>
 </resources>

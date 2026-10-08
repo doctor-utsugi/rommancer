@@ -26,6 +26,7 @@ import { ingestUnverified, ingestVerified } from '../uploads/ingest.js';
 import { serverKey } from '../devices/ssh.js';
 import { devicePlan } from '../devices/plan.js';
 import { Prisma } from '@prisma/client';
+import { storeWifiBands } from '../devconfig/service.js';
 
 export const agentRouter = Router();
 
@@ -44,7 +45,7 @@ const reroot = (p: string, from: string, to: string) => (p.startsWith(trimRoot(f
 
 const b64 = (v: string | undefined) => (v ? Buffer.from(v, 'base64').toString('utf8') : '');
 
-async function deviceFromToken(req: Request): Promise<AgentDevice> {
+export async function deviceFromToken(req: Request): Promise<AgentDevice> {
   const token = req.header('x-device-token');
   if (!token) throw new HttpError(401, 'Missing device token');
   // The console's own key, or the key of one of its SD cards synced from a computer
@@ -252,6 +253,8 @@ agentRouter.post('/sync', express.text({ limit: '16mb', type: '*/*' }), async (r
   // An unreadable body (a client that sent no content type) must not wipe the device's list
   if (typeof req.body === 'string' && req.body.length) await storeInventory(device, roms, req.header('x-allow-pull'));
   await storeSshOffer(device, req);
+  // "X-Wifi-Bands: 2.4 | dual | none": what its WiFi chip can do, so it is only given networks it can see
+  await storeWifiBands(device, req.header('x-wifi-bands'));
   // "X-Space: <free bytes> <total bytes>" of the device's storage, for the list copy budget
   const space = req.header('x-space')?.trim().split(/\s+/).map(Number);
   if (space?.length === 2 && space.every((n) => Number.isFinite(n) && n >= 0)) {

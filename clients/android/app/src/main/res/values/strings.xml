@@ -50,4 +50,8 @@
     <string name="watch_text">Saves go to the server as soon as you save</string>
     <string name="update_app">Update the app (%1$s)</string>
     <string name="updating">Downloading the update…</string>
+    <string name="add_wifi">Add my WiFi networks</string>
+    <string name="wifi_done">Networks saved. Android will join them when they are in range.</string>
+    <string name="wifi_none">There are no networks for this device in Rommancer (add them in your profile, on the web).</string>
+    <string name="wifi_cancelled">No networks were saved.</string>
 </resources>

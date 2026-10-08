@@ -78,7 +78,7 @@ class SyncEngine(private val context: Context, private val store: Store, private
         onProgress(Progress("server"))
         // Free and total bytes of the shared storage: the server copies list roms only while a reserve is kept
         val space = runCatching { android.os.StatFs((romsDir ?: root).path).let { "${it.availableBytes} ${it.totalBytes}" } }.getOrDefault("")
-        val plan = api.text("/agent/sync", "POST", request.toString().toByteArray(), mapOf("X-Allow-Pull" to if (store.allowPull) "1" else "0", "X-Space" to space))
+        val plan = api.text("/agent/sync", "POST", request.toString().toByteArray(), mapOf("X-Allow-Pull" to if (store.allowPull) "1" else "0", "X-Space" to space, "X-Wifi-Bands" to WifiSetup.bands(context)))
         var up = 0
         var down = 0
         var errors = 0
