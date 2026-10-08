@@ -555,7 +555,7 @@ function Lists({ deviceId, name, onCopy }: { deviceId: number; name: string; onC
     void api<typeof lists>('GET', '/lists?scope=all').then(setLists)
     void api<{ id: number }[]>('GET', `/devices/${deviceId}/lists`).then((l) => setPicked(new Set(l.map((x) => x.id))))
   }, [deviceId])
-  const [systems, setSystems] = useState<{ slug: string; name: string; games: number; excluded: boolean }[]>([])
+  const [systems, setSystems] = useState<{ slug: string; name: string; games: number; excluded: boolean; folder: string }[]>([])
   const loadSystems = useCallback(() => void api<typeof systems>('GET', `/devices/${deviceId}/list-systems`).then(setSystems), [deviceId])
   useEffect(loadSystems, [loadSystems])
   if (!lists) return <p className="muted">…</p>
@@ -594,7 +594,10 @@ function Lists({ deviceId, name, onCopy }: { deviceId: number; name: string; onC
             <label key={s.slug} className="check">
               <input type="checkbox" checked={!s.excluded} onChange={(e) => void setCopied(s.slug, e.target.checked)} />
               <span style={s.excluded ? { textDecoration: 'line-through', opacity: 0.6 } : undefined}>{s.name}</span>
-              <span className="muted small"> · {t('gamesN', { n: s.games })}</span>
+              <span className="muted small">
+                {' '}
+                · {t('gamesN', { n: s.games })} · {t('toFolder', { folder: s.folder || '/' })}
+              </span>
             </label>
           ))}
         </>

@@ -75,7 +75,7 @@ export const emulators: EmulatorSeed[] = [
 ];
 
 // Emulador por defecto de cada sistema en firmwares basados en RetroArch
-const raDefaults: Record<string, string> = {
+export const raDefaults: Record<string, string> = {
   nes: 'ra-fceumm',
   fds: 'ra-fceumm',
   snes: 'ra-snes9x',

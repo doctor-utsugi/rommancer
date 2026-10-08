@@ -5,6 +5,7 @@ export const esMore = {
     help: 'Desmarca los sistemas cuyos juegos no quieres en este dispositivo aunque estén en sus listas. Las partidas se siguen sincronizando.',
     games_one: '{{count}} juego',
     games_other: '{{count}} juegos',
+    folder: 'a {{folder}}/',
   },
   offline: {
     badge: 'Sin conexión',
@@ -309,6 +310,7 @@ export const enMore: typeof esMore = {
     help: 'Untick the systems whose games you do not want on this device even if they are in its lists. Saves still sync.',
     games_one: '{{count}} game',
     games_other: '{{count}} games',
+    folder: 'to {{folder}}/',
   },
   offline: {
     badge: 'Offline',

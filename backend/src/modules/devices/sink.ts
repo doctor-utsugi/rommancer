@@ -161,3 +161,9 @@ export function layoutOf(device: Device & { firmware: Firmware }): DeviceLayout 
     systemMap: { ...(device.firmware.systemMap as DeviceLayout['systemMap']), ...(o.systemMap ?? {}) },
   };
 }
+
+/**
+ * Where a system's roms go on a device: the firmware's folder for it, or a folder named after the system
+ * for systems the firmware does not list (a GBA flashcart holding Game Boy games for an emulator).
+ */
+export const folderFor = (layout: DeviceLayout, slug: string) => layout.systemMap[slug]?.folder ?? slug;

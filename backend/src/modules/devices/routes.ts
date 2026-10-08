@@ -13,7 +13,7 @@ import { ZipArchive } from 'archiver';
 import { sha256 } from '../../lib/crypto.js';
 import { scriptFiles } from '../saves/script.js';
 import { loadList, resolveListFiles } from '../lists/service.js';
-import { layoutOf, openSink } from './sink.js';
+import { folderFor, layoutOf, openSink } from './sink.js';
 import { ownedGameIds, ownedRomIds } from '../roms/service.js';
 import { installClient, serverKey, syncOverSsh } from './ssh.js';
 import { OPEN_PULL, pullTransfers } from '../saves/agent.js';
@@ -218,8 +218,8 @@ export async function listProgress(listId: number, device: Awaited<ReturnType<ty
   let total = 0;
   const excluded = excludedOf(device);
   for (const it of items) {
-    const folder = layout.systemMap[it.systemSlug]?.folder;
-    if (folder === undefined || excluded.has(it.systemSlug)) continue; // a system this console does not have, or left out
+    if (excluded.has(it.systemSlug)) continue; // left out for this device
+    const folder = folderFor(layout, it.systemSlug);
     total++;
     const there = it.files.some((f) => paths.has(pathKey(path.posix.join(root, layout.romsRoot, folder, f.destName))));
     if (there || (it.romId && games.has(gameOf.get(it.romId) ?? -1))) have++;
@@ -440,10 +440,15 @@ devicesRouter.get('/:id/list-systems', async (req, res) => {
   const excluded = excludedOf(d);
   const counts = new Map<string, number>();
   for (const { listId } of await prisma.deviceList.findMany({ where: { deviceId: d.id }, select: { listId: true } })) {
-    for (const it of (await resolveListFiles(listId)).items) if (layout.systemMap[it.systemSlug]) counts.set(it.systemSlug, (counts.get(it.systemSlug) ?? 0) + 1);
+    for (const it of (await resolveListFiles(listId)).items) counts.set(it.systemSlug, (counts.get(it.systemSlug) ?? 0) + 1);
   }
   const systems = await prisma.system.findMany({ where: { slug: { in: [...new Set([...counts.keys(), ...excluded])] } }, select: { slug: true, name: true } });
-  res.json(systems.map((s) => ({ slug: s.slug, name: s.name, games: counts.get(s.slug) ?? 0, excluded: excluded.has(s.slug) })).sort((a, b) => a.name.localeCompare(b.name)));
+  // folder: where its games go on the device (systems the firmware does not list get one named after them)
+  res.json(
+    systems
+      .map((s) => ({ slug: s.slug, name: s.name, games: counts.get(s.slug) ?? 0, excluded: excluded.has(s.slug), folder: path.posix.join(layout.romsRoot, folderFor(layout, s.slug)) }))
+      .sort((a, b) => a.name.localeCompare(b.name)),
+  );
 });
 
 devicesRouter.put('/:id/excluded-systems', requirePerm('roms.download'), async (req, res) => {

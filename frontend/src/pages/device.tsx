@@ -552,7 +552,7 @@ function formatAgo(d: string | null, lang: string) {
 function ExcludedSystems({ deviceId, canEdit, onChange }: { deviceId: string; canEdit: boolean; onChange: () => void }) {
   const { t } = useTranslation()
   const qc = useQueryClient()
-  const systems = useQuery({ queryKey: ['device-list-systems', deviceId], queryFn: () => get<{ slug: string; name: string; games: number; excluded: boolean }[]>(`/devices/${deviceId}/list-systems`) })
+  const systems = useQuery({ queryKey: ['device-list-systems', deviceId], queryFn: () => get<{ slug: string; name: string; games: number; excluded: boolean; folder: string }[]>(`/devices/${deviceId}/list-systems`) })
   if (!systems.data?.length) return null
   const toggle = async (slug: string, copy: boolean) => {
     const excluded = systems.data!.filter((s) => (s.slug === slug ? !copy : s.excluded)).map((s) => s.slug)
@@ -576,7 +576,9 @@ function ExcludedSystems({ deviceId, canEdit, onChange }: { deviceId: string; ca
             <label key={s.slug} className="flex items-center gap-2">
               <Checkbox checked={!s.excluded} disabled={!canEdit} onCheckedChange={(c) => void toggle(s.slug, !!c)} />
               <span className={s.excluded ? 'text-muted-foreground line-through' : ''}>{s.name}</span>
-              <span className="text-xs text-muted-foreground">· {t('more.excluded.games', { count: s.games })}</span>
+              <span className="text-xs text-muted-foreground">
+                · {t('more.excluded.games', { count: s.games })} · {t('more.excluded.folder', { folder: s.folder || '/' })}
+              </span>
             </label>
           ))}
         </div>

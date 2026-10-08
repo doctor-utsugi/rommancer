@@ -1856,7 +1856,14 @@ test('desktop companion: GBA flashcart (saves next to each rom) and card keys of
   assert.match(plan, new RegExp(`^put\t${save.replace(/[()]/g, '\\$&')}\t`, 'm'), 'the save next to the rom, in its own folder');
   assert.equal((await api('GET', `/devices/${id}`)).json.offline, true);
   const inv = (await api('GET', `/devices/${id}/inventory`)).json;
-  assert.equal(inv.items[0].system, 'gba', 'any rom on a one-system card is of that system');
+  assert.equal(inv.items[0].system, 'gba', 'a .gba anywhere on a GBA card');
+  // Any system goes on any device: a Game Boy rom for an emulator is GB, not GBA, and keeps its own folder
+  await (await agent('/sync', { method: 'POST', body: `rom\t${rom}\t${'b'.repeat(40)}\nrom\t${card}/gb/Tiny (World).gb\t${'d'.repeat(40)}\n` })).text();
+  const inv2 = (await api('GET', `/devices/${id}/inventory`)).json;
+  assert.equal(inv2.items.find((i: any) => i.name === 'Tiny (World).gb').system, 'gb');
+  const nesList = await api('POST', `/devices/${id}/send`, { gameIds: [ctx.smb3GameId] });
+  assert.equal(nesList.status, 201);
+  assert.match(await (await agent('/roms')).text(), new RegExp(`^rom\t${card}/nes/`, 'm'), 'a NES game sent to a GBA card goes to nes/');
 
   // A second key for the same device: the console keeps its own
   const extra = await api('POST', `/devices/${id}/card-token`, { label: 'spare card' });
@@ -1925,7 +1932,7 @@ test('sync client: device inventory, fetching missing roms, sync on request, dir
   assert.deepEqual(byList.map((x: any) => [x.deviceId, x.have, x.total]), [[id, 1, 1]]);
 
   // Per-device override: NES left out, whatever the lists hold
-  assert.deepEqual((await api('GET', `/devices/${id}/list-systems`)).json.map((x: any) => [x.slug, x.games, x.excluded]), [['nes', 1, false]]);
+  assert.deepEqual((await api('GET', `/devices/${id}/list-systems`)).json.map((x: any) => [x.slug, x.games, x.excluded, x.folder]), [['nes', 1, false, 'roms/nes']]);
   assert.equal((await api('PUT', `/devices/${id}/excluded-systems`, { systems: ['nes'] })).status, 200);
   assert.equal((await api('GET', `/devices/${id}/list-systems`)).json[0].excluded, true);
   assert.equal((await agent('/roms')).trim(), '', 'no NES rom is offered to the device');

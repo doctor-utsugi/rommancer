@@ -9,7 +9,8 @@ import type { Device, Emulator, Firmware } from '@prisma/client';
 import { prisma } from '../../lib/prisma.js';
 import { sha256 } from '../../lib/crypto.js';
 import { HttpError, badRequest } from '../../lib/http.js';
-import { layoutOf, type DeviceLayout } from '../devices/sink.js';
+import { folderFor, layoutOf, type DeviceLayout } from '../devices/sink.js';
+import { raDefaults } from '../../seed/data.js';
 import { contentFor, decide, deviceFileName, findLogicalSave, receiveFromDevice, saveDirs, setBase, sha1 } from './core.js';
 import { identifyRom, parseSaveFile } from './service.js';
 import fs from 'node:fs';
@@ -61,6 +62,34 @@ async function deviceFromToken(req: Request): Promise<AgentDevice> {
   return moved ? { ...device, rootPath: root } : device;
 }
 
+/** Extensions that belong to one system only (".gb", ".sfc"...), to tell a rom's system without its folder */
+let extSystems: { at: number; map: Map<string, string>; exts: Map<string, string[]> } | null = null;
+async function systemsByExtension() {
+  if (!extSystems || Date.now() - extSystems.at > 10 * 60_000) {
+    const rows = await prisma.system.findMany({ select: { slug: true, extensions: true } });
+    const owners = new Map<string, string[]>();
+    const exts = new Map<string, string[]>();
+    for (const r of rows) {
+      const list = (Array.isArray(r.extensions) ? (r.extensions as string[]) : []).map((e) => e.toLowerCase());
+      exts.set(r.slug, list);
+      for (const e of list) owners.set(e, [...(owners.get(e) ?? []), r.slug]);
+    }
+    extSystems = { at: Date.now(), map: new Map([...owners].filter(([, s]) => s.length === 1).map(([e, s]) => [e, s[0]])), exts };
+  }
+  return extSystems;
+}
+
+/** A rom's system on a device: its folder, the card's only system when the extension fits, or the extension */
+async function systemOf(layout: DeviceLayout, folder: string, romPath: string): Promise<string | null> {
+  const byFolder = Object.entries(layout.systemMap).find(([, v]) => v.folder === folder && v.folder !== '')?.[0];
+  if (byFolder) return byFolder;
+  const ext = path.posix.extname(romPath).toLowerCase();
+  const { map, exts } = await systemsByExtension();
+  const only = Object.keys(layout.systemMap);
+  if (only.length === 1 && (exts.get(only[0]) ?? []).includes(ext)) return only[0];
+  return map.get(ext) ?? (only.length === 1 && !map.has(ext) && !ext ? only[0] : null);
+}
+
 /** Sistema y emulador de una rom del dispositivo a partir de su carpeta. */
 async function romContext(device: AgentDevice, romPath: string) {
   const layout = layoutOf(device);
@@ -69,16 +98,17 @@ async function romContext(device: AgentDevice, romPath: string) {
   const romsRoot = layout.romsRoot.replace(/\/+$/, '');
   const afterRoms = rel.startsWith(romsRoot + '/') ? rel.slice(romsRoot.length + 1) : rel;
   const folder = afterRoms.split('/')[0];
-  // A card for one system only (a GBA flashcart): every rom on it is of that system, wherever it is
-  const only = Object.keys(layout.systemMap);
-  let slug = only.length === 1 ? only[0] : (Object.entries(layout.systemMap).find(([, v]) => v.folder === folder)?.[0] ?? null);
+  let slug = await systemOf(layout, folder, romPath);
   const baseName = path.posix.basename(romPath).replace(/\.[^.]+$/, '');
   if (!slug) {
     const ident = await identifyRom(baseName);
     if (ident) slug = (await prisma.system.findUnique({ where: { id: ident.systemId } }))?.slug ?? null;
   }
-  if (!slug || !layout.systemMap[slug]) throw badRequest(`Unknown system for ${romPath}`);
-  const emu = await prisma.emulator.findUniqueOrThrow({ where: { slug: layout.systemMap[slug].emulator } });
+  if (!slug) throw badRequest(`Unknown system for ${romPath}`);
+  // Systems the firmware does not list are played with RetroArch's usual core for them
+  const emuSlug = layout.systemMap[slug]?.emulator ?? raDefaults[slug];
+  if (!emuSlug) throw badRequest(`No emulator known for ${slug}`);
+  const emu = await prisma.emulator.findUniqueOrThrow({ where: { slug: emuSlug } });
   return { layout, slug, emu, baseName, root, rel };
 }
 
@@ -159,13 +189,17 @@ async function storeInventory(device: AgentDevice, scanned: { path: string; hash
   const layout = layoutOf(device);
   const base = path.posix.join(device.rootPath.replace(/\/+$/, ''), layout.romsRoot) + '/';
   const byFolder = new Map(Object.entries(layout.systemMap).map(([slug, v]) => [v.folder, slug]));
-  const onlySystem = Object.keys(layout.systemMap).length === 1 ? Object.keys(layout.systemMap)[0] : null;
   const hashes = [...new Set(roms.flatMap((r) => r.hashes).filter((h) => SHA1.test(h)))];
   const known = new Map<string, { romId: number; gameId: number }>();
   for (let i = 0; i < hashes.length; i += 500) {
     const chunk = hashes.slice(i, i + 500);
     const parts = await prisma.romPart.findMany({ where: { OR: [{ sha1: { in: chunk } }, { headerlessSha1: { in: chunk } }] }, select: { sha1: true, headerlessSha1: true, rom: { select: { id: true, gameId: true } } } });
     for (const p of parts) for (const h of [p.sha1, p.headerlessSha1]) if (h) known.set(h, { romId: p.rom.id, gameId: p.rom.gameId });
+  }
+  const systemsOf = new Map<string, string | null>();
+  for (const r of roms) {
+    const folder = r.path.startsWith(base) ? r.path.slice(base.length).split('/')[0] : '';
+    systemsOf.set(r.path, await systemOf(layout, folder, r.path));
   }
   const rows = roms.map((r) => {
     const folder = r.path.startsWith(base) ? r.path.slice(base.length).split('/')[0] : '';
@@ -174,7 +208,7 @@ async function storeInventory(device: AgentDevice, scanned: { path: string; hash
       deviceId: device.id,
       pathHash: crypto.createHash('sha1').update(r.path).digest('hex'),
       path: r.path.slice(0, 1024),
-      systemSlug: onlySystem ?? byFolder.get(folder) ?? null,
+      systemSlug: systemsOf.get(r.path) ?? byFolder.get(folder) ?? null,
       sha1: SHA1.test(r.hashes[0] ?? '') ? r.hashes[0] : null,
       headerlessSha1: SHA1.test(r.hashes[1] ?? '') ? r.hashes[1] : null,
       romId: hit?.romId ?? null,
@@ -302,8 +336,9 @@ agentRouter.get('/roms', async (req, res) => {
   for (const { listId } of lists) {
     const { items } = await resolveListFiles(listId);
     for (const it of items) {
-      const folder = layout.systemMap[it.systemSlug]?.folder;
-      if (folder === undefined || excluded.has(it.systemSlug)) continue; // a system this firmware does not have, or left out
+      // Any system goes: the user decides what a device holds (only the systems they left out are skipped)
+      if (excluded.has(it.systemSlug)) continue;
+      const folder = folderFor(layout, it.systemSlug);
       for (const f of it.files) {
         const dest = path.posix.join(root, layout.romsRoot, folder, f.destName);
         if (seen.has(dest)) continue;
