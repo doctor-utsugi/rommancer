@@ -42,7 +42,10 @@ class SyncEngine(private val context: Context, private val store: Store, private
         return roms.any { system -> system.listFiles()?.any { it.isDirectory && it.list()?.any { n -> n.endsWith(".srm") || n.contains(".state") } == true } == true }
     }
 
-    fun sync(): Result {
+    // The screen, the background worker and the save watcher may all ask at once: one pass at a time
+    fun sync(): Result = synchronized(LOCK) { syncOnce() }
+
+    private fun syncOnce(): Result {
         val server = store.server
         val api = Api(server, store.token ?: error("Not linked"))
         onProgress(Progress("connecting"))
@@ -106,7 +109,9 @@ class SyncEngine(private val context: Context, private val store: Store, private
     }
 
     /** Roms of the lists assigned to this device that are not here yet; never deletes anything */
-    fun roms(): String {
+    fun roms(): String = synchronized(LOCK) { romsOnce() }
+
+    private fun romsOnce(): String {
         val api = Api(store.server, store.token ?: error("Not linked"))
         onProgress(Progress("roms-plan"))
         val plan = api.text("/agent/roms").lines().mapNotNull { l -> l.split('\t').takeIf { it.size >= 4 && it[0] == "rom" } }
@@ -179,6 +184,17 @@ class SyncEngine(private val context: Context, private val store: Store, private
         return listOf("sync: $r", sent, roms).filter { it.isNotBlank() }.joinToString(" · ")
     }
 
+    /** Folders the save watcher observes (every subfolder of the save roots) and the save extensions */
+    fun watchTargets(): Pair<List<File>, List<String>> {
+        val roots = Api(store.server, store.token ?: error("Not linked")).text("/agent/roots").lines().mapNotNull { l -> l.split('\t', limit = 2).takeIf { it.size == 2 } }
+        val exts = roots.firstOrNull { it[0] == "exts" }?.get(1)?.split(' ')?.filter { it.isNotBlank() }.orEmpty()
+        val dirs = roots.filter { it[0] == "saves" }.map { File(it[1]) }
+            .flatMap { d -> d.walkTopDown().onEnter { !it.name.startsWith(".") }.filter { it.isDirectory }.toList() }.distinct()
+        return dirs to exts
+    }
+
+    fun isSaveFile(name: String, exts: List<String>): Boolean = !name.startsWith(".") && isSave(name, exts)
+
     private fun isSave(name: String, exts: List<String>): Boolean {
         val n = name.lowercase()
         return exts.any { e -> n.endsWith(e) || Regex(Regex.escape(e) + "(\\d|\\.auto)$").containsMatchIn(n) }
@@ -234,6 +250,7 @@ class SyncEngine(private val context: Context, private val store: Store, private
 
     companion object {
         const val HASH_MAX = 64L * 1024 * 1024
+        private val LOCK = Any()
         private val NOT_ROMS = listOf(".png", ".jpg", ".jpeg", ".mp4", ".xml", ".txt", ".json", ".cfg", ".db", ".ini", ".pdf", ".srm", ".sav", ".mcd", ".mcr", ".dsv", ".cht", ".log", ".sh", ".lpl")
     }
 }

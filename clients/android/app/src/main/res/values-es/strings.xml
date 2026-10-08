@@ -44,4 +44,8 @@
     <string name="p_roms_download">Descargando roms</string>
     <string name="p_pulls">Enviando juegos al servidor</string>
     <string name="no_log">Todavía no hay registro</string>
+    <string name="watch">Subir al guardar: %1$s</string>
+    <string name="watch_channel">Vigilancia de saves</string>
+    <string name="watch_title">Rommancer Sync</string>
+    <string name="watch_text">Los saves se suben al servidor en cuanto guardas</string>
 </resources>

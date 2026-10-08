@@ -1,6 +1,9 @@
 package com.rommancer.sync
 
+import android.Manifest
 import android.content.Intent
+import android.content.pm.PackageManager
+import android.os.Build
 import android.graphics.BitmapFactory
 import android.net.Uri
 import android.os.Bundle
@@ -9,6 +12,8 @@ import android.provider.Settings
 import android.view.KeyEvent
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
@@ -252,6 +257,15 @@ private fun Linked(store: Store, onUnlinked: () -> Unit) {
     val yes = stringResource(R.string.yes)
     val no = stringResource(R.string.no)
 
+    // The save watcher's notification needs this permission on Android 13+; it runs either way
+    val notifications = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { }
+    LaunchedEffect(Unit) {
+        if (Build.VERSION.SDK_INT >= 33 && context.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+            notifications.launch(Manifest.permission.POST_NOTIFICATIONS)
+        }
+        WatchService.start(context)
+    }
+
     // Conflicts are counted in the background so the menu never waits for the network
     LaunchedEffect(screen) {
         if (screen == Screen.Menu) conflicts = withContext(Dispatchers.IO) { runCatching { SyncEngine(context, store).conflicts() }.getOrNull() }
@@ -282,11 +296,17 @@ private fun Linked(store: Store, onUnlinked: () -> Unit) {
             MenuItem(stringResource(R.string.sync_now), firstItem) { run(titleSync) { it.all() } }
             MenuItem(titleRoms) { run(titleRoms) { it.roms() } }
             MenuItem(stringResource(R.string.auto_roms, if (store.autoRoms) yes else no)) { store.autoRoms = !store.autoRoms; settingsTick++ }
+            MenuItem(stringResource(R.string.watch, if (store.watch) yes else no)) {
+                store.watch = !store.watch
+                if (store.watch) WatchService.start(context) else WatchService.stop(context)
+                settingsTick++
+            }
             MenuItem(stringResource(R.string.allow_pull, if (store.allowPull) yes else no)) { store.allowPull = !store.allowPull; settingsTick++ }
             MenuItem(stringResource(R.string.conflicts, n)) { screen = Screen.Conflicts }
             MenuItem(stringResource(R.string.status)) { screen = Screen.Status }
             MenuItem(stringResource(R.string.unlink)) {
                 SyncWorker.cancel(context)
+                WatchService.stop(context)
                 store.unlink()
                 onUnlinked()
             }

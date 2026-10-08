@@ -28,6 +28,11 @@ class Store(context: Context) {
         get() = prefs.getBoolean("allowPull", true)
         set(v) = prefs.edit().putBoolean("allowPull", v).apply()
 
+    /** Upload saves as soon as a game writes them (a background service with a notification) */
+    var watch: Boolean
+        get() = prefs.getBoolean("watch", true)
+        set(v) = prefs.edit().putBoolean("watch", v).apply()
+
     /** Last events, newest last, for the Status screen */
     val log: List<String> get() = (prefs.getString("log", "") ?: "").lines().filter { it.isNotBlank() }
 

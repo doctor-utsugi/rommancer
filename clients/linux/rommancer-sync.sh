@@ -16,7 +16,7 @@
 #   rommancer-sync.sh status | unlink
 #   rommancer-sync.sh               link if needed, then start the daemon in the background
 set -u
-CLIENT_VERSION=20261007
+CLIENT_VERSION=20261008
 # Onion keeps curl (with TLS) and friends outside the default PATH
 [ -d /mnt/SDCARD/.tmp_update/bin ] && PATH="/mnt/SDCARD/.tmp_update/bin:$PATH"
 
@@ -385,6 +385,11 @@ cmd_daemon() {
     case "$asked" in *sync*) since=$FULL_SECONDS ;; esac
     case "$asked" in *pull*) cmd_pulls > /dev/null 2>&1 ;; esac
     fp="$(fingerprint)"
+    # A game may still be writing its save: go ahead only once the files stay unchanged for a moment
+    if [ "$fp" != "$last" ] && [ -n "$last" ]; then
+      sleep 3; since=$((since + 3))
+      [ "$(fingerprint)" = "$fp" ] || fp="$last"
+    fi
     if [ "$fp" != "$last" ] || [ "$since" -ge "$FULL_SECONDS" ]; then
       full=$since
       cmd_sync && { last="$(fingerprint)"; since=0; }
