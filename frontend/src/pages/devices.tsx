@@ -101,6 +101,11 @@ export function DevicesPage() {
                   {d.connType === 'SSH' ? `${d.sshUser}@${d.sshHost}:${d.sshPort ?? 22}` : ''}
                   {d.rootPath}
                 </p>
+                {d.offline && (
+                  <p className="text-xs text-muted-foreground" title={t('more.offline.help')}>
+                    <Badge variant="secondary">{t('more.offline.badge')}</Badge>
+                  </p>
+                )}
                 {d.connType === 'AGENT' && (
                   <p className="text-xs text-muted-foreground">
                     {t('more.device.games', { count: d._count?.inventory ?? 0 })}
@@ -109,7 +114,7 @@ export function DevicesPage() {
                 )}
                 <p className="text-xs text-muted-foreground">
                   {t('devices.lastSync')}: {formatDate(d.lastSyncAt)}
-                  {d.connType === 'AGENT' && ` · ${t('more.devices.lastSeen')}: ${formatDate(d.lastSeenAt)}`}
+                  {d.connType === 'AGENT' && ` · ${t(d.offline ? 'more.offline.lastConnected' : 'more.devices.lastSeen')}: ${formatDate(d.lastSeenAt)}`}
                   {d.syncSaves && ` · ${t('devices.syncSaves')}`}
                 </p>
                 <div className="flex flex-wrap gap-1">
@@ -361,7 +366,7 @@ function DeviceDialog({ device, onClose }: { device: any | null; onClose(): void
               <Field label={t('devices.savesLayout')}>
                 <NativeSelect value={form.savesLayout} onChange={(e) => set('savesLayout', e.target.value)}>
                   <option value="">{t(`devices.layouts.${fw.savesLayout}`)} (firmware)</option>
-                  {['flat', 'system', 'core', 'rom', 'rom-core', 'rom-saves'].map((l) => (
+                  {['flat', 'system', 'core', 'rom', 'rom-core', 'rom-saves', 'beside'].map((l) => (
                     <option key={l} value={l}>
                       {t(`devices.layouts.${l}`)}
                     </option>

@@ -196,11 +196,12 @@ linkRouter.post('/claim', async (req, res) => {
   const h: Hints = hints.parse(req.body);
   if (!h.root) throw badRequest('Missing root');
   // The desktop companion lets the user pick the console and firmware of a card
-  const picked = z.object({ consoleId: z.coerce.number().int().optional(), firmwareId: z.coerce.number().int().optional() }).parse(req.body);
+  const picked = z.object({ consoleId: z.coerce.number().int().optional(), firmwareId: z.coerce.number().int().optional(), offline: z.boolean().optional() }).parse(req.body);
   const guess = await suggest({ firmwareHint: h.firmware, model: h.model });
   const s = { consoleId: picked.consoleId ?? guess.consoleId, firmwareId: picked.firmwareId ?? guess.firmwareId };
   if (!s.firmwareId || !s.consoleId) throw badRequest('Unknown firmware or console');
   const { device, token } = await createAgentDevice(me(req).id, { name: h.name, consoleId: s.consoleId, firmwareId: s.firmwareId, rootPath: h.root, overrides: parseOverrides(h.overrides) });
+  if (picked.offline) await prisma.device.update({ where: { id: device.id }, data: { offline: true } });
   res.status(201).json({ deviceId: device.id, token });
 });
 

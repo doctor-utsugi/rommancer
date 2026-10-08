@@ -45,7 +45,10 @@ const b64 = (v: string | undefined) => (v ? Buffer.from(v, 'base64').toString('u
 async function deviceFromToken(req: Request): Promise<AgentDevice> {
   const token = req.header('x-device-token');
   if (!token) throw new HttpError(401, 'Missing device token');
-  const device = await prisma.device.findUnique({ where: { tokenHash: sha256(token) }, include: { firmware: true } });
+  // The console's own key, or the key of one of its SD cards synced from a computer
+  const device =
+    (await prisma.device.findUnique({ where: { tokenHash: sha256(token) }, include: { firmware: true } })) ??
+    (await prisma.deviceToken.findUnique({ where: { tokenHash: sha256(token) }, include: { device: { include: { firmware: true } } } }))?.device;
   if (!device) throw new HttpError(401, 'Invalid device token');
   // SD cards synced from a computer are mounted wherever the computer puts them: the client says where.
   // A card that only lives in a computer moves its root for good; the card of a console that syncs by itself
@@ -66,7 +69,9 @@ async function romContext(device: AgentDevice, romPath: string) {
   const romsRoot = layout.romsRoot.replace(/\/+$/, '');
   const afterRoms = rel.startsWith(romsRoot + '/') ? rel.slice(romsRoot.length + 1) : rel;
   const folder = afterRoms.split('/')[0];
-  let slug = Object.entries(layout.systemMap).find(([, v]) => v.folder === folder)?.[0] ?? null;
+  // A card for one system only (a GBA flashcart): every rom on it is of that system, wherever it is
+  const only = Object.keys(layout.systemMap);
+  let slug = only.length === 1 ? only[0] : (Object.entries(layout.systemMap).find(([, v]) => v.folder === folder)?.[0] ?? null);
   const baseName = path.posix.basename(romPath).replace(/\.[^.]+$/, '');
   if (!slug) {
     const ident = await identifyRom(baseName);
@@ -74,14 +79,15 @@ async function romContext(device: AgentDevice, romPath: string) {
   }
   if (!slug || !layout.systemMap[slug]) throw badRequest(`Unknown system for ${romPath}`);
   const emu = await prisma.emulator.findUniqueOrThrow({ where: { slug: layout.systemMap[slug].emulator } });
-  return { layout, slug, emu, baseName, root };
+  return { layout, slug, emu, baseName, root, rel };
 }
 
 type RomCtx = Awaited<ReturnType<typeof romContext>>;
 
 function candidatePaths(ctx: RomCtx, emu: Emulator = ctx.emu) {
   ctx = { ...ctx, emu };
-  const dirs = saveDirs(ctx.layout, ctx.slug, ctx.emu);
+  // "beside": flashcarts keep each save next to its rom, in whatever folder the rom is
+  const dirs = ctx.layout.savesLayout === 'beside' ? { saves: path.posix.dirname(ctx.rel), states: path.posix.dirname(ctx.rel) } : saveDirs(ctx.layout, ctx.slug, ctx.emu);
   const abs = (p: string) => path.posix.join(ctx.root, p);
   const files: { kind: 'SAVE' | 'STATE'; slot: number; path: string }[] = [{ kind: 'SAVE', slot: 0, path: abs(path.posix.join(dirs.saves, deviceFileName(ctx.baseName, ctx.emu, 'SAVE', 0))) }];
   if (ctx.emu.stateExt) for (const slot of [-1, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9]) files.push({ kind: 'STATE', slot, path: abs(path.posix.join(dirs.states, deviceFileName(ctx.baseName, ctx.emu, 'STATE', slot))) });
@@ -153,6 +159,7 @@ async function storeInventory(device: AgentDevice, scanned: { path: string; hash
   const layout = layoutOf(device);
   const base = path.posix.join(device.rootPath.replace(/\/+$/, ''), layout.romsRoot) + '/';
   const byFolder = new Map(Object.entries(layout.systemMap).map(([slug, v]) => [v.folder, slug]));
+  const onlySystem = Object.keys(layout.systemMap).length === 1 ? Object.keys(layout.systemMap)[0] : null;
   const hashes = [...new Set(roms.flatMap((r) => r.hashes).filter((h) => SHA1.test(h)))];
   const known = new Map<string, { romId: number; gameId: number }>();
   for (let i = 0; i < hashes.length; i += 500) {
@@ -167,7 +174,7 @@ async function storeInventory(device: AgentDevice, scanned: { path: string; hash
       deviceId: device.id,
       pathHash: crypto.createHash('sha1').update(r.path).digest('hex'),
       path: r.path.slice(0, 1024),
-      systemSlug: byFolder.get(folder) ?? null,
+      systemSlug: onlySystem ?? byFolder.get(folder) ?? null,
       sha1: SHA1.test(r.hashes[0] ?? '') ? r.hashes[0] : null,
       headerlessSha1: SHA1.test(r.hashes[1] ?? '') ? r.hashes[1] : null,
       romId: hit?.romId ?? null,
@@ -294,7 +301,7 @@ agentRouter.get('/roms', async (req, res) => {
     const { items } = await resolveListFiles(listId);
     for (const it of items) {
       const folder = layout.systemMap[it.systemSlug]?.folder;
-      if (!folder) continue; // a system this firmware does not have
+      if (folder === undefined) continue; // a system this firmware does not have
       for (const f of it.files) {
         const dest = path.posix.join(root, layout.romsRoot, folder, f.destName);
         if (seen.has(dest)) continue;
@@ -450,8 +457,11 @@ agentRouter.get('/roots', async (req, res) => {
   const layout = layoutOf(device);
   const root = device.rootPath.replace(/\/+$/, '');
   const abs = (p: string) => path.posix.join(root, p);
-  const lines = [`roms\t${abs(layout.romsRoot)}`, `saves\t${abs(layout.savesLayout.startsWith('rom') ? layout.romsRoot : layout.savesRoot)}`];
-  if (!layout.savesLayout.startsWith('rom') && layout.statesRoot !== layout.savesRoot) lines.push(`saves\t${abs(layout.statesRoot)}`);
+  const nextToRoms = layout.savesLayout.startsWith('rom') || layout.savesLayout === 'beside';
+  const lines = [`roms\t${abs(layout.romsRoot)}`, `saves\t${abs(nextToRoms ? layout.romsRoot : layout.savesRoot)}`];
+  if (!nextToRoms && layout.statesRoot !== layout.savesRoot) lines.push(`saves\t${abs(layout.statesRoot)}`);
+  // Roms anywhere under the roms folder, not only <system>/<file> (clients that know it look deeper)
+  if (layout.savesLayout === 'beside') lines.push('scan\tdeep');
   const exts = new Set<string>();
   for (const v of Object.values(layout.systemMap)) {
     const emu = await prisma.emulator.findUnique({ where: { slug: v.emulator } });

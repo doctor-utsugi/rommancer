@@ -61,15 +61,17 @@ pub fn read_link(root: &Path) -> Option<Link> {
         server: kv.get("SERVER").cloned().unwrap_or_default(),
         token,
         user: kv.get("USER").cloned().unwrap_or_default(),
-        console: found.1,
+        // SHARED=1: the card of a device that has its own root (a console), linked from here
+        console: found.1 || kv.get("SHARED").is_some_and(|v| v == "1"),
         device_id: kv.get("DEVICE_ID").and_then(|v| v.parse().ok()),
     })
 }
 
-pub fn write_own_link(root: &Path, server: &str, token: &str, user: &str, device_id: u64) -> std::io::Result<()> {
+pub fn write_own_link(root: &Path, server: &str, token: &str, user: &str, device_id: u64, shared: bool) -> std::io::Result<()> {
     let dir = root.join(".rommancer");
     std::fs::create_dir_all(&dir)?;
-    std::fs::write(dir.join("config"), format!("SERVER={server}\nTOKEN={token}\nUSER={user}\nDEVICE_ID={device_id}\n"))
+    let shared = if shared { "SHARED=1\n" } else { "" };
+    std::fs::write(dir.join("config"), format!("SERVER={server}\nTOKEN={token}\nUSER={user}\nDEVICE_ID={device_id}\n{shared}"))
 }
 
 pub fn remove_own_link(root: &Path) -> std::io::Result<()> {
@@ -94,9 +96,26 @@ pub fn guess_firmware(root: &Path) -> Option<String> {
         Some("knulli".into())
     } else if has("ROMs") && has("RetroArch") {
         Some("android-esde".into())
+    } else if has_ext(root, ".gba", 2) {
+        // GBA roms loose on the card: a flashcart (SuperCard, EZ-Flash...)
+        Some("gba-flashcart".into())
     } else {
         None
     }
+}
+
+fn has_ext(dir: &Path, ext: &str, depth: u32) -> bool {
+    std::fs::read_dir(dir).into_iter().flatten().flatten().any(|e| {
+        let name = e.file_name().to_string_lossy().to_lowercase();
+        if name.starts_with('.') {
+            return false;
+        }
+        match e.file_type() {
+            Ok(t) if t.is_dir() => depth > 0 && has_ext(&e.path(), ext, depth - 1),
+            Ok(_) => name.ends_with(ext),
+            _ => false,
+        }
+    })
 }
 
 fn card(path: PathBuf, label: String, removable: bool, total: u64, free: u64) -> Card {

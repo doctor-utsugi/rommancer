@@ -3,7 +3,7 @@ import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import { open } from '@tauri-apps/plugin-dialog'
 import { disable, enable, isEnabled } from '@tauri-apps/plugin-autostart'
-import { bytes, t } from './i18n'
+import { bytes, setLang, t, type Lang } from './i18n'
 import { SavePoint } from './SavePoint'
 
 interface Status {
@@ -44,11 +44,32 @@ interface Finished {
 
 const api = <T,>(method: string, path: string, body?: unknown) => invoke<T>('api', { method, path, body })
 
+const LANG_KEY = 'rommancer-lang'
+const savedLang = (): Lang | '' => {
+  try {
+    return (localStorage.getItem(LANG_KEY) as Lang | null) ?? ''
+  } catch {
+    return ''
+  }
+}
+
 export function App() {
   const [status, setStatus] = useState<Status | null>(null)
+  const [ready, setReady] = useState(false)
   const refresh = useCallback(() => void invoke<Status>('status').then(setStatus), [])
   useEffect(refresh, [refresh])
-  if (!status) return null
+  // The user's choice, otherwise Spanish when any locale variable of the system says so
+  useEffect(() => {
+    const chosen = savedLang()
+    if (chosen) {
+      setLang(chosen)
+      setReady(true)
+    } else
+      void invoke<string>('system_lang')
+        .then((l) => l === 'es' && setLang('es'))
+        .finally(() => setReady(true))
+  }, [])
+  if (!status || !ready) return null
   return status.signed_in ? <Main status={status} onChange={refresh} /> : <Login server={status.server} onDone={refresh} />
 }
 
@@ -179,9 +200,6 @@ function Main({ status, onChange }: { status: Status; onChange: () => void }) {
         <button className="ghost" onClick={() => void addFolder()}>
           + {t('addFolder')}
         </button>
-        <div className="sidepoint">
-          <SavePoint size={150} />
-        </div>
       </aside>
       <main>
         {card ? (
@@ -224,6 +242,25 @@ function Options({ status, onChange }: { status: Status; onChange: () => void })
           }}
         />
         {t('autostart')}
+      </label>
+      <label>
+        {t('language')}
+        <select
+          value={savedLang()}
+          onChange={(e) => {
+            try {
+              if (e.target.value) localStorage.setItem(LANG_KEY, e.target.value)
+              else localStorage.removeItem(LANG_KEY)
+            } catch {
+              /* not stored: this session only */
+            }
+            location.reload()
+          }}
+        >
+          <option value="">{t('langAuto')}</option>
+          <option value="es">Español</option>
+          <option value="en">English</option>
+        </select>
       </label>
       <button
         className="ghost danger"
@@ -342,12 +379,18 @@ function ProgressBox({ p }: { p?: Progress }) {
   )
 }
 
+const CONSOLE_FOR: Record<string, string> = { 'nds-twilight': 'Nintendo DS', onion: 'Miyoo Mini Plus', 'gba-flashcart': 'Game Boy Advance' }
+const OTHER = 'other'
+
 function LinkForm({ card, onLinked }: { card: Card; onLinked: () => void }) {
   const [firmwares, setFirmwares] = useState<{ id: number; slug: string; name: string }[]>([])
   const [consoles, setConsoles] = useState<{ id: number; name: string }[]>([])
+  const [devices, setDevices] = useState<{ id: number; name: string; console?: { name: string } }[]>([])
+  const [owner, setOwner] = useState('')
   const [name, setName] = useState(card.label)
   const [fw, setFw] = useState('')
   const [con, setCon] = useState('')
+  const [newCon, setNewCon] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   useEffect(() => {
@@ -358,16 +401,16 @@ function LinkForm({ card, onLinked }: { card: Card; onLinked: () => void }) {
     })
     void api<typeof consoles>('GET', '/devices/consoles').then((c) => {
       setConsoles(c)
-      const want = card.guess === 'nds-twilight' ? 'Nintendo DS' : card.guess === 'onion' ? 'Miyoo Mini Plus' : 'Other'
-      setCon(String(c.find((x) => x.name === want)?.id ?? c[0]?.id ?? ''))
+      const want = CONSOLE_FOR[card.guess ?? ''] ?? ''
+      setCon(String(c.find((x) => x.name === want)?.id ?? ''))
     })
+    void api<typeof devices>('GET', '/devices').then(setDevices)
   }, [card.guess])
-  const link = async () => {
+  const run = async (fn: () => Promise<unknown>) => {
     setBusy(true)
     setError('')
     try {
-      const f = firmwares.find((x) => String(x.id) === fw)!
-      await invoke('link_card', { root: card.root, name, consoleId: Number(con), firmwareId: Number(fw), firmware: f.slug })
+      await fn()
       onLinked()
     } catch (e) {
       setError(String(e))
@@ -375,43 +418,86 @@ function LinkForm({ card, onLinked }: { card: Card; onLinked: () => void }) {
       setBusy(false)
     }
   }
+  const attach = () => run(() => invoke('attach_card', { root: card.root, deviceId: Number(owner), label: name }))
+  const link = () =>
+    run(async () => {
+      let consoleId = Number(con)
+      if (con === OTHER) consoleId = (await api<{ id: number }>('POST', '/devices/consoles', { name: newCon.trim(), manufacturer: newCon.trim().split(' ')[0] })).id
+      const f = firmwares.find((x) => String(x.id) === fw)!
+      await invoke('link_card', { root: card.root, name, consoleId, firmwareId: Number(fw), firmware: f.slug })
+    })
+  const existing = owner !== ''
   return (
     <div className="panel">
       <h2>{t('linkTitle')}</h2>
       <p className="muted small">{t('linkHelp')}</p>
       <label>
-        {t('name')}
+        {t('belongs')}
+        <select value={owner} onChange={(e) => setOwner(e.target.value)}>
+          <option value="">{t('belongsNo')}</option>
+          {devices.map((d) => (
+            <option key={d.id} value={d.id}>
+              {d.name}
+              {d.console?.name ? ` (${d.console.name})` : ''}
+            </option>
+          ))}
+        </select>
+      </label>
+      <label>
+        {t(existing ? 'cardLabel' : 'name')}
         <input value={name} onChange={(e) => setName(e.target.value)} />
       </label>
-      <div className="row">
-        <label className="grow">
-          {t('firmware')}
-          <select value={fw} onChange={(e) => setFw(e.target.value)}>
-            <option value="" disabled>
-              …
-            </option>
-            {firmwares.map((f) => (
-              <option key={f.id} value={f.id}>
-                {f.name}
+      {existing ? (
+        <>
+          <p className="muted small">{t('attachHelp')}</p>
+          {error && <p className="error">{error}</p>}
+          <button className="primary" disabled={busy || !name} onClick={() => void attach()}>
+            {t('attach')}
+          </button>
+        </>
+      ) : (
+        <>
+          <div className="row">
+            <label className="grow">
+              {t('console')}
+              <select value={con} onChange={(e) => setCon(e.target.value)}>
+                <option value="" disabled>
+                  …
+                </option>
+                {consoles.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.name}
+                  </option>
+                ))}
+                <option value={OTHER}>{t('otherConsole')}</option>
+              </select>
+            </label>
+            {con === OTHER && (
+              <label className="grow">
+                {t('newConsole')}
+                <input autoFocus value={newCon} onChange={(e) => setNewCon(e.target.value)} />
+              </label>
+            )}
+          </div>
+          <label>
+            {t('firmware')}
+            <select value={fw} onChange={(e) => setFw(e.target.value)}>
+              <option value="" disabled>
+                {t('pickLayout')}
               </option>
-            ))}
-          </select>
-        </label>
-        <label className="grow">
-          {t('console')}
-          <select value={con} onChange={(e) => setCon(e.target.value)}>
-            {consoles.map((c) => (
-              <option key={c.id} value={c.id}>
-                {c.name}
-              </option>
-            ))}
-          </select>
-        </label>
-      </div>
-      {error && <p className="error">{error}</p>}
-      <button className="primary" disabled={busy || !name || !fw || !con} onClick={() => void link()}>
-        {t('link')}
-      </button>
+              {firmwares.map((f) => (
+                <option key={f.id} value={f.id}>
+                  {f.name}
+                </option>
+              ))}
+            </select>
+          </label>
+          {error && <p className="error">{error}</p>}
+          <button className="primary" disabled={busy || !name || !fw || !con || (con === OTHER && !newCon.trim())} onClick={() => void link()}>
+            {t('link')}
+          </button>
+        </>
+      )}
     </div>
   )
 }

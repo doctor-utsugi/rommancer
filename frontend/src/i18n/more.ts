@@ -1,5 +1,10 @@
 // Textos de la fase 2 (permisos, sincronizacion, revision, obras, dispositivos con scripts...)
 export const esMore = {
+  offline: {
+    badge: 'Sin conexión',
+    help: 'Se sincroniza al conectar su tarjeta a un PC con la app: lo que ves es de la última conexión y lo que pidas se hará en la siguiente.',
+    lastConnected: 'Última conexión',
+  },
   desktop: {
     app: 'App de PC ({{os}})',
     help: 'Sincroniza tarjetas SD y carpetas desde el ordenador (DS y consolas sin red), copia juegos y asigna listas. Se queda en la bandeja.',
@@ -293,6 +298,11 @@ export const esMore = {
 }
 
 export const enMore: typeof esMore = {
+  offline: {
+    badge: 'Offline',
+    help: 'Syncs when its card is connected to a computer with the app: what you see is from the last connection and what you ask for happens at the next one.',
+    lastConnected: 'Last connected',
+  },
   desktop: {
     app: 'PC app ({{os}})',
     help: 'Syncs SD cards and folders from the computer (DS and consoles without network), copies games and assigns lists. Stays in the tray.',

@@ -1839,6 +1839,34 @@ test('desktop companion: a console card synced from a computer keeps the console
   assert.match(await agent('/whoami'), new RegExp(`id\t${id}\n`));
 });
 
+test('desktop companion: GBA flashcart (saves next to each rom) and card keys of an existing device', async () => {
+  const card = '/media/me/SUPERCARD';
+  const claim = await api('POST', '/link/claim', { name: 'supercard', firmware: 'gba-flashcart', root: card, offline: true });
+  assert.equal(claim.status, 201, JSON.stringify(claim.json));
+  const token = claim.json.token as string;
+  const id = claim.json.deviceId as number;
+  const agent = (p: string, init: RequestInit = {}, tok = token) =>
+    fetch(`${base}/api/v1/agent${p}`, { ...init, headers: { 'X-Device-Token': tok, 'Content-Type': 'application/octet-stream', ...(init.headers ?? {}) } })
+  const roots = await (await agent('/roots')).text();
+  assert.match(roots, /scan\tdeep/);
+  assert.match(roots, new RegExp(`saves\t${card}\n`));
+  const rom = `${card}/Juegos/Estrategia/Mystery Game (USA).gba`;
+  const save = `${card}/Juegos/Estrategia/Mystery Game (USA).sav`;
+  const plan = await (await agent('/sync', { method: 'POST', body: `rom\t${rom}\t${'b'.repeat(40)}\nfile\t${save}\t${'c'.repeat(40)}\n` })).text();
+  assert.match(plan, new RegExp(`^put\t${save.replace(/[()]/g, '\\$&')}\t`, 'm'), 'the save next to the rom, in its own folder');
+  assert.equal((await api('GET', `/devices/${id}`)).json.offline, true);
+  const inv = (await api('GET', `/devices/${id}/inventory`)).json;
+  assert.equal(inv.items[0].system, 'gba', 'any rom on a one-system card is of that system');
+
+  // A second key for the same device: the console keeps its own
+  const extra = await api('POST', `/devices/${id}/card-token`, { label: 'spare card' });
+  assert.equal(extra.status, 201);
+  assert.match(await (await agent('/whoami', {}, extra.json.token)).text(), new RegExp(`id\t${id}\n`));
+  assert.match(await (await agent('/whoami')).text(), new RegExp(`id\t${id}\n`));
+  assert.equal((await api('DELETE', `/devices/${id}/card-tokens`)).json.revoked, 1);
+  assert.equal((await agent('/whoami', {}, extra.json.token)).status, 401);
+});
+
 test('sync client: device inventory, fetching missing roms, sync on request, direct sends and list progress', async () => {
   const client = path.join(ROOT, 'clients/linux/rommancer-sync.sh');
   const dir = path.join(DATA, 'sync-inventory');

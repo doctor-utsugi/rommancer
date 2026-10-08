@@ -178,7 +178,8 @@ fn remove_folder(app: AppHandle, state: State<AppState>, path: String) {
 async fn link_card(app: AppHandle, state: State<'_, AppState>, root: String, name: String, console_id: u64, firmware_id: u64, firmware: String) -> Result<u64, String> {
     let u = user(&state)?;
     let username = state.settings.lock().unwrap().username.clone().unwrap_or_default();
-    let body = serde_json::json!({ "name": name, "firmware": firmware, "root": root, "model": name, "consoleId": console_id, "firmwareId": firmware_id });
+    // offline: a device known only when its card is connected to a computer
+    let body = serde_json::json!({ "name": name, "firmware": firmware, "root": root, "model": name, "consoleId": console_id, "firmwareId": firmware_id, "offline": true });
     let r = {
         let u = u.clone();
         tauri::async_runtime::spawn_blocking(move || u.call("POST", "/link/claim", Some(&body))).await.map_err(|e| e.to_string())?
@@ -187,9 +188,40 @@ async fn link_card(app: AppHandle, state: State<'_, AppState>, root: String, nam
     persist_session(&app, &state);
     let token = r.get("token").and_then(|v| v.as_str()).ok_or("no token")?;
     let id = r.get("deviceId").and_then(|v| v.as_u64()).ok_or("no device id")?;
-    card::write_own_link(Path::new(&root), &u.server, token, &username, id).map_err(|e| format!("cannot write on the card: {e}"))?;
+    card::write_own_link(Path::new(&root), &u.server, token, &username, id, false).map_err(|e| format!("cannot write on the card: {e}"))?;
     let _ = app.emit("cards-changed", ());
     Ok(id)
+}
+
+/// Links a card as one more key of a device the user already has (the SD card of that console)
+#[tauri::command]
+async fn attach_card(app: AppHandle, state: State<'_, AppState>, root: String, device_id: u64, label: String) -> Result<u64, String> {
+    let u = user(&state)?;
+    let username = state.settings.lock().unwrap().username.clone().unwrap_or_default();
+    let body = serde_json::json!({ "label": label });
+    let path = format!("/devices/{device_id}/card-token");
+    let r = {
+        let u = u.clone();
+        tauri::async_runtime::spawn_blocking(move || u.call("POST", &path, Some(&body))).await.map_err(|e| e.to_string())?
+    }
+    .map_err(|e| e.to_string())?;
+    persist_session(&app, &state);
+    let token = r.get("token").and_then(|v| v.as_str()).ok_or("no token")?;
+    card::write_own_link(Path::new(&root), &u.server, token, &username, device_id, true).map_err(|e| format!("cannot write on the card: {e}"))?;
+    let _ = app.emit("cards-changed", ());
+    Ok(device_id)
+}
+
+/// Interface language from the system: the first of the locale variables that says one
+#[tauri::command]
+fn system_lang() -> String {
+    ["LANGUAGE", "LC_ALL", "LC_MESSAGES", "LANG", "LC_TIME"]
+        .iter()
+        .filter_map(|k| std::env::var(k).ok())
+        .filter(|v| !v.is_empty())
+        .find(|v| v.starts_with("es"))
+        .map(|_| "es".to_string())
+        .unwrap_or_default()
 }
 
 #[tauri::command]
@@ -351,7 +383,7 @@ pub fn run() {
                 let _ = window.hide();
             }
         })
-        .invoke_handler(tauri::generate_handler![status, login, logout, api, cards, set_options, add_folder, remove_folder, link_card, unlink_card, device_id, sync_card, cancel_sync])
+        .invoke_handler(tauri::generate_handler![status, login, logout, api, cards, set_options, add_folder, remove_folder, link_card, attach_card, system_lang, unlink_card, device_id, sync_card, cancel_sync])
         .run(tauri::generate_context!())
         .expect("error while running Rommancer");
 }

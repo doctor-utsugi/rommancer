@@ -494,6 +494,10 @@ model Device {
   sshError       String?           @db.VarChar(255)
   inventory      DeviceRom[]
   pulls          DevicePull[]
+  // Extra keys: SD cards of this device synced from a computer (the console keeps its own tokenHash)
+  cardTokens     DeviceToken[]
+  // Linked from the desktop companion: only known when its card is connected to a computer
+  offline        Boolean           @default(false)
   createdAt      DateTime          @default(now())
   user           User              @relation(fields: [userId], references: [id], onDelete: Cascade)
   console        Console           @relation(fields: [consoleId], references: [id])
@@ -838,4 +842,16 @@ model DevicePull {
   device    Device    @relation(fields: [deviceId], references: [id], onDelete: Cascade)
 
   @@index([deviceId, status])
+}
+
+/** A key for one SD card of a device, synced from a computer with the desktop companion */
+model DeviceToken {
+  id        Int      @id @default(autoincrement())
+  deviceId  Int
+  tokenHash String   @unique @db.Char(64)
+  label     String   @db.VarChar(128)
+  createdAt DateTime @default(now())
+  device    Device   @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+
+  @@index([deviceId])
 }

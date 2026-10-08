@@ -18,12 +18,12 @@ const es = {
   notLinked: 'Sin vincular',
   linkedConsole: 'Vinculada desde su consola',
   linked: 'Vinculada',
-  linkTitle: 'Vincular esta tarjeta',
+  linkTitle: 'Añadir esta tarjeta',
   linkHelp: 'Se guarda en la propia tarjeta: cualquier ordenador con Rommancer la reconocerá.',
   name: 'Nombre',
   firmware: 'Formato',
   console: 'Consola',
-  link: 'Vincular',
+  link: 'Añadir como dispositivo nuevo',
   unlink: 'Desvincular',
   unlinkConfirm: '¿Desvincular esta tarjeta? Sus partidas y juegos no se borran.',
   syncNow: 'Sincronizar ahora',
@@ -53,6 +53,16 @@ const es = {
   done: 'Listo: {up} subidas, {down} bajadas, {roms} juegos copiados, {sent} enviados al servidor',
   doneErrors: ' · {errors} errores',
   failed: 'Error: {msg}',
+  belongs: '¿Es la tarjeta de un dispositivo que ya tienes?',
+  belongsNo: 'No, es un dispositivo nuevo',
+  attachHelp: 'Contará como ese mismo dispositivo: sus partidas y juegos se suman a los suyos.',
+  cardLabel: 'Nombre de esta tarjeta',
+  attach: 'Añadir a ese dispositivo',
+  otherConsole: 'Otra…',
+  newConsole: 'Nombre de la consola',
+  pickLayout: 'Elige el formato de la tarjeta',
+  language: 'Idioma',
+  langAuto: 'Automático',
   p_connecting: 'Conectando',
   p_roms: 'Leyendo juegos',
   p_saves: 'Leyendo partidas',
@@ -82,12 +92,12 @@ const en: typeof es = {
   notLinked: 'Not linked',
   linkedConsole: 'Linked from its console',
   linked: 'Linked',
-  linkTitle: 'Link this card',
+  linkTitle: 'Add this card',
   linkHelp: 'The link is kept on the card itself: any computer with Rommancer will recognise it.',
   name: 'Name',
   firmware: 'Layout',
   console: 'Console',
-  link: 'Link',
+  link: 'Add as a new device',
   unlink: 'Unlink',
   unlinkConfirm: 'Unlink this card? Its saves and games are not deleted.',
   syncNow: 'Sync now',
@@ -117,6 +127,16 @@ const en: typeof es = {
   done: 'Done: {up} up, {down} down, {roms} games copied, {sent} sent to the server',
   doneErrors: ' · {errors} errors',
   failed: 'Error: {msg}',
+  belongs: 'Is it the card of a device you already have?',
+  belongsNo: 'No, it is a new device',
+  attachHelp: 'It will count as that same device: its saves and games add to its own.',
+  cardLabel: 'Name of this card',
+  attach: 'Add to that device',
+  otherConsole: 'Other…',
+  newConsole: 'Console name',
+  pickLayout: "Pick the card's layout",
+  language: 'Language',
+  langAuto: 'Automatic',
   p_connecting: 'Connecting',
   p_roms: 'Reading games',
   p_saves: 'Reading saves',
@@ -128,7 +148,12 @@ const en: typeof es = {
 }
 
 export type Key = keyof typeof es
-const dict = navigator.language.toLowerCase().startsWith('es') ? es : en
+export type Lang = 'es' | 'en'
+let dict: typeof es = navigator.language.toLowerCase().startsWith('es') ? es : en
+
+export function setLang(lang: Lang) {
+  dict = lang === 'es' ? es : en
+}
 
 export function t(key: Key, vars: Record<string, string | number> = {}) {
   return dict[key].replace(/\{(\w+)\}/g, (_, k) => String(vars[k] ?? ''))

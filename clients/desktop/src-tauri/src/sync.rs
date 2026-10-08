@@ -181,7 +181,13 @@ impl<'a> Engine<'a> {
         let mut rom_hashes: HashMap<String, String> = HashMap::new();
         // Roms: <roms>/<system>/<file>
         let mut roms = Vec::new();
-        if let Some(dir) = &roms_dir {
+        // Flashcart cards: roms in any folder of the card
+        let deep = roots.iter().any(|r| r.len() >= 2 && r[0] == "scan" && r[1] == "deep");
+        if let (true, Some(dir)) = (deep, &roms_dir) {
+            let mut all = Vec::new();
+            walk(dir, &mut all);
+            roms.extend(all.into_iter().filter(|p| p.file_name().map(|n| n.to_string_lossy()).is_some_and(|n| is_rom(&n, &exts) && !n.contains('\t'))));
+        } else if let Some(dir) = &roms_dir {
             for sys in fs::read_dir(dir).into_iter().flatten().flatten() {
                 if !sys.file_type().map(|t| t.is_dir()).unwrap_or(false) || sys.file_name().to_string_lossy().starts_with('.') {
                     continue;

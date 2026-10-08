@@ -61,6 +61,8 @@ export const emulators: EmulatorSeed[] = [
   { slug: 'ra-prosystem', name: 'RetroArch ProSystem', core: 'ProSystem', saveExt: '.srm', stateExt: '.state' },
   { slug: 'ra-dolphin', name: 'RetroArch Dolphin', core: 'dolphin-emu', saveExt: '.gci', stateExt: '.state' },
   { slug: 'mgba', name: 'mGBA (standalone)', saveExt: '.sav', stateExt: '.ss0' },
+  // The cartridge itself: flashcarts write the raw save next to the rom, no savestates
+  { slug: 'gba-cart', name: 'GBA cartridge (flashcart)', saveExt: '.sav' },
   { slug: 'snes9x', name: 'Snes9x (standalone)', saveExt: '.srm', stateExt: '.000' },
   { slug: 'duckstation', name: 'DuckStation', saveFormat: 'ps1card', saveExt: '.mcd', stateExt: '.sav' },
   { slug: 'epsxe', name: 'ePSXe', saveFormat: 'ps1card', saveExt: '.mcr' },
@@ -123,7 +125,7 @@ export interface FirmwareSeed {
   savesRoot: string;
   statesRoot: string;
   biosRoot: string;
-  savesLayout: 'flat' | 'system' | 'core' | 'rom' | 'rom-core' | 'rom-saves';
+  savesLayout: 'flat' | 'system' | 'core' | 'rom' | 'rom-core' | 'rom-saves' | 'beside';
   systemMap: Record<string, { folder: string; emulator: string }>;
 }
 
@@ -137,6 +139,8 @@ export const firmwares: FirmwareSeed[] = [
   { slug: 'retroarch-desktop', name: 'RetroArch (Windows/Linux/macOS)', romsRoot: 'roms', savesRoot: 'saves', statesRoot: 'states', biosRoot: 'system', savesLayout: 'flat', systemMap: map(esdeFolders) },
   // SD card synced from a PC (no network on the console): TWiLight Menu++ keeps saves in a "saves" folder next to the roms
   { slug: 'nds-twilight', name: 'Nintendo DS (TWiLight Menu++ SD card)', romsRoot: 'roms', savesRoot: 'roms', statesRoot: 'roms', biosRoot: '_nds', savesLayout: 'rom-saves', systemMap: map({ nds: 'nds' }, { nds: 'melonds' }) },
+  // GBA flashcarts (SuperCard, EZ-Flash...): roms anywhere on the card, each .sav next to its rom
+  { slug: 'gba-flashcart', name: 'GBA flashcart (SuperCard, EZ-Flash…)', romsRoot: '', savesRoot: '', statesRoot: '', biosRoot: '', savesLayout: 'beside', systemMap: map({ gba: '' }, { gba: 'gba-cart' }) },
   { slug: 'esde-desktop', name: 'ES-DE (escritorio)', romsRoot: 'ROMs', savesRoot: 'saves', statesRoot: 'states', biosRoot: 'bios', savesLayout: 'flat', systemMap: map(esdeFolders) },
 ];
 
@@ -150,6 +154,8 @@ export const consoles = [
   { name: 'Miyoo Mini Plus', manufacturer: 'Miyoo', formFactor: 'handheld' },
   { name: 'Powkiddy RGB30', manufacturer: 'Powkiddy', formFactor: 'handheld' },
   { name: 'Steam Deck', manufacturer: 'Valve', formFactor: 'handheld' },
+  { name: 'Game Boy Advance', manufacturer: 'Nintendo', formFactor: 'handheld' },
+  { name: 'Game Boy Advance SP', manufacturer: 'Nintendo', formFactor: 'handheld' },
   { name: 'Nintendo DS', manufacturer: 'Nintendo', formFactor: 'handheld' },
   { name: 'Nintendo DSi', manufacturer: 'Nintendo', formFactor: 'handheld' },
   { name: 'Nintendo 3DS', manufacturer: 'Nintendo', formFactor: 'handheld' },

@@ -52,7 +52,7 @@ const firmwareBody = z.object({
   savesRoot: z.string().max(255),
   statesRoot: z.string().max(255),
   biosRoot: z.string().max(255),
-  savesLayout: z.enum(['flat', 'system', 'core', 'rom', 'rom-core', 'rom-saves']),
+  savesLayout: z.enum(['flat', 'system', 'core', 'rom', 'rom-core', 'rom-saves', 'beside']),
   systemMap: z.record(z.string(), z.object({ folder: z.string(), emulator: z.string() })),
 });
 
@@ -92,7 +92,7 @@ const deviceBody = z.object({
       savesRoot: z.string().optional(),
       statesRoot: z.string().optional(),
       biosRoot: z.string().optional(),
-      savesLayout: z.enum(['flat', 'system', 'core', 'rom', 'rom-core', 'rom-saves']).optional(),
+      savesLayout: z.enum(['flat', 'system', 'core', 'rom', 'rom-core', 'rom-saves', 'beside']).optional(),
       systemMap: z.record(z.string(), z.object({ folder: z.string(), emulator: z.string() })).optional(),
     })
     .nullable()
@@ -215,7 +215,7 @@ export async function listProgress(listId: number, device: Awaited<ReturnType<ty
   let total = 0;
   for (const it of items) {
     const folder = layout.systemMap[it.systemSlug]?.folder;
-    if (!folder) continue; // a system this console does not have
+    if (folder === undefined) continue; // a system this console does not have
     total++;
     const there = it.files.some((f) => paths.has(pathKey(path.posix.join(root, layout.romsRoot, folder, f.destName))));
     if (there || (it.romId && games.has(gameOf.get(it.romId) ?? -1))) have++;
@@ -475,6 +475,21 @@ devicesRouter.post('/:id/token', async (req, res) => {
   const token = crypto.randomBytes(24).toString('base64url');
   await prisma.device.update({ where: { id: d.id }, data: { tokenHash: sha256(token), tokenCreatedAt: new Date() } });
   res.status(201).json({ token });
+});
+
+// A key for one SD card of this device, for the desktop companion: the console keeps its own key
+devicesRouter.post('/:id/card-token', async (req, res) => {
+  const d = await ownDevice(intParam(req), me(req));
+  const { label } = z.object({ label: z.string().trim().min(1).max(128) }).parse(req.body);
+  const token = crypto.randomBytes(24).toString('base64url');
+  await prisma.deviceToken.create({ data: { deviceId: d.id, tokenHash: sha256(token), label } });
+  res.status(201).json({ token, deviceId: d.id });
+});
+
+devicesRouter.delete('/:id/card-tokens', async (req, res) => {
+  const d = await ownDevice(intParam(req), me(req));
+  const r = await prisma.deviceToken.deleteMany({ where: { deviceId: d.id } });
+  res.json({ revoked: r.count });
 });
 
 devicesRouter.delete('/:id/token', async (req, res) => {
