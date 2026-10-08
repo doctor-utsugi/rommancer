@@ -18,6 +18,10 @@ import { env } from '../../config/env.js';
 import { extractEntryStream } from '../../lib/tools.js';
 import { resolveListFiles } from '../lists/service.js';
 import { resolveConflict } from './core.js';
+import os from 'node:os';
+import { pipeline } from 'node:stream/promises';
+import { normalizeTitle, parseRomName } from '../../lib/romname.js';
+import { ingestUnverified, ingestVerified } from '../uploads/ingest.js';
 
 export const agentRouter = Router();
 
@@ -104,6 +108,39 @@ async function registerUnknownCores(layout: DeviceLayout, root: string, files: I
   }
 }
 
+/** Keeps the device's rom list (only names and hashes) and identifies each game by its content. */
+async function storeInventory(device: AgentDevice, roms: { path: string; hashes: string[] }[], allowPull: string | undefined) {
+  const layout = layoutOf(device);
+  const base = path.posix.join(device.rootPath.replace(/\/+$/, ''), layout.romsRoot) + '/';
+  const byFolder = new Map(Object.entries(layout.systemMap).map(([slug, v]) => [v.folder, slug]));
+  const hashes = [...new Set(roms.flatMap((r) => r.hashes).filter((h) => SHA1.test(h)))];
+  const known = new Map<string, { romId: number; gameId: number }>();
+  for (let i = 0; i < hashes.length; i += 500) {
+    const chunk = hashes.slice(i, i + 500);
+    const parts = await prisma.romPart.findMany({ where: { OR: [{ sha1: { in: chunk } }, { headerlessSha1: { in: chunk } }] }, select: { sha1: true, headerlessSha1: true, rom: { select: { id: true, gameId: true } } } });
+    for (const p of parts) for (const h of [p.sha1, p.headerlessSha1]) if (h) known.set(h, { romId: p.rom.id, gameId: p.rom.gameId });
+  }
+  const rows = roms.map((r) => {
+    const folder = r.path.startsWith(base) ? r.path.slice(base.length).split('/')[0] : '';
+    const hit = r.hashes.map((h) => known.get(h)).find(Boolean);
+    return {
+      deviceId: device.id,
+      pathHash: crypto.createHash('sha1').update(r.path).digest('hex'),
+      path: r.path.slice(0, 1024),
+      systemSlug: byFolder.get(folder) ?? null,
+      sha1: SHA1.test(r.hashes[0] ?? '') ? r.hashes[0] : null,
+      headerlessSha1: SHA1.test(r.hashes[1] ?? '') ? r.hashes[1] : null,
+      romId: hit?.romId ?? null,
+      gameId: hit?.gameId ?? null,
+    };
+  });
+  await prisma.$transaction([
+    prisma.deviceRom.deleteMany({ where: { deviceId: device.id } }),
+    prisma.deviceRom.createMany({ data: rows, skipDuplicates: true }),
+    prisma.device.update({ where: { id: device.id }, data: { inventoryAt: new Date(), ...(allowPull === '0' || allowPull === '1' ? { allowPull: allowPull === '1' } : {}) } }),
+  ]);
+}
+
 const coreLayout = (layout: { savesLayout: string }) => layout.savesLayout === 'core' || layout.savesLayout === 'rom-core';
 
 /** In per-core layouts the save's folder names the core, which may differ from the firmware default. */
@@ -129,6 +166,7 @@ agentRouter.post('/sync', express.text({ limit: '16mb', type: '*/*' }), async (r
     if (kind === 'rom' && p) roms.push({ path: p, hashes: [h ?? '', h2 ?? ''].filter(Boolean) });
     else if (kind === 'file' && p && SHA1.test(h ?? '')) present.set(p, h);
   }
+  await storeInventory(device, roms, req.header('x-allow-pull'));
   const userSaves = await prisma.save.findMany({ where: { userId: device.userId }, select: { baseName: true, gameId: true } });
   const savedNames = new Set(userSaves.map((s) => s.baseName));
   const savedGames = new Set(userSaves.map((s) => s.gameId).filter((g): g is number => g !== null));
@@ -260,6 +298,64 @@ agentRouter.post('/conflicts/:id', express.urlencoded({ extended: false }), asyn
   if (!c || c.deviceId !== device.id) throw new HttpError(404, 'Conflict not found');
   await resolveConflict(c.id, keep, device.userId);
   res.type('text/plain').send('resolved\n');
+});
+
+// ---------- requests from the web app ----------
+
+// Polled every few seconds by the client: "sync" when asked to sync now, "pull" when roms are requested
+agentRouter.get('/poll', async (req, res) => {
+  const device = await deviceFromToken(req);
+  const out: string[] = [];
+  if (device.wantSyncAt) {
+    out.push('sync');
+    await prisma.device.update({ where: { id: device.id }, data: { wantSyncAt: null } });
+  }
+  if (await prisma.devicePull.count({ where: { deviceId: device.id, status: 'pending' } })) out.push('pull');
+  res.type('text/plain').send(out.join('\n') + (out.length ? '\n' : ''));
+});
+
+agentRouter.get('/pulls', async (req, res) => {
+  const device = await deviceFromToken(req);
+  const rows = await prisma.devicePull.findMany({ where: { deviceId: device.id, status: 'pending' }, orderBy: { id: 'asc' }, take: 200 });
+  res.type('text/plain').send(rows.map((r) => `pull\t${r.id}\t${r.path}`).join('\n') + (rows.length ? '\n' : ''));
+});
+
+/**
+ * A requested rom sent by the device (body = the file). Stored like a verified upload; roms no
+ * database knows come in as unverified, in the system of their folder, under a game with their title.
+ */
+agentRouter.post('/pull/:id', async (req, res) => {
+  const device = await deviceFromToken(req);
+  const pull = await prisma.devicePull.findUnique({ where: { id: Number(req.params.id) } });
+  if (!pull || pull.deviceId !== device.id || pull.status !== 'pending') throw new HttpError(404, 'Pull not found');
+  const owner = await prisma.user.findUniqueOrThrow({ where: { id: device.userId }, select: { id: true, username: true } });
+  const name = path.posix.basename(pull.path);
+  // Container readers need the right extension on the temporary file
+  const tmp = path.join(os.tmpdir(), `pull-${pull.id}-${Date.now()}${path.extname(name).toLowerCase()}`);
+  await pipeline(req, fs.createWriteStream(tmp));
+  let result: string;
+  try {
+    try {
+      const r = await ingestVerified(tmp, name, owner);
+      result = r.status === 'already-owned' ? 'already owned' : 'stored';
+    } catch (e) {
+      if (!(e instanceof HttpError) || e.status !== 422) throw e;
+      const inv = await prisma.deviceRom.findFirst({ where: { deviceId: device.id, path: pull.path } });
+      const system = inv?.systemSlug ? await prisma.system.findUnique({ where: { slug: inv.systemSlug } }) : null;
+      if (!system) throw badRequest('Unknown system for an unverified rom');
+      const title = parseRomName(name.replace(/\.[^.]+$/, '')).title || name;
+      const game = await prisma.game.findFirst({ where: { systemId: system.id, titleNormalized: normalizeTitle(title).slice(0, 255) } });
+      await ingestUnverified(tmp, name, owner, { systemId: system.id, ...(game ? { gameId: game.id } : { newGameTitle: title }) });
+      result = 'stored as unverified';
+    }
+    await prisma.devicePull.update({ where: { id: pull.id }, data: { status: 'done', result, doneAt: new Date() } });
+  } catch (e) {
+    result = e instanceof Error ? e.message : String(e);
+    await prisma.devicePull.update({ where: { id: pull.id }, data: { status: 'failed', result: result.slice(0, 500), doneAt: new Date() } });
+  } finally {
+    await fs.promises.rm(tmp, { force: true });
+  }
+  res.type('text/plain').send(result + '\n');
 });
 
 // Folders the client must list: roms (to know what is installed) and save locations

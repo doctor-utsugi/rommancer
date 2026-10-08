@@ -480,6 +480,13 @@ model Device {
   lastLog        String?           @db.Text
   clientVersion  String?           @db.VarChar(32)
   romLists       DeviceList[]
+  // The device lets the server fetch roms from it (client setting, reported on every sync)
+  allowPull      Boolean           @default(true)
+  // Set from the web app; the client syncs at its next poll and clears it
+  wantSyncAt     DateTime?
+  inventoryAt    DateTime?
+  inventory      DeviceRom[]
+  pulls          DevicePull[]
   createdAt      DateTime          @default(now())
   user           User              @relation(fields: [userId], references: [id], onDelete: Cascade)
   console        Console           @relation(fields: [consoleId], references: [id])
@@ -790,4 +797,38 @@ model DeviceList {
   list     List   @relation(fields: [listId], references: [id], onDelete: Cascade)
 
   @@id([deviceId, listId])
+}
+
+// Roms found on a device at its last full sync (only the list, not the files)
+model DeviceRom {
+  id             Int      @id @default(autoincrement())
+  deviceId       Int
+  // sha1 of the path, for the unique key (paths are too long to index)
+  pathHash       String   @db.Char(40)
+  path           String   @db.VarChar(1024)
+  systemSlug     String?  @db.VarChar(32)
+  size           BigInt   @default(0)
+  sha1           String?  @db.Char(40)
+  headerlessSha1 String?  @db.Char(40)
+  romId          Int?
+  gameId         Int?
+  device         Device   @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+
+  @@unique([deviceId, pathHash])
+  @@index([gameId])
+  @@index([romId])
+}
+
+// A rom the server asked a device to send (pending | done | failed)
+model DevicePull {
+  id        Int       @id @default(autoincrement())
+  deviceId  Int
+  path      String    @db.VarChar(1024)
+  status    String    @default("pending") @db.VarChar(16)
+  result    String?   @db.VarChar(512)
+  createdAt DateTime  @default(now())
+  doneAt    DateTime?
+  device    Device    @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+
+  @@index([deviceId, status])
 }

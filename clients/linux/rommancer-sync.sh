@@ -52,6 +52,8 @@ USER_NAME="$USER"
 # Per-device preferences kept apart from the link: AUTO_ROMS=1 downloads the lists' roms by itself
 SETTINGS="$STATE/settings"
 AUTO_ROMS=1
+# ALLOW_PULL=1 lets the server fetch roms it lacks from this device (only when asked from the web app)
+ALLOW_PULL=1
 [ -f "$SETTINGS" ] && . "$SETTINGS"
 set_setting() { grep -v "^$1=" "$SETTINGS" 2>/dev/null > "$WORK/settings"; echo "$1=$2" >> "$WORK/settings"; mv "$WORK/settings" "$SETTINGS"; }
 # Installer packages bring the server address (and a one-time enrolment token) next to the script
@@ -304,7 +306,7 @@ cmd_sync() {
   fix_clock
   build_request "$req" || { log "server unreachable"; rmdir "$LOCK"; return 1; }
   progress server 0 0
-  http POST "$SERVER/api/v1/agent/sync" "$req" "$plan" || { log "sync request failed"; rmdir "$LOCK"; return 1; }
+  http POST "$SERVER/api/v1/agent/sync" "$req" "$plan" "X-Allow-Pull: $ALLOW_PULL" || { log "sync request failed"; rmdir "$LOCK"; return 1; }
   ups=0; downs=0; errs=0; moved=0; total="$(grep -c . "$plan")"
   while IFS="$TAB" read -r action p a b; do
     moved=$((moved + 1)); progress transfer "$moved" "$total"
@@ -378,6 +380,10 @@ cmd_daemon() {
     if [ -z "${SAVE_DIRS:-}" ]; then
       roots="$(http GET "$SERVER/api/v1/agent/roots" - -)" && { SAVE_DIRS="$(printf '%s\n' "$roots" | sed -n "s/^saves$TAB//p")"; EXTS="$(field exts "$roots")"; }
     fi
+    # The web app can ask for a sync now or for roms: a tiny request on every watch tick
+    asked="$(HTTP_MAX=5 http_once GET "$SERVER/api/v1/agent/poll" - - 2>/dev/null)"
+    case "$asked" in *sync*) since=$FULL_SECONDS ;; esac
+    case "$asked" in *pull*) cmd_pulls > /dev/null 2>&1 ;; esac
     fp="$(fingerprint)"
     if [ "$fp" != "$last" ] || [ "$since" -ge "$FULL_SECONDS" ]; then
       full=$since
@@ -473,6 +479,29 @@ cmd_game_start() {
 
 cmd_all() { cmd_sync; [ "$AUTO_ROMS" = 1 ] && cmd_roms; return 0; }
 
+# Sends the roms the server asked for (streamed, one at a time); only with ALLOW_PULL=1
+cmd_pulls() {
+  need_link
+  [ "$ALLOW_PULL" = 1 ] || return 0
+  http GET "$SERVER/api/v1/agent/pulls" - "$WORK/pulls" || return 1
+  total="$(grep -c '^pull' "$WORK/pulls")"; i=0; sent=0
+  while IFS="$TAB" read -r kind id p; do
+    [ "$kind" = pull ] || continue
+    i=$((i + 1)); progress pulls "$i" "$total"
+    [ -f "$p" ] || continue
+    if command -v curl >/dev/null 2>&1; then
+      set -- -fsS --connect-timeout 5 --max-time 7200 -X POST -H "X-Device-Token: $TOKEN" -T "$p"
+      [ -f "$DIR/cacert.pem" ] && set -- "$@" --cacert "$DIR/cacert.pem"
+      curl "$@" "$SERVER/api/v1/agent/pull/$id" > "$WORK/pull-result" 2>/dev/null
+    else
+      wget -q -T 60 -O "$WORK/pull-result" --header="X-Device-Token: $TOKEN" --post-file="$p" "$SERVER/api/v1/agent/pull/$id"
+    fi && { sent=$((sent + 1)); log "sent $(basename "$p"): $(head -n 1 "$WORK/pull-result")"; }
+  done < "$WORK/pulls"
+  log "pulls: $sent of $total sent"
+  [ -n "${VERBOSE:-}" ] && printf 'sent to server: %s of %s\n' "$sent" "$total"
+  return 0
+}
+
 # conflict<TAB>id<TAB>game<TAB>kind<TAB>this device's date<TAB>server date<TAB>server's device
 cmd_conflicts() { need_link; http GET "$SERVER/api/v1/agent/conflicts" - -; }
 
@@ -514,6 +543,7 @@ t() {
       badserver) echo "No hay un Rommancer en esa direccion" ;; badlogin) echo "Usuario o contrasena incorrectos" ;;
       closed) echo "Este servidor no permite crear cuentas" ;; finished) echo "Listo. Sincronizacion automatica activada." ;;
       syncing) echo "Sincronizando..." ;; roms) echo "Sincronizar roms" ;; autoroms) echo "Roms automaticas: $2" ;;
+      allowpull) echo "Servidor puede traer juegos: $2" ;; p_pulls) echo "Enviando juegos al servidor" ;;
       yes) echo "si" ;; no) echo "no" ;; conflicts) echo "Conflictos ($2)" ;; noconflicts) echo "No hay conflictos" ;;
       keepdevice) echo "Quedarme con el de esta consola" ;; keepserver) echo "Usar el del servidor" ;;
       conflictinfo) echo "$2: esta consola $3, servidor $4 ($5)" ;;
@@ -530,6 +560,7 @@ t() {
       badserver) echo "No Rommancer at that address" ;; badlogin) echo "Wrong username or password" ;;
       closed) echo "This server does not allow new accounts" ;; finished) echo "Done. Automatic sync is on." ;;
       syncing) echo "Syncing..." ;; roms) echo "Sync roms" ;; autoroms) echo "Automatic roms: $2" ;;
+      allowpull) echo "Server may fetch games: $2" ;; p_pulls) echo "Sending games to the server" ;;
       yes) echo "yes" ;; no) echo "no" ;; conflicts) echo "Conflicts ($2)" ;; noconflicts) echo "No conflicts" ;;
       keepdevice) echo "Keep this console's save" ;; keepserver) echo "Use the server's save" ;;
       conflictinfo) echo "$2: this console $3, server $4 ($5)" ;;
@@ -626,14 +657,16 @@ cmd_setup() {
       cmd_conflicts > "$WORK/conflicts" 2>/dev/null || : > "$WORK/conflicts"
       nconf="$(grep -c '^conflict' "$WORK/conflicts")"
       if [ "$AUTO_ROMS" = 1 ]; then auto="$(t yes)"; else auto="$(t no)"; fi
-      menu "Rommancer Sync" "$(t connected)" "$(t sync)" "$(t roms)" "$(t autoroms "$auto")" "$(t conflicts "$nconf")" "$(t status)" "$(t unlink)" "$(t quit)"; rc=$?
+      if [ "$ALLOW_PULL" = 1 ]; then pull="$(t yes)"; else pull="$(t no)"; fi
+      menu "Rommancer Sync" "$(t connected)" "$(t sync)" "$(t roms)" "$(t autoroms "$auto")" "$(t allowpull "$pull")" "$(t conflicts "$nconf")" "$(t status)" "$(t unlink)" "$(t quit)"; rc=$?
       case $rc in
         0) with_progress "$(t sync)" cmd_all ;;
         1) with_progress "$(t roms)" cmd_roms ;;
         2) if [ "$AUTO_ROMS" = 1 ]; then AUTO_ROMS=0; else AUTO_ROMS=1; fi; set_setting AUTO_ROMS "$AUTO_ROMS" ;;
-        3) setup_conflicts ;;
-        4) panel "$(t status)" "$(tail -n 4 "$LOG" 2>/dev/null | cut -c21- | tr '\n' ' ')" wait ;;
-        5) keep="$SERVER"; cmd_unlink > /dev/null; TOKEN=""; USER_NAME=""; SERVER="$keep" ;;
+        3) if [ "$ALLOW_PULL" = 1 ]; then ALLOW_PULL=0; else ALLOW_PULL=1; fi; set_setting ALLOW_PULL "$ALLOW_PULL" ;;
+        4) setup_conflicts ;;
+        5) panel "$(t status)" "$(tail -n 4 "$LOG" 2>/dev/null | cut -c21- | tr '\n' ' ')" wait ;;
+        6) keep="$SERVER"; cmd_unlink > /dev/null; TOKEN=""; USER_NAME=""; SERVER="$keep" ;;
         *) return 0 ;;
       esac
     else
@@ -687,6 +720,7 @@ case "${1:-}" in
   conflicts) cmd_conflicts ;;
   resolve) cmd_resolve "${2:-}" "${3:-}" ;;
   set) set_setting "${2:-}" "${3:-}" ;;
+  pulls) VERBOSE=1; cmd_pulls ;;
   boot)
     # At power-on: start syncing and give the first pass up to BOOT_WAIT seconds, so saves are
     # current before a game can be opened; never asks anything

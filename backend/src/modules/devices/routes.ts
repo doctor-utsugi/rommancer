@@ -14,6 +14,7 @@ import { sha256 } from '../../lib/crypto.js';
 import { scriptFiles } from '../saves/script.js';
 import { loadList, resolveListFiles } from '../lists/service.js';
 import { layoutOf, openSink } from './sink.js';
+import { ownedGameIds, ownedRomIds } from '../roms/service.js';
 
 export const devicesRouter = Router();
 // Dispositivos: para copiar roms (descargar) o para sincronizar saves
@@ -100,7 +101,12 @@ function deviceData(body: Partial<z.infer<typeof deviceBody>>) {
 
 devicesRouter.get('/', async (req, res) => {
   const u = me(req);
-  const devices = await prisma.device.findMany({ where: { userId: u.id }, include: { console: true, firmware: true }, omit: publicDevice, orderBy: { name: 'asc' } });
+  const devices = await prisma.device.findMany({
+    where: { userId: u.id },
+    include: { console: true, firmware: true, _count: { select: { inventory: true } } },
+    omit: { ...publicDevice, lastLog: true },
+    orderBy: { name: 'asc' },
+  });
   res.json(devices);
 });
 
@@ -114,14 +120,127 @@ devicesRouter.post('/', async (req, res) => {
 
 devicesRouter.get('/:id', async (req, res) => {
   const d = await ownDevice(intParam(req), me(req));
-  const { sshPassword, sshKey, ...rest } = d;
-  res.json({ ...rest, hasPassword: !!sshPassword, hasKey: !!sshKey, layout: layoutOf(d) });
+  const { sshPassword, sshKey, tokenHash: _token, ...rest } = d;
+  res.json({ ...rest, hasPassword: !!sshPassword, hasKey: !!sshKey, layout: layoutOf(d), games: await prisma.deviceRom.count({ where: { deviceId: d.id } }) });
 });
 
 devicesRouter.patch('/:id', async (req, res) => {
   const d = await ownDevice(intParam(req), me(req));
   const body = deviceBody.partial().parse(req.body);
   res.json(await prisma.device.update({ where: { id: d.id }, data: deviceData(body) as Prisma.DeviceUncheckedUpdateInput, omit: publicDevice }));
+});
+
+// ---------- what a sync client has, and what the server asks of it ----------
+
+const pathKey = (p: string) => crypto.createHash('sha1').update(p).digest('hex');
+
+/** Share of a list already on a device: items whose files are at their destination or whose game it has. */
+export async function listProgress(listId: number, device: Awaited<ReturnType<typeof ownDevice>>) {
+  const layout = layoutOf(device);
+  const root = device.rootPath.replace(/\/+$/, '');
+  const { items } = await resolveListFiles(listId);
+  const inv = await prisma.deviceRom.findMany({ where: { deviceId: device.id }, select: { pathHash: true, gameId: true } });
+  const paths = new Set(inv.map((r) => r.pathHash));
+  const games = new Set(inv.map((r) => r.gameId).filter(Boolean));
+  const roms = items.length ? await prisma.rom.findMany({ where: { id: { in: items.flatMap((i) => (i.romId ? [i.romId] : [])) } }, select: { id: true, gameId: true } }) : [];
+  const gameOf = new Map(roms.map((r) => [r.id, r.gameId]));
+  let have = 0;
+  let total = 0;
+  for (const it of items) {
+    const folder = layout.systemMap[it.systemSlug]?.folder;
+    if (!folder) continue; // a system this console does not have
+    total++;
+    const there = it.files.some((f) => paths.has(pathKey(path.posix.join(root, layout.romsRoot, folder, f.destName))));
+    if (there || (it.romId && games.has(gameOf.get(it.romId) ?? -1))) have++;
+  }
+  return { have, total };
+}
+
+devicesRouter.get('/:id/inventory', async (req, res) => {
+  const d = await ownDevice(intParam(req), me(req));
+  const rows = await prisma.deviceRom.findMany({ where: { deviceId: d.id }, orderBy: [{ systemSlug: 'asc' }, { path: 'asc' }] });
+  const ownedRoms = await ownedRomIds({ romIds: [...new Set(rows.flatMap((r) => (r.romId ? [r.romId] : [])))], include: 'any' });
+  const ownedGames = await ownedGameIds();
+  const games = await prisma.game.findMany({ where: { id: { in: [...new Set(rows.flatMap((r) => (r.gameId ? [r.gameId] : [])))] } }, select: { id: true, title: true } });
+  const title = new Map(games.map((g) => [g.id, g.title]));
+  const systems = await prisma.system.findMany({ select: { slug: true, name: true } });
+  const sysName = new Map(systems.map((x) => [x.slug, x.name]));
+  const pending = new Set((await prisma.devicePull.findMany({ where: { deviceId: d.id, status: 'pending' }, select: { path: true } })).map((p) => p.path));
+  res.json({
+    allowPull: d.allowPull,
+    inventoryAt: d.inventoryAt,
+    items: rows.map((r) => ({
+      id: r.id,
+      path: r.path,
+      name: path.posix.basename(r.path),
+      system: r.systemSlug,
+      systemName: r.systemSlug ? (sysName.get(r.systemSlug) ?? r.systemSlug) : null,
+      gameId: r.gameId,
+      gameTitle: r.gameId ? title.get(r.gameId) : null,
+      onServer: !!((r.romId && ownedRoms.has(r.romId)) || (r.gameId && ownedGames.has(r.gameId))),
+      pullPending: pending.has(r.path),
+    })),
+  });
+});
+
+// Ask the client to sync (and send its inventory) at its next poll, within seconds
+devicesRouter.post('/:id/refresh', async (req, res) => {
+  const d = await ownDevice(intParam(req), me(req));
+  await prisma.device.update({ where: { id: d.id }, data: { wantSyncAt: new Date() } });
+  res.status(202).json({ ok: true });
+});
+
+// Bring roms the server lacks from the device: given paths, a whole system, or everything missing
+devicesRouter.post('/:id/pull', requirePerm('roms.upload'), async (req, res) => {
+  const d = await ownDevice(intParam(req), me(req));
+  if (!d.allowPull) throw forbidden();
+  const body = z.object({ paths: z.array(z.string().max(1024)).max(5000).optional(), system: z.string().max(32).optional() }).parse(req.body);
+  const rows = await prisma.deviceRom.findMany({
+    where: { deviceId: d.id, ...(body.paths ? { path: { in: body.paths } } : {}), ...(body.system ? { systemSlug: body.system } : {}) },
+  });
+  const ownedRoms = await ownedRomIds({ romIds: [...new Set(rows.flatMap((r) => (r.romId ? [r.romId] : [])))], include: 'any' });
+  const ownedGames = await ownedGameIds();
+  const pending = new Set((await prisma.devicePull.findMany({ where: { deviceId: d.id, status: 'pending' }, select: { path: true } })).map((p) => p.path));
+  // Explicit paths are fetched even if the game is owned (another version); bulk requests only bring what is missing
+  const wanted = rows.filter((r) => !pending.has(r.path) && (body.paths || !((r.romId && ownedRoms.has(r.romId)) || (r.gameId && ownedGames.has(r.gameId)))));
+  if (wanted.length) await prisma.devicePull.createMany({ data: wanted.map((r) => ({ deviceId: d.id, path: r.path })) });
+  res.status(202).json({ queued: wanted.length });
+});
+
+devicesRouter.get('/:id/pulls', async (req, res) => {
+  const d = await ownDevice(intParam(req), me(req));
+  res.json(await prisma.devicePull.findMany({ where: { deviceId: d.id }, orderBy: { id: 'desc' }, take: 100 }));
+});
+
+// Send games straight to a device: they go to its own list, which the device keeps
+devicesRouter.post('/:id/send', requirePerm('roms.download'), async (req, res) => {
+  const d = await ownDevice(intParam(req), me(req));
+  const { gameIds } = z.object({ gameIds: z.array(z.number().int()).min(1).max(1000) }).parse(req.body);
+  const name = `→ ${d.name}`;
+  let list = await prisma.list.findFirst({ where: { ownerId: me(req).id, name, devices: { some: { deviceId: d.id } } } });
+  if (!list) {
+    list = await prisma.list.create({ data: { ownerId: me(req).id, name, description: `Roms sent directly to ${d.name}` } });
+    await prisma.deviceList.create({ data: { deviceId: d.id, listId: list.id } });
+  }
+  const r = await prisma.listItem.createMany({ data: gameIds.map((gameId) => ({ listId: list.id, gameId, itemKey: `g${gameId}` })), skipDuplicates: true });
+  res.status(201).json({ listId: list.id, added: r.count });
+});
+
+devicesRouter.get('/:id/lists-progress', async (req, res) => {
+  const d = await ownDevice(intParam(req), me(req));
+  const rows = await prisma.deviceList.findMany({ where: { deviceId: d.id }, include: { list: { select: { id: true, name: true } } } });
+  res.json(await Promise.all(rows.map(async (r) => ({ ...r.list, ...(await listProgress(r.list.id, d)) }))));
+});
+
+devicesRouter.get('/by-list/:listId/progress', async (req, res) => {
+  const list = await loadList(intParam(req, 'listId'), me(req));
+  const rows = await prisma.deviceList.findMany({ where: { listId: list.id, device: { userId: me(req).id } }, select: { deviceId: true } });
+  const out = [];
+  for (const r of rows) {
+    const d = await ownDevice(r.deviceId, me(req));
+    out.push({ deviceId: d.id, name: d.name, inventoryAt: d.inventoryAt, ...(await listProgress(list.id, d)) });
+  }
+  res.json(out);
 });
 
 // The same assignment seen from a list: which of my sync clients keep it

@@ -1775,3 +1775,61 @@ test('collection: removing a hand-uploaded game deletes its file, list entries a
   assert.equal((await api('GET', `/lists/${list.json.id}`)).json.items.length, 0);
   assert.equal((await api('DELETE', `/games/${game.id}/collection`, undefined, userToken)).status, 403, 'admins only');
 });
+
+test('sync client: device inventory, fetching missing roms, sync on request, direct sends and list progress', async () => {
+  const client = path.join(ROOT, 'clients/linux/rommancer-sync.sh');
+  const dir = path.join(DATA, 'sync-inventory');
+  fs.rmSync(dir, { recursive: true, force: true });
+  const root = path.join(dir, 'console');
+  fs.mkdirSync(path.join(root, 'roms/nes'), { recursive: true });
+  const smb3 = `${SMB3}.nes`;
+  fs.copyFileSync(path.join(ROMS, 'nes', smb3), path.join(root, 'roms/nes', smb3));
+  const homebrew = 'Tiny Homebrew (World).nes';
+  fs.writeFileSync(path.join(root, 'roms/nes', homebrew), Buffer.concat([Buffer.from('NES\x1a'), crypto.randomBytes(24 * 1024)]));
+  const claim = await api('POST', '/link/claim', { name: 'inventory-console', firmware: 'knulli', root });
+  const id = claim.json.deviceId as number;
+  const state = path.join(dir, 'state');
+  fs.mkdirSync(state, { recursive: true });
+  fs.writeFileSync(path.join(state, 'config'), `SERVER=${base}\nTOKEN=${claim.json.token}\n`);
+  const run = (...args: string[]) => execFileP('sh', [client, ...args], { env: { ...process.env, ROMMANCER_STATE: state } });
+  const agent = (p: string) => fetch(`${base}/api/v1/agent${p}`, { headers: { 'X-Device-Token': claim.json.token } }).then((r) => r.text());
+
+  await run('sync');
+  let inv = (await api('GET', `/devices/${id}/inventory`)).json;
+  assert.equal(inv.allowPull, true);
+  assert.equal(inv.items.length, 2);
+  assert.equal(inv.items.find((i: any) => i.name === smb3).onServer, true, 'identified by hash and owned');
+  assert.equal(inv.items.find((i: any) => i.name === homebrew).onServer, false);
+
+  // "Sync now" from the web reaches the client at its next poll, once
+  await api('POST', `/devices/${id}/refresh`);
+  assert.equal((await agent('/poll')).trim(), 'sync');
+  assert.equal((await agent('/poll')).trim(), '');
+
+  // Bring everything the server lacks: only the homebrew, stored as unverified in the NES library
+  assert.equal((await api('POST', `/devices/${id}/pull`, {})).json.queued, 1);
+  assert.equal((await agent('/poll')).trim(), 'pull');
+  assert.match((await run('pulls')).stdout, /sent to server: 1 of 1/);
+  const pulls = (await api('GET', `/devices/${id}/pulls`)).json;
+  assert.equal(pulls[0].status, 'done', JSON.stringify(pulls[0]));
+  assert.equal(pulls[0].result, 'stored as unverified');
+  await run('sync');
+  inv = (await api('GET', `/devices/${id}/inventory`)).json;
+  assert.equal(inv.items.find((i: any) => i.name === homebrew).onServer, true, 'now in the collection');
+  assert.equal((await api('POST', `/devices/${id}/pull`, {})).json.queued, 0, 'nothing left to bring');
+
+  // A device that does not allow it is never asked
+  await execFileP('sh', [client, 'set', 'ALLOW_PULL', '0'], { env: { ...process.env, ROMMANCER_STATE: state } });
+  await run('sync');
+  assert.equal((await api('GET', `/devices/${id}/inventory`)).json.allowPull, false);
+  assert.equal((await api('POST', `/devices/${id}/pull`, {})).status, 403);
+
+  // Direct send: the device's own list, already complete because it has the game
+  const sent = await api('POST', `/devices/${id}/send`, { gameIds: [ctx.smb3GameId] });
+  assert.equal(sent.status, 201);
+  const progress = (await api('GET', `/devices/${id}/lists-progress`)).json;
+  const own = progress.find((l: any) => l.id === sent.json.listId);
+  assert.deepEqual([own.have, own.total], [1, 1]);
+  const byList = (await api('GET', `/devices/by-list/${sent.json.listId}/progress`)).json;
+  assert.deepEqual(byList.map((x: any) => [x.deviceId, x.have, x.total]), [[id, 1, 1]]);
+});

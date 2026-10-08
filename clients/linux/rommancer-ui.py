@@ -68,6 +68,8 @@ TEXTS = {
         "p_roms-download": "Descargando roms",
         "sync_roms": "Sincronizar roms",
         "auto_roms": "Roms automáticas: {v}",
+        "allow_pull": "El servidor puede traer juegos: {v}",
+        "p_pulls": "Enviando juegos al servidor",
         "yes": "sí",
         "no": "no",
         "conflicts": "Conflictos ({n})",
@@ -115,6 +117,8 @@ TEXTS = {
         "p_roms-download": "Downloading roms",
         "sync_roms": "Sync roms",
         "auto_roms": "Automatic roms: {v}",
+        "allow_pull": "Server may fetch games: {v}",
+        "p_pulls": "Sending games to the server",
         "yes": "yes",
         "no": "no",
         "conflicts": "Conflicts ({n})",
@@ -420,7 +424,7 @@ class App:
                 r = s.text(label, (x + 10, y), s.font, color)
                 if i == sel:
                     pygame.draw.rect(s.surf, ACCENT, r.inflate(20, 8), 2, border_radius=8)
-                y += int(s.font.get_linesize() * (1.4 if len(items) <= 5 else 1.12))
+                y += int(s.font.get_linesize() * (1.4 if len(items) <= 5 else 1.12 if len(items) <= 7 else 1.0))
             s.flip()
             a = self.next_action(timeout=0)
             if a is None:
@@ -643,9 +647,15 @@ class App:
             pass
         return cfg
 
+    def toggle(self, key):
+        on = self.settings().get(key, "1") == "1"
+        subprocess.run(["sh", SCRIPT, "set", key, "0" if on else "1"], capture_output=True, timeout=30)
+
     def toggle_auto_roms(self):
-        on = self.settings().get("AUTO_ROMS", "1") == "1"
-        subprocess.run(["sh", SCRIPT, "set", "AUTO_ROMS", "0" if on else "1"], capture_output=True, timeout=30)
+        self.toggle("AUTO_ROMS")
+
+    def toggle_allow_pull(self):
+        self.toggle("ALLOW_PULL")
 
     def conflicts(self):
         try:
@@ -695,11 +705,13 @@ class App:
         while True:
             if self.linked():
                 info = [T["connected"].format(server=self.cfg.get("SERVER", "")), T["as"].format(user=self.cfg.get("USER", "?"))]
-                auto = T["yes"] if self.settings().get("AUTO_ROMS", "1") == "1" else T["no"]
+                cfg = self.settings()
+                auto = T["yes"] if cfg.get("AUTO_ROMS", "1") == "1" else T["no"]
+                pull = T["yes"] if cfg.get("ALLOW_PULL", "1") == "1" else T["no"]
                 n = "…" if self.conflict_count is None else self.conflict_count
-                items = [T["sync_now"], T["sync_roms"], T["auto_roms"].format(v=auto), T["conflicts"].format(n=n), T["status"], T["logout"], T["quit"]]
-                choice = self.menu(T["title"], items, info, refresh=lambda: T["conflicts"].format(n="…" if self.conflict_count is None else self.conflict_count), refresh_index=3)
-                actions = [self.sync_now, self.sync_roms, self.toggle_auto_roms, self.resolve_conflicts, self.status, self.logout]
+                items = [T["sync_now"], T["sync_roms"], T["auto_roms"].format(v=auto), T["allow_pull"].format(v=pull), T["conflicts"].format(n=n), T["status"], T["logout"], T["quit"]]
+                choice = self.menu(T["title"], items, info, refresh=lambda: T["conflicts"].format(n="…" if self.conflict_count is None else self.conflict_count), refresh_index=4)
+                actions = [self.sync_now, self.sync_roms, self.toggle_auto_roms, self.toggle_allow_pull, self.resolve_conflicts, self.status, self.logout]
             else:
                 choice = self.menu(T["title"], [f"{T['server']}: {self.server}", T["login"], T["signup"], T["quit"]])
                 actions = [self.edit_server, self.login, self.signup]

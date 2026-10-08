@@ -167,6 +167,7 @@ export function ListPage() {
           )}
         </p>
         {list.derivedFilter && <p className="font-mono text-xs">{JSON.stringify(list.derivedFilter)}</p>}
+        <ListDevicesProgress listId={list.id} />
       </div>
       {jobId && (
         <div className="mb-4 max-w-md">
@@ -551,5 +552,23 @@ function DeviceDialog({ list, onClose }: { list: any; onClose(): void }) {
         </div>
       </DialogContent>
     </Dialog>
+  )
+}
+
+/** How much of the list each console that keeps it already has */
+function ListDevicesProgress({ listId }: { listId: number }) {
+  const { t } = useTranslation()
+  const progress = useQuery({ queryKey: ['list-progress', listId], queryFn: () => get<{ deviceId: number; name: string; have: number; total: number }[]>(`/devices/by-list/${listId}/progress`) })
+  if (!progress.data?.length) return null
+  return (
+    <div className="flex flex-wrap gap-2 pt-1">
+      {progress.data.map((p) => (
+        <Link key={p.deviceId} to={`/devices/${p.deviceId}`}>
+          <Badge variant={p.total && p.have === p.total ? 'default' : 'outline'}>
+            {p.name}: {t('more.device.listProgress', { have: p.have, total: p.total, pct: p.total ? Math.round((100 * p.have) / p.total) : 0 })}
+          </Badge>
+        </Link>
+      ))}
+    </div>
   )
 }

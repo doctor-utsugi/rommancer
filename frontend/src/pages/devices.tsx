@@ -88,6 +88,12 @@ export function DevicesPage() {
                   {d.connType === 'SSH' ? `${d.sshUser}@${d.sshHost}:${d.sshPort ?? 22}` : ''}
                   {d.rootPath}
                 </p>
+                {d.connType === 'AGENT' && (
+                  <p className="text-xs text-muted-foreground">
+                    {t('more.device.games', { count: d._count?.inventory ?? 0 })}
+                    {d.clientVersion && ` · ${t('more.device.client')} ${d.clientVersion}`}
+                  </p>
+                )}
                 <p className="text-xs text-muted-foreground">
                   {t('devices.lastSync')}: {formatDate(d.lastSyncAt)}
                   {d.connType === 'AGENT' && ` · ${t('more.devices.lastSeen')}: ${formatDate(d.lastSeenAt)}`}
@@ -97,6 +103,9 @@ export function DevicesPage() {
                   {d.connType === 'AGENT' ? (
                     can('saves') && (
                       <>
+                        <Button size="sm" nativeButton={false} render={<Link to={`/devices/${d.id}`} />}>
+                          {t('more.device.open')}
+                        </Button>
                         <Button variant="outline" size="sm" onClick={() => setScripts(d)}>
                           {t('more.devices.scripts')}
                         </Button>
