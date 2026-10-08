@@ -326,7 +326,7 @@ function CardView({ card, progress, result, syncing, onChange }: { card: Card; p
               ))}
             </nav>
             {tab === 'summary' && <Summary deviceId={deviceId} onSend={() => sync(false)} refreshKey={result} />}
-            {tab === 'lists' && <Lists deviceId={deviceId} onSaved={() => sync(true)} />}
+            {tab === 'lists' && <Lists deviceId={deviceId} name={card.label} onCopy={() => sync(true)} />}
             {tab === 'add' && <AddGames deviceId={deviceId} onAdded={() => sync(true)} />}
             {!card.link.console && (
               <button
@@ -548,7 +548,7 @@ function Summary({ deviceId, onSend, refreshKey }: { deviceId: number; onSend: (
   )
 }
 
-function Lists({ deviceId, onSaved }: { deviceId: number; onSaved: () => void }) {
+function Lists({ deviceId, name, onCopy }: { deviceId: number; name: string; onCopy: () => void }) {
   const [lists, setLists] = useState<{ id: number; name: string; _count?: { items: number } }[] | null>(null)
   const [picked, setPicked] = useState<Set<number>>(new Set())
   useEffect(() => {
@@ -557,30 +557,26 @@ function Lists({ deviceId, onSaved }: { deviceId: number; onSaved: () => void })
   }, [deviceId])
   if (!lists) return <p className="muted">…</p>
   if (!lists.length) return <p className="muted">{t('noLists')}</p>
-  const save = async () => {
-    await api('PUT', `/devices/${deviceId}/lists`, { listIds: [...picked] })
-    onSaved()
+  // Ticking a list subscribes the card right away; copying happens on the next sync (or now, with the button)
+  const toggle = async (id: number, on: boolean) => {
+    const n = new Set(picked)
+    if (on) n.add(id)
+    else n.delete(id)
+    setPicked(n)
+    await api('PUT', `/devices/${deviceId}/lists`, { listIds: [...n] })
   }
   return (
     <div className="panel">
-      <p className="muted small">{t('listsHelp')}</p>
+      <p className="muted small">{t('listsHelp', { name })}</p>
       {lists.map((l) => (
         <label key={l.id} className="check">
-          <input
-            type="checkbox"
-            checked={picked.has(l.id)}
-            onChange={(e) => {
-              const n = new Set(picked)
-              if (e.target.checked) n.add(l.id)
-              else n.delete(l.id)
-              setPicked(n)
-            }}
-          />
+          <input type="checkbox" checked={picked.has(l.id)} onChange={(e) => void toggle(l.id, e.target.checked)} />
           {l.name}
           {l._count && <span className="muted small"> · {l._count.items}</span>}
+          {picked.has(l.id) && <span className="accent small"> · {t('subscribed')}</span>}
         </label>
       ))}
-      <button className="primary" onClick={() => void save()}>
+      <button className="primary" disabled={!picked.size} onClick={onCopy}>
         {t('saveLists')}
       </button>
     </div>
