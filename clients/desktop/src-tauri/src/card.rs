@@ -156,3 +156,14 @@ pub fn list(folders: &[String]) -> Vec<Card> {
     }
     out
 }
+
+/// Free and total bytes of the disk holding ROOT (the mount point that contains it)
+pub fn space_of(root: &Path) -> Option<(u64, u64)> {
+    let disks = sysinfo::Disks::new_with_refreshed_list();
+    disks
+        .list()
+        .iter()
+        .filter(|d| root.starts_with(d.mount_point()))
+        .max_by_key(|d| d.mount_point().as_os_str().len())
+        .map(|d| (d.available_space(), d.total_space()))
+}

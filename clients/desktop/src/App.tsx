@@ -663,6 +663,10 @@ function Lists({ deviceId, name, onCopy }: { deviceId: number; name: string; onC
   }, [deviceId])
   const [systems, setSystems] = useState<SystemsInfo | null>(null)
   const [choosing, setChoosing] = useState(false)
+  const [plan, setPlan] = useState<PlanInfo | null>(null)
+  const [tree, setTree] = useState(false)
+  const loadPlan = useCallback(() => void api<PlanInfo>('GET', `/devices/${deviceId}/plan`).then(setPlan, () => {}), [deviceId])
+  useEffect(loadPlan, [loadPlan])
   const loadSystems = useCallback(() => void api<SystemsInfo>('GET', `/devices/${deviceId}/list-systems`).then(setSystems), [deviceId])
   useEffect(loadSystems, [loadSystems])
   if (!lists) return <p className="muted">…</p>
@@ -675,6 +679,7 @@ function Lists({ deviceId, name, onCopy }: { deviceId: number; name: string; onC
     setPicked(n)
     await api('PUT', `/devices/${deviceId}/lists`, { listIds: [...n] })
     loadSystems()
+    loadPlan()
   }
   return (
     <div className="panel">
@@ -701,7 +706,46 @@ function Lists({ deviceId, name, onCopy }: { deviceId: number; name: string; onC
           info={systems}
           onClose={(saved) => {
             setChoosing(false)
-            if (saved) loadSystems()
+            if (saved) {
+              loadSystems()
+              loadPlan()
+            }
+          }}
+        />
+      )}
+      {plan && plan.systems.length > 0 && (
+        <div className="space">
+          <p className="small">
+            {plan.total ? t('spaceLine', { free: bytes(plan.free ?? 0), total: bytes(plan.total), need: bytes(plan.missingBytes) }) : t('spaceUnknown')}
+          </p>
+          {plan.fits === false && <p className="error small">{t('spaceNoFit', { over: bytes(plan.missingBytes - (plan.budget ?? 0)) })}</p>}
+          <div className="row">
+            <span className="small">{t('spaceReserve')}</span>
+            <input
+              style={{ width: 70 }}
+              defaultValue={plan.reservePercent}
+              onBlur={async (e) => {
+                await api('PUT', `/devices/${deviceId}/reserve`, { percent: Math.max(0, Math.min(90, Number(e.target.value) || 0)) })
+                loadPlan()
+              }}
+            />
+            <span className="small">%</span>
+            <button className={plan.fits === false ? 'primary' : ''} onClick={() => setTree(true)}>
+              {t('spaceChoose')}
+            </button>
+          </div>
+        </div>
+      )}
+      {tree && plan && (
+        <SpaceTree
+          deviceId={deviceId}
+          plan={plan}
+          onClose={(saved) => {
+            setTree(false)
+            if (saved) {
+              loadPlan()
+              loadSystems()
+            }
           }}
         />
       )}
@@ -855,6 +899,91 @@ function Games({ deviceId, refreshKey, onSend }: { deviceId: number; refreshKey:
         ))}
         {shown.length > 500 && <p className="muted small">{t('moreGames', { n: shown.length - 500 })}</p>}
         {!shown.length && <p className="muted small">{t('noMatches')}</p>}
+      </div>
+    </div>
+  )
+}
+
+interface PlanInfo {
+  reservePercent: number
+  free: number | null
+  total: number | null
+  budget: number | null
+  missingBytes: number
+  fits: boolean | null
+  systems: { slug: string; name: string; excluded: boolean; bytes: number; games: { gameId: number | null; title: string; bytes: number; present: boolean; excluded: boolean }[] }[]
+}
+
+/** Systems and games of the card's lists by size: untick what should not be copied to it */
+function SpaceTree({ deviceId, plan, onClose }: { deviceId: number; plan: PlanInfo; onClose: (saved: boolean) => void }) {
+  const [offSystems, setOffSystems] = useState(new Set(plan.systems.filter((s) => s.excluded).map((s) => s.slug)))
+  const [offGames, setOffGames] = useState(new Set(plan.systems.flatMap((s) => s.games.filter((g) => g.excluded && g.gameId && !s.excluded).map((g) => g.gameId!))))
+  const [open, setOpen] = useState<string | null>(null)
+  const missing = plan.systems.reduce(
+    (n, s) => n + (offSystems.has(s.slug) ? 0 : s.games.filter((g) => !g.present && !(g.gameId && offGames.has(g.gameId))).reduce((m, g) => m + g.bytes, 0)),
+    0,
+  )
+  const save = async () => {
+    const sys = await api<SystemsInfo>('GET', `/devices/${deviceId}/list-systems`)
+    await api('PUT', `/devices/${deviceId}/system-filter`, { newAuto: sys.newAuto, excluded: [...offSystems], known: sys.systems.map((s) => s.slug), excludedGames: [...offGames] })
+    onClose(true)
+  }
+  const fits = plan.budget === null || missing <= plan.budget
+  return (
+    <div className="overlay" onClick={() => onClose(false)}>
+      <div className="panel dialog" onClick={(e) => e.stopPropagation()}>
+        <h2>{t('spaceTreeTitle')}</h2>
+        <p className={fits ? 'muted small' : 'error small'}>{t('spaceTreeTotal', { need: bytes(missing), budget: plan.budget === null ? '?' : bytes(plan.budget) })}</p>
+        <div className="results">
+          {plan.systems.map((s) => (
+            <div key={s.slug}>
+              <label className="check">
+                <input
+                  type="checkbox"
+                  checked={!offSystems.has(s.slug)}
+                  onChange={(e) => {
+                    const n = new Set(offSystems)
+                    if (e.target.checked) n.delete(s.slug)
+                    else n.add(s.slug)
+                    setOffSystems(n)
+                  }}
+                />
+                <button type="button" className="link grow" style={{ textAlign: 'left' }} onClick={() => setOpen(open === s.slug ? null : s.slug)}>
+                  {s.name} · {bytes(s.bytes)} · {t('gamesN', { n: s.games.length })}
+                </button>
+              </label>
+              {open === s.slug && !offSystems.has(s.slug) && (
+                <div style={{ paddingLeft: 24 }}>
+                  {s.games.map((g, i) => (
+                    <label key={g.gameId ?? i} className="check small">
+                      <input
+                        type="checkbox"
+                        disabled={!g.gameId}
+                        checked={!(g.gameId && offGames.has(g.gameId))}
+                        onChange={(e) => {
+                          if (!g.gameId) return
+                          const n = new Set(offGames)
+                          if (e.target.checked) n.delete(g.gameId)
+                          else n.add(g.gameId)
+                          setOffGames(n)
+                        }}
+                      />
+                      <span className="grow">{g.title}</span>
+                      {g.present && <span className="ok">✓</span>}
+                      <span className="muted">{bytes(g.bytes)}</span>
+                    </label>
+                  ))}
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+        <div className="row end">
+          <button onClick={() => onClose(false)}>{t('cancel')}</button>
+          <button className="primary" onClick={() => void save()}>
+            {t('save')}
+          </button>
+        </div>
       </div>
     </div>
   )

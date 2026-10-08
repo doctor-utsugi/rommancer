@@ -17,6 +17,7 @@ import { copiesSystem, folderFor, layoutOf, openSink, systemFilterOf } from './s
 import { ownedGameIds, ownedRomIds } from '../roms/service.js';
 import { installClient, serverKey, syncOverSsh } from './ssh.js';
 import { OPEN_PULL, pullTransfers } from '../saves/agent.js';
+import { devicePlan } from './plan.js';
 
 /** Requests not finished yet, including paused ones (the console is only offered the open ones) */
 const QUEUED_PULL = [...OPEN_PULL, 'paused'];
@@ -457,12 +458,71 @@ devicesRouter.get('/:id/list-systems', async (req, res) => {
 });
 
 // Saves the filter: the systems unticked, and whether systems that appear later are copied by themselves
+// (games left out one by one are kept unless given)
 devicesRouter.put('/:id/system-filter', requirePerm('roms.download'), async (req, res) => {
   const d = await ownDevice(intParam(req), me(req));
-  const body = z.object({ newAuto: z.boolean(), excluded: z.array(z.string().max(32)).max(200), known: z.array(z.string().max(32)).max(200) }).parse(req.body);
-  const filter = { newAuto: body.newAuto, excluded: [...new Set(body.excluded)], known: [...new Set([...body.known, ...body.excluded])] };
+  const body = z
+    .object({ newAuto: z.boolean(), excluded: z.array(z.string().max(32)).max(200), known: z.array(z.string().max(32)).max(200), excludedGames: z.array(z.number().int()).max(20000).optional() })
+    .parse(req.body);
+  const filter = {
+    newAuto: body.newAuto,
+    excluded: [...new Set(body.excluded)],
+    known: [...new Set([...body.known, ...body.excluded])],
+    excludedGames: body.excludedGames ? [...new Set(body.excludedGames)] : systemFilterOf(d).excludedGames,
+  };
   await prisma.device.update({ where: { id: d.id }, data: { systemFilter: filter } });
   res.json(filter);
+});
+
+/**
+ * Space on the device against what its lists would copy: a tree of systems and games by size, with what is
+ * already there and what is left out, so the user can choose what not to copy when it does not fit
+ */
+devicesRouter.get('/:id/plan', async (req, res) => {
+  const d = await ownDevice(intParam(req), me(req));
+  const plan = await devicePlan(d);
+  const names = new Map((await prisma.system.findMany({ select: { slug: true, name: true } })).map((s) => [s.slug, s.name]));
+  const filter = systemFilterOf(d);
+  const bySystem = new Map<string, { games: Map<string, { gameId: number | null; title: string; bytes: number; present: boolean; excluded: boolean }> }>();
+  for (const f of plan.files) {
+    const s = bySystem.get(f.system) ?? { games: new Map() };
+    const key = f.gameId ? `g${f.gameId}` : f.dest;
+    const g = s.games.get(key) ?? { gameId: f.gameId, title: f.title, bytes: 0, present: true, excluded: f.excluded };
+    g.bytes += f.size;
+    g.present = g.present && f.present;
+    s.games.set(key, g);
+    bySystem.set(f.system, s);
+  }
+  const systems = [...bySystem].map(([slug, s]) => {
+    const games = [...s.games.values()].sort((a, b) => b.bytes - a.bytes);
+    return {
+      slug,
+      name: names.get(slug) ?? slug,
+      excluded: !copiesSystem(filter, slug),
+      bytes: games.reduce((n, g) => n + g.bytes, 0),
+      missingBytes: games.filter((g) => !g.present && !g.excluded).reduce((n, g) => n + g.bytes, 0),
+      games,
+    };
+  });
+  res.json({
+    reservePercent: d.reservePercent,
+    free: plan.free,
+    total: plan.total,
+    reserveBytes: plan.reserveBytes,
+    budget: plan.budget,
+    missingBytes: plan.missingBytes,
+    fits: plan.budget === null ? null : plan.missingBytes <= plan.budget,
+    spaceAt: d.spaceAt,
+    shortfall: d.spaceShortfall,
+    systems: systems.sort((a, b) => b.bytes - a.bytes),
+  });
+});
+
+// Free space kept on the device when copying list roms (5% by default)
+devicesRouter.put('/:id/reserve', requirePerm('roms.download'), async (req, res) => {
+  const d = await ownDevice(intParam(req), me(req));
+  const { percent } = z.object({ percent: z.number().int().min(0).max(90) }).parse(req.body);
+  res.json(await prisma.device.update({ where: { id: d.id }, data: { reservePercent: percent }, select: { id: true, reservePercent: true } }));
 });
 
 devicesRouter.get('/:id/lists', async (req, res) => {

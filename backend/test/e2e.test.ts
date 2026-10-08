@@ -797,8 +797,12 @@ test('organizacion: renombrado y ordenacion por carpetas (dry-run y aplicar)', a
   fs.copyFileSync(path.join(ROMS, 'nes', `${SMB3}.nes`), path.join(dir, 'varios', 'smb3.nes'));
   fs.copyFileSync(path.join(ROMS, 'snes', 'Chrono Trigger (USA).smc'), path.join(dir, 'varios', 'ct.smc'));
   fs.copyFileSync(path.join(ROMS, 'snes', 'Chrono Trigger (USA) [T+Spa1.07_Merida].smc'), path.join(dir, 'ct-es.smc'));
+  // A new folder is a read-only source: reorganizing it is refused until it is made writable
   const p = await api('POST', '/admin/paths', { label: 'Messy', path: dir });
+  assert.equal(p.json.readOnly, true);
   await waitJob((await api('POST', `/admin/paths/${p.json.id}/scan`)).json.id);
+  assert.equal((await api('POST', `/admin/paths/${p.json.id}/organize`, { scheme: 'knulli' })).status, 400);
+  await api('PATCH', `/admin/paths/${p.json.id}`, { readOnly: false });
   const plan = (await api('GET', `/admin/paths/${p.json.id}/organize?scheme=knulli`)).json;
   assert.ok(plan.find((x: any) => x.to === path.join('nes', `${SMB3}.nes`)), JSON.stringify(plan));
   assert.ok(plan.find((x: any) => x.to === path.join('snes', 'Chrono Trigger (USA).sfc') || x.to === path.join('snes', 'Chrono Trigger (USA).smc')));
@@ -979,13 +983,14 @@ test('fase2: destino final, subidas no verificadas y verificacion posterior', as
   const snesHack = await send({ systemId: String(ctx.snesSystemId), newGameTitle: 'Juego Snes', kind: 'translation', hackName: 'Traduccion', hackVersion: '0.9', hackLanguage: 'Es' }, crypto.randomBytes(65536), 'juego-es.sfc');
   assert.equal(snesHack.status, 201, JSON.stringify(snesHack.json));
   assert.ok(fs.existsSync(path.join(DATA, 'uploads-target', 'snes', 'juego-es.sfc')));
-  // Sin destino ni predeterminada: DATA_DIR/library
+  // Destinations exist but none takes Game Boy: a clear error, never a disk nobody chose
   const def = (await api('GET', '/admin/paths')).json.find((p: any) => p.isDefaultTarget);
   await api('PATCH', `/admin/paths/${def.id}`, { isDefaultTarget: false });
   const gbs = (await api('GET', '/systems')).json.find((s: any) => s.slug === 'gb');
   const lib = await send({ systemId: String(gbs.id), newGameTitle: 'Homebrew GB' }, crypto.randomBytes(32768), 'hb.gb');
-  assert.equal(lib.status, 201);
-  assert.ok(fs.existsSync(path.join(DATA, 'library', 'gb', 'hb.gb')));
+  assert.equal(lib.status, 507, JSON.stringify(lib.json));
+  assert.match(lib.json.error, /No destination folder takes Game Boy/);
+  assert.ok(!fs.existsSync(path.join(DATA, 'library', 'gb', 'hb.gb')));
   await api('PATCH', `/admin/paths/${def.id}`, { isDefaultTarget: true });
 
   // Un DAT posterior con su checksum la verifica
@@ -1892,6 +1897,122 @@ test('desktop companion: a layout the user defines (one system, saves next to ea
   const inv = (await api('GET', `/devices/${claim.json.deviceId}/inventory`)).json;
   assert.equal(inv.items[0].system, 'gb');
   assert.equal(inv.items[0].size, 12345, 'the size the device reported');
+});
+
+test('storage: an unreachable folder keeps its index, mass removals wait for confirmation, destinations keep their reserve', async () => {
+  const dir = path.join(DATA, 'storage-src');
+  fs.rmSync(dir, { recursive: true, force: true });
+  fs.mkdirSync(path.join(dir, 'nes'), { recursive: true });
+  const nesFiles = fs.readdirSync(path.join(ROMS, 'nes')).filter((f) => f.endsWith('.nes')).slice(0, 60);
+  for (const f of nesFiles) fs.copyFileSync(path.join(ROMS, 'nes', f), path.join(dir, 'nes', f));
+  const p = (await api('POST', '/admin/paths', { label: 'Storage src', path: dir })).json;
+  await waitJob((await api('POST', `/admin/paths/${p.id}/scan`)).json.id);
+  const count = async () => Object.values((await api('GET', '/admin/paths')).json.find((x: any) => x.id === p.id).files as Record<string, number>).reduce((a, b) => a + b, 0);
+  const indexed = await count();
+  assert.ok(indexed >= 50, `indexed ${indexed}`);
+
+  // Disk gone (folder missing) or not mounted (empty mount point): offline, nothing removed
+  fs.renameSync(dir, dir + '-away');
+  const r1 = await waitJob((await api('POST', `/admin/paths/${p.id}/scan`)).json.id);
+  assert.equal(r1.result.offline, true);
+  assert.equal(await count(), indexed);
+  let row = (await api('GET', '/admin/paths')).json.find((x: any) => x.id === p.id);
+  assert.equal(row.offlineReason, 'missing');
+  fs.mkdirSync(dir);
+  const r2 = await waitJob((await api('POST', `/admin/paths/${p.id}/scan`)).json.id);
+  assert.equal(r2.result.reason, 'empty');
+  assert.equal(await count(), indexed);
+  fs.rmSync(dir, { recursive: true });
+  fs.renameSync(dir + '-away', dir);
+
+  // Most of the folder vanishing at once is held back until confirmed
+  for (const f of nesFiles.slice(0, 40)) fs.rmSync(path.join(dir, 'nes', f));
+  const r3 = await waitJob((await api('POST', `/admin/paths/${p.id}/scan`)).json.id);
+  assert.equal(r3.result.removed, 0);
+  assert.ok(r3.result.heldBack >= 40);
+  row = (await api('GET', '/admin/paths')).json.find((x: any) => x.id === p.id);
+  assert.equal(row.offlineAt, null, 'back online');
+  assert.match(row.scanWarning, /kept until confirmed/);
+  const r4 = await waitJob((await api('POST', `/admin/paths/${p.id}/scan`, { allowMassRemoval: true })).json.id);
+  assert.ok(r4.result.removed >= 40);
+  assert.equal((await api('GET', '/admin/paths')).json.find((x: any) => x.id === p.id).scanWarning, null);
+
+  // Overlapping folders are refused, the same folder elsewhere is recognised by its marker
+  assert.equal((await api('POST', '/admin/paths', { label: 'Inside', path: path.join(dir, 'nes') })).status, 409);
+  const dest = path.join(DATA, 'storage-dest');
+  fs.rmSync(dest, { recursive: true, force: true });
+  const d = (await api('POST', '/admin/paths', { label: 'Dest', path: dest, readOnly: false, targetSystems: ['lynx'], create: true, reservePercent: 90 })).json;
+  assert.ok(fs.existsSync(path.join(dest, '.rommancer-id')), 'writable folders get a marker');
+  const moved = dest + '-moved';
+  fs.rmSync(moved, { recursive: true, force: true });
+  fs.cpSync(dest, moved, { recursive: true });
+  const again = await api('POST', '/admin/paths', { label: 'Again', path: moved });
+  assert.equal(again.status, 409);
+  assert.match(again.json.error, /^SAME_FOLDER/);
+
+  // A destination that would cross its reserve refuses the upload (90% kept free on a disk that is fuller)
+  const space = await fs.promises.statfs(dest);
+  if (Number(space.bavail) / Number(space.blocks) < 0.9) {
+    const fd = new FormData();
+    fd.append('file', new Blob([crypto.randomBytes(4096)]), 'reserve.lnx');
+    const lynx = (await api('GET', '/systems')).json.find((s: any) => s.slug === 'lynx');
+    fd.append('systemId', String(lynx.id));
+    fd.append('newGameTitle', 'Reserve test');
+    // The system's destination is past its reserve: the file goes whole to the general destination instead
+    const up = await api('POST', '/uploads/unverified', fd);
+    assert.equal(up.status, 201, JSON.stringify(up.json));
+    assert.ok(!fs.existsSync(path.join(dest, 'lynx', 'reserve.lnx')));
+    assert.ok(fs.existsSync(path.join(DATA, 'uploads-target', 'lynx', 'reserve.lnx')));
+  }
+  await api('DELETE', `/admin/paths/${d.id}`);
+});
+
+test('organize: companions travel with their rom, multi-file games stay, a run can be undone', async () => {
+  const dir = path.join(DATA, 'organize-journal');
+  fs.rmSync(dir, { recursive: true, force: true });
+  fs.mkdirSync(dir, { recursive: true });
+  fs.copyFileSync(path.join(ROMS, 'nes', `${SMB3}.nes`), path.join(dir, 'mario.nes'));
+  fs.writeFileSync(path.join(dir, 'mario.ips'), 'PATCH');
+  const p = (await api('POST', '/admin/paths', { label: 'Journal', path: dir, readOnly: false })).json;
+  await waitJob((await api('POST', `/admin/paths/${p.id}/scan`)).json.id);
+  const plan = (await api('GET', `/admin/paths/${p.id}/organize?scheme=system`)).json;
+  assert.deepEqual(plan.find((x: any) => x.from === 'mario.nes').companions, ['mario.ips']);
+  const applied = (await api('POST', `/admin/paths/${p.id}/organize`, { scheme: 'system' })).json;
+  assert.equal(applied.errors.length, 0, JSON.stringify(applied));
+  assert.ok(fs.existsSync(path.join(dir, 'nes', `${SMB3}.nes`)));
+  assert.ok(fs.existsSync(path.join(dir, 'nes', `${SMB3}.ips`)), 'the patch follows its rom');
+  assert.ok(fs.existsSync(path.join(dir, '.rommancer-organize.json')));
+  const undone = (await api('POST', `/admin/paths/${p.id}/organize/undo`)).json;
+  assert.equal(undone.errors.length, 0);
+  assert.ok(fs.existsSync(path.join(dir, 'mario.nes')) && fs.existsSync(path.join(dir, 'mario.ips')));
+  const rescan = await waitJob((await api('POST', `/admin/paths/${p.id}/scan`)).json.id);
+  assert.equal(rescan.result.hashed, 0, 'the index followed the undo');
+});
+
+test('device space: list roms are copied while the reserve holds, the rest waits and can be left out', async () => {
+  const claim = await api('POST', '/link/claim', { name: 'small card', firmware: 'knulli', root: '/media/small' });
+  const id = claim.json.deviceId as number;
+  const agent = (p: string, init: RequestInit = {}) =>
+    fetch(`${base}/api/v1/agent${p}`, { ...init, headers: { 'X-Device-Token': claim.json.token, 'Content-Type': 'application/octet-stream', ...(init.headers ?? {}) } }).then((r) => r.text());
+  const sent = await api('POST', `/devices/${id}/send`, { gameIds: [ctx.smb3GameId] });
+  assert.equal(sent.status, 201);
+  // 1 MB free of 100 MB with a 5% reserve: nothing fits
+  await agent('/sync', { method: 'POST', body: 'rom\t/media/small/roms/nes/x.nes\t\t\t1\n', headers: { 'X-Space': `${1e6} ${1e8}` } });
+  let plan = (await api('GET', `/devices/${id}/plan`)).json;
+  assert.equal(plan.fits, false);
+  assert.equal(plan.reservePercent, 5);
+  assert.ok(plan.systems[0].games[0].bytes > 0);
+  assert.equal((await agent('/roms')).trim(), '', 'nothing copied past the reserve');
+  assert.equal((await api('GET', `/devices/${id}`)).json.spaceShortfall.files, 1);
+  // Plenty of room: copied
+  await agent('/sync', { method: 'POST', body: 'rom\t/media/small/roms/nes/x.nes\t\t\t1\n', headers: { 'X-Space': `${9e8} ${1e9}` } });
+  assert.match(await agent('/roms'), /^rom\t\/media\/small\/roms\/nes\//m);
+  // Left out one by one: not copied even with room
+  await api('PUT', `/devices/${id}/system-filter`, { newAuto: true, excluded: [], known: ['nes'], excludedGames: [ctx.smb3GameId] });
+  assert.equal((await agent('/roms')).trim(), '');
+  plan = (await api('GET', `/devices/${id}/plan`)).json;
+  assert.equal(plan.systems[0].games[0].excluded, true);
+  assert.equal((await api('PUT', `/devices/${id}/reserve`, { percent: 12 })).json.reservePercent, 12);
 });
 
 test('sync client: device inventory, fetching missing roms, sync on request, direct sends and list progress', async () => {

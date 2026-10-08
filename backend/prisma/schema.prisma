@@ -318,7 +318,33 @@ model RomPath {
   targetScheme    String    @default("system") @db.VarChar(32)
   readOnly        Boolean   @default(false)
   lastScanAt      DateTime?
+  // Identity of the folder: a marker file (.rommancer-id) holds this id in folders Rommancer may write to;
+  // wasMount records that the folder was a mount point, so an unmounted disk is noticed
+  volumeId        String?   @db.Char(36)
+  wasMount        Boolean   @default(false)
+  // Not reachable (disk unplugged, not mounted, emptied): its index is kept untouched and nothing is written
+  offlineAt       DateTime?
+  offlineReason   String?   @db.VarChar(64)
+  // Last scan held back something (e.g. it would have removed most of the folder)
+  scanWarning     String?   @db.VarChar(255)
+  // Destinations: free space kept on the disk, and order among destinations of the same system
+  reservePercent  Int       @default(5)
+  priority        Int       @default(0)
+  // Folder name -> system slug, for folders whose name says nothing ("varios", "SFC")
+  folderSystems   Json?
   files           RomFile[]
+}
+
+/** A file that disappeared: its hashes, kept for a while so the same file found elsewhere is not hashed again */
+model RomFileGone {
+  id        Int      @id @default(autoincrement())
+  quickHash String   @db.Char(40)
+  fileSize  BigInt
+  data      Json
+  goneAt    DateTime @default(now())
+
+  @@index([quickHash, fileSize])
+  @@index([goneAt])
 }
 
 model RomFile {
@@ -498,8 +524,15 @@ model Device {
   cardTokens     DeviceToken[]
   // Linked from the desktop companion: only known when its card is connected to a computer
   offline        Boolean           @default(false)
-  // Which systems of its lists are copied to the device: { newAuto, excluded, known } (see devices/sink.ts)
+  // Which systems and games of its lists are copied: { newAuto, excluded, known, excludedGames } (devices/sink.ts)
   systemFilter   Json?
+  // Free space kept on the device when copying list roms, its space as last reported by the client,
+  // and what did not fit at the last copy ({ at, files, bytes })
+  reservePercent Int               @default(5)
+  spaceFree      BigInt?
+  spaceTotal     BigInt?
+  spaceAt        DateTime?
+  spaceShortfall Json?
   createdAt      DateTime          @default(now())
   user           User              @relation(fields: [userId], references: [id], onDelete: Cascade)
   console        Console           @relation(fields: [consoleId], references: [id])

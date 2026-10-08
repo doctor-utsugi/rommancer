@@ -1,3 +1,7 @@
+import { useQuery } from '@tanstack/react-query'
+import { get } from '@/lib/api'
+import { useAuth } from '@/lib/auth'
+import { Button } from '@/components/ui/button'
 import { Link } from 'react-router'
 import { useTranslation } from 'react-i18next'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
@@ -12,9 +16,19 @@ export function DashboardPage() {
     (a, s) => ({ games: a.games + s.games, roms: a.roms + s.roms, owned: a.owned + s.owned, hacks: a.hacks + s.hacks }),
     { games: 0, roms: 0, owned: 0, hacks: 0 },
   )
+  const { user } = useAuth()
+  const paths = useQuery({ queryKey: ['paths'], queryFn: () => get<any[]>('/admin/paths'), enabled: user?.role === 'ADMIN' })
   return (
     <div>
       <PageHeader title={t('dashboard.title')} />
+      {user?.role === 'ADMIN' && paths.data && !paths.data.some((p) => !p.readOnly || p.isDefaultTarget || (p.targetSystems ?? []).length) && (
+        <div className="mb-6 flex flex-wrap items-center gap-3 rounded-lg border border-dashed p-4 text-sm">
+          <span className="grow">{t(paths.data.length ? 'more.setup.bannerNoDest' : 'more.setup.banner')}</span>
+          <Button size="sm" nativeButton={false} render={<Link to="/admin/storage-setup" />}>
+            {t('more.setup.open')}
+          </Button>
+        </div>
+      )}
       {isLoading ? (
         <p className="text-sm text-muted-foreground">{t('common.loading')}</p>
       ) : !systems.length ? (

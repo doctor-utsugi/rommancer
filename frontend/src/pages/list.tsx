@@ -12,7 +12,7 @@ import { Checkbox } from '@/components/ui/checkbox'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
-import { Empty, Field, JobProgress, NativeSelect, PageHeader, errMsg, useJob, useSystems } from '@/components/common'
+import { Empty, Field, JobProgress, NativeSelect, PageHeader, errMsg, useJob, useSystems, formatBytes } from '@/components/common'
 import { VerifiedUpload } from '@/pages/upload'
 import { ListFormDialog } from './lists'
 import { useRegions } from './games'
@@ -481,6 +481,16 @@ function DeviceDialog({ list, onClose }: { list: any; onClose(): void }) {
       await put(`/devices/by-list/${list.id}`, { deviceIds: chosen })
       void qc.invalidateQueries({ queryKey: ['list-devices', list.id] })
       toast.success(t('more.listDevices.saved'))
+      // Before anything is copied: say where it does not fit, with the way to choose what to leave out
+      for (const id of chosen) {
+        const plan = await get<{ fits: boolean | null; missingBytes: number; budget: number | null }>(`/devices/${id}/plan`).catch(() => null)
+        const d = agents.find((x) => x.id === id)
+        if (plan?.fits === false)
+          toast.warning(t('more.space.listNoFit', { device: d?.name ?? id, over: formatBytes(plan.missingBytes - (plan.budget ?? 0)) }), {
+            duration: 15000,
+            action: { label: t('more.space.choose'), onClick: () => (window.location.href = `/devices/${id}`) },
+          })
+      }
       onClose()
     } catch (e) {
       toast.error(errMsg(e))

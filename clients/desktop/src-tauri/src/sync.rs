@@ -237,7 +237,9 @@ impl<'a> Engine<'a> {
         self.save_cache();
 
         self.progress("server", 0, 0);
-        let plan = pairs(&self.api.post_text("/agent/sync", request.into_bytes(), &[("X-Allow-Pull", "1".into())])?);
+        // Free and total bytes of the card: the server copies list roms only while a reserve is kept
+        let space = crate::card::space_of(Path::new(&self.root)).map(|(f, t)| format!("{f} {t}")).unwrap_or_default();
+        let plan = pairs(&self.api.post_text("/agent/sync", request.into_bytes(), &[("X-Allow-Pull", "1".into()), ("X-Space", space)])?);
         let steps: Vec<_> = plan.into_iter().filter(|s| s.len() >= 3 && (s[0] == "put" || s[0] == "get")).collect();
         for (n, s) in steps.iter().enumerate() {
             self.check()?;

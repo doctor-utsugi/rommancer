@@ -452,3 +452,11 @@ button.command {
   margin: 0;
   background: var(--side);
 }
+
+.space {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  border-top: 1px solid var(--border);
+  padding-top: 10px;
+}

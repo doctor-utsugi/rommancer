@@ -333,7 +333,9 @@ cmd_sync() {
   fix_clock
   build_request "$req" || { log "server unreachable"; rmdir "$LOCK"; return 1; }
   progress server 0 0
-  http POST "$SERVER/api/v1/agent/sync" "$req" "$plan" "X-Allow-Pull: $ALLOW_PULL" "X-Ssh: $(ssh_offer)" "X-Client-Path-B64: $(b64 "$DIR/$(basename "$0")")" || { log "sync request failed"; rmdir "$LOCK"; return 1; }
+  # Free and total bytes of the roms' storage: the server copies list roms only while a reserve is kept
+  space="$(df -k "$ROMS" 2>/dev/null | awk 'NR == 2 { printf "%.0f %.0f", $4 * 1024, $2 * 1024 }')"
+  http POST "$SERVER/api/v1/agent/sync" "$req" "$plan" "X-Allow-Pull: $ALLOW_PULL" "X-Ssh: $(ssh_offer)" "X-Client-Path-B64: $(b64 "$DIR/$(basename "$0")")" "X-Space: ${space:-}" || { log "sync request failed"; rmdir "$LOCK"; return 1; }
   ups=0; downs=0; errs=0; moved=0; total="$(grep -c . "$plan")"
   while IFS="$TAB" read -r action p a b; do
     moved=$((moved + 1)); progress transfer "$moved" "$total"

@@ -260,6 +260,7 @@ export function DevicePage() {
             </div>
           )}
           <ExcludedSystems deviceId={String(id)} canEdit={can('roms.download')} onChange={() => void qc.invalidateQueries({ queryKey: ['device-lists', id] })} />
+          <DeviceSpace deviceId={String(id)} canEdit={can('roms.download')} />
         </TabsContent>
 
         <TabsContent value="pulls">
@@ -630,5 +631,151 @@ function ExcludedSystems({ deviceId, canEdit, onChange }: { deviceId: string; ca
         </DialogContent>
       </Dialog>
     </div>
+  )
+}
+
+interface DevicePlan {
+  reservePercent: number
+  free: number | null
+  total: number | null
+  reserveBytes: number | null
+  budget: number | null
+  missingBytes: number
+  fits: boolean | null
+  spaceAt: string | null
+  shortfall: { at: string; files: number; bytes: number } | null
+  systems: { slug: string; name: string; excluded: boolean; bytes: number; missingBytes: number; games: { gameId: number | null; title: string; bytes: number; present: boolean; excluded: boolean }[] }[]
+}
+
+/** The device's space against what its lists would copy, the reserve kept on it, and the tree to leave things out */
+function DeviceSpace({ deviceId, canEdit }: { deviceId: string; canEdit: boolean }) {
+  const { t } = useTranslation()
+  const qc = useQueryClient()
+  const plan = useQuery({ queryKey: ['device-plan', deviceId], queryFn: () => get<DevicePlan>(`/devices/${deviceId}/plan`) })
+  const [tree, setTree] = useState(false)
+  const p = plan.data
+  if (!p || !p.systems.length) return null
+  const setReserve = async (v: string) => {
+    const percent = Math.max(0, Math.min(90, Number(v) || 0))
+    await put(`/devices/${deviceId}/reserve`, { percent })
+    void qc.invalidateQueries({ queryKey: ['device-plan', deviceId] })
+  }
+  const used = p.total && p.free != null ? p.total - p.free : null
+  return (
+    <Card className="mt-4">
+      <CardHeader>
+        <CardTitle className="text-base">{t('more.space.title')}</CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-3 text-sm">
+        {p.total ? (
+          <div className="space-y-1">
+            <div className="relative h-2 overflow-hidden rounded-full bg-muted">
+              <div className="absolute inset-y-0 left-0 bg-primary" style={{ width: `${((used ?? 0) / p.total) * 100}%` }} />
+              <div className="absolute inset-y-0 bg-amber-500/70" style={{ left: `${((used ?? 0) / p.total) * 100}%`, width: `${Math.min(p.missingBytes, p.free ?? 0) / p.total * 100}%` }} />
+              <div className="absolute inset-y-0 right-0 bg-destructive/40" style={{ width: `${p.reservePercent}%` }} />
+            </div>
+            <p className="text-xs text-muted-foreground">{t('more.space.numbers', { free: formatBytes(p.free ?? 0), total: formatBytes(p.total), need: formatBytes(p.missingBytes), when: formatDate(p.spaceAt) })}</p>
+          </div>
+        ) : (
+          <p className="text-muted-foreground">{t('more.space.unknown')}</p>
+        )}
+        {p.fits === false && <p className="text-destructive">{t('more.space.noFit', { over: formatBytes(p.missingBytes - (p.budget ?? 0)) })}</p>}
+        {p.shortfall && <p className="text-amber-600">{t('more.space.shortfall', { files: p.shortfall.files, bytes: formatBytes(p.shortfall.bytes), when: formatDate(p.shortfall.at) })}</p>}
+        <div className="flex flex-wrap items-center gap-2">
+          <span>{t('more.space.reserve')}</span>
+          <Input className="w-20" defaultValue={p.reservePercent} inputMode="numeric" disabled={!canEdit} onBlur={(e) => void setReserve(e.target.value)} />
+          <span>%</span>
+          <Button size="sm" variant={p.fits === false ? 'default' : 'outline'} onClick={() => setTree(true)} disabled={!canEdit}>
+            {t('more.space.choose')}
+          </Button>
+        </div>
+        {tree && <SpaceTree deviceId={deviceId} plan={p} onClose={() => setTree(false)} />}
+      </CardContent>
+    </Card>
+  )
+}
+
+/** Systems and games of the device's lists by size: untick what should not be copied to it */
+function SpaceTree({ deviceId, plan, onClose }: { deviceId: string; plan: DevicePlan; onClose: () => void }) {
+  const { t } = useTranslation()
+  const qc = useQueryClient()
+  const [offSystems, setOffSystems] = useState(new Set(plan.systems.filter((s) => s.excluded).map((s) => s.slug)))
+  const [offGames, setOffGames] = useState(new Set(plan.systems.flatMap((s) => s.games.filter((g) => g.excluded && g.gameId && !s.excluded).map((g) => g.gameId!))))
+  const [open, setOpen] = useState<string | null>(null)
+  const missing = plan.systems.reduce(
+    (n, s) => n + (offSystems.has(s.slug) ? 0 : s.games.filter((g) => !g.present && !(g.gameId && offGames.has(g.gameId))).reduce((m, g) => m + g.bytes, 0)),
+    0,
+  )
+  const save = async () => {
+    try {
+      const sys = await get<{ newAuto: boolean; systems: { slug: string }[] }>(`/devices/${deviceId}/list-systems`)
+      await put(`/devices/${deviceId}/system-filter`, { newAuto: sys.newAuto, excluded: [...offSystems], known: sys.systems.map((s) => s.slug), excludedGames: [...offGames] })
+      void qc.invalidateQueries({ queryKey: ['device-plan', deviceId] })
+      void qc.invalidateQueries({ queryKey: ['device-list-systems', deviceId] })
+      onClose()
+    } catch (e) {
+      toast.error(errMsg(e))
+    }
+  }
+  const fits = plan.budget === null || missing <= plan.budget
+  return (
+    <Dialog open onOpenChange={(o) => !o && onClose()}>
+      <DialogContent className="sm:max-w-2xl">
+        <DialogHeader>
+          <DialogTitle>{t('more.space.treeTitle')}</DialogTitle>
+        </DialogHeader>
+        <p className={`text-sm ${fits ? 'text-muted-foreground' : 'text-destructive'}`}>
+          {t('more.space.treeTotal', { need: formatBytes(missing), budget: plan.budget === null ? '?' : formatBytes(plan.budget) })}
+        </p>
+        <div className="max-h-[55vh] space-y-1 overflow-y-auto text-sm">
+          {plan.systems.map((s) => (
+            <div key={s.slug} className="rounded-md border">
+              <div className="flex items-center gap-2 px-2 py-1.5">
+                <Checkbox
+                  checked={!offSystems.has(s.slug)}
+                  onCheckedChange={(c) => {
+                    const n = new Set(offSystems)
+                    if (c) n.delete(s.slug)
+                    else n.add(s.slug)
+                    setOffSystems(n)
+                  }}
+                />
+                <button type="button" className="grow text-left font-medium" onClick={() => setOpen(open === s.slug ? null : s.slug)}>
+                  {s.name} <span className="text-xs text-muted-foreground">· {formatBytes(s.bytes)} · {t('more.excluded.games', { count: s.games.length })}</span>
+                </button>
+              </div>
+              {open === s.slug && !offSystems.has(s.slug) && (
+                <div className="max-h-64 space-y-0.5 overflow-y-auto border-t px-2 py-1">
+                  {s.games.map((g, i) => (
+                    <label key={`${g.gameId ?? i}`} className="flex items-center gap-2 text-xs">
+                      <Checkbox
+                        checked={!(g.gameId && offGames.has(g.gameId))}
+                        disabled={!g.gameId}
+                        onCheckedChange={(c) => {
+                          if (!g.gameId) return
+                          const n = new Set(offGames)
+                          if (c) n.delete(g.gameId)
+                          else n.add(g.gameId)
+                          setOffGames(n)
+                        }}
+                      />
+                      <span className="grow truncate">{g.title}</span>
+                      {g.present && <Badge variant="secondary">{t('more.space.there')}</Badge>}
+                      <span className="w-20 text-right text-muted-foreground">{formatBytes(g.bytes)}</span>
+                    </label>
+                  ))}
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose}>
+            {t('common.cancel')}
+          </Button>
+          <Button onClick={() => void save()}>{t('common.save')}</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   )
 }

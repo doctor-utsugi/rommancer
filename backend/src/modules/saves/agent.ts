@@ -24,7 +24,8 @@ import { pipeline } from 'node:stream/promises';
 import { normalizeTitle, parseRomName } from '../../lib/romname.js';
 import { ingestUnverified, ingestVerified } from '../uploads/ingest.js';
 import { serverKey } from '../devices/ssh.js';
-import type { Prisma } from '@prisma/client';
+import { devicePlan } from '../devices/plan.js';
+import { Prisma } from '@prisma/client';
 
 export const agentRouter = Router();
 
@@ -251,6 +252,11 @@ agentRouter.post('/sync', express.text({ limit: '16mb', type: '*/*' }), async (r
   // An unreadable body (a client that sent no content type) must not wipe the device's list
   if (typeof req.body === 'string' && req.body.length) await storeInventory(device, roms, req.header('x-allow-pull'));
   await storeSshOffer(device, req);
+  // "X-Space: <free bytes> <total bytes>" of the device's storage, for the list copy budget
+  const space = req.header('x-space')?.trim().split(/\s+/).map(Number);
+  if (space?.length === 2 && space.every((n) => Number.isFinite(n) && n >= 0)) {
+    await prisma.device.update({ where: { id: device.id }, data: { spaceFree: BigInt(Math.round(space[0])), spaceTotal: BigInt(Math.round(space[1])), spaceAt: new Date() } });
+  }
   const userSaves = await prisma.save.findMany({ where: { userId: device.userId }, select: { baseName: true, gameId: true } });
   const savedNames = new Set(userSaves.map((s) => s.baseName));
   const savedGames = new Set(userSaves.map((s) => s.gameId).filter((g): g is number => g !== null));
@@ -327,28 +333,25 @@ function readRef(ref: string, deviceId: number): { p: string; e: string | null }
  */
 agentRouter.get('/roms', async (req, res) => {
   const device = await deviceFromToken(req);
-  const layout = layoutOf(device);
-  const root = device.rootPath.replace(/\/+$/, '');
-  const lists = await prisma.deviceList.findMany({ where: { deviceId: device.id }, select: { listId: true } });
-  // Systems the user left out for this device (or new ones, when they are not copied by themselves)
-  const filter = systemFilterOf(device);
-  const seen = new Set<string>();
+  // The lists' files minus what the user left out; missing ones only while the device keeps its reserve
+  const plan = await devicePlan(device, device.rootPath, device.homeRoot ?? device.rootPath);
+  let budget = plan.budget;
+  const skipped = { files: 0, bytes: 0 };
   const out: string[] = [];
-  for (const { listId } of lists) {
-    const { items } = await resolveListFiles(listId);
-    for (const it of items) {
-      // Any system goes: the user decides what a device holds (only the systems they left out are skipped)
-      if (!copiesSystem(filter, it.systemSlug)) continue;
-      const folder = folderFor(layout, it.systemSlug);
-      for (const f of it.files) {
-        const dest = path.posix.join(root, layout.romsRoot, folder, f.destName);
-        if (seen.has(dest)) continue;
-        seen.add(dest);
-        const size = f.archiveEntry ? 0 : ((await fs.promises.stat(f.absPath).catch(() => null))?.size ?? 0);
-        out.push(`rom\t${dest}\t${size}\t${fileRef(device.id, f.absPath, f.archiveEntry)}`);
+  for (const f of plan.files) {
+    if (f.excluded) continue;
+    if (!f.present && budget !== null) {
+      if (f.size > budget) {
+        skipped.files++;
+        skipped.bytes += f.size;
+        continue;
       }
+      budget -= f.size;
     }
+    const size = f.archiveEntry ? 0 : f.size;
+    out.push(`rom\t${f.dest}\t${size}\t${fileRef(device.id, f.absPath, f.archiveEntry)}`);
   }
+  await prisma.device.update({ where: { id: device.id }, data: { spaceShortfall: skipped.files ? { at: new Date().toISOString(), ...skipped } : Prisma.DbNull } });
   res.type('text/plain').send(out.join('\n') + (out.length ? '\n' : ''));
 });
 

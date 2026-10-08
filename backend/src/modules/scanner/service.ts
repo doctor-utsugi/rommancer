@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import type { MatchStatus, RomPath, System } from '@prisma/client';
+import type { MatchStatus, RomFile, RomPath, System } from '@prisma/client';
+import { refreshHealth } from '../storage/health.js';
 import { prisma } from '../../lib/prisma.js';
 import { sha1 } from '../../lib/crypto.js';
 import { hashFile, hashStream, type FileHashes } from '../../lib/hash.js';
@@ -17,13 +18,19 @@ import { ARCHIVE_EXTS, guessSystem, systemIndex, type SystemIndex } from './syst
 
 const SKIP_DIRS = new Set(['.git', 'media', 'images', 'videos', 'manuals', 'saves', 'states', '@eaDir', '#recycle']);
 
-export async function walk(root: string): Promise<string[]> {
+/**
+ * Files under ROOT. The root must be readable (an error there is thrown, never read as "empty"); subfolders
+ * that cannot be read go to FAILED, so what the index holds under them is kept instead of removed.
+ */
+export async function walk(root: string, failed: string[] = []): Promise<string[]> {
   const out: string[] = [];
   async function rec(dir: string) {
     let entries: fs.Dirent[];
     try {
       entries = await fs.promises.readdir(dir, { withFileTypes: true });
-    } catch {
+    } catch (e) {
+      if (dir === root) throw e;
+      failed.push(dir);
       return;
     }
     for (const e of entries) {
@@ -236,15 +243,30 @@ export async function processFile(full: string, rel: string, idx: SystemIndex, f
   return [{ archiveEntry: null, hashes: h, raHash: ra, systemId: sys?.id ?? null }];
 }
 
-export async function scanPath(romPathId: number, ctx?: JobContext, force = false) {
+/** Above this many indexed files, a scan that would drop more than half of a folder holds back and asks */
+const MASS_REMOVAL_MIN = 50;
+const GONE_KEEP_DAYS = 30;
+
+export async function scanPath(romPathId: number, ctx?: JobContext, force = false, allowMassRemoval = false) {
   const rp = await prisma.romPath.findUniqueOrThrow({ where: { id: romPathId } });
-  const idx = await systemIndex();
+  const base = await systemIndex();
+  // Folders the user told apart ("varios" -> snes) take precedence over names guessed from the catalogue
+  const overrides = Object.entries((rp.folderSystems ?? {}) as Record<string, string>).flatMap(([f, slug]) => (base.bySlug.get(slug) ? [[f.toLowerCase(), base.bySlug.get(slug)!] as const] : []));
+  const idx: SystemIndex = overrides.length ? { ...base, byFolder: new Map([...base.byFolder, ...overrides]) } : base;
   const forced = rp.systemId ? idx.byId.get(rp.systemId) ?? null : null;
   await fs.promises.mkdir(env.tmpDir, { recursive: true });
-  const files = (await walk(rp.path)).filter((f) => idx.allExts.has(path.extname(f).toLowerCase()));
-  ctx?.log(`${files.length} candidate files in ${rp.path}`);
 
   const existing = await prisma.romFile.findMany({ where: { romPathId }, select: { id: true, relativePath: true, fileSize: true, mtimeMs: true } });
+  // A disk that is not there must not look like a folder whose files were all deleted
+  const health = await refreshHealth(rp, existing.length);
+  if (!health.online) {
+    ctx?.log(`${rp.path} is offline (${health.reason}): nothing scanned, nothing removed`);
+    return { offline: true, reason: health.reason, files: 0, removed: 0 };
+  }
+  const failed: string[] = [];
+  const files = (await walk(rp.path, failed)).filter((f) => idx.allExts.has(path.extname(f).toLowerCase()));
+  ctx?.log(`${files.length} candidate files in ${rp.path}${failed.length ? `; ${failed.length} folders could not be read and keep their entries` : ''}`);
+
   const byRel = new Map<string, typeof existing>();
   for (const e of existing) {
     const list = byRel.get(e.relativePath) ?? [];
@@ -269,18 +291,22 @@ export async function scanPath(romPathId: number, ctx?: JobContext, force = fals
       const qh = await quickHash(full, st.size);
       // Fichero grande ya hasheado en otra ruta o con otro nombre (movido o renombrado conserva la fecha):
       // se reutilizan sus hashes. Los pequenos se hashean siempre, es mas barato que arriesgarse.
+      // Same size and quick hash: copies to another disk usually change the date, so it is not compared
       const known =
         st.size > REUSE_MIN_SIZE && !force
-          ? await prisma.romFile.findFirst({
-              where: { quickHash: qh, fileSize: BigInt(st.size), mtimeMs: BigInt(Math.floor(st.mtimeMs)) },
-              select: { romPathId: true, relativePath: true },
-            })
+          ? await prisma.romFile.findFirst({ where: { quickHash: qh, fileSize: BigInt(st.size) }, select: { romPathId: true, relativePath: true } })
           : null;
-      if (known) {
-        const rows = await prisma.romFile.findMany({ where: { romPathId: known.romPathId, relativePath: known.relativePath } });
+      // ...or a file that disappeared from another folder (moved), remembered for a while
+      const gone =
+        !known && st.size > REUSE_MIN_SIZE && !force ? await prisma.romFileGone.findMany({ where: { quickHash: qh, fileSize: BigInt(st.size) }, orderBy: { goneAt: 'desc' }, take: 20 }) : [];
+      const goneRows = gone.length ? gone.filter((g) => (g.data as { relativePath?: string }).relativePath === (gone[0].data as { relativePath?: string }).relativePath).map((g) => fromGone(g.data)) : [];
+      if (known || goneRows.length) {
+        const rows = known ? await prisma.romFile.findMany({ where: { romPathId: known.romPathId, relativePath: known.relativePath } }) : goneRows;
         if (prev?.length) await prisma.romFile.deleteMany({ where: { id: { in: prev.map((p) => p.id) } } });
         for (const { id: _id, romPathId: _rp, pathKey: _pk, relativePath: _rel, scannedAt: _s, ...data } of rows) {
-          await prisma.romFile.create({ data: { ...data, romPathId, relativePath: rel, pathKey: pathKey(rel, data.archiveEntry) } });
+          await prisma.romFile.create({
+            data: { ...data, romPathId, relativePath: rel, pathKey: pathKey(rel, data.archiveEntry), mtimeMs: BigInt(Math.floor(st.mtimeMs)), fileSize: BigInt(st.size) },
+          });
           if (data.status === 'MATCHED') stats.matched++;
           else if (data.status === 'HACK') stats.hacks++;
           else stats.unknown++;
@@ -340,14 +366,40 @@ export async function scanPath(romPathId: number, ctx?: JobContext, force = fals
     await ctx?.progress(i + 1, files.length, rel);
   }
 
-  const gone = existing.filter((e) => !seen.has(e.relativePath)).map((e) => e.id);
-  if (gone.length) await prisma.romFile.deleteMany({ where: { id: { in: gone } } });
+  // Files no longer there, except under folders that could not be read
+  const unreadable = failed.map((f) => path.relative(rp.path, f) + path.sep);
+  const goneIds = existing.filter((e) => !seen.has(e.relativePath) && !unreadable.some((u) => e.relativePath.startsWith(u))).map((e) => e.id);
+  let warning: string | null = null;
+  let removed = 0;
+  if (goneIds.length && !allowMassRemoval && existing.length >= MASS_REMOVAL_MIN && goneIds.length > existing.length / 2) {
+    // Most of the folder vanished at once: more likely a half-mounted disk or a moved folder than deletions
+    warning = `${goneIds.length} of ${existing.length} files are gone; kept until confirmed`;
+    ctx?.log(`Held back: ${warning}`);
+  } else if (goneIds.length) {
+    for (const c of chunked(goneIds, 1000)) {
+      const rows = await prisma.romFile.findMany({ where: { id: { in: c }, quickHash: { not: null } } });
+      if (rows.length) await prisma.romFileGone.createMany({ data: rows.map((r) => ({ quickHash: r.quickHash!, fileSize: r.fileSize, data: toGone(r) })) });
+      await prisma.romFile.deleteMany({ where: { id: { in: c } } });
+    }
+    removed = goneIds.length;
+  }
+  await prisma.romFileGone.deleteMany({ where: { goneAt: { lt: new Date(Date.now() - GONE_KEEP_DAYS * 86400_000) } } });
   const linked = (await identifyHacks({ romPathId }, ctx)).linked;
   await linkRaGames();
-  await prisma.romPath.update({ where: { id: romPathId }, data: { lastScanAt: new Date() } });
-  const res = { ...stats, removed: gone.length, hacksLinked: linked };
+  await prisma.romPath.update({ where: { id: romPathId }, data: { lastScanAt: new Date(), scanWarning: warning } });
+  const res = { ...stats, removed, heldBack: warning ? goneIds.length : 0, unreadableFolders: failed.length, hacksLinked: linked };
   ctx?.log(JSON.stringify(res));
   return res;
+}
+
+const chunked = <T,>(a: T[], n: number) => Array.from({ length: Math.ceil(a.length / n) }, (_, i) => a.slice(i * n, i * n + n));
+
+/** A RomFile row as JSON (BigInts as strings) for RomFileGone, and back */
+function toGone(r: RomFile) {
+  return JSON.parse(JSON.stringify(r, (_k, v) => (typeof v === 'bigint' ? `${v}n` : v)));
+}
+function fromGone(data: unknown): RomFile {
+  return JSON.parse(JSON.stringify(data), (_k, v) => (typeof v === 'string' && /^\d+n$/.test(v) ? BigInt(v.slice(0, -1)) : v)) as RomFile;
 }
 
 /** Re-empareja todos los ficheros contra la base de datos (tras importar un DAT). */

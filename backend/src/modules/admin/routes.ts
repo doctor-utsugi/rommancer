@@ -6,21 +6,21 @@ import multer from 'multer';
 import { z } from 'zod';
 import { env } from '../../config/env.js';
 import { prisma } from '../../lib/prisma.js';
-import { badRequest, intParam } from '../../lib/http.js';
+import { badRequest, intParam, HttpError } from '../../lib/http.js';
 import { enqueue, registerJob } from '../../lib/jobs.js';
 import { me, requireAdmin } from '../auth/middleware.js';
 import { importDat } from '../dats/importer.js';
 import { DAT_PRESETS } from '../dats/presets.js';
 import { applySeed, exportSeed, scheduleSeedExport } from '../seed/service.js';
 import { rematchAll, scanPath } from '../scanner/service.js';
-import { applyOrganize, planOrganize } from '../roms/organize.js';
+import { applyOrganize, planOrganize, undoOrganize } from '../roms/organize.js';
 import { SOURCES, forceSync } from '../sync/service.js';
 import { addRomRule, resolveRomGroups } from '../grouping/service.js';
 import { resolveWorks } from '../sync/wikidata.js';
 import { identifyHacks, linkFileAsHack } from '../hacks/identify.js';
 import { setSignupOpen, signupOpen } from '../auth/routes.js';
 
-registerJob('scan', async (ctx) => scanPath(ctx.params.romPathId, ctx, !!ctx.params.force));
+registerJob('scan', async (ctx) => scanPath(ctx.params.romPathId, ctx, !!ctx.params.force, !!ctx.params.allowMassRemoval));
 registerJob('rematch', async () => rematchAll());
 registerJob('hack-identify', async (ctx) => identifyHacks({ recheck: !!ctx.params.recheck }, ctx));
 registerJob('seed-export', async (ctx) => exportSeed(ctx));
@@ -49,8 +49,12 @@ registerJob('dat-import', async (ctx) => {
   return result;
 });
 
+import { MARKER, refreshHealth, registerIdentity, volumeKey } from '../storage/health.js';
+import { storageRouter } from '../storage/routes.js';
+
 export const adminRouter = Router();
 adminRouter.use(requireAdmin);
+adminRouter.use('/storage', storageRouter);
 
 // --- Rutas de roms ---
 const pathBody = z.object({
@@ -62,18 +66,38 @@ const pathBody = z.object({
   isDefaultTarget: z.boolean().optional(),
   targetScheme: z.string().max(32).optional(),
   readOnly: z.boolean().optional(),
+  reservePercent: z.number().int().min(0).max(90).optional(),
+  priority: z.number().int().min(-1000).max(1000).optional(),
+  // Folder name -> system slug for folders whose name says nothing
+  folderSystems: z.record(z.string().max(255), z.string().max(32)).nullable().optional(),
 });
 
 adminRouter.get('/paths', async (_req, res) => {
-  const paths = await prisma.romPath.findMany({ orderBy: { id: 'asc' } });
+  const paths = await prisma.romPath.findMany({ orderBy: [{ priority: 'asc' }, { id: 'asc' }] });
   const counts = await prisma.romFile.groupBy({ by: ['romPathId', 'status'], _count: true });
+  const sizes = await prisma.romFile.groupBy({ by: ['romPathId'], _sum: { fileSize: true } });
   res.json(
-    paths.map((p) => ({
-      ...p,
-      files: Object.fromEntries(counts.filter((c) => c.romPathId === p.id).map((c) => [c.status, c._count])),
-    })),
+    await Promise.all(
+      paths.map(async (p) => {
+        const known = counts.filter((c) => c.romPathId === p.id).reduce((n, c) => n + c._count, 0);
+        const health = await refreshHealth(p, known);
+        return {
+          ...p,
+          ...(await prisma.romPath.findUnique({ where: { id: p.id }, select: { offlineAt: true, offlineReason: true, volumeId: true } })),
+          files: Object.fromEntries(counts.filter((c) => c.romPathId === p.id).map((c) => [c.status, c._count])),
+          bytes: Number(sizes.find((s) => s.romPathId === p.id)?._sum.fileSize ?? 0),
+          disk: health.online ? { free: health.free ?? 0, total: health.total ?? 0, key: await volumeKey(p.path) } : null,
+        };
+      }),
+    ),
   );
 });
+
+/** Another registered folder inside or around P (scanning both would index the same files twice) */
+async function overlapping(p: string, exceptId?: number) {
+  const inside = (a: string, b: string) => a === b || a.startsWith(b.endsWith(path.sep) ? b : b + path.sep);
+  return (await prisma.romPath.findMany()).find((r) => r.id !== exceptId && (inside(p, r.path) || inside(r.path, p)));
+}
 
 async function checkDir(p: string) {
   const st = await fs.promises.stat(p).catch(() => null);
@@ -81,11 +105,32 @@ async function checkDir(p: string) {
 }
 
 adminRouter.post('/paths', async (req, res) => {
-  const body = pathBody.parse(req.body);
+  // create: a destination that does not exist yet (the wizard's general folder) is created
+  const body = pathBody.extend({ allowOverlap: z.boolean().optional(), create: z.boolean().optional() }).parse(req.body);
   const abs = path.resolve(body.path);
+  if (body.create && body.readOnly === false) await fs.promises.mkdir(abs, { recursive: true }).catch(() => {});
   await checkDir(abs);
-  if (body.isDefaultTarget) await prisma.romPath.updateMany({ data: { isDefaultTarget: false } });
-  res.status(201).json(await prisma.romPath.create({ data: { ...body, targetSystems: body.targetSystems ?? undefined, path: abs } }));
+  // The same folder mounted somewhere else (its marker names a registered folder): update that one instead
+  const marker = (await fs.promises.readFile(path.join(abs, MARKER), 'utf8').catch(() => ''))?.trim();
+  const same = marker ? await prisma.romPath.findFirst({ where: { volumeId: marker } }) : null;
+  if (same && same.path !== abs) throw new HttpError(409, `SAME_FOLDER:${same.id}:${same.path}`);
+  const clash = await overlapping(abs);
+  if (clash && !body.allowOverlap) throw new HttpError(409, `OVERLAP:${clash.id}:${clash.path}`);
+  const { allowOverlap: _o, create: _c, folderSystems, ...data } = body;
+  // New folders are sources Rommancer only reads; writing there is an explicit choice
+  const rp = await prisma.romPath.create({
+    data: { ...data, readOnly: body.readOnly ?? !(body.isDefaultTarget || body.targetSystems?.length), targetSystems: body.targetSystems ?? undefined, folderSystems: folderSystems ?? undefined, path: abs },
+  });
+  res.status(201).json(await registerIdentity(rp));
+});
+
+// The folder moved (disk mounted elsewhere, another drive letter): same index, new path
+adminRouter.post('/paths/:id/relink', async (req, res) => {
+  const { path: p } = z.object({ path: z.string().min(1).max(700) }).parse(req.body);
+  const abs = path.resolve(p);
+  await checkDir(abs);
+  const rp = await prisma.romPath.update({ where: { id: intParam(req) }, data: { path: abs, offlineAt: null, offlineReason: null } });
+  res.json(await refreshHealth(rp));
 });
 
 adminRouter.patch('/paths/:id', async (req, res) => {
@@ -94,9 +139,17 @@ adminRouter.patch('/paths/:id', async (req, res) => {
     body.path = path.resolve(body.path);
     await checkDir(body.path);
   }
-  if (body.isDefaultTarget) await prisma.romPath.updateMany({ data: { isDefaultTarget: false } });
-  const { targetSystems, ...rest } = body;
-  res.json(await prisma.romPath.update({ where: { id: intParam(req) }, data: { ...rest, ...(targetSystems !== undefined ? { targetSystems: targetSystems ?? Prisma.DbNull } : {}) } }));
+  const { targetSystems, folderSystems, ...rest } = body;
+  const rp = await prisma.romPath.update({
+    where: { id: intParam(req) },
+    data: {
+      ...rest,
+      ...(targetSystems !== undefined ? { targetSystems: targetSystems ?? Prisma.DbNull } : {}),
+      ...(folderSystems !== undefined ? { folderSystems: folderSystems ?? Prisma.DbNull } : {}),
+    },
+  });
+  // Made writable: it gets its marker now
+  res.json(body.readOnly === false || body.path ? await registerIdentity(rp) : rp);
 });
 
 adminRouter.delete('/paths/:id', async (req, res) => {
@@ -105,15 +158,20 @@ adminRouter.delete('/paths/:id', async (req, res) => {
 });
 
 adminRouter.post('/paths/:id/scan', async (req, res) => {
-  const { force } = z.object({ force: z.boolean().default(false) }).parse(req.body ?? {});
+  // allowMassRemoval: the user confirms that the files a previous scan held back really are gone
+  const { force, allowMassRemoval } = z.object({ force: z.boolean().default(false), allowMassRemoval: z.boolean().default(false) }).parse(req.body ?? {});
   const romPathId = intParam(req);
   await prisma.romPath.findUniqueOrThrow({ where: { id: romPathId } });
-  res.status(202).json(await enqueue('scan', { romPathId, force }, me(req).id));
+  res.status(202).json(await enqueue('scan', { romPathId, force, allowMassRemoval }, me(req).id));
 });
 
 adminRouter.get('/paths/:id/organize', async (req, res) => {
   const scheme = z.string().default('rename').parse(req.query.scheme);
   res.json(await planOrganize(intParam(req), scheme));
+});
+
+adminRouter.post('/paths/:id/organize/undo', async (req, res) => {
+  res.json(await undoOrganize(intParam(req)));
 });
 
 adminRouter.post('/paths/:id/organize', async (req, res) => {

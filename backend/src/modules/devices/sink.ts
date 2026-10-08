@@ -177,11 +177,18 @@ export interface SystemFilter {
   newAuto: boolean;
   excluded: string[];
   known: string[];
+  /** Games left out one by one (when a list does not fit on the device) */
+  excludedGames: number[];
 }
 
 export function systemFilterOf(d: { systemFilter: unknown }): SystemFilter {
   const f = (d.systemFilter ?? {}) as Partial<SystemFilter>;
-  return { newAuto: f.newAuto ?? true, excluded: Array.isArray(f.excluded) ? f.excluded : [], known: Array.isArray(f.known) ? f.known : [] };
+  return {
+    newAuto: f.newAuto ?? true,
+    excluded: Array.isArray(f.excluded) ? f.excluded : [],
+    known: Array.isArray(f.known) ? f.known : [],
+    excludedGames: Array.isArray(f.excludedGames) ? f.excludedGames : [],
+  };
 }
 
 /** Whether a system's games are copied to the device */

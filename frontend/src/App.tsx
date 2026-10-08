@@ -15,6 +15,7 @@ import { SavesPage } from '@/pages/saves'
 import { UploadPage } from '@/pages/upload'
 import { ProfilePage } from '@/pages/profile'
 import { AdminPathsPage } from '@/pages/admin/paths'
+import { StorageSetupPage } from '@/pages/admin/storage-setup'
 import { AdminFilesPage } from '@/pages/admin/files'
 import { AdminDatsPage } from '@/pages/admin/dats'
 import { AdminUsersPage } from '@/pages/admin/users'
@@ -69,6 +70,7 @@ export function App() {
         {user.role === 'ADMIN' && (
           <>
             <Route path="admin/paths" element={<AdminPathsPage />} />
+            <Route path="admin/storage-setup" element={<StorageSetupPage />} />
             <Route path="admin/files" element={<AdminFilesPage />} />
             <Route path="admin/dats" element={<AdminDatsPage />} />
             <Route path="admin/users" element={<AdminUsersPage />} />
