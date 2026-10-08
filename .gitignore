@@ -2,9 +2,9 @@ node_modules
 dist
 .env
 # Datos de ejecucion (la parte permanente esta en seed/)
-data/
-data-test*/
-roms/
+/data/
+/data-test*/
+/roms/
 .playwright-mcp/
 backend/scratch/
 tools/rcheevos/
