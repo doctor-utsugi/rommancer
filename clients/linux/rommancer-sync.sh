@@ -256,10 +256,11 @@ header_size() {
 
 rom_line() {
   f="$1"; size="$(stat -c %s "$f" 2>/dev/null)" || return 0
-  if [ "${size:-0}" -gt "$HASH_MAX" ]; then printf 'rom\t%s\n' "$f"; return 0; fi
+  # rom, path, sha1, headerless sha1, size (big files go unhashed, with their size)
+  if [ "${size:-0}" -gt "$HASH_MAX" ]; then printf 'rom\t%s\t\t\t%s\n' "$f" "$size"; return 0; fi
   full="$(cached_sha1 "$f")"; hs="$(header_size "$f")"; hl=""
   [ "$hs" -gt 0 ] && hl="$(cached_sha1 "$f" "$hs")"
-  printf 'rom\t%s\t%s\t%s\n' "$f" "$full" "$hl"
+  printf 'rom\t%s\t%s\t%s\t%s\n' "$f" "$full" "$hl" "$size"
 }
 
 is_save() {

@@ -73,9 +73,15 @@ async function syncLibretro(ctx: JobContext, systemSlug?: string, force = false)
     await fs.promises.mkdir(env.datsDir, { recursive: true });
     await fs.promises.writeFile(path.join(env.datsDir, fileName), got.text);
     const sys = systems.find((s) => s.slug === p.system);
-    const r = await importDat(got.text, { systemId: sys?.id, type: p.type, fileName, resolve: false });
-    if (!r.skipped) res.dats++;
-    ctx.log(`libretro DAT ${p.id}: ${r.skipped ? 'unchanged' : 'imported'}`);
+    try {
+      const r = await importDat(got.text, { systemId: sys?.id, type: p.type, fileName, resolve: false });
+      if (!r.skipped) res.dats++;
+      ctx.log(`libretro DAT ${p.id}: ${r.skipped ? 'unchanged' : 'imported'}`);
+    } catch (e) {
+      // One bad DAT does not stop the rest; forgetting its ETag makes the next sync download it again
+      await prisma.sourceState.deleteMany({ where: { key: `libretro:${p.id}` } });
+      ctx.log(`libretro DAT ${p.id}: failed: ${e instanceof Error ? e.message.split('\n').filter(Boolean).pop() : e}`);
+    }
   }
   // Metadatos: solo rellenan campos vacios o de menor prioridad
   for (const s of systems) {

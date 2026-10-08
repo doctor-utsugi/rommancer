@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import { open } from '@tauri-apps/plugin-dialog'
+import { openUrl } from '@tauri-apps/plugin-opener'
 import { disable, enable, isEnabled } from '@tauri-apps/plugin-autostart'
 import { bytes, locale, setLang, t, type Lang } from './i18n'
 import { SavePoint } from './SavePoint'
@@ -43,6 +44,8 @@ interface Finished {
 }
 
 const api = <T,>(method: string, path: string, body?: unknown) => invoke<T>('api', { method, path, body })
+// The guides page takes the place of a card in the sidebar selection
+const GUIDES = '__guides'
 
 const LANG_KEY = 'rommancer-lang'
 const savedLang = (): Lang | '' => {
@@ -135,6 +138,11 @@ function Main({ status, onChange }: { status: Status; onChange: () => void }) {
   const [progress, setProgress] = useState<Record<string, Progress>>({})
   const [results, setResults] = useState<Record<string, Finished>>({})
   const [optionsOpen, setOptionsOpen] = useState(false)
+  const [updated, setUpdated] = useState(false)
+  useEffect(() => {
+    const u = listen('app-updated', () => setUpdated(true))
+    return () => void u.then((f) => f())
+  }, [])
   const loadCards = useCallback(() => void invoke<Card[]>('cards').then(setCards), [])
 
   useEffect(() => {
@@ -155,6 +163,7 @@ function Main({ status, onChange }: { status: Status; onChange: () => void }) {
   }, [loadCards, onChange])
 
   useEffect(() => {
+    if (selected === GUIDES) return
     if (!selected && cards.length) setSelected(cards[0].root)
     if (selected && !cards.some((c) => c.root === selected)) setSelected(cards[0]?.root ?? null)
   }, [cards, selected])
@@ -229,9 +238,23 @@ function Main({ status, onChange }: { status: Status; onChange: () => void }) {
         <button className="ghost" onClick={() => void addFolder()}>
           + {t('addFolder')}
         </button>
+        <button className={selected === GUIDES ? 'card active guides-link' : 'card guides-link'} onClick={() => setSelected(GUIDES)}>
+          <span className="icon">📘</span>
+          <span className="grow title">{t('guidesNav')}</span>
+        </button>
       </aside>
       <main>
-        {card ? (
+        {updated && (
+          <div className="banner">
+            <span className="grow">{t('updatedBanner')}</span>
+            <button className="primary" onClick={() => void invoke('restart_app')}>
+              {t('restart')}
+            </button>
+          </div>
+        )}
+        {selected === GUIDES ? (
+          <Guides server={status.server} />
+        ) : card ? (
           <CardView key={card.root} card={card} progress={progress[card.root]} result={results[card.root]} syncing={syncing.has(card.root)} onChange={loadCards} />
         ) : (
           <div className="center">
@@ -410,31 +433,39 @@ function ProgressBox({ p }: { p?: Progress }) {
 }
 
 const CONSOLE_FOR: Record<string, string> = { 'nds-twilight': 'Nintendo DS', onion: 'Miyoo Mini Plus', 'gba-flashcart': 'Game Boy Advance' }
-const OTHER = 'other'
+const CUSTOM = 'custom'
+// Generic entries go last in the console list
+const GENERIC = ['Other', 'PC']
 
 function LinkForm({ card, onLinked }: { card: Card; onLinked: () => void }) {
   const [firmwares, setFirmwares] = useState<{ id: number; slug: string; name: string }[]>([])
   const [consoles, setConsoles] = useState<{ id: number; name: string }[]>([])
   const [devices, setDevices] = useState<{ id: number; name: string; console?: { name: string } }[]>([])
+  const [systems, setSystems] = useState<{ slug: string; name: string }[]>([])
   const [owner, setOwner] = useState('')
   const [name, setName] = useState(card.label)
   const [fw, setFw] = useState('')
-  const [con, setCon] = useState('')
-  const [newCon, setNewCon] = useState('')
+  const [consoleName, setConsoleName] = useState('')
+  // "Other (I define it)": one system or a folder per system, where the roms are, where the saves go
+  const [oneSystem, setOneSystem] = useState('gba')
+  const [multi, setMulti] = useState(false)
+  const [romsDir, setRomsDir] = useState('')
+  const [savesBeside, setSavesBeside] = useState(true)
+  const [savesDir, setSavesDir] = useState('saves')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   useEffect(() => {
     void api<typeof firmwares>('GET', '/devices/firmwares').then((f) => {
       setFirmwares(f)
-      // Unknown layout: the user picks it
       setFw(card.guess ? String(f.find((x) => x.slug === card.guess)?.id ?? '') : '')
     })
     void api<typeof consoles>('GET', '/devices/consoles').then((c) => {
-      setConsoles(c)
-      const want = CONSOLE_FOR[card.guess ?? ''] ?? ''
-      setCon(String(c.find((x) => x.name === want)?.id ?? ''))
+      const sorted = [...c].sort((a, b) => Number(GENERIC.includes(a.name)) - Number(GENERIC.includes(b.name)) || a.name.localeCompare(b.name))
+      setConsoles(sorted)
+      setConsoleName(CONSOLE_FOR[card.guess ?? ''] ?? '')
     })
     void api<typeof devices>('GET', '/devices').then(setDevices)
+    void api<{ slug: string; name: string }[]>('GET', '/systems').then((x) => setSystems([...x].sort((a, b) => a.name.localeCompare(b.name))))
   }, [card.guess])
   const run = async (fn: () => Promise<unknown>) => {
     setBusy(true)
@@ -449,14 +480,28 @@ function LinkForm({ card, onLinked }: { card: Card; onLinked: () => void }) {
     }
   }
   const attach = () => run(() => invoke('attach_card', { root: card.root, deviceId: Number(owner), label: name }))
+  const clean = (p: string) => p.trim().replace(/^\/+|\/+$/g, '')
   const link = () =>
     run(async () => {
-      let consoleId = Number(con)
-      if (con === OTHER) consoleId = (await api<{ id: number }>('POST', '/devices/consoles', { name: newCon.trim(), manufacturer: newCon.trim().split(' ')[0] })).id
-      const f = firmwares.find((x) => String(x.id) === fw)!
-      await invoke('link_card', { root: card.root, name, consoleId, firmwareId: Number(fw), firmware: f.slug })
+      // The typed console: an existing one, or a new one created now
+      const typed = consoleName.trim()
+      const found = consoles.find((c) => c.name.toLowerCase() === typed.toLowerCase())
+      const consoleId = found ? found.id : (await api<{ id: number }>('POST', '/devices/consoles', { name: typed, manufacturer: typed.split(' ')[0] })).id
+      let firmware = firmwares.find((x) => String(x.id) === fw)
+      let overrides: string | null = null
+      if (fw === CUSTOM) {
+        firmware = firmwares.find((x) => x.slug === 'retroarch-desktop')!
+        const roms = clean(romsDir)
+        overrides = JSON.stringify(
+          multi
+            ? { romsRoot: roms || 'roms', savesLayout: savesBeside ? 'rom' : 'system', savesRoot: clean(savesDir) || 'saves', statesRoot: clean(savesDir) || 'saves' }
+            : { romsRoot: roms, savesRoot: roms, statesRoot: roms, savesLayout: savesBeside ? 'beside' : 'flat', ...(savesBeside ? {} : { savesRoot: clean(savesDir), statesRoot: clean(savesDir) }), systemMap: { [oneSystem]: { folder: '' } }, systemMapOnly: true },
+        )
+      }
+      await invoke('link_card', { root: card.root, name, consoleId, firmwareId: firmware!.id, firmware: firmware!.slug, overrides })
     })
   const existing = owner !== ''
+  const ready = !!name && !!fw && !!consoleName.trim() && (fw !== CUSTOM || multi || !!oneSystem)
   return (
     <div className="panel">
       <h2>{t('linkTitle')}</h2>
@@ -487,28 +532,18 @@ function LinkForm({ card, onLinked }: { card: Card; onLinked: () => void }) {
         </>
       ) : (
         <>
-          <div className="row">
-            <label className="grow">
-              {t('console')}
-              <select value={con} onChange={(e) => setCon(e.target.value)}>
-                <option value="" disabled>
-                  …
-                </option>
-                {consoles.map((c) => (
-                  <option key={c.id} value={c.id}>
-                    {c.name}
-                  </option>
-                ))}
-                <option value={OTHER}>{t('otherConsole')}</option>
-              </select>
-            </label>
-            {con === OTHER && (
-              <label className="grow">
-                {t('newConsole')}
-                <input autoFocus value={newCon} onChange={(e) => setNewCon(e.target.value)} />
-              </label>
+          <label>
+            {t('console')}
+            <input list="consoles" value={consoleName} onChange={(e) => setConsoleName(e.target.value)} placeholder={t('consoleTypeahead')} />
+            <datalist id="consoles">
+              {consoles.map((c) => (
+                <option key={c.id} value={c.name} />
+              ))}
+            </datalist>
+            {consoleName.trim() && !consoles.some((c) => c.name.toLowerCase() === consoleName.trim().toLowerCase()) && (
+              <span className="accent small">{t('newConsoleHint', { name: consoleName.trim() })}</span>
             )}
-          </div>
+          </label>
           <label>
             {t('firmware')}
             <select value={fw} onChange={(e) => setFw(e.target.value)}>
@@ -520,10 +555,51 @@ function LinkForm({ card, onLinked }: { card: Card; onLinked: () => void }) {
                   {f.name}
                 </option>
               ))}
+              <option value={CUSTOM}>{t('customLayout')}</option>
             </select>
           </label>
+          {fw === CUSTOM && (
+            <div className="panel inner">
+              <label>
+                {t('customGames')}
+                <select value={multi ? 'multi' : 'one'} onChange={(e) => setMulti(e.target.value === 'multi')}>
+                  <option value="one">{t('customOne')}</option>
+                  <option value="multi">{t('customMulti')}</option>
+                </select>
+              </label>
+              {!multi && (
+                <label>
+                  {t('customSystem')}
+                  <select value={oneSystem} onChange={(e) => setOneSystem(e.target.value)}>
+                    {systems.map((x) => (
+                      <option key={x.slug} value={x.slug}>
+                        {x.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              )}
+              <label>
+                {t(multi ? 'customRomsMulti' : 'customRoms')}
+                <input value={romsDir} onChange={(e) => setRomsDir(e.target.value)} placeholder={multi ? 'roms' : t('customAnywhere')} />
+              </label>
+              <label>
+                {t('customSaves')}
+                <select value={savesBeside ? 'beside' : 'folder'} onChange={(e) => setSavesBeside(e.target.value === 'beside')}>
+                  <option value="beside">{t('customSavesBeside')}</option>
+                  <option value="folder">{t('customSavesFolder')}</option>
+                </select>
+              </label>
+              {!savesBeside && (
+                <label>
+                  {t('customSavesDir')}
+                  <input value={savesDir} onChange={(e) => setSavesDir(e.target.value)} placeholder="saves" />
+                </label>
+              )}
+            </div>
+          )}
           {error && <p className="error">{error}</p>}
-          <button className="primary" disabled={busy || !name || !fw || !con || (con === OTHER && !newCon.trim())} onClick={() => void link()}>
+          <button className="primary" disabled={busy || !ready} onClick={() => void link()}>
             {t('link')}
           </button>
         </>
@@ -632,6 +708,60 @@ function Lists({ deviceId, name, onCopy }: { deviceId: number; name: string; onC
       <button className="primary" disabled={!picked.size} onClick={onCopy}>
         {t('saveLists')}
       </button>
+    </div>
+  )
+}
+
+/** Quick guides per kind of console, with the downloads the server offers */
+function Guides({ server }: { server: string }) {
+  const base = server.replace(/\/+$/, '')
+  const command = `wget -O rommancer-sync.sh ${base}/api/v1/link/client.sh && sh rommancer-sync.sh link ${base}`
+  const cards: { key: string; devices: string; links: { label: string; url: string }[]; command?: string }[] = [
+    { key: 'knulli', devices: 'Anbernic RG40XX, RG35XX, RG406H…', links: [{ label: t('fromWeb'), url: `${base}/guides` }] },
+    { key: 'onion', devices: 'Miyoo Mini, Miyoo Mini Plus', links: [{ label: t('fromWeb'), url: `${base}/guides` }] },
+    { key: 'android', devices: 'AYN Thor, AYN Odin, Retroid Pocket…', links: [{ label: 'Android (.apk)', url: `${base}/api/v1/link/android/rommancer-sync.apk` }] },
+    {
+      key: 'pc',
+      devices: 'Windows, Linux',
+      links: [
+        { label: 'Windows (.exe)', url: `${base}/api/v1/link/desktop/rommancer-desktop-setup.exe` },
+        { label: 'Linux (.deb)', url: `${base}/api/v1/link/desktop/rommancer-desktop.deb` },
+      ],
+    },
+    { key: 'sd', devices: 'Nintendo DS (TWiLight Menu++), GBA (SuperCard, EZ-Flash…)', links: [] },
+    { key: 'linux', devices: 'muOS, ROCKNIX, PC', links: [], command },
+  ]
+  return (
+    <div className="cardview">
+      <h1>{t('guidesNav')}</h1>
+      <p className="muted small">{t('guidesIntro')}</p>
+      {cards.map((c) => (
+        <div key={c.key} className="panel">
+          <h2>{t(`g_${c.key}_title` as never)}</h2>
+          <p className="muted small">{c.devices}</p>
+          <ol className="steps">
+            {t(`g_${c.key}_steps` as never)
+              .split('|')
+              .map((step, i) => (
+                <li key={i}>{step}</li>
+              ))}
+          </ol>
+          {c.command && (
+            <button className="command" title={t('copy')} onClick={() => void navigator.clipboard.writeText(c.command!)}>
+              {c.command}
+            </button>
+          )}
+          {c.links.length > 0 && (
+            <div className="row wrap">
+              {c.links.map((l) => (
+                <button key={l.url} onClick={() => void openUrl(l.url)}>
+                  ⬇ {l.label}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      ))}
     </div>
   )
 }

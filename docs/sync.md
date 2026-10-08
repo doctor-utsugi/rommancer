@@ -99,6 +99,18 @@ card's lists. The mount point changes between computers: the client sends it in 
 updates the device's root before resolving paths. The default firmware is `nds-twilight` (roms in `roms/nds`, saves
 in `roms/nds/saves`, layout `rom-saves`); set `ROMMANCER_FIRMWARE`/`ROMMANCER_MODEL` for other cards.
 
+### Protocol details added later
+
+- Rom lines carry the file size as a fifth field: `rom<TAB>path<TAB>sha1<TAB>headerless sha1<TAB>size` (empty hashes for
+  files too big to hash). Older clients send four fields; the server then uses the catalog's size when it knows the rom.
+- `GET /link/android/version` (`code`, `name`, `size`) and `/link/android/rommancer-sync.apk`: the Android app offers
+  *Update the app* when the server has a higher version code (`clients/android/release/version.txt`, "<code> <name>").
+- Layouts defined by the user in the desktop app are device overrides on the generic `retroarch-desktop` firmware;
+  `systemMapOnly: true` makes the device hold just its own systems (a one-system card). Systems without an emulator in
+  the map use RetroArch's usual core for them (`raDefaults`).
+- Systems: 89, from libretro-database (No-Intro cartridges, Redump discs, FBNeo); their DATs download by themselves
+  (`dats/presets.ts`) and the committed seed carries them for a fresh server.
+
 ## Credits
 
 The spinning save point of the setup screen is pre-rendered by `tools/render_savepoint.py` from

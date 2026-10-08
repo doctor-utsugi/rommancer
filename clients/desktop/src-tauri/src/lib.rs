@@ -175,11 +175,15 @@ fn remove_folder(app: AppHandle, state: State<AppState>, path: String) {
 
 /// Links a card as a device of the signed-in user; the link is written on the card itself
 #[tauri::command]
-async fn link_card(app: AppHandle, state: State<'_, AppState>, root: String, name: String, console_id: u64, firmware_id: u64, firmware: String) -> Result<u64, String> {
+async fn link_card(app: AppHandle, state: State<'_, AppState>, root: String, name: String, console_id: u64, firmware_id: u64, firmware: String, overrides: Option<String>) -> Result<u64, String> {
     let u = user(&state)?;
     let username = state.settings.lock().unwrap().username.clone().unwrap_or_default();
     // offline: a device known only when its card is connected to a computer
-    let body = serde_json::json!({ "name": name, "firmware": firmware, "root": root, "model": name, "consoleId": console_id, "firmwareId": firmware_id, "offline": true });
+    let mut body = serde_json::json!({ "name": name, "firmware": firmware, "root": root, "model": name, "consoleId": console_id, "firmwareId": firmware_id, "offline": true });
+    // A layout the user defined: folders and systems on top of a generic firmware
+    if let Some(o) = overrides.filter(|o| !o.is_empty()) {
+        body["overrides"] = Value::String(o);
+    }
     let r = {
         let u = u.clone();
         tauri::async_runtime::spawn_blocking(move || u.call("POST", "/link/claim", Some(&body))).await.map_err(|e| e.to_string())?
@@ -301,6 +305,27 @@ fn cancel_sync(state: State<AppState>, root: String) {
     }
 }
 
+/// The binary is replaced when the app is updated while it sits in the tray: tell the window so it can restart
+fn watch_update(app: AppHandle) {
+    let Ok(exe) = std::env::current_exe() else { return };
+    let stamp = |p: &Path| std::fs::metadata(p).and_then(|m| m.modified()).ok();
+    let start = stamp(&exe);
+    std::thread::spawn(move || loop {
+        std::thread::sleep(Duration::from_secs(30));
+        // On Linux a replaced binary leaves the running one as "(deleted)"; elsewhere its date changes
+        let replaced = std::fs::read_link("/proc/self/exe").map(|p| p.to_string_lossy().ends_with(" (deleted)")).unwrap_or(false);
+        if replaced || stamp(&exe) != start {
+            let _ = app.emit("app-updated", ());
+            break;
+        }
+    });
+}
+
+#[tauri::command]
+fn restart_app(app: AppHandle) {
+    app.restart();
+}
+
 /// Looks for cards every few seconds; a linked card that appears is synced when auto sync is on
 fn watch_cards(app: AppHandle) {
     std::thread::spawn(move || loop {
@@ -339,6 +364,7 @@ pub fn run() {
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| show(app)))
         .plugin(tauri_plugin_autostart::init(tauri_plugin_autostart::MacosLauncher::LaunchAgent, Some(vec!["--hidden"])))
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_opener::init())
         .setup(|app| {
             let handle = app.handle().clone();
             let settings: Settings = std::fs::read_to_string(settings_path(&handle)).ok().and_then(|t| serde_json::from_str(&t).ok()).unwrap_or_default();
@@ -373,6 +399,7 @@ pub fn run() {
                     let _ = w.hide();
                 }
             }
+            watch_update(handle.clone());
             watch_cards(handle);
             Ok(())
         })
@@ -383,7 +410,7 @@ pub fn run() {
                 let _ = window.hide();
             }
         })
-        .invoke_handler(tauri::generate_handler![status, login, logout, api, cards, set_options, add_folder, remove_folder, link_card, attach_card, system_lang, unlink_card, device_id, sync_card, cancel_sync])
+        .invoke_handler(tauri::generate_handler![status, login, logout, api, cards, set_options, add_folder, remove_folder, link_card, attach_card, system_lang, restart_app, unlink_card, device_id, sync_card, cancel_sync])
         .run(tauri::generate_context!())
         .expect("error while running Rommancer");
 }

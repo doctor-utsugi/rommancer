@@ -12,8 +12,9 @@ android {
         applicationId = "com.rommancer.sync"
         minSdk = 26
         targetSdk = 35
-        versionCode = 1
-        versionName = "0.1.0"
+        // Bumped on every release: the app offers to update itself when the server has a higher one
+        versionCode = 2
+        versionName = "0.2.0"
     }
 
     buildTypes {

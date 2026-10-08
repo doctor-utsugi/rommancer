@@ -304,12 +304,12 @@ devicesRouter.post('/:id/pull', requirePerm('roms.upload'), async (req, res) => 
   res.status(202).json({ queued: wanted.length });
 });
 
-/** Sizes from the catalog (the device sends names and hashes only), by DeviceRom path */
-async function catalogSizes(rows: { path: string; romId: number | null }[]) {
+/** File sizes by DeviceRom path: what the device reported, else the catalog's (older clients send none) */
+async function catalogSizes(rows: { path: string; romId: number | null; size?: bigint }[]) {
   const romIds = [...new Set(rows.flatMap((r) => (r.romId ? [r.romId] : [])))];
   const parts = romIds.length ? await prisma.romPart.groupBy({ by: ['romId'], where: { romId: { in: romIds } }, _sum: { size: true } }) : [];
   const byRom = new Map(parts.map((p) => [p.romId, Number(p._sum.size ?? 0)]));
-  return new Map(rows.map((r) => [r.path, r.romId ? (byRom.get(r.romId) ?? 0) : 0]));
+  return new Map(rows.map((r) => [r.path, Number(r.size ?? 0) || (r.romId ? (byRom.get(r.romId) ?? 0) : 0)]));
 }
 
 /** The copy in progress for one device (see GET /:id/pull-progress) */
@@ -320,7 +320,7 @@ async function pullProgress(d: Device) {
     where: { deviceId: d.id, ...(oldestOpen ? { createdAt: { gte: oldestOpen.createdAt } } : { doneAt: { gte: new Date(Date.now() - 30 * 60_000) } }) },
     orderBy: { id: 'asc' },
   });
-  const sizes = await catalogSizes(await prisma.deviceRom.findMany({ where: { deviceId: d.id, path: { in: pulls.map((p) => p.path) } }, select: { path: true, romId: true } }));
+  const sizes = await catalogSizes(await prisma.deviceRom.findMany({ where: { deviceId: d.id, path: { in: pulls.map((p) => p.path) } }, select: { path: true, romId: true, size: true } }));
   const count = (st: string) => pulls.filter((p) => p.status === st).length;
   const bytes = (st: string[]) => pulls.filter((p) => st.includes(p.status)).reduce((n, p) => n + (sizes.get(p.path) ?? 0), 0);
   const sending = pulls.find((p) => pullTransfers.has(p.id));

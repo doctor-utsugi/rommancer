@@ -64,7 +64,8 @@ class SyncEngine(private val context: Context, private val store: Store, private
             run {
                 val hashes = if (rom.length() <= HASH_MAX) listOfNotNull(sha1(rom, 0), headerSize(rom).takeIf { it > 0 }?.let { sha1(rom, it) }) else emptyList()
                 romHashes[rom.path] = hashes.joinToString(",")
-                request.append("rom\t").append(rom.path).append(hashes.joinToString("") { "\t$it" }).append('\n')
+                // rom, path, sha1, headerless sha1, size
+                request.append("rom\t").append(rom.path).append('\t').append(hashes.getOrElse(0) { "" }).append('\t').append(hashes.getOrElse(1) { "" }).append('\t').append(rom.length()).append('\n')
             }
         }
         saveDirs.forEach { dir ->

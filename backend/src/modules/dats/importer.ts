@@ -181,8 +181,14 @@ export async function importDat(text: string, opts: ImportOptions = {}): Promise
   const partsByName = new Map<string, PartRow[]>();
   const toInsert: Prisma.RomCreateManyInput[] = [];
   const same = (a: unknown, b: unknown) => JSON.stringify(a ?? null) === JSON.stringify(b ?? null);
+  // The database compares names without case, accents or trailing spaces: two DAT entries that only differ
+  // there (or past 255 characters) are one row, so only the first is kept
+  const collate = (n: string) => n.normalize('NFD').replace(/\p{Diacritic}/gu, '').toLowerCase().trimEnd();
+  const taken = new Set<string>();
   for (const g of merged) {
     const romName = g.name.slice(0, 255);
+    if (taken.has(collate(romName))) continue;
+    taken.add(collate(romName));
     const p = parseRomName(g.name);
     const parts = buildParts(g.roms);
     const first = parts[0];
@@ -216,7 +222,7 @@ export async function importDat(text: string, opts: ImportOptions = {}): Promise
       toInsert.push({ ...(fields as object), name: romName, datSourceId: source.id, gameId: gameByTitle.get(normalizeTitle(romTitle(g)).slice(0, 255))! } as Prisma.RomCreateManyInput);
     }
   }
-  for (const c of chunk(toInsert, 1000)) await prisma.rom.createMany({ data: c });
+  for (const c of chunk(toInsert, 1000)) await prisma.rom.createMany({ data: c, skipDuplicates: true });
   const created = toInsert.length;
   if (created) {
     const names = toInsert.map((r) => r.name);
@@ -228,7 +234,10 @@ export async function importDat(text: string, opts: ImportOptions = {}): Promise
   const presentIds = merged.map((g) => known.get(g.name.slice(0, 255))?.id).filter((x): x is number => !!x);
   for (const c of chunk(presentIds, 5000)) await prisma.rom.updateMany({ where: { id: { in: c } }, data: { checkedAt: now } });
   const partsByRom = new Map<number, PartRow[]>();
-  for (const [name, parts] of partsByName) partsByRom.set(known.get(name)!.id, parts);
+  for (const [name, parts] of partsByName) {
+    const k = known.get(name);
+    if (k) partsByRom.set(k.id, parts);
+  }
 
   // Partes: se actualizan por nombre sin borrar (los ficheros escaneados siguen enlazados)
   const existingParts = await prisma.romPart.findMany({ where: { romId: { in: [...partsByRom.keys()] } } });

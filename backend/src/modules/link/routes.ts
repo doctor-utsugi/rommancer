@@ -166,6 +166,20 @@ linkPublicRouter.get('/desktop/:name', (req, res) => {
   res.download(path.join(DESKTOP_DIR, name), name);
 });
 
+// The Android app: its version (the app updates itself when the server has a newer one) and the APK
+const ANDROID_DIR = path.resolve(CLIENT_DIR, '../android/release');
+linkPublicRouter.get('/android/version', (_req, res) => {
+  const v = fs.existsSync(path.join(ANDROID_DIR, 'version.txt')) ? fs.readFileSync(path.join(ANDROID_DIR, 'version.txt'), 'utf8').trim() : '';
+  const [code, name] = v.split(/\s+/);
+  if (!code || !fs.existsSync(path.join(ANDROID_DIR, 'rommancer-sync.apk'))) throw new HttpError(404, 'Not built yet');
+  res.type('text/plain').send(`code\t${code}\nname\t${name ?? code}\nsize\t${fs.statSync(path.join(ANDROID_DIR, 'rommancer-sync.apk')).size}\n`);
+});
+linkPublicRouter.get('/android/rommancer-sync.apk', (_req, res) => {
+  const f = path.join(ANDROID_DIR, 'rommancer-sync.apk');
+  if (!fs.existsSync(f)) throw new HttpError(404, 'Not built yet');
+  res.type('application/vnd.android.package-archive').download(f, 'rommancer-sync.apk');
+});
+
 // The Linux client itself, so a device only needs: wget -O- SERVER/api/v1/link/client.sh | sh
 linkPublicRouter.get('/client.sh', (_req, res) => {
   if (!fs.existsSync(CLIENT_SCRIPT)) throw new HttpError(404, 'Client not bundled');

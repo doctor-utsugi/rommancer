@@ -1,5 +1,19 @@
 // Textos de la fase 2 (permisos, sincronizacion, revision, obras, dispositivos con scripts...)
 export const esMore = {
+  guides: {
+    nav: 'Guías y descargas',
+    title: 'Guías y descargas',
+    intro: 'Rommancer se instala en cada consola para sincronizar partidas, recibir juegos de tus listas y mandar los que te falten. Estas son las consolas que funcionan hoy; elige la tuya y sigue los pasos.',
+    copy: 'Copiar',
+    copied: 'Copiado',
+    knulli: { title: 'Knulli / Batocera', steps: ['Descarga el paquete: ya lleva tu servidor y tu cuenta.', 'Descomprímelo en la partición SHARE de la tarjeta (o en la carpeta share por red).', 'En la consola: Tools → Rommancer Sync. Se vincula sola.', 'Listo: sincroniza en segundo plano desde que la enciendes.'] },
+    onion: { title: 'Onion (Miyoo Mini)', steps: ['Descarga el paquete: ya lleva tu servidor y tu cuenta.', 'Descomprímelo en la raíz de la tarjeta SD.', 'En la consola: Apps → Rommancer Sync. Se vincula sola.', 'Listo: sincroniza al encender y en segundo plano.'] },
+    android: { title: 'Android', steps: ['Descarga la APK en la consola e instálala (permite instalar desde esta fuente si lo pide).', 'Abre Rommancer Sync, concede el acceso a archivos y entra con tu usuario.', 'Las partidas se suben en cuanto guardas; la app se actualiza sola.'] },
+    pc: { title: 'App de PC', steps: ['Descarga e instala la app para tu sistema.', 'Entra con tu usuario: se queda en la bandeja.', 'Mete una tarjeta o añade una carpeta y vincúlala a un dispositivo.'] },
+    sd: { title: 'Tarjetas sin red (DS, flashcarts de GBA…)', steps: ['Instala la app de PC.', 'Mete la tarjeta en el PC: aparece sola.', 'Añádela eligiendo su consola y su formato (TWiLight Menu++, GBA flashcart…).', 'Cada vez que la metas se sincroniza: partidas, juegos de sus listas y lo que pidas desde aquí.'] },
+    linux: { title: 'Otras consolas Linux (terminal)', steps: ['Abre una terminal en la consola (o entra por SSH).', 'Ejecuta este comando: muestra un código.', 'Aprueba el código en Dispositivos → Vincular.'] },
+    ssh: { title: 'Solo por SSH', devices: 'Cualquier consola Linux con SSH', steps: ['En Dispositivos → Añadir por SSH (administradores).', 'Indica IP, usuario y contraseña la primera vez.', 'El servidor instala el cliente y la mantiene al día.'] },
+  },
   excluded: {
     title: 'Sistemas que se copian a este dispositivo',
     help: 'Todos los sistemas que tienen las listas suscritas. Desmarca los que no quieras en este dispositivo; las partidas se siguen sincronizando.',
@@ -311,6 +325,20 @@ export const esMore = {
 }
 
 export const enMore: typeof esMore = {
+  guides: {
+    nav: 'Guides & downloads',
+    title: 'Guides & downloads',
+    intro: 'Rommancer is installed on each console to sync saves, receive the games of your lists and send the ones you lack. These are the consoles that work today; pick yours and follow the steps.',
+    copy: 'Copy',
+    copied: 'Copied',
+    knulli: { title: 'Knulli / Batocera', steps: ['Download the package: it already carries your server and account.', 'Unzip it on the card\'s SHARE partition (or the share folder over the network).', 'On the console: Tools → Rommancer Sync. It links itself.', 'Done: it syncs in the background from power-on.'] },
+    onion: { title: 'Onion (Miyoo Mini)', steps: ['Download the package: it already carries your server and account.', 'Unzip it at the root of the SD card.', 'On the console: Apps → Rommancer Sync. It links itself.', 'Done: it syncs at power-on and in the background.'] },
+    android: { title: 'Android', steps: ['Download the APK on the console and install it (allow this source if asked).', 'Open Rommancer Sync, grant file access and sign in.', 'Saves go up as soon as you save; the app updates itself.'] },
+    pc: { title: 'PC app', steps: ['Download and install the app for your system.', 'Sign in: it stays in the tray.', 'Insert a card or add a folder and link it to a device.'] },
+    sd: { title: 'Cards without network (DS, GBA flashcarts…)', steps: ['Install the PC app.', 'Insert the card in the PC: it shows up by itself.', 'Add it choosing its console and layout (TWiLight Menu++, GBA flashcart…).', 'Every time you insert it, it syncs: saves, its lists\' games and what you ask for here.'] },
+    linux: { title: 'Other Linux consoles (terminal)', steps: ['Open a terminal on the console (or log in over SSH).', 'Run this command: it shows a code.', 'Approve the code in Devices → Link.'] },
+    ssh: { title: 'SSH only', devices: 'Any Linux console with SSH', steps: ['Devices → Add over SSH (admins).', 'Give its IP, user and password the first time.', 'The server installs the client and keeps it up to date.'] },
+  },
   excluded: {
     title: 'Systems copied to this device',
     help: 'Every system in the subscribed lists. Untick those you do not want on this device; saves still sync.',

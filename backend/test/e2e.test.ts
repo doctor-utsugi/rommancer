@@ -1874,6 +1874,26 @@ test('desktop companion: GBA flashcart (saves next to each rom) and card keys of
   assert.equal((await agent('/whoami', {}, extra.json.token)).status, 401);
 });
 
+test('desktop companion: a layout the user defines (one system, saves next to each game) and file sizes', async () => {
+  const card = '/media/me/CUSTOM';
+  const rd = ctx.firmwares.find((f: any) => f.slug === 'retroarch-desktop');
+  const overrides = JSON.stringify({ romsRoot: '', savesRoot: '', statesRoot: '', savesLayout: 'beside', systemMap: { gb: { folder: '' } }, systemMapOnly: true });
+  const claim = await api('POST', '/link/claim', { name: 'custom card', firmware: 'retroarch-desktop', firmwareId: rd.id, root: card, overrides, offline: true });
+  assert.equal(claim.status, 201, JSON.stringify(claim.json));
+  const agent = (p: string, init: RequestInit = {}) =>
+    fetch(`${base}/api/v1/agent${p}`, { ...init, headers: { 'X-Device-Token': claim.json.token, 'Content-Type': 'application/octet-stream', ...(init.headers ?? {}) } }).then((r) => r.text());
+  const roots = await agent('/roots');
+  assert.match(roots, /exts\t\.srm/, "the system's usual core decides the save extension");
+  assert.match(roots, /scan\tdeep/);
+  const rom = `${card}/juegos/Tiny (World).gb`;
+  const save = `${card}/juegos/Tiny (World).srm`;
+  const plan = await agent('/sync', { method: 'POST', body: `rom\t${rom}\t${'e'.repeat(40)}\t\t12345\nfile\t${save}\t${'f'.repeat(40)}\n` });
+  assert.match(plan, /^put\t.*Tiny \(World\)\.srm/m);
+  const inv = (await api('GET', `/devices/${claim.json.deviceId}/inventory`)).json;
+  assert.equal(inv.items[0].system, 'gb');
+  assert.equal(inv.items[0].size, 12345, 'the size the device reported');
+});
+
 test('sync client: device inventory, fetching missing roms, sync on request, direct sends and list progress', async () => {
   const client = path.join(ROOT, 'clients/linux/rommancer-sync.sh');
   const dir = path.join(DATA, 'sync-inventory');

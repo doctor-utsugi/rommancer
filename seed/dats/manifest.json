@@ -12,18 +12,6 @@
   "priority": 0
  },
  {
-  "file": "hacks - Nintendo - Nintendo Entertainment System.dat",
-  "system": "nes",
-  "type": "HACKS",
-  "priority": 0
- },
- {
-  "file": "hacks - Nintendo - Super Nintendo Entertainment System.dat",
-  "system": "snes",
-  "type": "HACKS",
-  "priority": 0
- },
- {
   "file": "nointro - Nintendo - Family Computer Disk System.dat",
   "system": "fds",
   "type": "NOINTRO",
@@ -120,6 +108,24 @@
   "priority": 0
  },
  {
+  "file": "fbneo - FinalBurn Neo (ClrMame Pro XML, Arcade only).dat",
+  "system": "fbneo",
+  "type": "FBNEO",
+  "priority": 0
+ },
+ {
+  "file": "hacks - Nintendo - Nintendo Entertainment System.dat",
+  "system": "nes",
+  "type": "HACKS",
+  "priority": 0
+ },
+ {
+  "file": "hacks - Nintendo - Super Nintendo Entertainment System.dat",
+  "system": "snes",
+  "type": "HACKS",
+  "priority": 0
+ },
+ {
   "file": "hacks - Nintendo - Game Boy.dat",
   "system": "gb",
   "type": "HACKS",
@@ -186,9 +192,423 @@
   "priority": 0
  },
  {
-  "file": "fbneo - FinalBurn Neo (ClrMame Pro XML, Arcade only).dat",
-  "system": "fbneo",
-  "type": "FBNEO",
+  "file": "nointro - Atari - 2600.dat",
+  "system": "atari2600",
+  "type": "NOINTRO",
+  "priority": 0
+ },
+ {
+  "file": "nointro - Atari - 5200.dat",
+  "system": "atari5200",
+  "type": "NOINTRO",
+  "priority": 0
+ },
+ {
+  "file": "nointro - Atari - 8-bit Family.dat",
+  "system": "atari800",
+  "type": "NOINTRO",
+  "priority": 0
+ },
+ {
+  "file": "nointro - Atari - Jaguar.dat",
+  "system": "jaguar",
+  "type": "NOINTRO",
+  "priority": 0
+ },
+ {
+  "file": "nointro - Atari - ST.dat",
+  "system": "atarist",
+  "type": "NOINTRO",
+  "priority": 0
+ },
+ {
+  "file": "nointro - Bandai - WonderSwan.dat",
+  "system": "wswan",
+  "type": "NOINTRO",
+  "priority": 0
+ },
+ {
+  "file": "nointro - Bandai - WonderSwan Color.dat",
+  "system": "wswanc",
+  "type": "NOINTRO",
+  "priority": 0
+ },
+ {
+  "file": "nointro - Benesse - Pocket Challenge V2.dat",
+  "system": "pcv2",
+  "type": "NOINTRO",
+  "priority": 0
+ },
+ {
+  "file": "nointro - Casio - Loopy.dat",
+  "system": "loopy",
+  "type": "NOINTRO",
+  "priority": 0
+ },
+ {
+  "file": "nointro - Casio - PV-1000.dat",
+  "system": "pv1000",
+  "type": "NOINTRO",
+  "priority": 0
+ },
+ {
+  "file": "nointro - Coleco - ColecoVision.dat",
+  "system": "colecovision",
+  "type": "NOINTRO",
+  "priority": 0
+ },
+ {
+  "file": "nointro - Commodore - 64.dat",
+  "system": "c64",
+  "type": "NOINTRO",
+  "priority": 0
+ },
+ {
+  "file": "nointro - Commodore - Amiga.dat",
+  "system": "amiga500",
+  "type": "NOINTRO",
+  "priority": 0
+ },
+ {
+  "file": "nointro - Commodore - Plus-4.dat",
+  "system": "cplus4",
+  "type": "NOINTRO",
+  "priority": 0
+ },
+ {
+  "file": "nointro - Commodore - VIC-20.dat",
+  "system": "c20",
+  "type": "NOINTRO",
+  "priority": 0
+ },
+ {
+  "file": "nointro - Emerson - Arcadia 2001.dat",
+  "system": "arcadia",
+  "type": "NOINTRO",
+  "priority": 0
+ },
+ {
+  "file": "nointro - Entex - Adventure Vision.dat",
+  "system": "advision",
+  "type": "NOINTRO",
+  "priority": 0
+ },
+ {
+  "file": "nointro - Epoch - Super Cassette Vision.dat",
+  "system": "scv",
+  "type": "NOINTRO",
+  "priority": 0
+ },
+ {
+  "file": "nointro - Fairchild - Channel F.dat",
+  "system": "channelf",
+  "type": "NOINTRO",
+  "priority": 0
+ },
+ {
+  "file": "nointro - Funtech - Super Acan.dat",
+  "system": "supracan",
+  "type": "NOINTRO",
+  "priority": 0
+ },
+ {
+  "file": "nointro - GCE - Vectrex.dat",
+  "system": "vectrex",
+  "type": "NOINTRO",
+  "priority": 0
+ },
+ {
+  "file": "nointro - GamePark - GP32.dat",
+  "system": "gp32",
+  "type": "NOINTRO",
+  "priority": 0
+ },
+ {
+  "file": "nointro - Hartung - Game Master.dat",
+  "system": "gmaster",
+  "type": "NOINTRO",
+  "priority": 0
+ },
+ {
+  "file": "nointro - Interton - VC 4000.dat",
+  "system": "vc4000",
+  "type": "NOINTRO",
+  "priority": 0
+ },
+ {
+  "file": "nointro - Magnavox - Odyssey2.dat",
+  "system": "o2em",
+  "type": "NOINTRO",
+  "priority": 0
+ },
+ {
+  "file": "nointro - Philips - Videopac+.dat",
+  "system": "videopacplus",
+  "type": "NOINTRO",
+  "priority": 0
+ },
+ {
+  "file": "nointro - Mattel - Intellivision.dat",
+  "system": "intellivision",
+  "type": "NOINTRO",
+  "priority": 0
+ },
+ {
+  "file": "nointro - Microsoft - MSX.dat",
+  "system": "msx1",
+  "type": "NOINTRO",
+  "priority": 0
+ },
+ {
+  "file": "nointro - Microsoft - MSX2.dat",
+  "system": "msx2",
+  "type": "NOINTRO",
+  "priority": 0
+ },
+ {
+  "file": "nointro - NEC - PC Engine - TurboGrafx 16.dat",
+  "system": "pcengine",
+  "type": "NOINTRO",
+  "priority": 0
+ },
+ {
+  "file": "nointro - NEC - PC Engine SuperGrafx.dat",
+  "system": "supergrafx",
+  "type": "NOINTRO",
+  "priority": 0
+ },
+ {
+  "file": "nointro - Nintendo - Nintendo 3DS.dat",
+  "system": "3ds",
+  "type": "NOINTRO",
+  "priority": 0
+ },
+ {
+  "file": "nointro - Nintendo - Nintendo 64DD.dat",
+  "system": "n64dd",
+  "type": "NOINTRO",
+  "priority": 0
+ },
+ {
+  "file": "nointro - Nintendo - Nintendo DSi.dat",
+  "system": "nds-dsi",
+  "type": "NOINTRO",
+  "priority": 0
+ },
+ {
+  "file": "nointro - Nintendo - Pokemon Mini.dat",
+  "system": "pokemini",
+  "type": "NOINTRO",
+  "priority": 0
+ },
+ {
+  "file": "nointro - Nintendo - Satellaview.dat",
+  "system": "satellaview",
+  "type": "NOINTRO",
+  "priority": 0
+ },
+ {
+  "file": "nointro - Nintendo - Sufami Turbo.dat",
+  "system": "sufami",
+  "type": "NOINTRO",
+  "priority": 0
+ },
+ {
+  "file": "nointro - Nintendo - Virtual Boy.dat",
+  "system": "virtualboy",
+  "type": "NOINTRO",
+  "priority": 0
+ },
+ {
+  "file": "nointro - RCA - Studio II.dat",
+  "system": "studio2",
+  "type": "NOINTRO",
+  "priority": 0
+ },
+ {
+  "file": "nointro - SNK - Neo Geo Pocket.dat",
+  "system": "ngp",
+  "type": "NOINTRO",
+  "priority": 0
+ },
+ {
+  "file": "nointro - SNK - Neo Geo Pocket Color.dat",
+  "system": "ngpc",
+  "type": "NOINTRO",
+  "priority": 0
+ },
+ {
+  "file": "nointro - Sega - 32X.dat",
+  "system": "sega32x",
+  "type": "NOINTRO",
+  "priority": 0
+ },
+ {
+  "file": "nointro - Sega - PICO.dat",
+  "system": "pico",
+  "type": "NOINTRO",
+  "priority": 0
+ },
+ {
+  "file": "nointro - Sega - SG-1000.dat",
+  "system": "sg1000",
+  "type": "NOINTRO",
+  "priority": 0
+ },
+ {
+  "file": "nointro - Sharp - X1.dat",
+  "system": "x1",
+  "type": "NOINTRO",
+  "priority": 0
+ },
+ {
+  "file": "nointro - Sharp - X68000.dat",
+  "system": "x68000",
+  "type": "NOINTRO",
+  "priority": 0
+ },
+ {
+  "file": "nointro - Sinclair - ZX Spectrum +3.dat",
+  "system": "zxspectrum",
+  "type": "NOINTRO",
+  "priority": 0
+ },
+ {
+  "file": "nointro - Tiger - Game.com.dat",
+  "system": "gamecom",
+  "type": "NOINTRO",
+  "priority": 0
+ },
+ {
+  "file": "nointro - VTech - CreatiVision.dat",
+  "system": "crvision",
+  "type": "NOINTRO",
+  "priority": 0
+ },
+ {
+  "file": "nointro - VTech - V.Smile.dat",
+  "system": "vsmile",
+  "type": "NOINTRO",
+  "priority": 0
+ },
+ {
+  "file": "nointro - Watara - Supervision.dat",
+  "system": "supervision",
+  "type": "NOINTRO",
+  "priority": 0
+ },
+ {
+  "file": "nointro - Arduboy Inc - Arduboy.dat",
+  "system": "arduboy",
+  "type": "NOINTRO",
+  "priority": 0
+ },
+ {
+  "file": "nointro - Sony - PlayStation Vita.dat",
+  "system": "psvita",
+  "type": "NOINTRO",
+  "priority": 0
+ },
+ {
+  "file": "redump - Atari - Jaguar CD.dat",
+  "system": "jaguarcd",
+  "type": "REDUMP",
+  "priority": 0
+ },
+ {
+  "file": "redump - Commodore - CD32.dat",
+  "system": "amigacd32",
+  "type": "REDUMP",
+  "priority": 0
+ },
+ {
+  "file": "redump - Commodore - CDTV.dat",
+  "system": "amigacdtv",
+  "type": "REDUMP",
+  "priority": 0
+ },
+ {
+  "file": "redump - Microsoft - Xbox.dat",
+  "system": "xbox",
+  "type": "REDUMP",
+  "priority": 0
+ },
+ {
+  "file": "redump - Microsoft - Xbox 360.dat",
+  "system": "xbox360",
+  "type": "REDUMP",
+  "priority": 0
+ },
+ {
+  "file": "redump - NEC - PC Engine CD - TurboGrafx-CD.dat",
+  "system": "pcenginecd",
+  "type": "REDUMP",
+  "priority": 0
+ },
+ {
+  "file": "redump - NEC - PC-98.dat",
+  "system": "pc98",
+  "type": "REDUMP",
+  "priority": 0
+ },
+ {
+  "file": "redump - NEC - PC-FX.dat",
+  "system": "pcfx",
+  "type": "REDUMP",
+  "priority": 0
+ },
+ {
+  "file": "redump - Philips - CD-i.dat",
+  "system": "cdi",
+  "type": "REDUMP",
+  "priority": 0
+ },
+ {
+  "file": "redump - SNK - Neo Geo CD.dat",
+  "system": "neogeocd",
+  "type": "REDUMP",
+  "priority": 0
+ },
+ {
+  "file": "redump - Sega - Dreamcast.dat",
+  "system": "dreamcast",
+  "type": "REDUMP",
+  "priority": 0
+ },
+ {
+  "file": "redump - Sega - Mega-CD - Sega CD.dat",
+  "system": "segacd",
+  "type": "REDUMP",
+  "priority": 0
+ },
+ {
+  "file": "redump - Sega - Naomi.dat",
+  "system": "naomi",
+  "type": "REDUMP",
+  "priority": 0
+ },
+ {
+  "file": "redump - Sega - Naomi 2.dat",
+  "system": "naomi2",
+  "type": "REDUMP",
+  "priority": 0
+ },
+ {
+  "file": "redump - Sega - Saturn.dat",
+  "system": "saturn",
+  "type": "REDUMP",
+  "priority": 0
+ },
+ {
+  "file": "redump - Sony - PlayStation 3.dat",
+  "system": "ps3",
+  "type": "REDUMP",
+  "priority": 0
+ },
+ {
+  "file": "redump - The 3DO Company - 3DO.dat",
+  "system": "3do",
+  "type": "REDUMP",
   "priority": 0
  }
 ]

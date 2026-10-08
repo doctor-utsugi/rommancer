@@ -48,4 +48,6 @@
     <string name="watch_channel">Save watcher</string>
     <string name="watch_title">Rommancer Sync</string>
     <string name="watch_text">Saves go to the server as soon as you save</string>
+    <string name="update_app">Update the app (%1$s)</string>
+    <string name="updating">Downloading the update…</string>
 </resources>

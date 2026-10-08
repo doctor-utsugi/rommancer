@@ -158,7 +158,8 @@ export function layoutOf(device: Device & { firmware: Firmware }): DeviceLayout 
     statesRoot: o.statesRoot ?? device.firmware.statesRoot,
     biosRoot: o.biosRoot ?? device.firmware.biosRoot,
     savesLayout: o.savesLayout ?? device.firmware.savesLayout,
-    systemMap: { ...(device.firmware.systemMap as DeviceLayout['systemMap']), ...(o.systemMap ?? {}) },
+    // systemMapOnly: a layout the user defined holds just its own systems, not the base firmware's too
+    systemMap: (o as { systemMapOnly?: boolean }).systemMapOnly ? (o.systemMap ?? {}) : { ...(device.firmware.systemMap as DeviceLayout['systemMap']), ...(o.systemMap ?? {}) },
   };
 }
 

@@ -2,6 +2,7 @@ import { NavLink, Outlet } from 'react-router'
 import { useTranslation } from 'react-i18next'
 import {
   Activity,
+  BookOpen,
   Cable,
   GitMerge,
   Library,
@@ -69,6 +70,7 @@ export function Layout() {
         {can('lists') && <Item to="/lists" icon={ListChecks} label={t('nav.lists')} />}
         {(can('roms.download') || can('saves')) && <Item to="/devices" icon={Cable} label={t('nav.devices')} />}
         {can('saves') && <Item to="/saves" icon={Save} label={t('nav.saves')} />}
+        {(can('roms.download') || can('saves')) && <Item to="/guides" icon={BookOpen} label={t('more.guides.nav')} />}
         {(can('roms.upload') || can('roms.uploadUnverified')) && <Item to="/upload" icon={Upload} label={t('nav.upload')} />}
         {user?.role === 'ADMIN' && (
           <>

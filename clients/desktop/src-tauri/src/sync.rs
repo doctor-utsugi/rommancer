@@ -215,7 +215,9 @@ impl<'a> Engine<'a> {
                 }
             }
             rom_hashes.insert(wire(rom), hashes.join(","));
-            request.push_str(&format!("rom\t{}{}\n", wire(rom), hashes.iter().map(|h| format!("\t{h}")).collect::<String>()));
+            // rom, path, sha1, headerless sha1, size
+            let h = |i: usize| hashes.get(i).cloned().unwrap_or_default();
+            request.push_str(&format!("rom\t{}\t{}\t{}\t{size}\n", wire(rom), h(0), h(1)));
         }
         let mut saves = Vec::new();
         for d in &save_dirs {

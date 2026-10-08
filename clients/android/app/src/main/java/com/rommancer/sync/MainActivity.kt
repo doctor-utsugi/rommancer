@@ -266,6 +266,10 @@ private fun Linked(store: Store, onUnlinked: () -> Unit) {
         WatchService.start(context)
     }
 
+    // A newer app on the server: offered at the top of the menu
+    var update by remember { mutableStateOf<Updater.Available?>(null) }
+    LaunchedEffect(Unit) { update = withContext(Dispatchers.IO) { Updater.check(context, store) } }
+
     // Conflicts are counted in the background so the menu never waits for the network
     LaunchedEffect(screen) {
         if (screen == Screen.Menu) conflicts = withContext(Dispatchers.IO) { runCatching { SyncEngine(context, store).conflicts() }.getOrNull() }
@@ -293,6 +297,10 @@ private fun Linked(store: Store, onUnlinked: () -> Unit) {
             val n = conflicts?.size?.toString() ?: "…"
             val titleSync = stringResource(R.string.syncing)
             val titleRoms = stringResource(R.string.sync_roms)
+            val titleUpdate = stringResource(R.string.updating)
+            update?.let { u ->
+                MenuItem(stringResource(R.string.update_app, u.name)) { run(titleUpdate) { Updater.install(context, store); "" } }
+            }
             MenuItem(stringResource(R.string.sync_now), firstItem) { run(titleSync) { it.all() } }
             MenuItem(titleRoms) { run(titleRoms) { it.roms() } }
             MenuItem(stringResource(R.string.auto_roms, if (store.autoRoms) yes else no)) { store.autoRoms = !store.autoRoms; settingsTick++ }

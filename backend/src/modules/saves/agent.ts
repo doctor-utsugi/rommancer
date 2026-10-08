@@ -182,7 +182,7 @@ async function storeSshOffer(device: AgentDevice, req: Request) {
 }
 
 /** Keeps the device's rom list (only names and hashes) and identifies each game by its content. */
-async function storeInventory(device: AgentDevice, scanned: { path: string; hashes: string[] }[], allowPull: string | undefined) {
+async function storeInventory(device: AgentDevice, scanned: { path: string; hashes: string[]; size?: number }[], allowPull: string | undefined) {
   // Kept under the device's own root, so requests made later reach the console with its paths
   const roms = device.homeRoot ? scanned.map((r) => ({ ...r, path: reroot(r.path, device.rootPath, device.homeRoot!) })) : scanned;
   device = device.homeRoot ? { ...device, rootPath: device.homeRoot } : device;
@@ -213,6 +213,7 @@ async function storeInventory(device: AgentDevice, scanned: { path: string; hash
       headerlessSha1: SHA1.test(r.hashes[1] ?? '') ? r.hashes[1] : null,
       romId: hit?.romId ?? null,
       gameId: hit?.gameId ?? null,
+      size: BigInt(r.size ?? 0),
     };
   });
   await prisma.$transaction([
@@ -239,12 +240,12 @@ async function emulatorForPath(ctx: RomCtx, filePath: string): Promise<Emulator>
  */
 agentRouter.post('/sync', express.text({ limit: '16mb', type: '*/*' }), async (req, res) => {
   const device = await deviceFromToken(req);
-  // "rom<TAB>path[<TAB>sha1[<TAB>headerless sha1]]": the hashes identify roms with non-DAT names
-  const roms: { path: string; hashes: string[] }[] = [];
+  // "rom<TAB>path[<TAB>sha1[<TAB>headerless sha1[<TAB>size]]]": the hashes identify roms with non-DAT names
+  const roms: { path: string; hashes: string[]; size: number }[] = [];
   const present = new Map<string, string>();
   for (const line of String(req.body ?? '').split('\n')) {
-    const [kind, p, h, h2] = line.replace(/\r$/, '').split('\t');
-    if (kind === 'rom' && p) roms.push({ path: p, hashes: [h ?? '', h2 ?? ''].filter(Boolean) });
+    const [kind, p, h, h2, size] = line.replace(/\r$/, '').split('\t');
+    if (kind === 'rom' && p) roms.push({ path: p, hashes: [h ?? '', h2 ?? ''].filter(Boolean), size: Number(size) || 0 });
     else if (kind === 'file' && p && SHA1.test(h ?? '')) present.set(p, h);
   }
   // An unreadable body (a client that sent no content type) must not wipe the device's list
@@ -500,8 +501,11 @@ agentRouter.get('/roots', async (req, res) => {
   // Roms anywhere under the roms folder, not only <system>/<file> (clients that know it look deeper)
   if (layout.savesLayout === 'beside') lines.push('scan\tdeep');
   const exts = new Set<string>();
-  for (const v of Object.values(layout.systemMap)) {
-    const emu = await prisma.emulator.findUnique({ where: { slug: v.emulator } });
+  for (const [slug, v] of Object.entries(layout.systemMap)) {
+    // Layouts the user defined may leave the emulator out: RetroArch's usual core for the system
+    const emuSlug = v.emulator ?? raDefaults[slug];
+    if (!emuSlug) continue;
+    const emu = await prisma.emulator.findUnique({ where: { slug: emuSlug } });
     if (emu) [emu.saveExt, emu.stateExt].forEach((e) => e && exts.add(e.toLowerCase()));
   }
   lines.push(`exts\t${[...exts].join(' ')}`);
