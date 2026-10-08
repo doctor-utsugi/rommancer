@@ -8,6 +8,7 @@ import path from 'node:path';
 import cron from 'node-cron';
 import { env } from '../../config/env.js';
 import { prisma } from '../../lib/prisma.js';
+import { decrypt } from '../../lib/crypto.js';
 import { enqueue, registerJob, type JobContext } from '../../lib/jobs.js';
 import { HttpError } from '../../lib/http.js';
 import { normalizeTitle, parseRomName } from '../../lib/romname.js';
@@ -176,16 +177,24 @@ async function syncRetool(ctx: JobContext, systemSlug?: string, force = false) {
   return res;
 }
 
+/** The server's RA key, or else an admin's own Web API key (the catalogue is the same for everyone) */
+export async function raCatalogKey() {
+  if (env.ra.apiKey) return env.ra.apiKey;
+  const admin = await prisma.user.findFirst({ where: { role: 'ADMIN', raApiKey: { not: null } }, orderBy: { id: 'asc' } });
+  return decrypt(admin?.raApiKey) ?? '';
+}
+
 // --- RetroAchievements: una llamada por consola con la clave global del admin ---
 async function syncRetroAchievements(ctx: JobContext, systemSlug?: string) {
-  if (!env.ra.apiKey) {
-    ctx.log('RetroAchievements: RA_API_KEY no configurada');
+  const apiKey = await raCatalogKey();
+  if (!apiKey) {
+    ctx.log('RetroAchievements: no RA_API_KEY and no admin with a Web API key');
     return { skipped: true };
   }
   const systems = await prisma.system.findMany({ where: { raConsoleId: { not: null }, ...(systemSlug ? { slug: systemSlug } : {}) } });
   const out: Record<string, unknown> = {};
   for (const s of systems) {
-    const q = new URLSearchParams({ i: String(s.raConsoleId), h: '1', f: '1', y: env.ra.apiKey });
+    const q = new URLSearchParams({ i: String(s.raConsoleId), h: '1', f: '1', y: apiKey });
     const r = await fetch(`${env.ra.baseUrl}/API_GetGameList.php?${q}`, { headers: { 'User-Agent': env.userAgent } });
     if (r.status === 429) throw new Error('RetroAchievements rate limit');
     if (!r.ok) {

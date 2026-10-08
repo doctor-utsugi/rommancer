@@ -4,6 +4,8 @@ import { Router } from 'express';
 import { z } from 'zod';
 import { env } from '../../config/env.js';
 import { prisma } from '../../lib/prisma.js';
+import { forceSync } from '../sync/service.js';
+import { refreshProgress } from '../ra/progress.js';
 import { encrypt } from '../../lib/crypto.js';
 import { HttpError, intParam } from '../../lib/http.js';
 import { DEFAULT_PERMISSIONS, PERMISSIONS, normalizePermissions } from '../../lib/permissions.js';
@@ -75,6 +77,11 @@ usersRouter.patch('/me', async (req, res) => {
     if (body[k] !== undefined) data[k] = encrypt(body[k]);
   }
   const updated = await prisma.user.update({ where: { id: u.id }, data });
+  if (body.raApiKey) {
+    // A first key brings the RA catalogue (an admin's key serves the server) and the user's progress
+    if (u.role === 'ADMIN' && (await prisma.raGame.count()) === 0) await forceSync(['retroachievements'], undefined, u.id).catch(() => {});
+    void refreshProgress(u.id).catch(() => {});
+  }
   // Al cambiar la contrasena se invalidan las sesiones anteriores y se entregan tokens nuevos
   if (body.newPassword) {
     await prisma.refreshToken.deleteMany({ where: { userId: u.id } });

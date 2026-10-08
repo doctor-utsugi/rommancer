@@ -15,6 +15,7 @@ import { addRomRule, mergeGameInto, resolveRomGroups } from '../grouping/service
 import { applyMeta } from '../scrape/meta.js';
 import { addPatch, makePatch, materializeHack } from '../patches/service.js';
 import { ownedGameIds, ownedRomIds, systemStats } from './service.js';
+import { progressFor } from '../ra/progress.js';
 
 export const collectionRouter = Router();
 collectionRouter.use(requirePerm('collection.view'));
@@ -43,6 +44,7 @@ collectionRouter.get('/games', async (req, res) => {
       status: z.enum(['all', 'owned', 'missing', 'hacks']).default('all'),
       region: z.string().optional(),
       ra: z.enum(['1', '0']).optional(),
+      favorites: z.enum(['1']).optional(),
       workId: z.coerce.number().int().optional(),
       franchiseId: z.coerce.number().int().optional(),
       lowConfidence: z.enum(['1']).optional(),
@@ -65,6 +67,8 @@ collectionRouter.get('/games', async (req, res) => {
     where.id = q.status === 'owned' ? { in: owned } : { notIn: owned };
   }
   if (q.status === 'hacks') where.hacks = { some: {} };
+  const userId = me(req).id;
+  if (q.favorites) where.AND = [{ roms: { some: { favorites: { some: { userId } } } } }];
   const [total, games] = await Promise.all([
     prisma.game.count({ where }),
     prisma.game.findMany({
@@ -74,7 +78,7 @@ collectionRouter.get('/games', async (req, res) => {
       take: q.pageSize,
       include: {
         system: { select: { slug: true, name: true } },
-        roms: { select: { id: true, name: true, regions: true, flags: true, raGameId: true } },
+        roms: { select: { id: true, name: true, regions: true, flags: true, raGameId: true, favorites: { where: { userId }, select: { romId: true } } } },
         media: { where: { type: 'COVER' }, take: 1, select: { id: true, path: true } },
         work: { select: { id: true, title: true, franchise: { select: { id: true, name: true } } } },
         _count: { select: { hacks: true } },
@@ -84,6 +88,9 @@ collectionRouter.get('/games', async (req, res) => {
   const allRomIds = games.flatMap((g) => g.roms.map((r) => r.id));
   const owned = await ownedRomIds({ romIds: allRomIds });
   const ownedAny = await ownedRomIds({ romIds: allRomIds, include: 'any' });
+  const raIds = [...new Set(games.flatMap((g) => g.roms.flatMap((r) => (r.raGameId ? [r.raGameId] : []))))];
+  const raGames = new Map((await prisma.raGame.findMany({ where: { id: { in: raIds } }, select: { id: true, numAchievements: true } })).map((r) => [r.id, r.numAchievements]));
+  const progress = await progressFor(userId, raIds);
   res.json({
     total,
     page: q.page,
@@ -102,6 +109,11 @@ collectionRouter.get('/games', async (req, res) => {
       groupConfidence: g.groupConfidence,
       regions: [...new Set(g.roms.flatMap((r) => r.regions as string[]))],
       ra: g.roms.some((r) => r.raGameId),
+      raGameId: g.roms.find((r) => r.raGameId)?.raGameId ?? null,
+      raAchievements: Math.max(0, ...g.roms.map((r) => (r.raGameId ? (raGames.get(r.raGameId) ?? 0) : 0))),
+      // The user's best progress among the game's roms
+      raProgress: g.roms.map((r) => (r.raGameId ? progress.get(r.raGameId) : undefined)).filter((p) => !!p).sort((a, b) => b!.awarded - a!.awarded)[0] ?? null,
+      favorite: g.roms.some((r) => r.favorites.length > 0),
       hackCount: g._count.hacks,
     })),
   });
@@ -115,6 +127,7 @@ collectionRouter.get('/games/:id', async (req, res) => {
       roms: {
         orderBy: { name: 'asc' },
         include: {
+          favorites: { where: { userId: me(req).id }, select: { romId: true } },
           datSource: { select: { type: true, name: true } },
           parts: { include: { files: { include: { romPath: { select: { id: true, label: true, path: true } } } } } },
         },
@@ -135,12 +148,14 @@ collectionRouter.get('/games/:id', async (req, res) => {
   const owned = await ownedRomIds({ romIds });
   const ownedAny = await ownedRomIds({ romIds, include: 'any' });
   const raGames = await prisma.raGame.findMany({ where: { id: { in: g.roms.map((r) => r.raGameId).filter((x): x is number => !!x) } } });
+  const progress = await progressFor(me(req).id, raGames.map((x) => x.id));
   // La version solo se muestra si el juego tiene varias
   const revisions = new Set(g.roms.map((r) => r.revision ?? ''));
   const uploaders = new Map((await prisma.user.findMany({ where: { id: { in: g.roms.map((r) => r.createdById).filter((x): x is number => !!x) } }, select: { id: true, username: true } })).map((u) => [u.id, u.username]));
   res.json({
     ...g,
     showRevision: revisions.size > 1,
+    favorite: g.roms.some((r) => r.favorites.length > 0),
     media: g.media.map((m) => ({ ...m, url: `/api/v1/media/${m.id}` })),
     work: g.work ? { ...g.work, games: g.work.games.filter((x) => x.id !== g.id) } : null,
     roms: g.roms.map((r) => ({
@@ -149,6 +164,9 @@ collectionRouter.get('/games/:id', async (req, res) => {
       unverified: r.datSource.type === 'USER' || (ownedAny.has(r.id) && !owned.has(r.id)),
       uploadedBy: r.createdById ? uploaders.get(r.createdById) ?? null : null,
       raGame: raGames.find((x) => x.id === r.raGameId) ?? null,
+      raProgress: r.raGameId ? (progress.get(r.raGameId) ?? null) : null,
+      favorite: r.favorites.length > 0,
+      favorites: undefined,
     })),
     hacks: g.hacks.map((h) => ({
       ...h,
@@ -559,4 +577,17 @@ collectionRouter.get('/roms/:id/download', requirePerm('roms.download'), async (
   const f = part?.files[0];
   if (!part || !f) throw notFound('Rom file');
   await sendRomFile(res, f, part.name);
+});
+
+/** Favourite roms: per user, and a game with one shows as favourite */
+collectionRouter.put('/roms/:id/favorite', async (req, res) => {
+  const romId = intParam(req);
+  if (!(await prisma.rom.findUnique({ where: { id: romId }, select: { id: true } }))) throw notFound('Rom');
+  await prisma.romFavorite.upsert({ where: { userId_romId: { userId: me(req).id, romId } }, create: { userId: me(req).id, romId }, update: {} });
+  res.status(204).end();
+});
+
+collectionRouter.delete('/roms/:id/favorite', async (req, res) => {
+  await prisma.romFavorite.deleteMany({ where: { userId: me(req).id, romId: intParam(req) } });
+  res.status(204).end();
 });

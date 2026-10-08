@@ -5,6 +5,7 @@ import { badRequest } from '../../lib/http.js';
 import { me, requireAdmin } from '../auth/middleware.js';
 import { linkRaGames } from '../scanner/service.js';
 import { forceSync } from '../sync/service.js';
+import { progressSummary, refreshProgress } from './progress.js';
 
 export const raRouter = Router();
 
@@ -58,4 +59,13 @@ raRouter.get('/status', async (_req, res) => {
       (SELECT COUNT(*) FROM Rom r JOIN Game g ON g.id = r.gameId WHERE g.systemId = s.id AND r.raGameId IS NOT NULL) AS roms
     FROM \`System\` s WHERE s.raConsoleId IS NOT NULL ORDER BY s.sortOrder`;
   res.json(rows.map((r) => ({ slug: r.slug, games: Number(r.games), hashes: Number(r.hashes), roms: Number(r.roms) })));
+});
+
+raRouter.get('/me', async (req, res) => {
+  res.json(await progressSummary(me(req).id));
+});
+
+raRouter.post('/me/refresh', async (req, res) => {
+  await refreshProgress(me(req).id);
+  res.json(await progressSummary(me(req).id));
 });

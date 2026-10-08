@@ -90,6 +90,14 @@ function otherMocks(req: http.IncomingMessage, res: http.ServerResponse, url: UR
     res.end(PNG);
     return true;
   }
+  if (p === '/ra/API_GetUserProfile.php') {
+    if (url.searchParams.get('y') !== 'user-web-key') return (res.statusCode = 401), res.end('{}'), true;
+    return json(res, { User: 'raplayer', UserPic: '/UserPic/raplayer.png', TotalPoints: 1234, TotalSoftcorePoints: 10, TotalTruePoints: 3000, MemberSince: '2020-01-01 00:00:00' }), true;
+  }
+  if (p === '/ra/API_GetUserCompletionProgress.php') {
+    const rows = raProgressGames.map((id) => ({ GameID: id, MaxPossible: 40, NumAwarded: 12, NumAwardedHardcore: 10, MostRecentAwardedDate: '2026-10-01T10:00:00+00:00' }));
+    return json(res, { Count: rows.length, Total: rows.length, Results: url.searchParams.get('o') === '0' ? rows : [] }), true;
+  }
   if (p === '/ra/dorequest.php') {
     const f = new URLSearchParams(body);
     if (f.get('r') === 'login2' && f.get('u') === 'raplayer' && f.get('p') === 'ra-secret-pass') return json(res, { Success: true, User: 'raplayer', Token: 'RATOKEN123' }), true;
@@ -110,6 +118,8 @@ function otherMocks(req: http.IncomingMessage, res: http.ServerResponse, url: UR
   return false;
 }
 
+/** RA games the mocked user has progress in */
+const raProgressGames: number[] = [];
 const ssMock = http.createServer(async (req, res) => {
   const url = new URL(req.url!, 'http://x');
   let body = '';
@@ -2230,4 +2240,42 @@ test('device config: your settings reach Knulli and Onion through the shell clie
   assert.equal(Buffer.from(first[1], 'base64').toString(), 'Casa');
   assert.equal(Buffer.from(first[2], 'base64').toString(), 'casa;password$1');
   assert.equal(first[3], 'dual');
+});
+
+test('favourite roms mark their game; RetroAchievements progress read with the user\'s own key', async () => {
+  const { prisma } = await import('../src/lib/prisma.js');
+  const rom = await prisma.rom.findFirstOrThrow({ where: { raGameId: { not: null } }, include: { game: true } });
+  // Favourites are per rom; the game shows as favourite
+  assert.equal((await api('PUT', `/roms/${rom.id}/favorite`)).status, 204);
+  assert.equal((await api('PUT', `/roms/${rom.id}/favorite`)).status, 204, 'marking twice is fine');
+  const favs = (await api('GET', '/games?favorites=1&pageSize=100')).json;
+  assert.deepEqual(favs.items.map((g: any) => g.id), [rom.gameId]);
+  assert.equal(favs.items[0].favorite, true);
+  const detail = (await api('GET', `/games/${rom.gameId}`)).json;
+  assert.equal(detail.favorite, true);
+  assert.equal(detail.roms.find((r: any) => r.id === rom.id).favorite, true);
+  assert.equal(detail.roms.find((r: any) => r.id === rom.id).favorites, undefined);
+  // Another user does not see them
+  const other = (await api('GET', '/games?favorites=1', undefined, userToken)).json;
+  assert.equal(other.total, 0);
+  assert.equal((await api('DELETE', `/roms/${rom.id}/favorite`)).status, 204);
+  assert.equal((await api('GET', '/games?favorites=1')).json.total, 0);
+
+  // RA progress: nothing until the user sets their RA user and Web API key
+  assert.equal((await api('GET', '/ra/me')).json.configured, false);
+  raProgressGames.push(rom.raGameId!);
+  await api('PATCH', '/users/me', { raUser: 'raplayer', raApiKey: 'wrong-key' });
+  assert.equal((await api('POST', '/ra/me/refresh')).status, 400, 'a key RA refuses is said so');
+  await api('PATCH', '/users/me', { raApiKey: 'user-web-key' });
+  const me = (await api('POST', '/ra/me/refresh')).json;
+  assert.equal(me.configured, true);
+  assert.equal(me.profile.points, 1234);
+  assert.equal(me.profile.achievements, 12);
+  assert.equal(me.profile.games, 1);
+  const list = (await api('GET', `/games?systemId=${rom.game.systemId}&ra=1&pageSize=200`)).json;
+  const row = list.items.find((g: any) => g.id === rom.gameId);
+  assert.deepEqual({ awarded: row.raProgress.awarded, total: row.raProgress.total }, { awarded: 12, total: 40 });
+  assert.equal(row.raGameId, rom.raGameId);
+  const d = (await api('GET', `/games/${rom.gameId}`)).json;
+  assert.equal(d.roms.find((r: any) => r.id === rom.id).raProgress.awarded, 12);
 });

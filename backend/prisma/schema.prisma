@@ -79,35 +79,40 @@ enum HackType {
 }
 
 model User {
-  id                 Int      @id @default(autoincrement())
-  username           String   @unique @db.VarChar(64)
-  email              String   @unique @db.VarChar(191)
+  id                 Int       @id @default(autoincrement())
+  username           String    @unique @db.VarChar(64)
+  email              String    @unique @db.VarChar(191)
   passwordHash       String
-  role               Role     @default(USER)
-  locale             String   @default("es") @db.VarChar(8)
+  role               Role      @default(USER)
+  locale             String    @default("es") @db.VarChar(8)
   // Credenciales externas cifradas (AES-256-GCM)
-  ssUser             String?  @db.Text
-  ssPassword         String?  @db.Text
-  raUser             String?  @db.Text
-  raApiKey           String?  @db.Text
+  ssUser             String?   @db.Text
+  ssPassword         String?   @db.Text
+  raUser             String?   @db.Text
+  raApiKey           String?   @db.Text
   // RetroAchievements login for the consoles (some firmwares need the password itself) and the token RA gives for it
-  raPassword         String?  @db.Text
-  raToken            String?  @db.Text
-  tgdbApiKey         String?  @db.Text
+  raPassword         String?   @db.Text
+  raToken            String?   @db.Text
+  // The user's RetroAchievements profile (points, rank...) as last read with their Web API key, and when
+  raProfile          Json?
+  raProgressAt       DateTime?
+  tgdbApiKey         String?   @db.Text
   // Lista de permisos (ver lib/permissions.ts). El admin los tiene todos.
   permissions        Json?
-  mustChangePassword Boolean  @default(false)
-  createdAt          DateTime @default(now())
+  mustChangePassword Boolean   @default(false)
+  createdAt          DateTime  @default(now())
 
   lists         List[]
   listShares    ListShare[]
   wifiNetworks  WifiNetwork[]
+  romFavorites  RomFavorite[]
+  raProgress    RaUserProgress[]
   devices       Device[]
   deviceLinks   DeviceLink[]
   saves         Save[]
   jobs          Job[]
   refreshTokens RefreshToken[]
-  invitations   Invitation[]   @relation("invitationCreator")
+  invitations   Invitation[]     @relation("invitationCreator")
 }
 
 model RefreshToken {
@@ -214,32 +219,33 @@ model Game {
 }
 
 model Rom {
-  id                Int        @id @default(autoincrement())
+  id                Int           @id @default(autoincrement())
   gameId            Int
   datSourceId       Int
-  name              String     @db.VarChar(255)
+  name              String        @db.VarChar(255)
   regions           Json
   languages         Json
-  revision          String?    @db.VarChar(32)
+  revision          String?       @db.VarChar(32)
   flags             Json
-  isBios            Boolean    @default(false)
+  isBios            Boolean       @default(false)
   // Hash RA precalculado a partir del DAT cuando el algoritmo lo permite
-  raHash            String?    @db.Char(32)
+  raHash            String?       @db.Char(32)
   raGameId          Int?
-  serial            String?    @db.VarChar(64)
+  serial            String?       @db.VarChar(64)
   // Titulo original (p.ej. japones) segun Retool
-  localTitle        String?    @db.VarChar(255)
+  localTitle        String?       @db.VarChar(255)
   // Descripcion del DAT (en arcade es el titulo; el nombre es el del set)
-  description       String?    @db.VarChar(255)
+  description       String?       @db.VarChar(255)
   // Padre segun No-Intro Parent/Clone
-  parentName        String?    @db.VarChar(255)
+  parentName        String?       @db.VarChar(255)
   // La fuente ya no la contiene; se conserva (datos permanentes)
-  removedFromSource Boolean    @default(false)
+  removedFromSource Boolean       @default(false)
   checkedAt         DateTime?
   createdById       Int?
-  game              Game       @relation(fields: [gameId], references: [id], onDelete: Cascade)
-  datSource         DatSource  @relation(fields: [datSourceId], references: [id], onDelete: Cascade)
+  game              Game          @relation(fields: [gameId], references: [id], onDelete: Cascade)
+  datSource         DatSource     @relation(fields: [datSourceId], references: [id], onDelete: Cascade)
   parts             RomPart[]
+  favorites         RomFavorite[]
   listItems         ListItem[]
   media             Media[]
   saves             Save[]
@@ -966,4 +972,29 @@ model DeviceConfigOp {
   device    Device    @relation(fields: [deviceId], references: [id], onDelete: Cascade)
 
   @@index([deviceId, status])
+}
+
+/// A rom the user marked as favourite (its game shows as favourite too)
+model RomFavorite {
+  userId    Int
+  romId     Int
+  createdAt DateTime @default(now())
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  rom       Rom      @relation(fields: [romId], references: [id], onDelete: Cascade)
+
+  @@id([userId, romId])
+  @@index([romId])
+}
+
+/// The user's achievements in a RetroAchievements game, read with their own Web API key
+model RaUserProgress {
+  userId          Int
+  raGameId        Int
+  awarded         Int       @default(0)
+  awardedHardcore Int       @default(0)
+  total           Int       @default(0)
+  lastAt          DateTime?
+  user            User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([userId, raGameId])
 }

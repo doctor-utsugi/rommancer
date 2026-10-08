@@ -10,6 +10,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Input } from '@/components/ui/input'
 import { Field, NativeSelect, PageHeader, errMsg } from '@/components/common'
 import { ConsoleSettingsCard } from '@/components/device-config'
+import { RaSummaryCard } from '@/components/ra-summary'
 
 export function ProfilePage() {
   const { t } = useTranslation()
@@ -131,6 +132,7 @@ export function ProfilePage() {
         </CardContent>
       </Card>
       )}
+      {!locked && <RaSummaryCard />}
       {!locked && <ConsoleSettingsCard />}
     </div>
   )

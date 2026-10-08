@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { Link, useSearchParams } from 'react-router'
 import { keepPreviousData, useQuery } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
-import { ImageOff, LayoutGrid, List, Trophy } from 'lucide-react'
+import { ImageOff, LayoutGrid, List, Star, Trophy } from 'lucide-react'
 import { authUrl, get, post, type Paged } from '@/lib/api'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -22,10 +22,25 @@ interface GameRow {
   ownedCount: number
   regions: string[]
   ra: boolean
+  raGameId: number | null
+  raAchievements: number
+  raProgress: { awarded: number; total: number } | null
+  favorite: boolean
   hackCount: number
   releaseYear: number | null
   unverifiedCount: number
   groupConfidence: 'high' | 'low'
+}
+
+/** Achievements of the game, or the user's progress in it when their RA account is set */
+function RaBadge({ g }: { g: GameRow }) {
+  const { t } = useTranslation()
+  return (
+    <Badge variant={g.raProgress?.awarded ? 'default' : 'secondary'}>
+      <Trophy className="size-3" />
+      {g.raProgress ? t('more.ra.progress', { awarded: g.raProgress.awarded, total: g.raProgress.total || g.raAchievements }) : g.raAchievements || 'RA'}
+    </Badge>
+  )
 }
 
 export function useRegions() {
@@ -59,6 +74,7 @@ export function GamesPage() {
   const status = params.get('status') ?? 'all'
   const region = params.get('region') ?? ''
   const ra = params.get('ra') === '1'
+  const favorites = params.get('favorites') === '1'
   const page = Number(params.get('page') ?? 1)
   const [q, setQ] = useState(params.get('q') ?? '')
   const [selected, setSelected] = useState<Set<number>>(new Set())
@@ -79,6 +95,7 @@ export function GamesPage() {
   if (params.get('q')) query.set('q', params.get('q')!)
   if (region) query.set('region', region)
   if (ra) query.set('ra', '1')
+  if (favorites) query.set('favorites', '1')
   for (const k of ['lowConfidence', 'workId', 'franchiseId']) if (params.get(k)) query.set(k, params.get(k)!)
   const { data, isFetching } = useQuery({
     queryKey: ['games', query.toString()],
@@ -144,6 +161,10 @@ export function GamesPage() {
           <Checkbox checked={ra} onCheckedChange={(c) => set('ra', c ? '1' : '')} />
           {t('games.raOnly')}
         </label>
+        <label className="flex items-center gap-2 text-sm">
+          <Checkbox checked={favorites} onCheckedChange={(c) => set('favorites', c ? '1' : '')} />
+          {t('more.fav.only')}
+        </label>
       </form>
       {jobId && (
         <div className="mb-4 max-w-md">
@@ -185,11 +206,11 @@ export function GamesPage() {
                   </Badge>
                 </TableCell>
                 <TableCell className="space-x-1 truncate">
+                  {g.favorite && <Star className="inline size-4 fill-amber-400 text-amber-500" aria-label={t('more.fav.favorite')} />}
                   {g.ra && (
-                    <Badge variant="secondary">
-                      <Trophy className="size-3" />
-                      RA
-                    </Badge>
+                    <a href={`https://retroachievements.org/game/${g.raGameId}`} target="_blank" rel="noreferrer" title={t('more.ra.openShort')}>
+                      <RaBadge g={g} />
+                    </a>
                   )}
                   {g.hackCount > 0 && <Badge variant="secondary">{g.hackCount} hacks</Badge>}
                   {g.unverifiedCount > 0 && <Badge variant="destructive">{g.unverifiedCount}</Badge>}
@@ -220,12 +241,12 @@ export function GamesPage() {
                   <p className="text-xs text-muted-foreground">{g.system.name}</p>
                   <div className="flex flex-wrap gap-1">
                     <Badge variant={g.ownedCount ? 'default' : 'outline'}>{t('games.roms', { owned: g.ownedCount, count: g.romCount })}</Badge>
-                    {g.ra && (
-                      <Badge variant="secondary">
-                        <Trophy className="size-3" />
-                        RA
+                    {g.favorite && (
+                      <Badge variant="outline">
+                        <Star className="size-3 fill-amber-400 text-amber-500" />
                       </Badge>
                     )}
+                    {g.ra && <RaBadge g={g} />}
                     {g.hackCount > 0 && <Badge variant="secondary">{g.hackCount} hacks</Badge>}
                     {g.unverifiedCount > 0 && <Badge variant="destructive">{t('more.tags.unverifiedCount', { count: g.unverifiedCount })}</Badge>}
                     {g.groupConfidence === 'low' && <Badge variant="outline">{t('more.tags.lowConfidence')}</Badge>}

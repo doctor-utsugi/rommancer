@@ -2,9 +2,9 @@ import { useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router'
 import { useQuery } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
-import { Check, Download, FilePlus, FileText, ImageOff, Pencil, Trash2, Trophy, Upload, X } from 'lucide-react'
+import { Check, Download, FilePlus, FileText, ImageOff, Pencil, Star, Trash2, Trophy, Upload, X } from 'lucide-react'
 import { toast } from 'sonner'
-import { authUrl, del, get, patch, post, upload } from '@/lib/api'
+import { api, authUrl, del, get, patch, post, upload } from '@/lib/api'
 import { useAuth } from '@/lib/auth'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -46,6 +46,15 @@ export function GamePage() {
       toast.success(t('more.game.removed', { count: r.records }))
       if (r.gameDeleted) nav('/games')
       else void refetch()
+    } catch (e) {
+      toast.error(errMsg(e))
+    }
+  }
+
+  const toggleFavorite = async (r: any) => {
+    try {
+      await (r.favorite ? del(`/roms/${r.id}/favorite`) : api('PUT', `/roms/${r.id}/favorite`))
+      void refetch()
     } catch (e) {
       toast.error(errMsg(e))
     }
@@ -114,7 +123,10 @@ export function GamePage() {
         </div>
         <div className="min-w-0 flex-1 space-y-3">
           <div>
-            <h1 className="text-2xl font-semibold">{g.title}</h1>
+            <h1 className="flex items-center gap-2 text-2xl font-semibold">
+              {g.title}
+              {g.favorite && <Star className="size-5 fill-amber-400 text-amber-500" aria-label={t('more.fav.favorite')} />}
+            </h1>
             <p className="text-muted-foreground">{g.system.name}</p>
             <div className="mt-1 flex flex-wrap gap-2 text-sm">
               {g.groupConfidence === 'low' && tag(t('more.tags.lowConfidence'), 'secondary')}
@@ -241,8 +253,11 @@ export function GamePage() {
                 <TableRow key={r.id}>
                   <TableCell>{r.owned ? <Check className="size-4 text-green-600" /> : r.unverified && r.parts.some((p: any) => p.files.length) ? <Check className="size-4 text-amber-600" /> : <X className="size-4 text-muted-foreground" />}</TableCell>
                   <TableCell>
-                    <p className="truncate font-medium" title={r.name}>
-                      {r.name}
+                    <p className="flex items-center gap-1 truncate font-medium" title={r.name}>
+                      <button type="button" onClick={() => void toggleFavorite(r)} aria-label={t(r.favorite ? 'more.fav.remove' : 'more.fav.add')} title={t(r.favorite ? 'more.fav.remove' : 'more.fav.add')}>
+                        <Star className={`size-4 shrink-0 ${r.favorite ? 'fill-amber-400 text-amber-500' : 'text-muted-foreground hover:text-amber-500'}`} />
+                      </button>
+                      <span className="truncate">{r.name}</span>
                     </p>
                     <p className="truncate text-xs text-muted-foreground" title={r.parts.map((p: any) => p.name).join(', ')}>
                       {r.datSource.type} · {r.parts.map((p: any) => `${p.name} (${formatBytes(Number(p.size))})`).join(', ')}
@@ -263,10 +278,12 @@ export function GamePage() {
                   </TableCell>
                   <TableCell>
                     {r.raGame ? (
-                      <Badge variant="secondary" title={r.raGame.title}>
-                        <Trophy className="size-3" />
-                        {t('game.raAchievements', { count: r.raGame.numAchievements })}
-                      </Badge>
+                      <a href={`https://retroachievements.org/game/${r.raGame.id}`} target="_blank" rel="noreferrer" title={t('more.ra.open', { title: r.raGame.title })}>
+                        <Badge variant={r.raProgress?.awarded ? 'default' : 'secondary'}>
+                          <Trophy className="size-3" />
+                          {r.raProgress ? t('more.ra.progress', { awarded: r.raProgress.awarded, total: r.raProgress.total || r.raGame.numAchievements }) : t('game.raAchievements', { count: r.raGame.numAchievements })}
+                        </Badge>
+                      </a>
                     ) : (
                       '-'
                     )}

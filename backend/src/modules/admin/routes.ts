@@ -14,7 +14,7 @@ import { DAT_PRESETS } from '../dats/presets.js';
 import { applySeed, exportSeed, scheduleSeedExport } from '../seed/service.js';
 import { rematchAll, scanPath } from '../scanner/service.js';
 import { applyOrganize, planOrganize, undoOrganize } from '../roms/organize.js';
-import { SOURCES, forceSync } from '../sync/service.js';
+import { SOURCES, forceSync, raCatalogKey } from '../sync/service.js';
 import { addRomRule, resolveRomGroups } from '../grouping/service.js';
 import { resolveWorks } from '../sync/wikidata.js';
 import { identifyHacks, linkFileAsHack } from '../hacks/identify.js';
@@ -275,7 +275,7 @@ adminRouter.get('/tools', async (_req, res) => {
     chdman: await hasTool(env.bins.chdman),
     sevenZip: await hasTool(env.bins.sevenZip),
     screenscraper: !!(env.screenscraper.devId && env.screenscraper.user),
-    retroachievements: !!env.ra.apiKey,
+    retroachievements: !!(await raCatalogKey()),
     thegamesdb: !!env.tgdb.apiKey,
     seed: fs.existsSync(env.seedDir),
   });

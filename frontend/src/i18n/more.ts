@@ -1,5 +1,19 @@
 // Textos de la fase 2 (permisos, sincronizacion, revision, obras, dispositivos con scripts...)
 export const esMore = {
+  fav: { add: 'Marcar como favorita', remove: 'Quitar de favoritas', favorite: 'Favorito', only: 'Favoritos' },
+  ra: {
+    progress: '{{awarded}}/{{total}}',
+    open: 'Ver «{{title}}» en RetroAchievements',
+    openShort: 'Ver en RetroAchievements',
+    title: 'Tus logros de RetroAchievements',
+    help: 'Con tu usuario y tu Web API key de RetroAchievements (gratis, en la página de ajustes de tu cuenta de RA) se lee tu progreso en cada juego.',
+    notSet: 'Pon tu usuario y tu Web API key de RetroAchievements en «Credenciales de servicios externos».',
+    points: '{{points}} puntos',
+    summary: '{{achievements}} logros en {{games}} juegos · {{mastered}} dominados',
+    readAt: 'Leído {{when}}',
+    refresh: 'Actualizar',
+    refreshing: 'Leyendo tu progreso…',
+  },
   config: {
     settingsTitle: 'Ajustes para tus consolas',
     settingsHelp: 'Rommancer los pone en tus consolas por ti: con su app, por SSH o al sincronizar su tarjeta en el ordenador. Las contraseñas se guardan cifradas y no vuelven a mostrarse.',
@@ -492,6 +506,20 @@ export const esMore = {
 }
 
 export const enMore: typeof esMore = {
+  fav: { add: 'Mark as favourite', remove: 'Remove from favourites', favorite: 'Favourite', only: 'Favourites' },
+  ra: {
+    progress: '{{awarded}}/{{total}}',
+    open: 'Open "{{title}}" on RetroAchievements',
+    openShort: 'Open on RetroAchievements',
+    title: 'Your RetroAchievements',
+    help: 'With your RetroAchievements user and Web API key (free, on your RA account settings page) your progress in each game is read.',
+    notSet: 'Set your RetroAchievements user and Web API key in "External service credentials".',
+    points: '{{points}} points',
+    summary: '{{achievements}} achievements in {{games}} games · {{mastered}} mastered',
+    readAt: 'Read {{when}}',
+    refresh: 'Refresh',
+    refreshing: 'Reading your progress…',
+  },
   config: {
     settingsTitle: 'Settings for your consoles',
     settingsHelp: 'Rommancer puts them on your consoles for you: through their app, over SSH or when their card is synced on a computer. Passwords are stored encrypted and never shown again.',
