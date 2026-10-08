@@ -37,6 +37,18 @@ const es = {
   free: '{free} libres de {total}',
   tabSummary: 'Resumen',
   tabLists: 'Listas',
+  tabGames: 'Juegos',
+  gamesAt: '{n} juegos en la tarjeta, según su última sincronización ({when})',
+  searchCard: 'Buscar en la tarjeta',
+  allSystems: 'Todos los sistemas',
+  showAll: 'Todos',
+  showNew: 'Nuevos para la colección',
+  showUnidentified: 'Sin identificar',
+  showOnServer: 'Ya en el servidor',
+  sendOne: 'Subir',
+  sending: 'Pendiente de subir',
+  moreGames: 'y {n} más: afina la búsqueda',
+  noMatches: 'Nada coincide.',
   tabAdd: 'Añadir juegos',
   newGames: 'Esta tarjeta tiene {n} juegos nuevos que ayudarían a la colección remota',
   collection: 'Colección remota',
@@ -127,6 +139,18 @@ const en: typeof es = {
   free: '{free} free of {total}',
   tabSummary: 'Summary',
   tabLists: 'Lists',
+  tabGames: 'Games',
+  gamesAt: '{n} games on the card, as of its last sync ({when})',
+  searchCard: 'Search the card',
+  allSystems: 'All systems',
+  showAll: 'All',
+  showNew: 'New to the collection',
+  showUnidentified: 'Unidentified',
+  showOnServer: 'Already on the server',
+  sendOne: 'Send',
+  sending: 'Waiting to be sent',
+  moreGames: 'and {n} more: narrow the search',
+  noMatches: 'Nothing matches.',
   tabAdd: 'Add games',
   newGames: 'This card has {n} new games that would help the remote collection',
   collection: 'Remote collection',
@@ -186,6 +210,9 @@ let dict: typeof es = navigator.language.toLowerCase().startsWith('es') ? es : e
 export function setLang(lang: Lang) {
   dict = lang === 'es' ? es : en
 }
+
+/** Dates and numbers in the interface language */
+export const locale = () => (dict === es ? 'es-ES' : 'en-GB')
 
 export function t(key: Key, vars: Record<string, string | number> = {}) {
   return dict[key].replace(/\{(\w+)\}/g, (_, k) => String(vars[k] ?? ''))

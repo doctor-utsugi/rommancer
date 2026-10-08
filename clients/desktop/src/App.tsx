@@ -3,7 +3,7 @@ import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import { open } from '@tauri-apps/plugin-dialog'
 import { disable, enable, isEnabled } from '@tauri-apps/plugin-autostart'
-import { bytes, setLang, t, type Lang } from './i18n'
+import { bytes, locale, setLang, t, type Lang } from './i18n'
 import { SavePoint } from './SavePoint'
 
 interface Status {
@@ -306,7 +306,7 @@ function Options({ status, onChange }: { status: Status; onChange: () => void })
 
 function CardView({ card, progress, result, syncing, onChange }: { card: Card; progress?: Progress; result?: Finished; syncing: boolean; onChange: () => void }) {
   const [deviceId, setDeviceId] = useState<number | null>(card.link?.device_id ?? null)
-  const [tab, setTab] = useState<'summary' | 'lists' | 'add'>('summary')
+  const [tab, setTab] = useState<'summary' | 'games' | 'lists' | 'add'>('summary')
   const [error, setError] = useState('')
   useEffect(() => {
     if (card.link && !deviceId) invoke<number>('device_id', { root: card.root }).then(setDeviceId, (e) => setError(String(e)))
@@ -348,13 +348,14 @@ function CardView({ card, progress, result, syncing, onChange }: { card: Card; p
         deviceId && (
           <>
             <nav className="tabs">
-              {(['summary', 'lists', 'add'] as const).map((k) => (
+              {(['summary', 'games', 'lists', 'add'] as const).map((k) => (
                 <button key={k} className={tab === k ? 'active' : ''} onClick={() => setTab(k)}>
-                  {t(k === 'summary' ? 'tabSummary' : k === 'lists' ? 'tabLists' : 'tabAdd')}
+                  {t(k === 'summary' ? 'tabSummary' : k === 'games' ? 'tabGames' : k === 'lists' ? 'tabLists' : 'tabAdd')}
                 </button>
               ))}
             </nav>
             {tab === 'summary' && <Summary deviceId={deviceId} onSend={() => sync(false)} refreshKey={result} />}
+            {tab === 'games' && <Games deviceId={deviceId} refreshKey={result} onSend={() => sync(false)} />}
             {tab === 'lists' && <Lists deviceId={deviceId} name={card.label} onCopy={() => sync(true)} />}
             {tab === 'add' && <AddGames deviceId={deviceId} onAdded={() => sync(true)} />}
             {!card.link.console && (
@@ -631,6 +632,100 @@ function Lists({ deviceId, name, onCopy }: { deviceId: number; name: string; onC
       <button className="primary" disabled={!picked.size} onClick={onCopy}>
         {t('saveLists')}
       </button>
+    </div>
+  )
+}
+
+interface Game {
+  id: number
+  path: string
+  name: string
+  size: number
+  system: string | null
+  systemName: string | null
+  folder: string | null
+  gameId: number | null
+  gameTitle: string | null
+  onServer: boolean
+  pullPending: boolean
+}
+
+/** What the card holds (as of its last sync): titles, systems and whether the server has each game */
+function Games({ deviceId, refreshKey, onSend }: { deviceId: number; refreshKey: unknown; onSend: () => void }) {
+  const [data, setData] = useState<{ inventoryAt: string | null; allowPull: boolean; items: Game[] } | null>(null)
+  const [q, setQ] = useState('')
+  const [system, setSystem] = useState('')
+  const [show, setShow] = useState<'all' | 'new' | 'unidentified' | 'onServer'>('all')
+  const [error, setError] = useState('')
+  const load = useCallback(() => void api<typeof data>('GET', `/devices/${deviceId}/inventory`).then(setData, (e) => setError(String(e))), [deviceId])
+  useEffect(load, [load, refreshKey])
+  const items = data?.items ?? []
+  const systems = useMemo(() => [...new Map(items.filter((i) => i.system).map((i) => [i.system!, i.systemName ?? i.system!])).entries()].sort((a, b) => a[1].localeCompare(b[1])), [items])
+  if (error) return <p className="error">{error}</p>
+  if (!data) return <p className="muted">…</p>
+  if (!data.inventoryAt) return <p className="muted">{t('noInventory')}</p>
+  const needle = q.trim().toLowerCase()
+  const shown = items.filter(
+    (i) =>
+      (!system || i.system === system) &&
+      (show === 'all' || (show === 'new' && i.gameId && !i.onServer) || (show === 'unidentified' && !i.gameId && !i.onServer) || (show === 'onServer' && i.onServer)) &&
+      (!needle || `${i.name} ${i.gameTitle ?? ''}`.toLowerCase().includes(needle)),
+  )
+  const send = async (path: string) => {
+    await api('POST', `/devices/${deviceId}/pull`, { paths: [path] })
+    load()
+    onSend()
+  }
+  return (
+    <div className="panel">
+      <p className="muted small">{t('gamesAt', { n: items.length, when: new Date(data.inventoryAt).toLocaleString(locale()) })}</p>
+      <div className="row">
+        <input className="grow" value={q} onChange={(e) => setQ(e.target.value)} placeholder={t('searchCard')} />
+        <select style={{ width: 'auto' }} value={system} onChange={(e) => setSystem(e.target.value)}>
+          <option value="">{t('allSystems')}</option>
+          {systems.map(([slug, name]) => (
+            <option key={slug} value={slug}>
+              {name}
+            </option>
+          ))}
+        </select>
+        <select style={{ width: 'auto' }} value={show} onChange={(e) => setShow(e.target.value as typeof show)}>
+          <option value="all">{t('showAll')}</option>
+          <option value="new">{t('showNew')}</option>
+          <option value="unidentified">{t('showUnidentified')}</option>
+          <option value="onServer">{t('showOnServer')}</option>
+        </select>
+      </div>
+      <div className="games">
+        {shown.slice(0, 500).map((i) => (
+          <div key={i.id} className="game">
+            <span className="grow">
+              <span className="title" title={i.path}>
+                {i.gameTitle ?? i.name}
+              </span>
+              <span className="muted small">
+                {i.systemName ?? i.folder ?? '—'}
+                {i.gameTitle && ` · ${i.name}`}
+              </span>
+            </span>
+            {i.onServer ? (
+              <span className="ok" title={t('showOnServer')}>
+                ✓
+              </span>
+            ) : i.pullPending ? (
+              <span className="muted small">{t('sending')}</span>
+            ) : (
+              data.allowPull && (
+                <button className="small-btn" onClick={() => void send(i.path)}>
+                  {t('sendOne')}
+                </button>
+              )
+            )}
+          </div>
+        ))}
+        {shown.length > 500 && <p className="muted small">{t('moreGames', { n: shown.length - 500 })}</p>}
+        {!shown.length && <p className="muted small">{t('noMatches')}</p>}
+      </div>
     </div>
   )
 }
