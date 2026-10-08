@@ -43,6 +43,7 @@ interface Summary {
 
 interface PullProgress {
   active: boolean
+  finishedAt: string | null
   total: number
   done: number
   failed: number
@@ -379,7 +380,26 @@ function CollectionHero({
 }) {
   const { t } = useTranslation()
   const running = !!progress?.active
-  const finished = !running && !!progress?.total
+  // The last copy's outcome stays until closed (or for half an hour, on the server side)
+  const finishedKey = progress?.finishedAt ? `copy-seen-${progress.finishedAt}` : ''
+  const [closedKey, setClosedKey] = useState('')
+  const stored = (() => {
+    try {
+      return !!finishedKey && localStorage.getItem(finishedKey) === '1'
+    } catch {
+      return false
+    }
+  })()
+  const closed = !!finishedKey && (closedKey === finishedKey || stored)
+  const finished = !running && !!progress?.total && !closed
+  const close = () => {
+    try {
+      localStorage.setItem(finishedKey, '1')
+    } catch {
+      /* private mode: closed for this view only */
+    }
+    setClosedKey(finishedKey)
+  }
   if (!summary.newGames && !running && !finished) return null
   const c = summary.collection
   const s = summary.consoleSystems
@@ -424,19 +444,51 @@ function CollectionHero({
             )}
           </div>
         )}
-        {progress && (running || finished) && <CopyProgress p={progress} onCancel={onCancel} onPause={onPause} onResume={onResume} divided={summary.newGames > 0} />}
+        {progress && (running || finished) && <CopyProgress p={progress} onCancel={onCancel} onPause={onPause} onResume={onResume} onClose={close} divided={summary.newGames > 0} />}
       </CardContent>
     </Card>
   )
 }
 
-function CopyProgress({ p, onCancel, onPause, onResume, divided }: { p: PullProgress; onCancel: () => void; onPause: () => void; onResume: () => void; divided: boolean }) {
-  const { t } = useTranslation()
+function CopyProgress({
+  p,
+  onCancel,
+  onPause,
+  onResume,
+  onClose,
+  divided,
+}: {
+  p: PullProgress
+  onCancel: () => void
+  onPause: () => void
+  onResume: () => void
+  onClose: () => void
+  divided: boolean
+}) {
+  const { t, i18n } = useTranslation()
   // Paused: nothing left on offer to the console (a file under way may still be finishing)
   const paused = p.paused > 0 && p.paused === p.open - (p.current ? 1 : 0)
   const files = p.done + p.failed
   const share = p.bytesTotal ? pct(p.bytesDone, p.bytesTotal) : pct(files, p.total)
   const cur = p.current
+  if (!p.active)
+    return (
+      <div className={`flex items-center justify-between gap-2 text-sm ${divided ? 'border-t pt-4' : ''}`}>
+        <span>
+          <Check className="mr-1 inline size-4 text-green-600" />
+          {t('more.hero.lastCopy', { when: formatAgo(p.finishedAt, i18n.language), done: p.done, total: p.total })}
+          {p.failed > 0 && (
+            <span className="text-destructive" title={p.failures.map((f) => `${f.name}: ${f.result ?? ''}`).join('\n')}>
+              {' · '}
+              {t('more.hero.failed', { count: p.failed })}
+            </span>
+          )}
+        </span>
+        <Button size="sm" variant="ghost" onClick={onClose} title={t('common.close')}>
+          <X className="size-4" />
+        </Button>
+      </div>
+    )
   return (
     <div className={`space-y-2 ${divided ? 'border-t pt-4' : ''}`}>
       <div className="flex flex-wrap items-center justify-between gap-2 text-sm">
@@ -485,4 +537,11 @@ function CopyProgress({ p, onCancel, onPause, onResume, divided }: { p: PullProg
       )}
     </div>
   )
+}
+
+/** "hace 12 min" style, for recent events */
+function formatAgo(d: string | null, lang: string) {
+  if (!d) return ''
+  const min = Math.max(0, Math.round((Date.now() - new Date(d).getTime()) / 60_000))
+  return new Intl.RelativeTimeFormat(lang, { numeric: 'auto' }).format(-min, 'minute')
 }

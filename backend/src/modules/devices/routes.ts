@@ -1,7 +1,7 @@
 import path from 'node:path';
 import { Router } from 'express';
 import { z } from 'zod';
-import type { Prisma } from '@prisma/client';
+import type { Device, Prisma } from '@prisma/client';
 import { prisma } from '../../lib/prisma.js';
 import { encrypt } from '../../lib/crypto.js';
 import { badRequest, forbidden, intParam } from '../../lib/http.js';
@@ -177,6 +177,14 @@ devicesRouter.post('/:id/ssh-sync', requireAdmin, async (req, res) => {
   res.status(202).json({ ok: true });
 });
 
+// Copies under way on any of the user's consoles, for the activity panel shown on every page
+devicesRouter.get('/activity', async (req, res) => {
+  const u = me(req);
+  const queued = await prisma.devicePull.findMany({ where: { status: { in: QUEUED_PULL }, device: { userId: u.id } }, select: { deviceId: true }, distinct: ['deviceId'] });
+  const devices = await prisma.device.findMany({ where: { id: { in: queued.map((q) => q.deviceId) } } });
+  res.json(await Promise.all(devices.map(async (d) => ({ deviceId: d.id, name: d.name, ...(await pullProgress(d)) }))));
+});
+
 devicesRouter.get('/:id', async (req, res) => {
   const d = await ownDevice(intParam(req), me(req));
   const { sshPassword, sshKey, tokenHash: _token, ...rest } = d;
@@ -303,22 +311,22 @@ async function catalogSizes(rows: { path: string; romId: number | null }[]) {
   return new Map(rows.map((r) => [r.path, r.romId ? (byRom.get(r.romId) ?? 0) : 0]));
 }
 
-/**
- * The copy in progress: every request since the oldest one still open (or the last hour's when all are
- * finished), with bytes, the file being received right now and whether the console can be reached.
- */
-devicesRouter.get('/:id/pull-progress', async (req, res) => {
-  const d = await ownDevice(intParam(req), me(req));
+/** The copy in progress for one device (see GET /:id/pull-progress) */
+async function pullProgress(d: Device) {
   const oldestOpen = await prisma.devicePull.findFirst({ where: { deviceId: d.id, status: { in: QUEUED_PULL } }, orderBy: { createdAt: 'asc' }, select: { createdAt: true } });
-  const since = oldestOpen?.createdAt ?? new Date(Date.now() - 3600_000);
-  const pulls = await prisma.devicePull.findMany({ where: { deviceId: d.id, createdAt: { gte: since } }, orderBy: { id: 'asc' } });
+  // Nothing open: what finished in the last half hour (the last copy's outcome)
+  const pulls = await prisma.devicePull.findMany({
+    where: { deviceId: d.id, ...(oldestOpen ? { createdAt: { gte: oldestOpen.createdAt } } : { doneAt: { gte: new Date(Date.now() - 30 * 60_000) } }) },
+    orderBy: { id: 'asc' },
+  });
   const sizes = await catalogSizes(await prisma.deviceRom.findMany({ where: { deviceId: d.id, path: { in: pulls.map((p) => p.path) } }, select: { path: true, romId: true } }));
   const count = (st: string) => pulls.filter((p) => p.status === st).length;
   const bytes = (st: string[]) => pulls.filter((p) => st.includes(p.status)).reduce((n, p) => n + (sizes.get(p.path) ?? 0), 0);
   const sending = pulls.find((p) => pullTransfers.has(p.id));
   const live = sending ? pullTransfers.get(sending.id)! : null;
-  res.json({
+  return {
     active: !!oldestOpen,
+    finishedAt: oldestOpen ? null : pulls.reduce<Date | null>((m, p) => (p.doneAt && (!m || p.doneAt > m) ? p.doneAt : m), null),
     total: pulls.length,
     done: count('done'),
     failed: count('failed'),
@@ -332,7 +340,15 @@ devicesRouter.get('/:id/pull-progress', async (req, res) => {
     lastSeenAt: d.lastSeenAt,
     viaSsh: !!(d.sshHost && d.clientPath),
     failures: pulls.filter((p) => p.status === 'failed').slice(-5).map((p) => ({ name: path.posix.basename(p.path), result: p.result })),
-  });
+  }
+}
+
+/**
+ * The copy in progress: every request since the oldest one still open (or the last hour's when all are
+ * finished), with bytes, the file being received right now and whether the console can be reached.
+ */
+devicesRouter.get('/:id/pull-progress', async (req, res) => {
+  res.json(await pullProgress(await ownDevice(intParam(req), me(req))));
 });
 
 // Cancels what has not been sent yet (a transfer already under way finishes)

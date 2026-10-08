@@ -26,6 +26,7 @@ import { useAuth } from '@/lib/auth'
 import { Button } from '@/components/ui/button'
 import i18n from '@/i18n'
 import { patch } from '@/lib/api'
+import { ActivityDock } from '@/components/activity'
 
 function Item({ to, icon: Icon, label }: { to: string; icon: typeof Home; label: string }) {
   return (
@@ -98,6 +99,7 @@ export function Layout() {
       <main className="min-w-0 flex-1 p-6 lg:p-8">
         <Outlet />
       </main>
+      <ActivityDock />
     </div>
   )
 }

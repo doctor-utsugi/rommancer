@@ -396,8 +396,14 @@ agentRouter.post('/pull/:id', async (req, res) => {
         if (!system) throw badRequest('Unknown system for an unverified rom');
         const title = parseRomName(name.replace(/\.[^.]+$/, '')).title || name;
         const game = await prisma.game.findFirst({ where: { systemId: system.id, titleNormalized: normalizeTitle(title).slice(0, 255) } });
-        await ingestUnverified(tmp, name, owner, { systemId: system.id, ...(game ? { gameId: game.id } : { newGameTitle: title }) });
-        result = 'stored as unverified';
+        try {
+          await ingestUnverified(tmp, name, owner, { systemId: system.id, ...(game ? { gameId: game.id } : { newGameTitle: title }) });
+          result = 'stored as unverified';
+        } catch (dup) {
+          // The same file came in before: nothing missing, not a failure
+          if (!(dup instanceof HttpError) || dup.status !== 409) throw dup;
+          result = 'already owned';
+        }
       }
       await prisma.devicePull.update({ where: { id: pull.id }, data: { status: 'done', result, doneAt: new Date() } });
     } catch (e) {

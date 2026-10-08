@@ -1,5 +1,14 @@
 // Textos de la fase 2 (permisos, sincronizacion, revision, obras, dispositivos con scripts...)
 export const esMore = {
+  activity: {
+    title_one: '{{count}} copia en curso',
+    title_other: '{{count}} copias en curso',
+    open: 'Ver',
+    paused: 'en pausa',
+    offline: 'consola desconectada, seguirá al volver',
+    waiting: 'esperando a la consola',
+    finished: 'Copia terminada: {{name}}',
+  },
   hero: {
     title_one: 'Esta consola tiene {{count}} juego nuevo que ayudaría a tu colección',
     title_other: 'Esta consola tiene {{count}} juegos nuevos que ayudarían a tu colección',
@@ -14,6 +23,7 @@ export const esMore = {
     copyRest_other: 'Traer también los {{count}} sin identificar',
     copying: 'Copiando desde la consola',
     copied: 'Copia terminada',
+    lastCopy: 'Última copia desde esta consola, terminada {{when}}: {{done}} de {{total}} ficheros llegaron al servidor',
     progressFiles: '{{done}} de {{total}} ficheros',
     sending: 'Recibiendo {{name}}',
     waitingConsole: 'Esperando a que la consola envíe el siguiente…',
@@ -279,6 +289,15 @@ export const esMore = {
 }
 
 export const enMore: typeof esMore = {
+  activity: {
+    title_one: '{{count}} copy in progress',
+    title_other: '{{count}} copies in progress',
+    open: 'Open',
+    paused: 'paused',
+    offline: 'console offline, will carry on when back',
+    waiting: 'waiting for the console',
+    finished: 'Copy finished: {{name}}',
+  },
   hero: {
     title_one: 'This console has {{count}} new game that would help your collection',
     title_other: 'This console has {{count}} new games that would help your collection',
@@ -293,6 +312,7 @@ export const enMore: typeof esMore = {
     copyRest_other: 'Also bring the {{count}} unidentified',
     copying: 'Copying from the console',
     copied: 'Copy finished',
+    lastCopy: 'Last copy from this console, finished {{when}}: {{done}} of {{total}} files reached the server',
     progressFiles: '{{done}} of {{total}} files',
     sending: 'Receiving {{name}}',
     waitingConsole: 'Waiting for the console to send the next one…',

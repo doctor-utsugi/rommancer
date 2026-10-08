@@ -100,8 +100,8 @@ http_once() {
     # Some firmwares (Onion) ship curl without root certificates: use the bundle next to the script
     [ -f "$DIR/cacert.pem" ] && set -- "$@" --cacert "$DIR/cacert.pem"
     [ "$body" != "-" ] && set -- "$@" --data-binary "@$body"
-    if [ "$out" = "-" ]; then curl -fsS --connect-timeout 5 --max-time "${HTTP_MAX:-120}" -X "$m" "$@" "$u"
-    else curl -fsS --connect-timeout 5 --max-time "${HTTP_MAX:-1800}" -X "$m" "$@" -o "$out" "$u"; fi
+    if [ "$out" = "-" ]; then curl -fsS --globoff --connect-timeout 5 --max-time "${HTTP_MAX:-120}" -X "$m" "$@" "$u"
+    else curl -fsS --globoff --connect-timeout 5 --max-time "${HTTP_MAX:-1800}" -X "$m" "$@" -o "$out" "$u"; fi
   else
     # busybox wget: POST when there is a body, GET otherwise
     while [ "$n" -gt 0 ]; do set -- "$@" "--header=$1"; shift; n=$((n - 1)); done
@@ -575,7 +575,8 @@ cmd_pulls() {
     fi
     if command -v curl >/dev/null 2>&1; then
       # A stalled transfer (under 1 KB/s for a minute) is dropped and sent again later
-      set -- -fsS --connect-timeout 5 --max-time 7200 --speed-limit 1024 --speed-time 60 -X POST -H "X-Device-Token: $TOKEN" -T "$p"
+      # --globoff: rom names often carry [brackets] that curl would read as a pattern
+      set -- -fsS --globoff --connect-timeout 5 --max-time 7200 --speed-limit 1024 --speed-time 60 -X POST -H "X-Device-Token: $TOKEN" -T "$p"
       [ -f "$DIR/cacert.pem" ] && set -- "$@" --cacert "$DIR/cacert.pem"
       curl "$@" "$SERVER/api/v1/agent/pull/$id" > "$WORK/pull-result" 2>/dev/null
     else
