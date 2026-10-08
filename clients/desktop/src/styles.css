@@ -367,3 +367,21 @@ label.check.top {
 .row.end {
   justify-content: flex-end;
 }
+
+.device {
+  margin-bottom: 6px;
+}
+
+.device-name {
+  margin: 6px 0 2px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+ul.cards.nested {
+  padding-left: 10px;
+  border-left: 2px solid var(--border);
+  margin-left: 8px;
+}

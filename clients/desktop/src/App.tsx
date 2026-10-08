@@ -166,8 +166,40 @@ function Main({ status, onChange }: { status: Status; onChange: () => void }) {
       loadCards()
     }
   }
+  // Which server device each linked card is, to list cards under their device
+  const [devices, setDevices] = useState<Record<number, { name: string; console?: { name: string } }>>({})
+  const [ids, setIds] = useState<Record<string, number>>({})
+  useEffect(() => {
+    void api<{ id: number; name: string; console?: { name: string } }[]>('GET', '/devices').then((ds) => setDevices(Object.fromEntries(ds.map((d) => [d.id, d]))))
+    for (const c of cards.filter((x) => x.link)) {
+      if (c.link!.device_id) setIds((m) => ({ ...m, [c.root]: c.link!.device_id! }))
+      else void invoke<number>('device_id', { root: c.root }).then((id) => setIds((m) => ({ ...m, [c.root]: id })), () => {})
+    }
+  }, [cards])
+  const groups = useMemo(() => {
+    const by = new Map<number, Card[]>()
+    for (const c of cards) if (c.link && ids[c.root]) by.set(ids[c.root], [...(by.get(ids[c.root]) ?? []), c])
+    return [...by.entries()].sort((a, b) => (devices[a[0]]?.name ?? '').localeCompare(devices[b[0]]?.name ?? ''))
+  }, [cards, ids, devices])
+  const loose = cards.filter((c) => !c.link || !ids[c.root])
   const card = cards.find((c) => c.root === selected) ?? null
   const syncing = new Set([...status.syncing, ...Object.keys(progress)])
+  const cardButton = (c: Card) => (
+    <li key={c.root}>
+      <button className={c.root === selected ? 'card active' : 'card'} onClick={() => setSelected(c.root)}>
+        <span className="icon">{c.removable ? '💾' : '📁'}</span>
+        <span className="grow">
+          <span className="title">{c.label}</span>
+          <span className="muted small">
+            {t(c.removable ? 'sdCard' : 'folder')}
+            {c.link?.console ? ` · ${t('consoleToo')}` : ''}
+            {!c.link ? ` · ${t('notLinked')}` : ''}
+          </span>
+        </span>
+        {syncing.has(c.root) && <span className="spinner" />}
+      </button>
+    </li>
+  )
   return (
     <div className="app">
       <aside>
@@ -181,22 +213,19 @@ function Main({ status, onChange }: { status: Status; onChange: () => void }) {
         <p className="muted small">
           {status.username} · {status.server.replace(/^https?:\/\//, '')}
         </p>
-        <h2>{t('cards')}</h2>
         {!cards.length && <p className="muted small">{t('noCards')}</p>}
-        <ul className="cards">
-          {cards.map((c) => (
-            <li key={c.root}>
-              <button className={c.root === selected ? 'card active' : 'card'} onClick={() => setSelected(c.root)}>
-                <span className="icon">{c.removable ? '💾' : '📁'}</span>
-                <span className="grow">
-                  <span className="title">{c.label}</span>
-                  <span className="muted small">{c.link ? (c.link.console ? t('linkedConsole') : t('linked')) : t('notLinked')}</span>
-                </span>
-                {syncing.has(c.root) && <span className="spinner" />}
-              </button>
-            </li>
-          ))}
-        </ul>
+        {groups.length > 0 && <h2>{t('devicesHeading')}</h2>}
+        {groups.map(([id, list]) => (
+          <div key={id} className="device">
+            <p className="device-name">
+              🎮 {devices[id]?.name ?? `#${id}`}
+              {devices[id]?.console?.name && <span className="muted small"> · {devices[id].console!.name}</span>}
+            </p>
+            <ul className="cards nested">{list.map(cardButton)}</ul>
+          </div>
+        ))}
+        {loose.length > 0 && <h2>{t(groups.length ? 'unlinkedHeading' : 'cards')}</h2>}
+        <ul className="cards">{loose.map(cardButton)}</ul>
         <button className="ghost" onClick={() => void addFolder()}>
           + {t('addFolder')}
         </button>
