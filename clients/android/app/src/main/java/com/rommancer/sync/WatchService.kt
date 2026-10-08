@@ -77,8 +77,9 @@ class WatchService : Service() {
     private fun poll() {
         if (!store.linked) return stopSelf()
         val asked = engine().poll()
-        if ("sync" in asked) runCatching { engine().all() }
-        else if ("pull" in asked) runCatching { engine().pulls() }
+        if ("sync" in asked) runCatching { engine().sync(); if (store.autoRoms) engine().roms() }
+        // Long copies for the server run apart, so saves keep going up meanwhile
+        if ("pull" in asked) Thread { runCatching { engine().pulls() } }.start()
     }
 
     private fun startInForeground() {

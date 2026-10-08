@@ -171,7 +171,7 @@ export async function sweepSsh(now = Date.now()) {
   const devices = await prisma.device.findMany({
     // Admins' consoles only: the server opens connections inside its own network
     where: { connType: 'AGENT', syncSaves: true, sshHost: { not: null }, clientPath: { not: null }, user: { role: 'ADMIN' } },
-    include: { pulls: { where: { status: 'pending' }, select: { createdAt: true }, orderBy: { createdAt: 'desc' }, take: 1 } },
+    include: { pulls: { where: { status: { in: ['pending', 'sending'] } }, select: { createdAt: true }, orderBy: { createdAt: 'desc' }, take: 1 } },
   });
   const started: number[] = [];
   for (const d of devices) {

@@ -48,6 +48,23 @@ Client commands: `setup`, `link SERVER`, `enroll`, `sync`, `daemon`, `boot`, `in
   `FileObserver` and syncs 5 s after the last write; it also polls the server every 15 s for requests from the web
   app and starts at boot. WorkManager runs a full pass every 15 minutes as a fallback. Menu: *Upload when saving*.
 
+### Copying a console's games to the server
+
+The device page shows how many games the console has that a database knows and the collection lacks, and how
+the collection's completeness would change (overall and in the console's systems). *Copy all* queues one request
+per file (`DevicePull`); the console sends them one at a time:
+
+- The Linux daemon sees `pull` in its 15 s poll and starts `rommancer-sync.sh pulls` as a separate process, so
+  saves keep syncing during a long copy; Android runs it on its own thread. Over SSH the server runs `pulls` itself.
+- A transfer cut halfway (console off, network gone, client killed) puts the request back to `pending` on the
+  server: the body must reach its `Content-Length` before anything is stored. Stalled uploads (under 1 KB/s for a
+  minute) are dropped by the client and sent again later. A file gone from the device is reported (`X-Missing`) and
+  closed instead of retried.
+- On Knulli/Batocera copies wait while a game runs (`game-start`/`game-stop` events, checked against a running
+  emulator so a crashed game does not pause them forever).
+- `GET /devices/:id/pull-progress` reports files, bytes, the file being received and its bytes so far;
+  `DELETE /devices/:id/pulls` cancels what has not been sent.
+
 ### The server's SSH channel
 
 The server can also reach a console itself, over SSH, and run the same client there (one sync algorithm,

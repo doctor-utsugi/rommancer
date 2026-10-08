@@ -16,6 +16,7 @@ import { loadList, resolveListFiles } from '../lists/service.js';
 import { layoutOf, openSink } from './sink.js';
 import { ownedGameIds, ownedRomIds } from '../roms/service.js';
 import { installClient, serverKey, syncOverSsh } from './ssh.js';
+import { OPEN_PULL, pullTransfers } from '../saves/agent.js';
 import { createAgentDevice, publicBase } from '../link/routes.js';
 
 export const devicesRouter = Router();
@@ -216,25 +217,53 @@ devicesRouter.get('/:id/inventory', async (req, res) => {
   const rows = await prisma.deviceRom.findMany({ where: { deviceId: d.id }, orderBy: [{ systemSlug: 'asc' }, { path: 'asc' }] });
   const ownedRoms = await ownedRomIds({ romIds: [...new Set(rows.flatMap((r) => (r.romId ? [r.romId] : [])))], include: 'any' });
   const ownedGames = await ownedGameIds();
-  const games = await prisma.game.findMany({ where: { id: { in: [...new Set(rows.flatMap((r) => (r.gameId ? [r.gameId] : [])))] } }, select: { id: true, title: true } });
-  const title = new Map(games.map((g) => [g.id, g.title]));
-  const systems = await prisma.system.findMany({ select: { slug: true, name: true } });
+  const games = await prisma.game.findMany({ where: { id: { in: [...new Set(rows.flatMap((r) => (r.gameId ? [r.gameId] : [])))] } }, select: { id: true, title: true, systemId: true } });
+  const gameById = new Map(games.map((g) => [g.id, g]));
+  const systems = await prisma.system.findMany({ select: { id: true, slug: true, name: true } });
   const sysName = new Map(systems.map((x) => [x.slug, x.name]));
-  const pending = new Set((await prisma.devicePull.findMany({ where: { deviceId: d.id, status: 'pending' }, select: { path: true } })).map((p) => p.path));
-  res.json({
-    allowPull: d.allowPull,
-    inventoryAt: d.inventoryAt,
-    items: rows.map((r) => ({
+  const sysById = new Map(systems.map((x) => [x.id, x]));
+  const pending = new Set((await prisma.devicePull.findMany({ where: { deviceId: d.id, status: { in: OPEN_PULL } }, select: { path: true } })).map((p) => p.path));
+  const sizes = await catalogSizes(rows);
+  const romsBase = path.posix.join(d.rootPath.replace(/\/+$/, ''), layoutOf(d).romsRoot) + '/';
+  const items = rows.map((r) => {
+    const game = r.gameId ? gameById.get(r.gameId) : undefined;
+    // Identified games know their system even in folders the firmware map does not list
+    const sys = r.systemSlug ?? (game ? sysById.get(game.systemId)?.slug : undefined) ?? null;
+    const folder = r.path.startsWith(romsBase) ? r.path.slice(romsBase.length).split('/')[0] : null;
+    return {
       id: r.id,
       path: r.path,
       name: path.posix.basename(r.path),
-      system: r.systemSlug,
-      systemName: r.systemSlug ? (sysName.get(r.systemSlug) ?? r.systemSlug) : null,
+      size: sizes.get(r.path) ?? 0,
+      system: sys,
+      systemName: sys ? (sysName.get(sys) ?? sys) : null,
+      folder,
       gameId: r.gameId,
-      gameTitle: r.gameId ? title.get(r.gameId) : null,
+      gameTitle: game?.title ?? null,
       onServer: !!((r.romId && ownedRoms.has(r.romId)) || (r.gameId && ownedGames.has(r.gameId))),
       pullPending: pending.has(r.path),
-    })),
+    };
+  });
+  // What the console would add: games a database knows and the collection lacks
+  const helpful = items.filter((i) => i.gameId && !i.onServer);
+  const newGames = new Set(helpful.map((i) => i.gameId!));
+  const consoleSystems = [...new Set(items.flatMap((i) => (i.system ? [i.system] : [])))].map((slug) => systems.find((x) => x.slug === slug)?.id).filter((x): x is number => !!x);
+  const catalogTotal = await prisma.game.count();
+  const systemsTotal = consoleSystems.length ? await prisma.game.count({ where: { systemId: { in: consoleSystems } } }) : 0;
+  const ownedInSystems = consoleSystems.length ? await prisma.game.count({ where: { id: { in: [...ownedGames] }, systemId: { in: consoleSystems } } }) : 0;
+  res.json({
+    allowPull: d.allowPull,
+    inventoryAt: d.inventoryAt,
+    summary: {
+      newGames: newGames.size,
+      newFiles: helpful.length,
+      newBytes: helpful.reduce((n, i) => n + i.size, 0),
+      waiting: helpful.filter((i) => i.pullPending).length,
+      unidentified: items.filter((i) => !i.gameId && !i.onServer).length,
+      collection: { total: catalogTotal, before: ownedGames.size, after: ownedGames.size + newGames.size },
+      consoleSystems: { total: systemsTotal, before: ownedInSystems, after: ownedInSystems + newGames.size },
+    },
+    items,
   });
 });
 
@@ -249,17 +278,64 @@ devicesRouter.post('/:id/refresh', async (req, res) => {
 devicesRouter.post('/:id/pull', requirePerm('roms.upload'), async (req, res) => {
   const d = await ownDevice(intParam(req), me(req));
   if (!d.allowPull) throw forbidden();
-  const body = z.object({ paths: z.array(z.string().max(1024)).max(5000).optional(), system: z.string().max(32).optional() }).parse(req.body);
+  // identified: only games a database knows (what the device page offers to copy); otherwise everything missing
+  const body = z.object({ paths: z.array(z.string().max(1024)).max(5000).optional(), system: z.string().max(32).optional(), identified: z.boolean().optional() }).parse(req.body);
   const rows = await prisma.deviceRom.findMany({
-    where: { deviceId: d.id, ...(body.paths ? { path: { in: body.paths } } : {}), ...(body.system ? { systemSlug: body.system } : {}) },
+    where: { deviceId: d.id, ...(body.paths ? { path: { in: body.paths } } : {}), ...(body.system ? { systemSlug: body.system } : {}), ...(body.identified ? { gameId: { not: null } } : {}) },
   });
   const ownedRoms = await ownedRomIds({ romIds: [...new Set(rows.flatMap((r) => (r.romId ? [r.romId] : [])))], include: 'any' });
   const ownedGames = await ownedGameIds();
-  const pending = new Set((await prisma.devicePull.findMany({ where: { deviceId: d.id, status: 'pending' }, select: { path: true } })).map((p) => p.path));
+  const pending = new Set((await prisma.devicePull.findMany({ where: { deviceId: d.id, status: { in: OPEN_PULL } }, select: { path: true } })).map((p) => p.path));
   // Explicit paths are fetched even if the game is owned (another version); bulk requests only bring what is missing
   const wanted = rows.filter((r) => !pending.has(r.path) && (body.paths || !((r.romId && ownedRoms.has(r.romId)) || (r.gameId && ownedGames.has(r.gameId)))));
   if (wanted.length) await prisma.devicePull.createMany({ data: wanted.map((r) => ({ deviceId: d.id, path: r.path })) });
   res.status(202).json({ queued: wanted.length });
+});
+
+/** Sizes from the catalog (the device sends names and hashes only), by DeviceRom path */
+async function catalogSizes(rows: { path: string; romId: number | null }[]) {
+  const romIds = [...new Set(rows.flatMap((r) => (r.romId ? [r.romId] : [])))];
+  const parts = romIds.length ? await prisma.romPart.groupBy({ by: ['romId'], where: { romId: { in: romIds } }, _sum: { size: true } }) : [];
+  const byRom = new Map(parts.map((p) => [p.romId, Number(p._sum.size ?? 0)]));
+  return new Map(rows.map((r) => [r.path, r.romId ? (byRom.get(r.romId) ?? 0) : 0]));
+}
+
+/**
+ * The copy in progress: every request since the oldest one still open (or the last hour's when all are
+ * finished), with bytes, the file being received right now and whether the console can be reached.
+ */
+devicesRouter.get('/:id/pull-progress', async (req, res) => {
+  const d = await ownDevice(intParam(req), me(req));
+  const oldestOpen = await prisma.devicePull.findFirst({ where: { deviceId: d.id, status: { in: OPEN_PULL } }, orderBy: { createdAt: 'asc' }, select: { createdAt: true } });
+  const since = oldestOpen?.createdAt ?? new Date(Date.now() - 3600_000);
+  const pulls = await prisma.devicePull.findMany({ where: { deviceId: d.id, createdAt: { gte: since } }, orderBy: { id: 'asc' } });
+  const sizes = await catalogSizes(await prisma.deviceRom.findMany({ where: { deviceId: d.id, path: { in: pulls.map((p) => p.path) } }, select: { path: true, romId: true } }));
+  const count = (st: string) => pulls.filter((p) => p.status === st).length;
+  const bytes = (st: string[]) => pulls.filter((p) => st.includes(p.status)).reduce((n, p) => n + (sizes.get(p.path) ?? 0), 0);
+  const sending = pulls.find((p) => pullTransfers.has(p.id));
+  const live = sending ? pullTransfers.get(sending.id)! : null;
+  res.json({
+    active: !!oldestOpen,
+    total: pulls.length,
+    done: count('done'),
+    failed: count('failed'),
+    open: pulls.length - count('done') - count('failed'),
+    bytesTotal: bytes(['pending', 'sending', 'done', 'failed']),
+    bytesDone: bytes(['done', 'failed']) + (live?.received ?? 0),
+    current: sending && live ? { path: sending.path, name: path.posix.basename(sending.path), received: live.received, size: live.size || (sizes.get(sending.path) ?? 0), startedAt: live.startedAt } : null,
+    // The daemon polls every 15 s; SSH lets the server resume by itself when the daemon is not running
+    online: !!d.lastSeenAt && Date.now() - d.lastSeenAt.getTime() < 60_000,
+    lastSeenAt: d.lastSeenAt,
+    viaSsh: !!(d.sshHost && d.clientPath),
+    failures: pulls.filter((p) => p.status === 'failed').slice(-5).map((p) => ({ name: path.posix.basename(p.path), result: p.result })),
+  });
+});
+
+// Cancels what has not been sent yet (a transfer already under way finishes)
+devicesRouter.delete('/:id/pulls', async (req, res) => {
+  const d = await ownDevice(intParam(req), me(req));
+  const r = await prisma.devicePull.deleteMany({ where: { deviceId: d.id, status: 'pending' } });
+  res.json({ cancelled: r.count });
 });
 
 devicesRouter.get('/:id/pulls', async (req, res) => {

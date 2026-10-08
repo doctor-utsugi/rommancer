@@ -4,7 +4,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
 import { Check, Download, RefreshCw, Send, Terminal, X } from 'lucide-react'
 import { toast } from 'sonner'
-import { get, post, type Paged } from '@/lib/api'
+import { del, get, post, type Paged } from '@/lib/api'
 import { useAuth } from '@/lib/auth'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -15,7 +15,7 @@ import { Input } from '@/components/ui/input'
 import { Progress } from '@/components/ui/progress'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
-import { Empty, NativeSelect, PageHeader, errMsg, formatDate } from '@/components/common'
+import { Empty, NativeSelect, PageHeader, errMsg, formatBytes, formatDate } from '@/components/common'
 
 interface InventoryItem {
   id: number
@@ -27,6 +27,33 @@ interface InventoryItem {
   gameTitle: string | null
   onServer: boolean
   pullPending: boolean
+  size: number
+  folder: string | null
+}
+
+interface Summary {
+  newGames: number
+  newFiles: number
+  newBytes: number
+  waiting: number
+  unidentified: number
+  collection: { total: number; before: number; after: number }
+  consoleSystems: { total: number; before: number; after: number }
+}
+
+interface PullProgress {
+  active: boolean
+  total: number
+  done: number
+  failed: number
+  open: number
+  bytesTotal: number
+  bytesDone: number
+  current: { path: string; name: string; received: number; size: number; startedAt: number } | null
+  online: boolean
+  lastSeenAt: string | null
+  viaSsh: boolean
+  failures: { name: string; result: string | null }[]
 }
 
 // One console seen from the panel: what it has, what it keeps, what the server asked of it
@@ -36,20 +63,31 @@ export function DevicePage() {
   const { can, user } = useAuth()
   const qc = useQueryClient()
   const device = useQuery({ queryKey: ['device', id], queryFn: () => get<any>(`/devices/${id}`) })
-  const inventory = useQuery({ queryKey: ['device-inventory', id], queryFn: () => get<{ allowPull: boolean; inventoryAt: string | null; items: InventoryItem[] }>(`/devices/${id}/inventory`), refetchInterval: 15_000 })
+  const inventory = useQuery({
+    queryKey: ['device-inventory', id],
+    queryFn: () => get<{ allowPull: boolean; inventoryAt: string | null; summary: Summary; items: InventoryItem[] }>(`/devices/${id}/inventory`),
+    refetchInterval: 15_000,
+  })
+  const progress = useQuery({
+    queryKey: ['device-pull-progress', id],
+    queryFn: () => get<PullProgress>(`/devices/${id}/pull-progress`),
+    refetchInterval: (q) => (q.state.data?.active ? 2_000 : 15_000),
+  })
   const lists = useQuery({ queryKey: ['device-lists', id], queryFn: () => get<{ id: number; name: string; have: number; total: number }[]>(`/devices/${id}/lists-progress`) })
   const pulls = useQuery({ queryKey: ['device-pulls', id], queryFn: () => get<any[]>(`/devices/${id}/pulls`), refetchInterval: 10_000 })
   const [q, setQ] = useState('')
   const [system, setSystem] = useState('')
-  const [onlyMissing, setOnlyMissing] = useState(false)
+  const [show, setShow] = useState<'all' | 'new' | 'unidentified' | 'onServer'>('all')
   const [sending, setSending] = useState(false)
 
   const items = inventory.data?.items ?? []
   const systems = useMemo(() => [...new Map(items.filter((i) => i.system).map((i) => [i.system!, i.systemName ?? i.system!])).entries()], [items])
   const shown = items.filter(
-    (i) => (!system || i.system === system) && (!onlyMissing || !i.onServer) && (!q || `${i.name} ${i.gameTitle ?? ''}`.toLowerCase().includes(q.toLowerCase())),
+    (i) =>
+      (!system || i.system === system) &&
+      (show === 'all' || (show === 'new' && i.gameId && !i.onServer) || (show === 'unidentified' && !i.gameId && !i.onServer) || (show === 'onServer' && i.onServer)) &&
+      (!q || `${i.name} ${i.gameTitle ?? ''}`.toLowerCase().includes(q.toLowerCase())),
   )
-  const missing = items.filter((i) => !i.onServer).length
   const allowPull = !!inventory.data?.allowPull && can('roms.upload')
 
   const act = async (fn: () => Promise<any>, ok?: (r: any) => string) => {
@@ -59,6 +97,7 @@ export function DevicePage() {
       void qc.invalidateQueries({ queryKey: ['device-inventory', id] })
       void qc.invalidateQueries({ queryKey: ['device-pulls', id] })
       void qc.invalidateQueries({ queryKey: ['device-lists', id] })
+      void qc.invalidateQueries({ queryKey: ['device-pull-progress', id] })
     } catch (e) {
       toast.error(errMsg(e))
     }
@@ -86,12 +125,6 @@ export function DevicePage() {
             {t('more.device.sshSync')}
           </Button>
         )}
-        {allowPull && missing > 0 && (
-          <Button size="sm" onClick={() => void pull({})}>
-            <Download className="size-4" />
-            {t('more.device.pullAll', { count: missing })}
-          </Button>
-        )}
       </PageHeader>
       <p className="text-sm text-muted-foreground">
         {d.console?.name} · {d.firmware?.name} · {t('more.device.games', { count: items.length })} · {t('more.devices.lastSeen')}: {formatDate(d.lastSeenAt)}
@@ -105,6 +138,16 @@ export function DevicePage() {
         </p>
       )}
       {!inventory.data?.allowPull && <p className="text-sm text-muted-foreground">{t('more.device.pullDisabled')}</p>}
+      {inventory.data?.summary && (
+        <CollectionHero
+          summary={inventory.data.summary}
+          progress={progress.data}
+          canPull={allowPull}
+          onCopy={() => void pull({ identified: true })}
+          onCopyRest={() => void pull({})}
+          onCancel={() => void act(() => del(`/devices/${id}/pulls`), (r) => t('more.hero.cancelled', { count: r.cancelled }))}
+        />
+      )}
 
       <Tabs defaultValue="games">
         <TabsList>
@@ -124,10 +167,12 @@ export function DevicePage() {
                 </option>
               ))}
             </NativeSelect>
-            <label className="flex items-center gap-2 text-sm">
-              <Checkbox checked={onlyMissing} onCheckedChange={(c) => setOnlyMissing(!!c)} />
-              {t('more.device.onlyMissing')}
-            </label>
+            <NativeSelect value={show} onChange={(e) => setShow(e.target.value as typeof show)}>
+              <option value="all">{t('more.hero.showAll')}</option>
+              <option value="new">{t('more.hero.showNew')}</option>
+              <option value="unidentified">{t('more.hero.showUnidentified')}</option>
+              <option value="onServer">{t('more.hero.showOnServer')}</option>
+            </NativeSelect>
             {allowPull && system && (
               <Button size="sm" variant="outline" onClick={() => void pull({ system })}>
                 <Download className="size-4" />
@@ -164,7 +209,7 @@ export function DevicePage() {
                         {i.name}
                       </p>
                     </TableCell>
-                    <TableCell className="truncate">{i.systemName ?? '-'}</TableCell>
+                    <TableCell className="truncate">{i.systemName ?? <span className="text-muted-foreground">{i.folder ?? '-'}</span>}</TableCell>
                     <TableCell>{i.onServer ? <Check className="size-4 text-green-600" /> : <X className="size-4 text-muted-foreground" />}</TableCell>
                     <TableCell>
                       {i.pullPending ? (
@@ -300,5 +345,119 @@ function SendDialog({ deviceId, onClose, onSent }: { deviceId: number; onClose()
         </DialogFooter>
       </DialogContent>
     </Dialog>
+  )
+}
+
+const pct = (n: number, total: number) => (total ? (n / total) * 100 : 0)
+// Small collections move in the hundredths: enough decimals for one game to show
+const fmtPct = (v: number) => `${v < 1 ? v.toFixed(3) : v < 10 ? v.toFixed(2) : v.toFixed(1)} %`
+
+/** What the console would add to the collection, and the copy of it while it runs */
+function CollectionHero({
+  summary,
+  progress,
+  canPull,
+  onCopy,
+  onCopyRest,
+  onCancel,
+}: {
+  summary: Summary
+  progress?: PullProgress
+  canPull: boolean
+  onCopy: () => void
+  onCopyRest: () => void
+  onCancel: () => void
+}) {
+  const { t } = useTranslation()
+  const running = !!progress?.active
+  const finished = !running && !!progress?.total
+  if (!summary.newGames && !running && !finished) return null
+  const c = summary.collection
+  const s = summary.consoleSystems
+  const left = summary.newFiles - summary.waiting
+  return (
+    <Card className="border-l-4 border-l-primary">
+      <CardContent className="space-y-4 py-5">
+        {summary.newGames > 0 && (
+          <div className="flex flex-wrap items-center justify-between gap-4">
+            <div className="space-y-1">
+              <p className="text-lg font-semibold">{t('more.hero.title', { count: summary.newGames })}</p>
+              <p className="text-sm text-muted-foreground">
+                {t('more.hero.collection')}: <span className="font-medium text-foreground">{fmtPct(pct(c.before, c.total))}</span> →{' '}
+                <span className="font-semibold text-primary">{fmtPct(pct(c.after, c.total))}</span>
+                {s.total > 0 && (
+                  <>
+                    {' · '}
+                    {t('more.hero.consoleSystems')}: {fmtPct(pct(s.before, s.total))} → <span className="font-semibold text-primary">{fmtPct(pct(s.after, s.total))}</span>
+                  </>
+                )}
+              </p>
+              <p className="text-xs text-muted-foreground">
+                {t('more.hero.files', { count: summary.newFiles })}
+                {summary.newBytes > 0 && ` · ${formatBytes(summary.newBytes)}`}
+                {summary.unidentified > 0 && ` · ${t('more.hero.unidentified', { count: summary.unidentified })}`}
+              </p>
+            </div>
+            {canPull && (
+              <div className="flex flex-col items-end gap-1">
+                {left > 0 && (
+                  <Button onClick={onCopy}>
+                    <Download className="size-4" />
+                    {t('more.hero.copyAll')}
+                  </Button>
+                )}
+                {summary.unidentified > 0 && (
+                  <button type="button" className="text-xs text-muted-foreground underline-offset-2 hover:underline" onClick={onCopyRest}>
+                    {t('more.hero.copyRest', { count: summary.unidentified })}
+                  </button>
+                )}
+              </div>
+            )}
+          </div>
+        )}
+        {progress && (running || finished) && <CopyProgress p={progress} onCancel={onCancel} divided={summary.newGames > 0} />}
+      </CardContent>
+    </Card>
+  )
+}
+
+function CopyProgress({ p, onCancel, divided }: { p: PullProgress; onCancel: () => void; divided: boolean }) {
+  const { t } = useTranslation()
+  const files = p.done + p.failed
+  const share = p.bytesTotal ? pct(p.bytesDone, p.bytesTotal) : pct(files, p.total)
+  const cur = p.current
+  return (
+    <div className={`space-y-2 ${divided ? 'border-t pt-4' : ''}`}>
+      <div className="flex flex-wrap items-center justify-between gap-2 text-sm">
+        <span className="font-medium">
+          {p.active ? t('more.hero.copying') : t('more.hero.copied')} · {t('more.hero.progressFiles', { done: files, total: p.total })}
+          {p.bytesTotal > 0 && ` · ${formatBytes(p.bytesDone)} / ${formatBytes(p.bytesTotal)}`}
+        </span>
+        {p.active && (
+          <Button size="sm" variant="ghost" onClick={onCancel}>
+            {t('more.hero.cancel')}
+          </Button>
+        )}
+      </div>
+      <Progress value={share} />
+      {cur && (
+        <div className="space-y-1">
+          <p className="truncate text-xs text-muted-foreground" title={cur.path}>
+            {t('more.hero.sending', { name: cur.name })} {cur.size > 0 && `· ${Math.floor(pct(cur.received, cur.size))} %`}
+          </p>
+          {cur.size > 0 && <Progress value={pct(cur.received, cur.size)} className="h-1" />}
+        </div>
+      )}
+      {p.active && !cur && (
+        <p className="text-xs text-muted-foreground">
+          {p.online ? t('more.hero.waitingConsole') : p.viaSsh ? t('more.hero.offlineSsh', { when: formatDate(p.lastSeenAt) }) : t('more.hero.offline', { when: formatDate(p.lastSeenAt) })}
+        </p>
+      )}
+      {p.failed > 0 && (
+        <p className="text-xs text-destructive" title={p.failures.map((f) => `${f.name}: ${f.result ?? ''}`).join('\n')}>
+          {t('more.hero.failed', { count: p.failed })}
+        </p>
+      )}
+    </div>
   )
 }

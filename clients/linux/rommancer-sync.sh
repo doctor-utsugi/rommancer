@@ -12,6 +12,7 @@
 #   rommancer-sync.sh roms          download the roms of the lists assigned to this device
 #   rommancer-sync.sh conflicts | resolve ID device|server
 #   rommancer-sync.sh game-start ROM   fetch that rom's saves (called by firmware game events)
+#   rommancer-sync.sh game-stop        upload saves after a game (called by firmware game events)
 #   rommancer-sync.sh set AUTO_ROMS 0|1
 #   rommancer-sync.sh status | unlink
 #   rommancer-sync.sh               link if needed, then start the daemon in the background
@@ -321,7 +322,8 @@ cmd_sync() {
     n=0; while ! mkdir "$LOCK" 2>/dev/null; do sleep 1; n=$((n + 1)); [ "$n" -lt 600 ] || { rm -f "$WORK/priority"; return 1; }; done
   fi
   rm -f "$WORK/priority"
-  trap 'rmdir "$LOCK" 2>/dev/null' EXIT INT TERM
+  trap 'rmdir "$LOCK" 2>/dev/null' EXIT
+  trap 'rmdir "$LOCK" 2>/dev/null; exit 1' INT TERM
   req="$WORK/request"; plan="$WORK/plan"
   if ! touch "$STATE/.write-test" 2>/dev/null; then
     log "storage is read-only, skipping sync"; rmdir "$LOCK"; return 1
@@ -432,7 +434,8 @@ cmd_daemon() {
     # The web app can ask for a sync now or for roms: a tiny request on every watch tick
     asked="$(HTTP_MAX=5 http_once GET "$SERVER/api/v1/agent/poll" - - 2>/dev/null)"
     case "$asked" in *sync*) since=$FULL_SECONDS ;; esac
-    case "$asked" in *pull*) cmd_pulls > /dev/null 2>&1 ;; esac
+    # Roms for the server go in the background: saves keep syncing while a long copy runs
+    case "$asked" in *pull*) pulls_running || (nohup sh "$DIR/$(basename "$0")" pulls > /dev/null 2>&1 &) ;; esac
     fp="$(fingerprint)"
     # A game may still be writing its save: go ahead only once the files stay unchanged for a moment
     if [ "$fp" != "$last" ] && [ -n "$last" ]; then
@@ -462,7 +465,7 @@ cmd_install() {
       cmp -s "$WORK/custom.sh" "$boot" || { cat "$WORK/custom.sh" > "$boot"; chmod +x "$boot"; }
       mkdir -p /userdata/system/scripts
       # Batocera calls this with gameStart/gameStop, the system, emulator, core and rom; gameStart waits for us
-      printf '#!/bin/sh\n# rommancer-sync: fetch the save before a game, upload saves after it\ncase "$1" in\n  gameStart) sh "%s" game-start "$5" >/dev/null 2>&1 ;;\n  gameStop) nohup sh "%s" sync >/dev/null 2>&1 & ;;\nesac\nexit 0\n' "$self" "$self" > "$WORK/hook.sh"
+      printf '#!/bin/sh\n# rommancer-sync: fetch the save before a game, upload saves after it\ncase "$1" in\n  gameStart) sh "%s" game-start "$5" >/dev/null 2>&1 ;;\n  gameStop) nohup sh "%s" game-stop >/dev/null 2>&1 & ;;\nesac\nexit 0\n' "$self" "$self" > "$WORK/hook.sh"
       cmp -s "$WORK/hook.sh" /userdata/system/scripts/rommancer-sync.sh || cat "$WORK/hook.sh" > /userdata/system/scripts/rommancer-sync.sh
       chmod +x /userdata/system/scripts/rommancer-sync.sh
       # Knulli has a Tools section; the shared Knulli/Batocera installer puts the launcher in Ports
@@ -518,6 +521,7 @@ cmd_roms() {
 
 # Right before a game starts (Knulli/Batocera event): fetch the server's saves for that rom only
 cmd_game_start() {
+  touch "$WORK/playing"
   rom="$1"; [ -n "$TOKEN" ] && [ -f "$rom" ] || return 0
   fix_clock
   HTTP_MAX=10
@@ -537,18 +541,41 @@ cmd_game_start() {
 
 cmd_all() { cmd_sync; [ "$AUTO_ROMS" = 1 ] && cmd_roms; return 0; }
 
-# Sends the roms the server asked for (streamed, one at a time); only with ALLOW_PULL=1
+# A copy for the server is under way (a lock whose process died does not count)
+pulls_running() { [ -f "$WORK/pull-lock/pid" ] && kill -0 "$(cat "$WORK/pull-lock/pid")" 2>/dev/null; }
+
+# A game is running: the firmware's game events set the flag, and an emulator must really be running
+# (a crashed game may never send its end event)
+playing() {
+  [ -f "$WORK/playing" ] || return 1
+  ps 2>/dev/null | grep -q '[e]mulatorlauncher\|[r]etroarch' && return 0
+  rm -f "$WORK/playing"; return 1
+}
+
+# Sends the roms the server asked for (streamed, one at a time); only with ALLOW_PULL=1. A copy cut
+# halfway is simply sent again next time: the server keeps the request open until a whole file arrives.
 cmd_pulls() {
   need_link
   [ "$ALLOW_PULL" = 1 ] || return 0
-  http GET "$SERVER/api/v1/agent/pulls" - "$WORK/pulls" || return 1
+  pulls_running && return 0
+  rm -rf "$WORK/pull-lock"; mkdir "$WORK/pull-lock" 2>/dev/null || return 0
+  echo $$ > "$WORK/pull-lock/pid"
+  trap 'rm -rf "$WORK/pull-lock"' EXIT
+  trap 'rm -rf "$WORK/pull-lock"; exit 1' INT TERM
+  http GET "$SERVER/api/v1/agent/pulls" - "$WORK/pulls" || { rm -rf "$WORK/pull-lock"; return 1; }
   total="$(grep -c '^pull' "$WORK/pulls")"; i=0; sent=0
   while IFS="$TAB" read -r kind id p; do
     [ "$kind" = pull ] || continue
     i=$((i + 1)); progress pulls "$i" "$total"
-    [ -f "$p" ] || continue
+    # Never compete with a game for the network and the card: wait until it ends
+    while playing; do sleep 20; done
+    if [ ! -f "$p" ]; then
+      http POST "$SERVER/api/v1/agent/pull/$id" - - "X-Missing: 1" >/dev/null 2>&1
+      continue
+    fi
     if command -v curl >/dev/null 2>&1; then
-      set -- -fsS --connect-timeout 5 --max-time 7200 -X POST -H "X-Device-Token: $TOKEN" -T "$p"
+      # A stalled transfer (under 1 KB/s for a minute) is dropped and sent again later
+      set -- -fsS --connect-timeout 5 --max-time 7200 --speed-limit 1024 --speed-time 60 -X POST -H "X-Device-Token: $TOKEN" -T "$p"
       [ -f "$DIR/cacert.pem" ] && set -- "$@" --cacert "$DIR/cacert.pem"
       curl "$@" "$SERVER/api/v1/agent/pull/$id" > "$WORK/pull-result" 2>/dev/null
     else
@@ -557,6 +584,8 @@ cmd_pulls() {
   done < "$WORK/pulls"
   log "pulls: $sent of $total sent"
   [ -n "${VERBOSE:-}" ] && printf 'sent to server: %s of %s\n' "$sent" "$total"
+  rm -rf "$WORK/pull-lock"
+  trap - EXIT INT TERM
   return 0
 }
 
@@ -782,6 +811,8 @@ case "${1:-}" in
     cmd_all; [ -n "$SD" ] && cmd_pulls
     [ -n "$SD" ] && sync ;;
   game-start) cmd_game_start "${2:-}" ;;
+  # After a game: copies for the server may go on, and the game's saves go up
+  game-stop) rm -f "$WORK/playing"; cmd_sync ;;
   conflicts) cmd_conflicts ;;
   resolve) cmd_resolve "${2:-}" "${3:-}" ;;
   set) set_setting "${2:-}" "${3:-}" ;;

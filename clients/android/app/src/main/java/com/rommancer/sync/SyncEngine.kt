@@ -152,13 +152,20 @@ class SyncEngine(private val context: Context, private val store: Store, private
     /** Sends the roms the server asked for, one at a time; only when the user allows it */
     fun pulls(): String {
         if (!store.allowPull) return ""
+        // One copy at a time; a transfer cut halfway stays open on the server and is sent again next time
+        if (!PULLING.compareAndSet(false, true)) return ""
+        try { return pullsOnce() } finally { PULLING.set(false) }
+    }
+
+    private fun pullsOnce(): String {
         val api = Api(store.server, store.token ?: error("Not linked"))
         val wanted = api.text("/agent/pulls").lines().mapNotNull { l -> l.split('\t').takeIf { it.size >= 3 && it[0] == "pull" } }
         var sent = 0
         for ((i, p) in wanted.withIndex()) {
             onProgress(Progress("pulls", i + 1, wanted.size, File(p[2]).name))
             val file = File(p[2])
-            if (!file.exists()) continue
+            // Gone from the device: the server closes the request instead of asking again
+            if (!file.exists()) { runCatching { api.text("/agent/pull/${p[1]}", "POST", ByteArray(0), mapOf("X-Missing" to "1")) }; continue }
             runCatching { api.uploadFile("/agent/pull/${p[1]}", file) }.onSuccess { sent++ }
         }
         return if (wanted.isEmpty()) "" else "sent to server: $sent of ${wanted.size}".also { store.addLog(it) }
@@ -251,6 +258,7 @@ class SyncEngine(private val context: Context, private val store: Store, private
     companion object {
         const val HASH_MAX = 64L * 1024 * 1024
         private val LOCK = Any()
+        private val PULLING = java.util.concurrent.atomic.AtomicBoolean(false)
         private val NOT_ROMS = listOf(".png", ".jpg", ".jpeg", ".mp4", ".xml", ".txt", ".json", ".cfg", ".db", ".ini", ".pdf", ".srm", ".sav", ".mcd", ".mcr", ".dsv", ".cht", ".log", ".sh", ".lpl")
     }
 }

@@ -27,6 +27,11 @@ import type { Prisma } from '@prisma/client';
 
 export const agentRouter = Router();
 
+/** Requests still to be sent: "sending" ones whose transfer died with the server are sent again */
+export const OPEN_PULL = ['pending', 'sending'];
+/** Transfers in progress, for the progress shown in the web app (bytes received so far) */
+export const pullTransfers = new Map<number, { received: number; size: number; startedAt: number }>();
+
 type AgentDevice = Device & { firmware: Firmware };
 
 const b64 = (v: string | undefined) => (v ? Buffer.from(v, 'base64').toString('utf8') : '');
@@ -333,52 +338,77 @@ agentRouter.get('/poll', async (req, res) => {
     out.push('sync');
     await prisma.device.update({ where: { id: device.id }, data: { wantSyncAt: null } });
   }
-  if (await prisma.devicePull.count({ where: { deviceId: device.id, status: 'pending' } })) out.push('pull');
+  if (await prisma.devicePull.count({ where: { deviceId: device.id, status: { in: OPEN_PULL } } })) out.push('pull');
   res.type('text/plain').send(out.join('\n') + (out.length ? '\n' : ''));
 });
 
 agentRouter.get('/pulls', async (req, res) => {
   const device = await deviceFromToken(req);
-  const rows = await prisma.devicePull.findMany({ where: { deviceId: device.id, status: 'pending' }, orderBy: { id: 'asc' }, take: 200 });
+  const rows = await prisma.devicePull.findMany({ where: { deviceId: device.id, status: { in: OPEN_PULL } }, orderBy: { id: 'asc' }, take: 200 });
   res.type('text/plain').send(rows.map((r) => `pull\t${r.id}\t${r.path}`).join('\n') + (rows.length ? '\n' : ''));
 });
 
 /**
  * A requested rom sent by the device (body = the file). Stored like a verified upload; roms no
  * database knows come in as unverified, in the system of their folder, under a game with their title.
+ * A transfer cut halfway (console switched off, network gone, client hung) leaves the request pending,
+ * so the next contact sends it again; a partial file is never stored.
  */
 agentRouter.post('/pull/:id', async (req, res) => {
   const device = await deviceFromToken(req);
   const pull = await prisma.devicePull.findUnique({ where: { id: Number(req.params.id) } });
-  if (!pull || pull.deviceId !== device.id || pull.status !== 'pending') throw new HttpError(404, 'Pull not found');
+  if (!pull || pull.deviceId !== device.id || !OPEN_PULL.includes(pull.status)) throw new HttpError(404, 'Pull not found');
+  // The client tells when the file is gone from the device: nothing to retry
+  if (req.header('x-missing') === '1') {
+    await prisma.devicePull.update({ where: { id: pull.id }, data: { status: 'failed', result: 'not on the device any more', doneAt: new Date() } });
+    res.type('text/plain').send('noted\n');
+    return;
+  }
   const owner = await prisma.user.findUniqueOrThrow({ where: { id: device.userId }, select: { id: true, username: true } });
   const name = path.posix.basename(pull.path);
   // Container readers need the right extension on the temporary file
   const tmp = path.join(os.tmpdir(), `pull-${pull.id}-${Date.now()}${path.extname(name).toLowerCase()}`);
-  await pipeline(req, fs.createWriteStream(tmp));
+  const expected = Number(req.header('content-length') ?? NaN);
+  await prisma.devicePull.update({ where: { id: pull.id }, data: { status: 'sending' } });
+  const live = { received: 0, size: Number.isFinite(expected) ? expected : 0, startedAt: Date.now() };
+  pullTransfers.set(pull.id, live);
+  req.on('data', (c: Buffer) => (live.received += c.length));
   let result: string;
   try {
     try {
-      const r = await ingestVerified(tmp, name, owner);
-      result = r.status === 'already-owned' ? 'already owned' : 'stored';
+      await pipeline(req, fs.createWriteStream(tmp));
+      const got = (await fs.promises.stat(tmp)).size;
+      if (Number.isFinite(expected) && got !== expected) throw new Error(`incomplete: ${got} of ${expected} bytes`);
     } catch (e) {
-      if (!(e instanceof HttpError) || e.status !== 422) throw e;
-      const inv = await prisma.deviceRom.findFirst({ where: { deviceId: device.id, path: pull.path } });
-      const system = inv?.systemSlug ? await prisma.system.findUnique({ where: { slug: inv.systemSlug } }) : null;
-      if (!system) throw badRequest('Unknown system for an unverified rom');
-      const title = parseRomName(name.replace(/\.[^.]+$/, '')).title || name;
-      const game = await prisma.game.findFirst({ where: { systemId: system.id, titleNormalized: normalizeTitle(title).slice(0, 255) } });
-      await ingestUnverified(tmp, name, owner, { systemId: system.id, ...(game ? { gameId: game.id } : { newGameTitle: title }) });
-      result = 'stored as unverified';
+      // Cut halfway: back to the queue for the next contact
+      await prisma.devicePull.update({ where: { id: pull.id }, data: { status: 'pending', result: `interrupted (${e instanceof Error ? e.message : e})`.slice(0, 500) } });
+      if (!res.headersSent && !req.destroyed) res.status(409).type('text/plain').send('interrupted, will retry\n');
+      return;
     }
-    await prisma.devicePull.update({ where: { id: pull.id }, data: { status: 'done', result, doneAt: new Date() } });
-  } catch (e) {
-    result = e instanceof Error ? e.message : String(e);
-    await prisma.devicePull.update({ where: { id: pull.id }, data: { status: 'failed', result: result.slice(0, 500), doneAt: new Date() } });
+    try {
+      try {
+        const r = await ingestVerified(tmp, name, owner);
+        result = r.status === 'already-owned' ? 'already owned' : 'stored';
+      } catch (e) {
+        if (!(e instanceof HttpError) || e.status !== 422) throw e;
+        const inv = await prisma.deviceRom.findFirst({ where: { deviceId: device.id, path: pull.path } });
+        const system = inv?.systemSlug ? await prisma.system.findUnique({ where: { slug: inv.systemSlug } }) : null;
+        if (!system) throw badRequest('Unknown system for an unverified rom');
+        const title = parseRomName(name.replace(/\.[^.]+$/, '')).title || name;
+        const game = await prisma.game.findFirst({ where: { systemId: system.id, titleNormalized: normalizeTitle(title).slice(0, 255) } });
+        await ingestUnverified(tmp, name, owner, { systemId: system.id, ...(game ? { gameId: game.id } : { newGameTitle: title }) });
+        result = 'stored as unverified';
+      }
+      await prisma.devicePull.update({ where: { id: pull.id }, data: { status: 'done', result, doneAt: new Date() } });
+    } catch (e) {
+      result = e instanceof Error ? e.message : String(e);
+      await prisma.devicePull.update({ where: { id: pull.id }, data: { status: 'failed', result: result.slice(0, 500), doneAt: new Date() } });
+    }
+    res.type('text/plain').send(result + '\n');
   } finally {
+    pullTransfers.delete(pull.id);
     await fs.promises.rm(tmp, { force: true });
   }
-  res.type('text/plain').send(result + '\n');
 });
 
 // The server's public key, which the client adds to the console's authorized_keys (when allowed there)
