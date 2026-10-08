@@ -65,6 +65,20 @@ class Api(private val server: String, private val token: String? = null) {
         }
     }
 
+    /** Streams a file as the request body (roms can be large) */
+    fun uploadFile(path: String, file: File, headers: Map<String, String> = emptyMap()): String {
+        val conn = open(path, "POST", headers)
+        try {
+            conn.doOutput = true
+            conn.setFixedLengthStreamingMode(file.length())
+            file.inputStream().use { input -> conn.outputStream.use { input.copyTo(it, 1 shl 16) } }
+            check(conn)
+            return conn.inputStream.bufferedReader().readText()
+        } finally {
+            conn.disconnect()
+        }
+    }
+
     companion object {
         fun enc(s: String): String = URLEncoder.encode(s, "UTF-8")
         fun b64(s: String): String = Base64.getEncoder().encodeToString(s.toByteArray())

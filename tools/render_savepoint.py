@@ -5,7 +5,9 @@ Handhelds cannot rasterise an 80k-triangle mesh in Python at frame rate, so the 
 into a sprite strip (FRAMES frames side by side, transparent background) that the apps just blit.
 
 Model: "Save Point" by FFVII-Collector, https://www.thingiverse.com/thing:3485640 (CC BY).
-Usage: render_savepoint.py model.stl out.png [size] [frames]
+Usage: render_savepoint.py model.stl out.png [size] [frames] [columns]
+With COLUMNS the frames go in a grid (row by row) instead of one strip: Android cannot load
+bitmaps wider than its maximum texture size.
 """
 import math
 import struct
@@ -65,15 +67,17 @@ def main():
     stl, dest = sys.argv[1], sys.argv[2]
     size = int(sys.argv[3]) if len(sys.argv) > 3 else 160
     frames = int(sys.argv[4]) if len(sys.argv) > 4 else 36
+    cols = int(sys.argv[5]) if len(sys.argv) > 5 else frames
     tris = load_stl(stl)
     # Centre and normalise; STL from 3D printing is Z-up, the screen is Y-up
     tris = tris[:, :, [0, 2, 1]]
     centre = (tris.reshape(-1, 3).max(axis=0) + tris.reshape(-1, 3).min(axis=0)) / 2
     tris -= centre
     tris /= np.abs(tris).max()
-    strip = Image.new("RGBA", (size * frames, size), (0, 0, 0, 0))
+    rows = math.ceil(frames / cols)
+    strip = Image.new("RGBA", (size * cols, size * rows), (0, 0, 0, 0))
     for k in range(frames):
-        strip.paste(render(tris, size, 2 * math.pi * k / frames), (k * size, 0))
+        strip.paste(render(tris, size, 2 * math.pi * k / frames), ((k % cols) * size, (k // cols) * size))
         print(f"frame {k + 1}/{frames}", end="\r", flush=True)
     strip.save(dest, optimize=True)
     print(f"\nsaved {dest}")

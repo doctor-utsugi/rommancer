@@ -23,4 +23,25 @@
     <string name="bad_login">Usuario o contraseña incorrectos</string>
     <string name="signup_closed">Este servidor no permite crear cuentas</string>
     <string name="exists">Ese usuario o email ya existe</string>
+    <string name="sync_roms">Sincronizar roms</string>
+    <string name="auto_roms">Roms automáticas: %1$s</string>
+    <string name="allow_pull">El servidor puede traer juegos: %1$s</string>
+    <string name="conflicts">Conflictos (%1$s)</string>
+    <string name="status">Estado</string>
+    <string name="exit">Salir</string>
+    <string name="yes">sí</string>
+    <string name="no">no</string>
+    <string name="no_conflicts">No hay conflictos</string>
+    <string name="keep_device">Quedarme con el de este dispositivo</string>
+    <string name="keep_server">Usar el del servidor</string>
+    <string name="conflict_info">%1$s: este dispositivo guardó el %2$s; el servidor tiene una versión del %3$s (%4$s).</string>
+    <string name="press_back">Volver</string>
+    <string name="p_connecting">Conectando con el servidor</string>
+    <string name="p_roms">Comprobando roms</string>
+    <string name="p_server">Preguntando al servidor</string>
+    <string name="p_transfer">Transfiriendo saves</string>
+    <string name="p_roms_plan">Preguntando qué roms tocan</string>
+    <string name="p_roms_download">Descargando roms</string>
+    <string name="p_pulls">Enviando juegos al servidor</string>
+    <string name="no_log">Todavía no hay registro</string>
 </resources>

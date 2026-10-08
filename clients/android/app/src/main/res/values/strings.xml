@@ -23,4 +23,25 @@
     <string name="bad_login">Wrong username or password</string>
     <string name="signup_closed">This server does not allow new accounts</string>
     <string name="exists">That username or email already exists</string>
+    <string name="sync_roms">Sync roms</string>
+    <string name="auto_roms">Automatic roms: %1$s</string>
+    <string name="allow_pull">Server may fetch games: %1$s</string>
+    <string name="conflicts">Conflicts (%1$s)</string>
+    <string name="status">Status</string>
+    <string name="exit">Exit</string>
+    <string name="yes">yes</string>
+    <string name="no">no</string>
+    <string name="no_conflicts">No conflicts</string>
+    <string name="keep_device">Keep this device\'s save</string>
+    <string name="keep_server">Use the server\'s save</string>
+    <string name="conflict_info">%1$s: this device saved on %2$s; the server has a version from %3$s (%4$s).</string>
+    <string name="press_back">Back</string>
+    <string name="p_connecting">Contacting the server</string>
+    <string name="p_roms">Checking roms</string>
+    <string name="p_server">Asking the server</string>
+    <string name="p_transfer">Transferring saves</string>
+    <string name="p_roms_plan">Asking which roms belong here</string>
+    <string name="p_roms_download">Downloading roms</string>
+    <string name="p_pulls">Sending games to the server</string>
+    <string name="no_log">No log yet</string>
 </resources>

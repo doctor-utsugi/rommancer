@@ -10,13 +10,13 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.util.concurrent.TimeUnit
 
-/** Background sync every 15 minutes (the shortest period Android allows for periodic work). */
+/** Background sync every 15 minutes (the shortest period Android allows for periodic work): saves, server requests and list roms. */
 class SyncWorker(context: Context, params: WorkerParameters) : CoroutineWorker(context, params) {
     override suspend fun doWork(): Result = withContext(Dispatchers.IO) {
         val store = Store(applicationContext)
         if (!store.linked) return@withContext Result.success()
         try {
-            SyncEngine(applicationContext, store).sync()
+            SyncEngine(applicationContext, store).all()
             Result.success()
         } catch (e: Exception) {
             Result.retry()

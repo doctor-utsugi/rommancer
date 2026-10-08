@@ -7,7 +7,14 @@ import java.io.File
 import java.security.MessageDigest
 
 /** Same protocol as clients/linux/rommancer-sync.sh: list roms and saves, let the server decide, move files. */
-class SyncEngine(private val context: Context, private val store: Store) {
+class SyncEngine(private val context: Context, private val store: Store, private val onProgress: (Progress) -> Unit = {}) {
+
+    /** Phase, count and the current file's share, for the progress screen */
+    data class Progress(val phase: String, val done: Int = 0, val total: Int = 0, val detail: String = "", val fileShare: Float = 0f) {
+        val share: Float get() = if (total == 0) 0f else ((if (phase == "roms-download") done - 1 + fileShare else done.toFloat()) / total).coerceIn(0f, 1f)
+    }
+
+    data class Conflict(val id: Int, val game: String, val kind: String, val mine: String, val theirs: String, val device: String)
 
     data class Result(val up: Int, val down: Int, val errors: Int) {
         override fun toString() = "$up up, $down down, $errors errors"
@@ -38,6 +45,7 @@ class SyncEngine(private val context: Context, private val store: Store) {
     fun sync(): Result {
         val server = store.server
         val api = Api(server, store.token ?: error("Not linked"))
+        onProgress(Progress("connecting"))
         loadCache()
         val roots = api.text("/agent/roots").lines().mapNotNull { l -> l.split('\t', limit = 2).takeIf { it.size == 2 } }
         val romsDir = roots.firstOrNull { it[0] == "roms" }?.get(1)?.let(::File)
@@ -46,8 +54,11 @@ class SyncEngine(private val context: Context, private val store: Store) {
 
         val request = StringBuilder()
         val romHashes = HashMap<String, String>()
-        romsDir?.listFiles()?.filter { it.isDirectory && !it.name.startsWith(".") }?.forEach { system ->
-            system.listFiles()?.filter { it.isFile && !it.name.startsWith(".") && isRom(it.name, exts) }?.forEach { rom ->
+        val romFiles = romsDir?.listFiles()?.filter { it.isDirectory && !it.name.startsWith(".") }
+            ?.flatMap { system -> system.listFiles()?.filter { it.isFile && !it.name.startsWith(".") && isRom(it.name, exts) }.orEmpty() }.orEmpty()
+        romFiles.forEachIndexed { index, rom ->
+            if (index % 10 == 0) onProgress(Progress("roms", index, romFiles.size))
+            run {
                 val hashes = if (rom.length() <= HASH_MAX) listOfNotNull(sha1(rom, 0), headerSize(rom).takeIf { it > 0 }?.let { sha1(rom, it) }) else emptyList()
                 romHashes[rom.path] = hashes.joinToString(",")
                 request.append("rom\t").append(rom.path).append(hashes.joinToString("") { "\t$it" }).append('\n')
@@ -60,11 +71,14 @@ class SyncEngine(private val context: Context, private val store: Store) {
         }
         saveCache()
 
-        val plan = api.text("/agent/sync", "POST", request.toString().toByteArray())
+        onProgress(Progress("server"))
+        val plan = api.text("/agent/sync", "POST", request.toString().toByteArray(), mapOf("X-Allow-Pull" to if (store.allowPull) "1" else "0"))
         var up = 0
         var down = 0
         var errors = 0
-        for (line in plan.lines()) {
+        val steps = plan.lines().filter { it.isNotBlank() }
+        for ((n, line) in steps.withIndex()) {
+            onProgress(Progress("transfer", n + 1, steps.size))
             val f = line.split('\t')
             try {
                 when (f[0]) {
@@ -85,7 +99,84 @@ class SyncEngine(private val context: Context, private val store: Store) {
                 errors++
             }
         }
-        return Result(up, down, errors).also { store.lastResult = "${java.text.DateFormat.getDateTimeInstance().format(java.util.Date())}: $it" }
+        return Result(up, down, errors).also {
+            store.lastResult = "${java.text.DateFormat.getDateTimeInstance().format(java.util.Date())}: $it"
+            store.addLog("sync: $it")
+        }
+    }
+
+    /** Roms of the lists assigned to this device that are not here yet; never deletes anything */
+    fun roms(): String {
+        val api = Api(store.server, store.token ?: error("Not linked"))
+        onProgress(Progress("roms-plan"))
+        val plan = api.text("/agent/roms").lines().mapNotNull { l -> l.split('\t').takeIf { it.size >= 4 && it[0] == "rom" } }
+        var got = 0
+        var have = 0
+        var failed = 0
+        for ((i, f) in plan.withIndex()) {
+            val dest = File(f[1])
+            val size = f[2].toLongOrNull() ?: 0L
+            if (dest.exists() && (size == 0L || dest.length() == size)) { have++; continue }
+            if (size > 0 && (dest.parentFile ?: root).let { generateSequence(it) { p -> p.parentFile }.first { p -> p.exists() } }.usableSpace < size + 50L * 1024 * 1024) {
+                failed++
+                store.addLog("roms: not enough space for ${dest.name}")
+                break
+            }
+            val part = File(dest.path + ".part")
+            val watcher = Thread {
+                while (!Thread.currentThread().isInterrupted) {
+                    onProgress(Progress("roms-download", i + 1, plan.size, dest.name, if (size > 0) part.length().toFloat() / size else 0f))
+                    try { Thread.sleep(500) } catch (_: InterruptedException) { break }
+                }
+            }.apply { start() }
+            try {
+                api.download("/agent/rom?f=${f[3]}", emptyMap(), part)
+                if (size > 0 && part.length() != size) error("size mismatch")
+                part.renameTo(dest)
+                got++
+            } catch (e: Exception) {
+                part.delete()
+                failed++
+            } finally {
+                watcher.interrupt()
+            }
+        }
+        return "roms: $got downloaded, $have already here, $failed failed".also { store.addLog(it) }
+    }
+
+    /** Sends the roms the server asked for, one at a time; only when the user allows it */
+    fun pulls(): String {
+        if (!store.allowPull) return ""
+        val api = Api(store.server, store.token ?: error("Not linked"))
+        val wanted = api.text("/agent/pulls").lines().mapNotNull { l -> l.split('\t').takeIf { it.size >= 3 && it[0] == "pull" } }
+        var sent = 0
+        for ((i, p) in wanted.withIndex()) {
+            onProgress(Progress("pulls", i + 1, wanted.size, File(p[2]).name))
+            val file = File(p[2])
+            if (!file.exists()) continue
+            runCatching { api.uploadFile("/agent/pull/${p[1]}", file) }.onSuccess { sent++ }
+        }
+        return if (wanted.isEmpty()) "" else "sent to server: $sent of ${wanted.size}".also { store.addLog(it) }
+    }
+
+    /** What the web app asked for since the last time: "sync" and/or "pull" */
+    fun poll(): Set<String> = runCatching { Api(store.server, store.token ?: return emptySet()).text("/agent/poll").lines().filter { it.isNotBlank() }.toSet() }.getOrDefault(emptySet())
+
+    fun conflicts(): List<Conflict> = Api(store.server, store.token ?: error("Not linked")).text("/agent/conflicts").lines()
+        .mapNotNull { l -> l.split('\t').takeIf { it.size >= 7 && it[0] == "conflict" }?.let { Conflict(it[1].toInt(), it[2], it[3], it[4], it[5], it[6]) } }
+
+    fun resolve(id: Int, keep: String): Result {
+        Api(store.server, store.token ?: error("Not linked")).form("/agent/conflicts/$id", mapOf("keep" to keep))
+        store.addLog("conflict $id: kept $keep")
+        return sync()
+    }
+
+    /** "Sync now": saves, the roms the server asked for, then the lists' roms when automatic roms is on */
+    fun all(): String {
+        val r = sync()
+        val sent = runCatching { pulls() }.getOrDefault("")
+        val roms = if (store.autoRoms) roms() else ""
+        return listOf("sync: $r", sent, roms).filter { it.isNotBlank() }.joinToString(" · ")
     }
 
     private fun isSave(name: String, exts: List<String>): Boolean {
