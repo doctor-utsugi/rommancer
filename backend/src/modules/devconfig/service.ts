@@ -92,12 +92,20 @@ export async function settingsPending(device: FullDevice) {
   return !d.empty && d.hash !== device.settingsHash;
 }
 
+/** A file to write (with its mode when it matters), or one of Rommancer's own files to remove */
+type Write = {
+  path: string;
+  sha1: string;
+  mode?: string;
+  del?: boolean;
+};
+
 interface Payload {
   versionId?: number;
   paths?: string[];
   gets?: string[];
   collected?: Record<string, { sha1: string; size: number } | null>;
-  writes?: { path: string; sha1: string }[];
+  writes?: Write[];
   notes?: string[];
   settingsHash?: string;
   /** Networks this application wrote, so they can be removed later if the user drops them */
@@ -211,22 +219,24 @@ export async function ready(device: FullDevice, opId: number) {
   const collected = p.collected ?? {};
   const present = Object.entries(collected).flatMap(([f, c]) => (c ? [{ path: f, ...c }] : []));
   const notes = [...(p.notes ?? [])];
-  const writes: { path: string; sha1: string }[] = [];
+  const writes: Write[] = [];
   if (op.kind === 'settings') {
     const adapter = adapterFor(device.firmware.slug)!;
     const files = new Map<string, string | null>();
-    for (const f of adapter.settingsFiles) {
-      if (!(f in collected)) continue;
-      const c = collected[f];
+    for (const [f, c] of Object.entries(collected)) {
+      // Settings folders ("network/") hand over every file found in them
+      if (!adapter.settingsFiles.some((s) => (s.endsWith('/') ? f.startsWith(s) : s === f))) continue;
       files.set(f, c ? (await readBlob(c.sha1)).toString('utf8') : null);
     }
     const { want, hash } = await desiredFor(device);
     p.settingsHash = hash;
     p.partial = adapter.settingsFiles.some((f) => !reachable(f, op.channel as Channel));
     p.wifiSsids = want.wifi.map((w) => w.ssid);
-    const out = adapter.apply(want, files);
+    const out = adapter.apply(want, files, (f) => reachable(f, op.channel as Channel));
     notes.push(...out.notes);
-    for (const [f, text] of out.writes) writes.push({ path: f, sha1: await putBlob(Buffer.from(text, 'utf8')) });
+    for (const [f, text] of out.writes) writes.push({ path: f, sha1: await putBlob(Buffer.from(text, 'utf8')), mode: out.modes?.[f] });
+    // Only files Rommancer itself made are ever removed
+    for (const f of out.deletes ?? []) if (/(^|\/)rommancer-[^/]+$/.test(f) && reachable(f, op.channel as Channel)) writes.push({ path: f, sha1: '', del: true });
   } else if (op.kind === 'restore') {
     const src = await prisma.deviceConfigVersion.findUniqueOrThrow({ where: { id: p.versionId! } });
     for (const f of src.files as { path: string; sha1: string }[]) {
@@ -250,14 +260,14 @@ export async function ready(device: FullDevice, opId: number) {
     await finish({ ...op, payload: data as Prisma.JsonValue }, !failed);
     return [];
   }
-  return writes.map((w, i) => ({ n: i, path: w.path }));
+  return writes.map((w, i) => ({ n: i, path: w.path, mode: w.mode, del: !!w.del }));
 }
 
 /** The content of the Nth file to write */
 export async function outFile(device: Device, opId: number, n: number) {
   const op = await openOp(device, opId, 'applying');
   const w = payloadOf(op).writes?.[n];
-  if (!w) throw new HttpError(404, 'No such file');
+  if (!w || w.del) throw new HttpError(404, 'No such file');
   return readBlob(w.sha1);
 }
 

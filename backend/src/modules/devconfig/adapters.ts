@@ -1,3 +1,5 @@
+import crypto from 'node:crypto';
+
 /** Where each firmware keeps the managed settings and what a backup copies (paths relative to the device root,
  * absolute outside it). Nothing is reloaded live, so a sync over WiFi is never cut short. */
 
@@ -11,6 +13,10 @@ export interface DesiredSettings {
 
 export interface Applied {
   writes: Map<string, string>;
+  /** Unix modes for written files that need one ("600": NetworkManager ignores readable keyfiles) */
+  modes?: Record<string, string>;
+  /** Rommancer's own files (named rommancer-*) that are no longer wanted */
+  deletes?: string[];
   /** Settings that could not be applied here, as "code" or "code:detail" (the web app words them) */
   notes: string[];
 }
@@ -22,7 +28,8 @@ export interface Adapter {
   /** Files (or folders, ending in "/") copied by a backup */
   backup: string[];
   settingsFiles: string[];
-  apply(want: DesiredSettings, files: Map<string, string | null>): Applied;
+  /** REACH: whether the channel at work reaches a path (the card does not reach internal memory) */
+  apply(want: DesiredSettings, files: Map<string, string | null>, reach: (path: string) => boolean): Applied;
 }
 
 /** Lines "key=value" (batocera.conf, system.cfg): changes the given keys in place, appends new ones, drops null ones */
@@ -189,6 +196,115 @@ const onion: Adapter = {
   },
 };
 
+/** The WPA key wpa_supplicant derives from a passphrase, so the passphrase itself is not left on the card */
+export const wpaPsk = (ssid: string, pass: string) => crypto.pbkdf2Sync(pass, ssid, 4096, 32, 'sha1').toString('hex');
+
+/** A file name of Rommancer's own for a network: readable, and unique per SSID */
+const netFile = (ssid: string) => `rommancer-${ssid.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 24) || 'wifi'}-${crypto.createHash('sha1').update(ssid).digest('hex').slice(0, 6)}`;
+
+/** One file per network in a folder: Rommancer's files are written or removed, the others stay */
+function networkFiles(dir: string, ext: string, want: DesiredSettings, files: Map<string, string | null>, render: (w: DesiredSettings['wifi'][number], i: number) => string): Pick<Applied, 'writes' | 'deletes'> {
+  const writes = new Map<string, string>();
+  const keep = new Set<string>();
+  want.wifi.forEach((w, i) => {
+    const f = `${dir}${netFile(w.ssid)}.${ext}`;
+    keep.add(f);
+    const text = render(w, i);
+    if (files.get(f) !== text) writes.set(f, text);
+  });
+  const deletes = [...files.keys()].filter((f) => f.startsWith(`${dir}rommancer-`) && !keep.has(f) && files.get(f) !== null);
+  return { writes, deletes };
+}
+
+const raKeys = (ra: NonNullable<DesiredSettings['ra']>): Record<string, string> => ({
+  cheevos_enable: 'true',
+  cheevos_username: raQuote(ra.username),
+  ...(ra.token ? { cheevos_token: raQuote(ra.token), cheevos_password: '' } : { cheevos_password: raQuote(ra.password ?? '') }),
+});
+
+/** muOS: RetroArch's config and the cheevos file it appends at each launch (internal), WiFi profiles on the card */
+const MUOS_RA = '/opt/muos/share/info/config/retroarch.cfg';
+const MUOS_CHEEVOS = '/opt/muos/share/info/config/retroarch.cheevos.cfg';
+const MUOS_NET = 'MUOS/network/';
+const muos: Adapter = {
+  backup: [MUOS_NET, MUOS_RA, MUOS_CHEEVOS],
+  settingsFiles: [MUOS_RA, MUOS_CHEEVOS, MUOS_NET],
+  apply(want, files, reach) {
+    const notes: string[] = [];
+    const writes = new Map<string, string>();
+    if (want.ra) {
+      if (!reach(MUOS_RA)) notes.push(note('raInternal'));
+      else {
+        const cfg = files.get(MUOS_RA);
+        if (cfg != null) {
+          const next = setRetroArch(cfg, raKeys(want.ra));
+          if (next !== cfg) writes.set(MUOS_RA, next);
+        }
+        const ch = files.get(MUOS_CHEEVOS) ?? '';
+        const nextCh = setRetroArch(ch, raKeys(want.ra));
+        if (nextCh !== ch) writes.set(MUOS_CHEEVOS, nextCh);
+      }
+    }
+    // Lower priority wins in muOS (1 to 9); "pass" may be the 64-hex key, which it uses as is
+    const net = networkFiles(MUOS_NET, 'ini', want, files, (w, i) =>
+      ['[network]', `ssid=${w.ssid}`, `pass=${w.password ? wpaPsk(w.ssid, w.password) : ''}`, 'type=dhcp', `priority=${Math.min(9, i + 1)}`, 'autoconnect=1', ''].join('\n'),
+    );
+    for (const [f, t] of net.writes) writes.set(f, t);
+    return { writes, notes, deletes: net.deletes };
+  },
+};
+
+/** ROCKNIX: RetroAchievements in system.cfg (RetroArch's config is rebuilt from it at each launch), WiFi as NetworkManager keyfiles */
+const ROCKNIX_CFG = '.config/system/configs/system.cfg';
+const ROCKNIX_NM = '/storage/.config/NetworkManager/system-connections/';
+const rocknix: Adapter = {
+  backup: [ROCKNIX_CFG, ROCKNIX_NM],
+  settingsFiles: [ROCKNIX_CFG, ROCKNIX_NM],
+  apply(want, files, reach) {
+    const notes: string[] = [];
+    const writes = new Map<string, string>();
+    const modes: Record<string, string> = {};
+    if (want.ra) {
+      const text = files.get(ROCKNIX_CFG);
+      if (text == null) notes.push(note('missing', ROCKNIX_CFG));
+      else {
+        if (!want.ra.password) notes.push(note('raNoPassword'));
+        const next = setKeys(text, {
+          'global.retroachievements': '1',
+          'global.retroachievements.username': want.ra.username,
+          ...(want.ra.password ? { 'global.retroachievements.password': want.ra.password } : {}),
+        });
+        if (next !== text) writes.set(ROCKNIX_CFG, next);
+      }
+    }
+    let deletes: string[] = [];
+    if (want.wifi.length || want.managed.length) {
+      if (!reach(ROCKNIX_NM)) notes.push(note('wifiInternal'));
+      else {
+        const uuid = (ssid: string) => {
+          const h = crypto.createHash('sha1').update(`rommancer:${ssid}`).digest('hex');
+          return `${h.slice(0, 8)}-${h.slice(8, 12)}-5${h.slice(13, 16)}-a${h.slice(17, 20)}-${h.slice(20, 32)}`;
+        };
+        // Higher autoconnect-priority wins in NetworkManager
+        const net = networkFiles(ROCKNIX_NM, 'nmconnection', want, files, (w, i) =>
+          [
+            '[connection]', `id=${w.ssid}`, `uuid=${uuid(w.ssid)}`, 'type=wifi', 'autoconnect=true', `autoconnect-priority=${(want.wifi.length - i) * 10}`, '',
+            '[wifi]', 'mode=infrastructure', `ssid=${w.ssid}`, ...(w.hidden ? ['hidden=true'] : []), '',
+            ...(w.password ? ['[wifi-security]', 'key-mgmt=wpa-psk', `psk=${wpaPsk(w.ssid, w.password)}`, ''] : []),
+            '[ipv4]', 'method=auto', '', '[ipv6]', 'method=auto', '',
+          ].join('\n'),
+        );
+        for (const [f, t] of net.writes) {
+          writes.set(f, t);
+          modes[f] = '600';
+        }
+        deletes = net.deletes ?? [];
+      }
+    }
+    return { writes, notes, modes, deletes };
+  },
+};
+
 const ADAPTERS: Record<string, Adapter> = {
   knulli: batocera('system/batocera.conf', [
     'system/batocera.conf',
@@ -201,6 +317,8 @@ const ADAPTERS: Record<string, Adapter> = {
   onion,
 };
 ADAPTERS.batocera = ADAPTERS.knulli;
+ADAPTERS.muos = muos;
+ADAPTERS.rocknix = rocknix;
 
 export const adapterFor = (firmwareSlug: string): Adapter | null => ADAPTERS[firmwareSlug] ?? null;
 export const isAbsolute = (p: string) => p.startsWith('/');

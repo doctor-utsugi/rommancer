@@ -27,6 +27,9 @@ A device is only given networks it can see. Its bands come from, in this order:
 
 A 2.4 GHz device skips networks marked `5 GHz only`; a device without WiFi gets none.
 
+ArkOS and NextUI are not supported yet: Rommancer does not know their folders, and ArkOS imports one network
+only when it is in range.
+
 Networks Rommancer does not manage (set up on the console itself) are kept. Networks it manages and that no
 longer apply (removed from your list, or not visible to that device) are removed.
 
@@ -36,6 +39,8 @@ longer apply (removed from your list, or not visible to that device) are removed
 |---|---|---|---|
 | Knulli, Batocera | `system/batocera.conf` (`global.retroachievements.*`) | same file: `wifi`, `wifi2`, `wifi3` (`.ssid`, `.key`, `#;$` escaped) and `wifi.hidden` | `batocera.conf`, `es_settings.cfg`, `es_input.cfg`, RetroArch core options and remaps, `custom.sh` |
 | Onion | `RetroArch/.retroarch/retroarch.cfg` (`cheevos_*`, token) | `/appconfigs/wpa_supplicant.conf` (internal memory) | `retroarch.cfg` and overrides, `.tmp_update/config/`, profile config, `/appconfigs/system.json`, `wpa_supplicant.conf` |
+| muOS | `/opt/muos/share/info/config/retroarch.cfg` and `retroarch.cheevos.cfg` (appended at each launch; internal) | one profile per network in `MUOS/network/rommancer-*.ini` on the card (`pass` is the derived 64-hex key; priority 1 wins) | the network profiles and both RetroArch files |
+| ROCKNIX | `.config/system/configs/system.cfg` (`global.retroachievements.*`, password; RetroArch's config is rebuilt from it) | NetworkManager keyfiles `rommancer-*.nmconnection` in `/storage/.config/NetworkManager/system-connections/`, mode 600 (only the console or SSH writes them) | `system.cfg` and the keyfiles |
 | Android | not reachable (emulators keep their config in app-private storage) | handed to Android with `ACTION_WIFI_ADD_NETWORKS`: the user confirms them in a system dialog | none |
 
 Nothing is reloaded live. RetroArch reads its config at the next game, and the firmwares read WiFi networks at
@@ -69,7 +74,9 @@ Steps, all under `/api/v1/agent/config` with the device token:
    folder. Paths are relative to the device root, or absolute outside it. Empty: nothing to do.
 2. `POST /file/:op` for each one: the file as body, `X-Path-B64` names it, `X-Missing: 1` if it is not there.
 3. `POST /ready/:op`: the server keeps the copy and answers `put<TAB>n<TAB>path` for each file to write.
-4. `GET /out/:op/:n`: the content to write (clients write `path.rommancer-tmp`, then rename).
+4. `GET /out/:op/:n`: the content to write (clients write `path.rommancer-tmp`, set the mode when the `put` line
+   has a fourth field, then rename). `del<TAB>n<TAB>path` lines remove a file; the server only sends them for
+   Rommancer's own files (`rommancer-*`), such as a network the user dropped.
 5. `POST /done/:op`: `ok`, or `error<TAB>writeFailed:path`.
 
 Work a channel took and did not finish is offered again after 30 minutes. Settings that failed are not retried

@@ -36,7 +36,7 @@ export const esMore = {
     addWifi: 'Añadir red',
     up: 'Subir',
     down: 'Bajar',
-    unsupported: 'Rommancer aún no sabe dónde guarda este sistema su configuración. De momento: Knulli, Batocera y Onion.',
+    unsupported: 'Rommancer aún no sabe dónde guarda este sistema su configuración. De momento: Knulli, Batocera, Onion, muOS y ROCKNIX.',
     android: 'En Android, tus redes WiFi se añaden desde la app de Rommancer: «Añadir mis redes WiFi» (Android pide confirmarlas). Los emuladores guardan su configuración en una zona que Android no deja tocar a otras apps.',
     yourSettings: 'Tus ajustes en esta consola',
     keep: 'Mantener mis ajustes al día (RetroAchievements y redes WiFi)',
@@ -94,6 +94,7 @@ export const esMore = {
     note_unsupported: 'Rommancer aún no sabe dónde guarda {{detail}} su configuración',
     note_unreachable: 'desde la tarjeta no se llega a {{detail}}: lo restaura la consola o el SSH',
     note_writeFailed: 'la consola no pudo escribir {{detail}}',
+    note_raInternal: 'RetroAchievements está en la memoria interna de la consola: lo pone su app o el SSH, no la tarjeta',
     note_tooBig: '{{detail}} pesa más de 4 MB y no se ha copiado',
   },
   organize: {
@@ -542,7 +543,7 @@ export const enMore: typeof esMore = {
     addWifi: 'Add network',
     up: 'Move up',
     down: 'Move down',
-    unsupported: 'Rommancer does not know where this firmware keeps its configuration yet. For now: Knulli, Batocera and Onion.',
+    unsupported: 'Rommancer does not know where this firmware keeps its configuration yet. For now: Knulli, Batocera, Onion, muOS and ROCKNIX.',
     android: 'On Android your WiFi networks are added from the Rommancer app: "Add my WiFi networks" (Android asks to confirm them). Emulators keep their configuration where Android does not let other apps in.',
     yourSettings: 'Your settings on this console',
     keep: 'Keep my settings up to date (RetroAchievements and WiFi networks)',
@@ -600,6 +601,7 @@ export const enMore: typeof esMore = {
     note_unsupported: 'Rommancer does not know where {{detail}} keeps its configuration yet',
     note_unreachable: 'the card does not reach {{detail}}: the console or SSH restores it',
     note_writeFailed: 'the console could not write {{detail}}',
+    note_raInternal: 'RetroAchievements lives in the console\'s internal memory: its app or SSH sets it, not the card',
     note_tooBig: '{{detail}} is larger than 4 MB and was not copied',
   },
   organize: {

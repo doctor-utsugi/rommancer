@@ -361,7 +361,7 @@ impl<'a> Engine<'a> {
                     _ => self.api.post_text(&format!("/agent/config/file/{op}"), Vec::new(), &[headers[0].clone(), ("X-Missing", "1".into())])?,
                 };
             }
-            let puts: Vec<_> = pairs(&self.api.post_text(&format!("/agent/config/ready/{op}"), Vec::new(), &[])?).into_iter().filter(|l| l.len() >= 3 && l[0] == "put").collect();
+            let puts: Vec<_> = pairs(&self.api.post_text(&format!("/agent/config/ready/{op}"), Vec::new(), &[])?).into_iter().filter(|l| l.len() >= 3 && (l[0] == "put" || l[0] == "del")).collect();
             if puts.is_empty() {
                 out.config += 1;
                 continue;
@@ -370,6 +370,13 @@ impl<'a> Engine<'a> {
             for p in &puts {
                 if !inside(&p[2]) {
                     failed = Some(p[2].clone());
+                    continue;
+                }
+                if p[0] == "del" {
+                    let target = root.join(&p[2]);
+                    if target.exists() && fs::remove_file(&target).is_err() {
+                        failed = Some(p[2].clone());
+                    }
                     continue;
                 }
                 if self.api.download(&format!("/agent/config/out/{op}/{}", p[1]), &[], &root.join(&p[2]), &mut |_| {}, self.cancelled).is_err() {

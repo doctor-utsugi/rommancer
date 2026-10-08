@@ -2279,3 +2279,69 @@ test('favourite roms mark their game; RetroAchievements progress read with the u
   const d = (await api('GET', `/games/${rom.gameId}`)).json;
   assert.equal(d.roms.find((r: any) => r.id === rom.id).raProgress.awarded, 12);
 });
+
+test('device config: muOS profiles on the card and ROCKNIX NetworkManager keyfiles, Rommancer\'s own files removed when no longer wanted', async () => {
+  const client = path.join(ROOT, 'clients/linux/rommancer-sync.sh');
+  const dir = path.join(DATA, 'device-config-2');
+  fs.rmSync(dir, { recursive: true, force: true });
+  const sysroot = path.join(dir, 'sys');
+  const run = (name: string, args: string[], env: Record<string, string> = {}) =>
+    execFileP('sh', [client, ...args], { env: { ...process.env, ROMMANCER_STATE: path.join(dir, `${name}-state`), ROMMANCER_ROOT: path.join(dir, name), ROMMANCER_SYSROOT: sysroot, ROMMANCER_WIFI_BANDS: '', ...env } });
+  const pair = async (name: string, firmware: string, model: string) => {
+    const linking = run(name, ['link', base], { ROMMANCER_NAME: name, ROMMANCER_FIRMWARE: firmware, ROMMANCER_MODEL: model });
+    const codeFile = path.join(dir, `${name}-state`, 'code.txt');
+    for (let i = 0; i < 50 && !fs.existsSync(codeFile); i++) await new Promise((r) => setTimeout(r, 100));
+    const code = fs.readFileSync(codeFile, 'utf8').split('\n')[0];
+    const info = await api('GET', `/link/${code}`);
+    const ok = await api('POST', `/link/${code}/approve`, { name, consoleId: info.json.suggestedConsoleId, firmwareId: info.json.suggestedFirmwareId });
+    await linking;
+    return ok.json.deviceId as number;
+  };
+  const { wpaPsk } = await import('../src/modules/devconfig/adapters.js');
+  // muOS: profiles on the card, RetroArch config inside the system
+  const net = path.join(dir, 'muos/MUOS/network');
+  fs.mkdirSync(net, { recursive: true });
+  fs.writeFileSync(path.join(net, 'Casa.ini'), '[network]\nssid=Casa\npass=made-on-the-console\ntype=dhcp\npriority=1\nautoconnect=1\n');
+  fs.writeFileSync(path.join(net, 'rommancer-vieja-abc123.ini'), '[network]\nssid=Vieja\npass=x\n');
+  const muosRa = path.join(sysroot, 'opt/muos/share/info/config/retroarch.cfg');
+  fs.mkdirSync(path.dirname(muosRa), { recursive: true });
+  fs.writeFileSync(muosRa, 'video_smooth = "false"\n');
+  await pair('muos', 'muos', 'Anbernic RG35XX Plus');
+  await run('muos', ['config']);
+  const ours = fs.readdirSync(net).filter((f) => f.startsWith('rommancer-')).sort();
+  assert.equal(ours.length, 3, ours.join(','));
+  assert.ok(!ours.includes('rommancer-vieja-abc123.ini'), 'a network Rommancer wrote before and no longer wants is removed');
+  assert.ok(fs.existsSync(path.join(net, 'Casa.ini')), 'profiles made on the console stay');
+  const casa = fs.readFileSync(path.join(net, ours.find((f) => f.startsWith('rommancer-casa-'))!), 'utf8');
+  assert.match(casa, /^\[network\]\nssid=Casa\npass=[0-9a-f]{64}\ntype=dhcp\npriority=1\nautoconnect=1\n$/);
+  assert.ok(casa.includes(`pass=${wpaPsk('Casa', 'casa;password$1')}`), 'the derived key, not the passphrase');
+  assert.match(fs.readFileSync(muosRa, 'utf8'), /^cheevos_token = "RATOKEN123"$/m);
+  assert.match(fs.readFileSync(path.join(sysroot, 'opt/muos/share/info/config/retroarch.cheevos.cfg'), 'utf8'), /^cheevos_username = "raplayer"$/m);
+
+  // ROCKNIX: system.cfg on its storage, keyfiles that only root can read
+  const sysCfg = path.join(dir, 'rocknix/.config/system/configs/system.cfg');
+  fs.mkdirSync(path.dirname(sysCfg), { recursive: true });
+  fs.writeFileSync(sysCfg, 'global.retroachievements=0\nglobal.retroachievements.username=\nglobal.retroachievements.password=\nwifi.enabled=1\n');
+  const nm = path.join(sysroot, 'storage/.config/NetworkManager/system-connections');
+  fs.mkdirSync(nm, { recursive: true });
+  await pair('rocknix', 'rocknix', 'Anbernic RG353V');
+  await run('rocknix', ['config']);
+  const cfg = fs.readFileSync(sysCfg, 'utf8');
+  assert.match(cfg, /^global\.retroachievements=1$/m);
+  assert.match(cfg, /^global\.retroachievements\.username=raplayer$/m);
+  assert.match(cfg, /^global\.retroachievements\.password=ra-secret-pass$/m);
+  const keyfiles = fs.readdirSync(nm).sort();
+  assert.equal(keyfiles.length, 3, keyfiles.join(','));
+  const hidden = fs.readFileSync(path.join(nm, keyfiles.find((f) => f.startsWith('rommancer-oculta-'))!), 'utf8');
+  assert.match(hidden, /\[wifi\]\nmode=infrastructure\nssid=Oculta\nhidden=true/);
+  assert.match(hidden, /key-mgmt=wpa-psk\npsk=[0-9a-f]{64}/);
+  assert.equal(fs.statSync(path.join(nm, keyfiles[0])).mode & 0o777, 0o600, 'NetworkManager ignores keyfiles others can read');
+
+  // A network the user drops goes away from both, at the next application
+  const nets = (await api('GET', '/settings/consoles')).json.wifi;
+  await api('DELETE', `/settings/consoles/wifi/${nets.find((w: any) => w.ssid === 'Oculta').id}`);
+  await run('rocknix', ['config']);
+  await run('muos', ['config']);
+  assert.equal(fs.readdirSync(nm).length, 2);
+  assert.equal(fs.readdirSync(net).filter((f) => f.startsWith('rommancer-')).length, 2);
+});

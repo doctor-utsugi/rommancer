@@ -30,11 +30,12 @@ configAgentRouter.post('/file/:op', express.raw({ type: '*/*', limit: '8mb' }), 
   res.status(204).end();
 });
 
-/** All read: "put<TAB>n<TAB>path" for each file to write (fetched from /out), or nothing */
+/** All read: "put<TAB>n<TAB>path[<TAB>mode]" for each file to write (fetched from /out), "del<TAB>n<TAB>path" to remove */
 configAgentRouter.post('/ready/:op', async (req, res) => {
   const device = await deviceFromToken(req);
   const writes = await ready(device, Number(req.params.op));
-  res.type('text/plain').send(writes.map((w) => `put\t${w.n}\t${w.path}`).join('\n') + (writes.length ? '\n' : ''));
+  const lines = writes.map((w) => (w.del ? `del\t${w.n}\t${w.path}` : `put\t${w.n}\t${w.path}${w.mode ? `\t${w.mode}` : ''}`));
+  res.type('text/plain').send(lines.join('\n') + (lines.length ? '\n' : ''));
 });
 
 configAgentRouter.get('/out/:op/:n', async (req, res) => {

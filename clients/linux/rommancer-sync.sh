@@ -22,7 +22,7 @@
 #                                   Menu++...) mounted on this computer; the link lives on the card itself,
 #                                   so any computer with this script can sync it. Without a command: sync.
 set -u
-CLIENT_VERSION=20261009
+CLIENT_VERSION=20261010
 # Onion keeps curl (with TLS) and friends outside the default PATH
 [ -d /mnt/SDCARD/.tmp_update/bin ] && PATH="/mnt/SDCARD/.tmp_update/bin:$PATH"
 
@@ -47,6 +47,14 @@ WORK="${TMPDIR:-/tmp}/rommancer-$(id -u 2>/dev/null || echo 0)"
 # Each card gets its own lock and progress, apart from a daemon this computer may be running
 [ -n "$SD" ] && WORK="$WORK-sd-$(printf '%s' "$SD" | cksum | cut -d' ' -f1)"
 LOCK="$WORK/lock"
+# The sync lock holds its owner's pid: a lock left by a process that died (power cut, killed run) is taken over
+take_lock() {
+  if mkdir "$LOCK" 2>/dev/null; then echo $$ > "$LOCK/pid"; return 0; fi
+  owner="$(cat "$LOCK/pid" 2>/dev/null)"
+  if [ -n "$owner" ] && ! kill -0 "$owner" 2>/dev/null; then rm -rf "$LOCK"; mkdir "$LOCK" 2>/dev/null && echo $$ > "$LOCK/pid" && return 0; fi
+  return 1
+}
+drop_lock() { rm -rf "$LOCK" 2>/dev/null; }
 WATCH_SECONDS="${ROMMANCER_WATCH_SECONDS:-15}"
 FULL_SECONDS="${ROMMANCER_FULL_SECONDS:-300}"
 # Roms up to this size are hashed (once, cached) so games are recognised whatever their file name
@@ -105,7 +113,8 @@ http_once() {
   else
     # busybox wget: POST when there is a body, GET otherwise
     while [ "$n" -gt 0 ]; do set -- "$@" "--header=$1"; shift; n=$((n - 1)); done
-    [ "$body" != "-" ] && set -- "$@" "--post-file=$body"
+    if [ "$body" != "-" ]; then set -- "$@" "--post-file=$body"
+    elif [ "$m" = POST ]; then set -- "$@" "--post-data="; fi
     wget -q -T 30 -O "$out" "$@" "$u"
   fi
 }
@@ -316,26 +325,26 @@ cmd_sync() {
   need_link
   # A sync asked for on screen goes first: background passes step aside while it waits
   if [ -z "${VERBOSE:-}" ] && [ -f "$WORK/priority" ]; then log "background sync skipped (one was asked for on screen)"; return 0; fi
-  if ! mkdir "$LOCK" 2>/dev/null; then
+  if ! take_lock; then
     [ -n "${VERBOSE:-}" ] || { log "sync already running"; return 0; }
     touch "$WORK/priority"
     progress waiting 0 0
-    n=0; while ! mkdir "$LOCK" 2>/dev/null; do sleep 1; n=$((n + 1)); [ "$n" -lt 600 ] || { rm -f "$WORK/priority"; return 1; }; done
+    n=0; while ! take_lock; do sleep 1; n=$((n + 1)); [ "$n" -lt 600 ] || { rm -f "$WORK/priority"; return 1; }; done
   fi
   rm -f "$WORK/priority"
-  trap 'rmdir "$LOCK" 2>/dev/null' EXIT
-  trap 'rmdir "$LOCK" 2>/dev/null; exit 1' INT TERM
+  trap 'drop_lock' EXIT
+  trap 'drop_lock; exit 1' INT TERM
   req="$WORK/request"; plan="$WORK/plan"
   if ! touch "$STATE/.write-test" 2>/dev/null; then
-    log "storage is read-only, skipping sync"; rmdir "$LOCK"; return 1
+    log "storage is read-only, skipping sync"; drop_lock; return 1
   fi
   rm -f "$STATE/.write-test"
   fix_clock
-  build_request "$req" || { log "server unreachable"; rmdir "$LOCK"; return 1; }
+  build_request "$req" || { log "server unreachable"; drop_lock; return 1; }
   progress server 0 0
   # Free and total bytes of the roms' storage: the server copies list roms only while a reserve is kept
   space="$(df -k "$ROMS" 2>/dev/null | awk 'NR == 2 { printf "%.0f %.0f", $4 * 1024, $2 * 1024 }')"
-  http POST "$SERVER/api/v1/agent/sync" "$req" "$plan" "X-Allow-Pull: $ALLOW_PULL" "X-Ssh: $(ssh_offer)" "X-Client-Path-B64: $(b64 "$DIR/$(basename "$0")")" "X-Space: ${space:-}" "X-Wifi-Bands: $(wifi_bands)" || { log "sync request failed"; rmdir "$LOCK"; return 1; }
+  http POST "$SERVER/api/v1/agent/sync" "$req" "$plan" "X-Allow-Pull: $ALLOW_PULL" "X-Ssh: $(ssh_offer)" "X-Client-Path-B64: $(b64 "$DIR/$(basename "$0")")" "X-Space: ${space:-}" "X-Wifi-Bands: $(wifi_bands)" || { log "sync request failed"; drop_lock; return 1; }
   ups=0; downs=0; errs=0; moved=0; total="$(grep -c . "$plan")"
   while IFS="$TAB" read -r action p a b; do
     moved=$((moved + 1)); progress transfer "$moved" "$total"
@@ -356,7 +365,7 @@ cmd_sync() {
   { tail -n 40 "$LOG"; [ -f "$DIR/last-run.txt" ] && { echo "--- last-run.txt"; tail -n 20 "$DIR/last-run.txt"; }; } > "$WORK/report" 2>/dev/null
   http POST "$SERVER/api/v1/agent/log" "$WORK/report" - "X-Client-Version: $CLIENT_VERSION" >/dev/null 2>&1
   [ -n "${VERBOSE:-}" ] && printf 'sync: %s up, %s down, %s errors\n' "$ups" "$downs" "$errs"
-  rmdir "$LOCK" 2>/dev/null
+  drop_lock
   trap - EXIT INT TERM
   return 0
 }
@@ -406,12 +415,15 @@ cmd_config() {
     http POST "$SERVER/api/v1/agent/config/ready/$op" - "$cput" || return 1
     [ -s "$cput" ] || { log "config: $op done, nothing to change"; continue; }
     cerr=""
-    while IFS="$TAB" read -r kind n cp; do
-      [ "$kind" = put ] || continue
+    while IFS="$TAB" read -r kind n cp mode; do
       dest="$(cfg_path "$cp")"
-      mkdir -p "$(dirname "$dest")" 2>/dev/null
-      if http GET "$SERVER/api/v1/agent/config/out/$op/$n" - "$dest.rommancer-tmp" && mv "$dest.rommancer-tmp" "$dest"; then :
-      else rm -f "$dest.rommancer-tmp"; cerr="$cp"; fi
+      case "$kind" in
+        del) rm -f "$dest" || cerr="$cp" ;;
+        put)
+          mkdir -p "$(dirname "$dest")" 2>/dev/null
+          if http GET "$SERVER/api/v1/agent/config/out/$op/$n" - "$dest.rommancer-tmp" && { [ -z "$mode" ] || chmod "$mode" "$dest.rommancer-tmp"; } && mv "$dest.rommancer-tmp" "$dest"; then :
+          else rm -f "$dest.rommancer-tmp"; cerr="$cp"; fi ;;
+      esac
     done < "$cput"
     sync
     if [ -z "$cerr" ]; then printf 'ok' > "$WORK/config-done"; else printf 'error\twriteFailed:%s' "$cerr" > "$WORK/config-done"; fi
