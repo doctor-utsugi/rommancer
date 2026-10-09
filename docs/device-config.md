@@ -34,7 +34,7 @@ longer apply (removed from your list, or not visible to that device) are removed
 
 | Firmware | RetroAchievements | WiFi | Copied by a backup |
 |---|---|---|---|
-| Knulli, Batocera | `system/batocera.conf` (`global.retroachievements.*`) | same file: `wifi`, `wifi2`, `wifi3` (`.ssid`, `.key`, `#;$` escaped) and `wifi.hidden` | `batocera.conf`, `es_settings.cfg`, `es_input.cfg`, RetroArch core options and remaps, `custom.sh` |
+| Knulli, Batocera | `system/knulli.conf` (newer Knulli) or `system/batocera.conf` (`global.retroachievements.*`) | same file: `wifi`, `wifi2`, `wifi3` (`.ssid`, `.key`, `#;$` escaped) and `wifi.hidden` | `batocera.conf`, `es_settings.cfg`, `es_input.cfg`, RetroArch core options and remaps, `custom.sh` |
 | Onion | `RetroArch/.retroarch/retroarch.cfg` (`cheevos_*`, token) | `/appconfigs/wpa_supplicant.conf` (internal memory) | `retroarch.cfg` and overrides, `.tmp_update/config/`, profile config, `/appconfigs/system.json`, `wpa_supplicant.conf` |
 | muOS | `/opt/muos/share/info/config/retroarch.cfg` and `retroarch.cheevos.cfg` (appended at each launch; internal) | one profile per network in `MUOS/network/rommancer-*.ini` on the card (`pass` is the derived 64-hex key; priority 1 wins) | the network profiles and both RetroArch files |
 | ROCKNIX | `.config/system/configs/system.cfg` (`global.retroachievements.*`, password; RetroArch's config is rebuilt from it) | NetworkManager keyfiles `rommancer-*.nmconnection` in `/storage/.config/NetworkManager/system-connections/`, mode 600 (only the console or SSH writes them) | `system.cfg` and the keyfiles |

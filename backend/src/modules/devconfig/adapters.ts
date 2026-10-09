@@ -77,15 +77,17 @@ function keyOf(text: string, key: string): string | null {
   return null;
 }
 
-/** Batocera and Knulli: everything in batocera.conf; RetroArch's cheevos_* are generated from it at each launch */
-const batocera = (conf: string, backup: string[]): Adapter => ({
-  backup,
-  settingsFiles: [conf],
+/** Batocera and Knulli: everything in one conf file (Knulli renamed batocera.conf to knulli.conf; the first found is used).
+ * RetroArch's cheevos_* are generated from it at each launch */
+const batocera = (confs: string[], backup: string[]): Adapter => ({
+  backup: [...confs, ...backup],
+  settingsFiles: confs,
   apply(want, files) {
     const notes: string[] = [];
     const writes = new Map<string, string>();
-    const text = files.get(conf);
-    if (text == null) return { writes, notes: [note('missing', conf)] };
+    const conf = confs.find((c) => typeof files.get(c) === 'string');
+    if (!conf) return { writes, notes: [note('missing', confs[0])] };
+    const text = files.get(conf)!;
     const set: Record<string, string | null> = {};
     if (want.ra) {
       set['global.retroachievements'] = '1';
@@ -443,8 +445,7 @@ const nextui: Adapter = {
 };
 
 const ADAPTERS: Record<string, Adapter> = {
-  knulli: batocera('system/batocera.conf', [
-    'system/batocera.conf',
+  knulli: batocera(['system/knulli.conf', 'system/batocera.conf'], [
     'system/configs/emulationstation/es_settings.cfg',
     'system/configs/emulationstation/es_input.cfg',
     'system/configs/retroarch/cores/retroarch-core-options.cfg',

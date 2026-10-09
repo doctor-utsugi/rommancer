@@ -2391,6 +2391,10 @@ test('NextUI and ArkOS: minarch save and state names, a NextUI save reaching an 
   assert.ok(!arkPlan.includes('.state'));
 
   const { adapterFor, wpaPsk } = await import('../src/modules/devconfig/adapters.js');
+  // Knulli renamed batocera.conf to knulli.conf: the one present is the one written
+  const kn = adapterFor('knulli')!.apply({ ra: { username: 'raplayer', password: 'pw', token: 'TOK' }, wifi: [], managed: [] }, new Map([['system/knulli.conf', 'global.retroachievements=0\n'], ['system/batocera.conf', null]]), () => true);
+  assert.deepEqual([...kn.writes.keys()], ['system/knulli.conf']);
+  assert.match(kn.writes.get('system/knulli.conf')!, /^global\.retroachievements=1$/m);
   const want = { ra: { username: 'raplayer', password: 'pw', token: 'TOK' }, wifi: [{ ssid: 'Casa', password: 'casa-pass', hidden: false }, { ssid: 'Oculta', password: 'x-pass', hidden: true }], managed: ['Casa', 'Oculta', 'Vieja'] };
   // NextUI on a TrimUI: minuisettings.txt on the card, wpa_supplicant.conf inside the system
   const nu = adapterFor('nextui')!;

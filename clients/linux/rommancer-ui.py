@@ -133,13 +133,15 @@ TEXTS = {
 
 
 def system_language():
-    try:
-        with open("/userdata/system/batocera.conf", encoding="utf-8") as f:
-            m = re.search(r"^system\.language=(\w\w)", f.read(), re.M)
-            if m:
-                return m.group(1)
-    except OSError:
-        pass
+    # Newer Knulli renamed batocera.conf to knulli.conf
+    for conf in ("/userdata/system/knulli.conf", "/userdata/system/batocera.conf"):
+        try:
+            with open(conf, encoding="utf-8") as f:
+                m = re.search(r"^system\.language=(\w\w)", f.read(), re.M)
+                if m:
+                    return m.group(1)
+        except OSError:
+            pass
     return (os.environ.get("LANG") or "en")[:2]
 
 
