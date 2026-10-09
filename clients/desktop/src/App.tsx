@@ -805,6 +805,8 @@ function ConsoleSettings() {
     }
   }
   const nets = s?.wifi ?? []
+  // Consoles without 5 GHz skip the 5 GHz-only networks, so their first one is the next they can see
+  const fallback = nets.find((w) => w.band !== '5')
   const order = (ids: number[]) => void run(() => api('PUT', '/settings/consoles/wifi-order', { ids }))
   const move = (i: number, d: number) => {
     const ids = nets.map((w) => w.id)
@@ -914,15 +916,18 @@ function ConsoleSettings() {
                   <strong>{w.ssid}</strong>
                   {i === 0 && <span className="pill">{t('wifiDefault')}</span>}
                   <span className="muted small block">{[w.hasPassword ? t('wifiSaved') : t('wifiOpen'), w.hidden ? t('wifiHidden') : null].filter(Boolean).join(' · ')}</span>
+                  {i === 0 && w.band === '5' && <span className="muted small block">{fallback ? t('wifiDefault24', { ssid: fallback.ssid }) : t('wifiDefaultNo24')}</span>}
                 </span>
                 <select value={w.band} style={{ width: 'auto' }} onChange={(e) => void run(() => api('PATCH', `/settings/consoles/wifi/${w.id}`, { band: e.target.value }))}>
                   {bands}
                 </select>
-                {i > 0 && (
-                  <button className="ghost" disabled={busy} onClick={() => order([w.id, ...nets.map((n) => n.id).filter((x) => x !== w.id)])}>
-                    {t('wifiMakeDefault')}
-                  </button>
-                )}
+                <span style={{ width: 150, display: 'flex', justifyContent: 'flex-end' }}>
+                  {i > 0 && (
+                    <button className="ghost" disabled={busy} onClick={() => order([w.id, ...nets.map((n) => n.id).filter((x) => x !== w.id)])}>
+                      {t('wifiMakeDefault')}
+                    </button>
+                  )}
+                </span>
                 <button className="small-btn" disabled={busy || i === 0} onClick={() => move(i, -1)} title={t('up')}>
                   ↑
                 </button>

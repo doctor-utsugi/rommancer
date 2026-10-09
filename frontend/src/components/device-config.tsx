@@ -73,6 +73,8 @@ export function WifiNetworksCard() {
     ;[ids[i], ids[i + d]] = [ids[i + d], ids[i]]
     order(ids)
   }
+  // Consoles without 5 GHz skip the 5 GHz-only networks, so their first one is the next they can see
+  const fallback = nets.find((w) => w.band !== '5')
   const makeDefault = (id: number) => order([id, ...nets.map((w) => w.id).filter((x) => x !== id)])
   return (
     <Card>
@@ -99,17 +101,24 @@ export function WifiNetworksCard() {
                   <p className="text-xs text-muted-foreground">
                     {[w.hasPassword ? t('more.config.wifiSaved') : t('more.config.open'), w.hidden ? t('more.config.hidden') : null].filter(Boolean).join(' · ')}
                   </p>
+                  {i === 0 && w.band === '5' && (
+                    <p className="text-xs text-muted-foreground">
+                      {fallback ? t('more.config.wifiDefault24', { ssid: fallback.ssid }) : t('more.config.wifiDefaultNo24')}
+                    </p>
+                  )}
                 </div>
                 <NativeSelect className="w-36" value={w.band} onChange={(e) => void run(() => patch(`/settings/consoles/wifi/${w.id}`, { band: e.target.value }))}>
                   <option value="dual">{t('more.config.bandDual')}</option>
                   <option value="2.4">2.4 GHz</option>
                   <option value="5">{t('more.config.band5')}</option>
                 </NativeSelect>
-                {i > 0 && (
-                  <Button size="sm" variant="ghost" disabled={busy} onClick={() => makeDefault(w.id)}>
-                    {t('more.config.wifiMakeDefault')}
-                  </Button>
-                )}
+                <div className="flex w-36 justify-end">
+                  {i > 0 && (
+                    <Button size="sm" variant="ghost" disabled={busy} onClick={() => makeDefault(w.id)}>
+                      {t('more.config.wifiMakeDefault')}
+                    </Button>
+                  )}
+                </div>
                 <Button size="icon" variant="ghost" disabled={busy || i === 0} onClick={() => move(i, -1)} aria-label={t('more.config.up')}>
                   <ArrowUp className="size-4" />
                 </Button>
