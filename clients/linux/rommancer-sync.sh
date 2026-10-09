@@ -22,7 +22,9 @@
 #                                   Menu++...) mounted on this computer; the link lives on the card itself,
 #                                   so any computer with this script can sync it. Without a command: sync.
 set -u
-CLIENT_VERSION=20261011
+CLIENT_VERSION=20261012
+# A clock before this date is surely wrong (no battery-backed clock); kept apart from the version, which may run ahead
+CLOCK_MIN=20261001
 # Onion keeps curl (with TLS) and friends outside the default PATH
 [ -d /mnt/SDCARD/.tmp_update/bin ] && PATH="/mnt/SDCARD/.tmp_update/bin:$PATH"
 
@@ -121,7 +123,7 @@ http_once() {
 
 # Handhelds without a battery-backed clock boot in the past, and TLS then rejects valid certificates
 fix_clock() {
-  [ "$(date +%Y%m%d)" -ge "$CLIENT_VERSION" ] && return 0
+  [ "$(date +%Y%m%d)" -ge "$CLOCK_MIN" ] && return 0
   command -v ntpdate >/dev/null 2>&1 && ntpdate -u pool.ntp.org >/dev/null 2>&1 && log "clock set by NTP: $(date)"
   return 0
 }
@@ -531,10 +533,11 @@ cmd_daemon() {
       [ "$(fingerprint)" = "$fp" ] || fp="$last"
     fi
     if [ "$fp" != "$last" ] || [ "$since" -ge "$FULL_SECONDS" ]; then
-      full=$since
+      # Not "full": rom_line (inside cmd_sync) uses that name for a hash
+      full_pass=0; [ "$since" -ge "$FULL_SECONDS" ] && full_pass=1
       cmd_sync && { last="$(fingerprint)"; since=0; }
-      [ "$full" -ge "$FULL_SECONDS" ] && cmd_config > /dev/null 2>&1
-      [ "$full" -ge "$FULL_SECONDS" ] && [ "$AUTO_ROMS" = 1 ] && cmd_roms > /dev/null 2>&1
+      [ "$full_pass" = 1 ] && cmd_config > /dev/null 2>&1
+      [ "$full_pass" = 1 ] && [ "$AUTO_ROMS" = 1 ] && cmd_roms > /dev/null 2>&1
     fi
     sleep "$WATCH_SECONDS"; since=$((since + WATCH_SECONDS))
   done

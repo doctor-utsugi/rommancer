@@ -2430,3 +2430,40 @@ test('NextUI and ArkOS: minarch save and state names, a NextUI save reaching an 
   assert.equal(acard.writes.get('tools/wifikeyfile.txt'), 'ssid="Casa"\npsk="casa-pass"\n');
   assert.deepEqual(acard.notes.sort(), ['raInternal', 'wifiOneAtBoot:Casa']);
 });
+
+test('sync client daemon: a full pass that hashed roms still applies the settings (its pass flag is not clobbered)', async () => {
+  const dir = path.join(DATA, 'daemon-config');
+  fs.rmSync(dir, { recursive: true, force: true });
+  // A copy of the client: the daemon updates itself from the server and must not touch the repository
+  const bin = path.join(dir, 'bin');
+  fs.mkdirSync(bin, { recursive: true });
+  for (const f of ['rommancer-sync.sh', 'cacert.pem']) fs.copyFileSync(path.join(ROOT, 'clients/linux', f), path.join(bin, f));
+  const root = path.join(dir, 'storage');
+  const cfg = path.join(root, '.config/system/configs/system.cfg');
+  fs.mkdirSync(path.dirname(cfg), { recursive: true });
+  fs.writeFileSync(cfg, 'global.retroachievements=0\n');
+  fs.mkdirSync(path.join(root, 'roms/gba'), { recursive: true });
+  fs.writeFileSync(path.join(root, 'roms/gba/Hashed Game (USA).gba'), Buffer.alloc(4096, 3));
+  const env = { ...process.env, ROMMANCER_STATE: path.join(dir, 'state'), ROMMANCER_ROOT: root, ROMMANCER_SYSROOT: path.join(dir, 'sys'), ROMMANCER_FIRMWARE: 'rocknix', ROMMANCER_NAME: 'daemon-rocknix', ROMMANCER_MODEL: 'Anbernic RG353V', ROMMANCER_WIFI_BANDS: '', ROMMANCER_WATCH_SECONDS: '1', TMPDIR: path.join(dir, 'tmp') };
+  fs.mkdirSync(env.TMPDIR, { recursive: true });
+  const client = path.join(bin, 'rommancer-sync.sh');
+  const linking = execFileP('sh', [client, 'link', base], { env });
+  const codeFile = path.join(dir, 'state', 'code.txt');
+  for (let i = 0; i < 50 && !fs.existsSync(codeFile); i++) await new Promise((r) => setTimeout(r, 100));
+  const code = fs.readFileSync(codeFile, 'utf8').split('\n')[0];
+  const info = await api('GET', `/link/${code}`);
+  await api('POST', `/link/${code}/approve`, { name: 'daemon-rocknix', consoleId: info.json.suggestedConsoleId, firmwareId: info.json.suggestedFirmwareId });
+  await linking;
+  const { spawn } = await import('node:child_process');
+  const daemon = spawn('sh', [client, 'daemon'], { env, stdio: 'ignore', detached: true });
+  try {
+    let text = '';
+    for (let i = 0; i < 60 && !/^global\.retroachievements=1$/m.test(text); i++) {
+      await new Promise((r) => setTimeout(r, 500));
+      text = fs.readFileSync(cfg, 'utf8');
+    }
+    assert.match(text, /^global\.retroachievements=1$/m, 'the first full pass applies the settings by itself');
+  } finally {
+    process.kill(-daemon.pid!, 'SIGTERM');
+  }
+});
