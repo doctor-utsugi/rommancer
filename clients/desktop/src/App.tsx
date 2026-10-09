@@ -44,8 +44,9 @@ interface Finished {
 }
 
 const api = <T,>(method: string, path: string, body?: unknown) => invoke<T>('api', { method, path, body })
-// The guides page takes the place of a card in the sidebar selection
+// The guides and console settings pages take the place of a card in the sidebar selection
 const GUIDES = '__guides'
+const SETTINGS = '__settings'
 
 const LANG_KEY = 'rommancer-lang'
 const savedLang = (): Lang | '' => {
@@ -163,7 +164,7 @@ function Main({ status, onChange }: { status: Status; onChange: () => void }) {
   }, [loadCards, onChange])
 
   useEffect(() => {
-    if (selected === GUIDES) return
+    if (selected === GUIDES || selected === SETTINGS) return
     if (!selected && cards.length) setSelected(cards[0].root)
     if (selected && !cards.some((c) => c.root === selected)) setSelected(cards[0]?.root ?? null)
   }, [cards, selected])
@@ -238,6 +239,10 @@ function Main({ status, onChange }: { status: Status; onChange: () => void }) {
         <button className="ghost" onClick={() => void addFolder()}>
           + {t('addFolder')}
         </button>
+        <button className={selected === SETTINGS ? 'card active guides-link' : 'card guides-link'} onClick={() => setSelected(SETTINGS)}>
+          <span className="icon">🏆</span>
+          <span className="grow title">{t('consoleSettings')}</span>
+        </button>
         <button className={selected === GUIDES ? 'card active guides-link' : 'card guides-link'} onClick={() => setSelected(GUIDES)}>
           <span className="icon">📘</span>
           <span className="grow title">{t('guidesNav')}</span>
@@ -254,6 +259,8 @@ function Main({ status, onChange }: { status: Status; onChange: () => void }) {
         )}
         {selected === GUIDES ? (
           <Guides server={status.server} />
+        ) : selected === SETTINGS ? (
+          <ConsoleSettings />
         ) : card ? (
           <CardView key={card.root} card={card} progress={progress[card.root]} result={results[card.root]} syncing={syncing.has(card.root)} onChange={loadCards} />
         ) : (
@@ -757,12 +764,150 @@ function Lists({ deviceId, name, onCopy }: { deviceId: number; name: string; onC
 }
 
 /** Quick guides per kind of console, with the downloads the server offers */
+interface ConsoleSettingsData {
+  ra: { username: string | null; hasPassword: boolean; hasToken: boolean }
+  wifi: { id: number; ssid: string; hasPassword: boolean; band: string; hidden: boolean }[]
+}
+
+/** The same settings as the web profile: the RetroAchievements login and WiFi networks pushed to every console */
+function ConsoleSettings() {
+  const [s, setS] = useState<ConsoleSettingsData | null>(null)
+  const [ra, setRa] = useState({ username: '', password: '' })
+  const [net, setNet] = useState({ ssid: '', password: '', band: 'dual', hidden: false })
+  const [busy, setBusy] = useState(false)
+  const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null)
+  const load = useCallback(() => void api<ConsoleSettingsData>('GET', '/settings/consoles').then(setS, (e) => setMsg({ ok: false, text: String(e) })), [])
+  useEffect(load, [load])
+  const run = async (f: () => Promise<unknown>, ok?: string) => {
+    setBusy(true)
+    setMsg(null)
+    try {
+      await f()
+      if (ok) setMsg({ ok: true, text: ok })
+      load()
+    } catch (e) {
+      setMsg({ ok: false, text: String(e) })
+    } finally {
+      setBusy(false)
+    }
+  }
+  const move = (i: number, d: number) => {
+    const ids = s!.wifi.map((w) => w.id)
+    ;[ids[i], ids[i + d]] = [ids[i + d], ids[i]]
+    void run(() => api('PUT', '/settings/consoles/wifi-order', { ids }))
+  }
+  const bands = (
+    <>
+      <option value="dual">{t('bandDual')}</option>
+      <option value="2.4">2.4 GHz</option>
+      <option value="5">{t('band5')}</option>
+    </>
+  )
+  return (
+    <div className="cardview">
+      <h1>{t('consoleSettings')}</h1>
+      <p className="muted small">{t('consoleSettingsHelp')}</p>
+      {msg && <p className={msg.ok ? 'ok' : 'error'}>{msg.text}</p>}
+      <div className="panel">
+        <h2>
+          RetroAchievements{' '}
+          <span className={s?.ra.hasPassword ? 'ok small' : 'muted small'}>{s?.ra.hasPassword ? `· ${s.ra.username}` : `· ${t('raNotSet')}`}</span>
+        </h2>
+        <p className="muted small">{t('raHelp')}</p>
+        <div className="row wrap">
+          <label className="grow">
+            {t('username')}
+            <input value={ra.username} placeholder={s?.ra.username ?? ''} onChange={(e) => setRa({ ...ra, username: e.target.value })} autoComplete="off" />
+          </label>
+          <label className="grow">
+            {t('raPassword')}
+            <input type="password" value={ra.password} onChange={(e) => setRa({ ...ra, password: e.target.value })} autoComplete="new-password" />
+          </label>
+        </div>
+        <div className="row">
+          <button
+            className="primary"
+            disabled={busy || !(ra.username || s?.ra.username) || !ra.password}
+            onClick={() => void run(() => api('PUT', '/settings/consoles/ra', { username: ra.username || s?.ra.username, password: ra.password }).then(() => setRa({ username: '', password: '' })), t('raOk'))}
+          >
+            {t('raCheck')}
+          </button>
+          {s?.ra.hasPassword && (
+            <button className="ghost danger" disabled={busy} onClick={() => void run(() => api('DELETE', '/settings/consoles/ra'))}>
+              {t('remove')}
+            </button>
+          )}
+        </div>
+      </div>
+      <div className="panel">
+        <h2>{t('wifiTitle')}</h2>
+        <p className="muted small">{t('wifiHelp')}</p>
+        {s?.wifi.map((w, i) => (
+          <div key={w.id} className="row">
+            <span className="grow">
+              {w.ssid}
+              {!w.hasPassword && <span className="muted small"> · {t('wifiOpen')}</span>}
+            </span>
+            <select value={w.band} style={{ width: 'auto' }} onChange={(e) => void run(() => api('PATCH', `/settings/consoles/wifi/${w.id}`, { band: e.target.value }))}>
+              {bands}
+            </select>
+            <label className="check">
+              <input type="checkbox" checked={w.hidden} onChange={(e) => void run(() => api('PATCH', `/settings/consoles/wifi/${w.id}`, { hidden: e.target.checked }))} />
+              {t('wifiHidden')}
+            </label>
+            <button className="small-btn" disabled={busy || i === 0} onClick={() => move(i, -1)} title={t('up')}>
+              ↑
+            </button>
+            <button className="small-btn" disabled={busy || i === s.wifi.length - 1} onClick={() => move(i, 1)} title={t('down')}>
+              ↓
+            </button>
+            <button className="small-btn danger" disabled={busy} onClick={() => void run(() => api('DELETE', `/settings/consoles/wifi/${w.id}`))} title={t('remove')}>
+              ✕
+            </button>
+          </div>
+        ))}
+        <div className="row wrap">
+          <label className="grow">
+            {t('ssid')}
+            <input value={net.ssid} onChange={(e) => setNet({ ...net, ssid: e.target.value })} autoComplete="off" />
+          </label>
+          <label className="grow">
+            {t('wifiPassword')}
+            <input type="password" value={net.password} placeholder={t('wifiPasswordHint')} onChange={(e) => setNet({ ...net, password: e.target.value })} autoComplete="new-password" />
+          </label>
+          <label>
+            {t('band')}
+            <select value={net.band} onChange={(e) => setNet({ ...net, band: e.target.value })}>
+              {bands}
+            </select>
+          </label>
+        </div>
+        <p className="muted small">{t('bandHelp')}</p>
+        <div className="row">
+          <label className="check grow">
+            <input type="checkbox" checked={net.hidden} onChange={(e) => setNet({ ...net, hidden: e.target.checked })} />
+            {t('wifiHiddenLong')}
+          </label>
+          <button
+            className="primary"
+            disabled={busy || !net.ssid || (!!net.password && net.password.length < 8)}
+            onClick={() => void run(() => api('POST', '/settings/consoles/wifi', { ...net, password: net.password || null }).then(() => setNet({ ssid: '', password: '', band: 'dual', hidden: false })))}
+          >
+            {t('addWifi')}
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 function Guides({ server }: { server: string }) {
   const base = server.replace(/\/+$/, '')
   const command = `wget -O rommancer-sync.sh ${base}/api/v1/link/client.sh && sh rommancer-sync.sh link ${base}`
   const cards: { key: string; devices: string; links: { label: string; url: string }[]; command?: string }[] = [
     { key: 'knulli', devices: 'Anbernic RG40XX, RG35XX, RG406H…', links: [{ label: t('fromWeb'), url: `${base}/guides` }] },
     { key: 'onion', devices: 'Miyoo Mini, Miyoo Mini Plus', links: [{ label: t('fromWeb'), url: `${base}/guides` }] },
+    { key: 'arkos', devices: 'Anbernic RG353, RG503, Powkiddy RGB30…', links: [{ label: t('fromWeb'), url: `${base}/guides` }] },
     { key: 'android', devices: 'AYN Thor, AYN Odin, Retroid Pocket…', links: [{ label: 'Android (.apk)', url: `${base}/api/v1/link/android/rommancer-sync.apk` }] },
     {
       key: 'pc',
