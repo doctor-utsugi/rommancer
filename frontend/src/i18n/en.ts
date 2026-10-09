@@ -199,7 +199,7 @@ export const en: Dict = {
     savesRoot: 'Saves folder',
     statesRoot: 'Savestates folder',
     savesLayout: 'Saves organization',
-    layouts: { flat: 'Single folder', system: 'Folder per system', core: 'Folder per core', rom: 'Next to the rom', 'rom-core': 'Next to the rom, folder per core', 'rom-saves': 'Saves folder next to the roms', beside: 'Next to each rom, in any folder' },
+    layouts: { flat: 'Single folder', system: 'Folder per system', core: 'Folder per core', rom: 'Next to the rom', 'rom-core': 'Next to the rom, folder per core', 'rom-saves': 'Saves folder next to the roms', beside: 'Next to each rom, in any folder', minui: 'NextUI/MinUI (Saves/<tag>, states in .userdata)' },
     folders: 'Folders per system',
     emulator: 'Emulator',
     testOk: 'Connection OK',

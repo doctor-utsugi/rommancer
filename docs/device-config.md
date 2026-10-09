@@ -27,9 +27,6 @@ A device is only given networks it can see. Its bands come from, in this order:
 
 A 2.4 GHz device skips networks marked `5 GHz only`; a device without WiFi gets none.
 
-ArkOS and NextUI are not supported yet: Rommancer does not know their folders, and ArkOS imports one network
-only when it is in range.
-
 Networks Rommancer does not manage (set up on the console itself) are kept. Networks it manages and that no
 longer apply (removed from your list, or not visible to that device) are removed.
 
@@ -41,6 +38,8 @@ longer apply (removed from your list, or not visible to that device) are removed
 | Onion | `RetroArch/.retroarch/retroarch.cfg` (`cheevos_*`, token) | `/appconfigs/wpa_supplicant.conf` (internal memory) | `retroarch.cfg` and overrides, `.tmp_update/config/`, profile config, `/appconfigs/system.json`, `wpa_supplicant.conf` |
 | muOS | `/opt/muos/share/info/config/retroarch.cfg` and `retroarch.cheevos.cfg` (appended at each launch; internal) | one profile per network in `MUOS/network/rommancer-*.ini` on the card (`pass` is the derived 64-hex key; priority 1 wins) | the network profiles and both RetroArch files |
 | ROCKNIX | `.config/system/configs/system.cfg` (`global.retroachievements.*`, password; RetroArch's config is rebuilt from it) | NetworkManager keyfiles `rommancer-*.nmconnection` in `/storage/.config/NetworkManager/system-connections/`, mode 600 (only the console or SSH writes them) | `system.cfg` and the keyfiles |
+| ArkOS, dArkOS | `cheevos_*` in both `/home/ark/.config/retroarch/retroarch.cfg` and `retroarch32/retroarch.cfg` (token; EmulationStation never rewrites them) | NetworkManager keyfiles in `/etc/NetworkManager/system-connections/`, mode 600 (the client runs as root). From the card (`/roms`) only `tools/wifikeyfile.txt`: ArkOS imports that one network at boot and keeps it only if it connects then | both `retroarch.cfg`, the keyfiles and `es_settings.cfg` |
+| NextUI | `.userdata/shared/minuisettings.txt` on the card (`raEnable`, `raUsername`, `raToken`, `raAuthenticated`; minarch logs in with the token only, so without one the user presses *Authenticate* once) | `wpa_supplicant.conf`: `/etc/wifi/` on TrimUI tg5040, `/etc/wifi/wpa_supplicant/` on tg5050 (internal), `.userdata/h700/wifi/` on the card for the H700 Anbernics | `minuisettings.txt` and the `wpa_supplicant.conf` found |
 | Android | RetroArch's `retroarch.cfg` (`RetroArch/` or `Android/data/com.retroarch*/files/`) and PPSSPP's `PSP/SYSTEM/ppsspp.ini` (`[Achievements]`) with its token in `ppsspp_retroachievements.dat` | handed to Android with `ACTION_WIFI_ADD_NETWORKS`: the user confirms them in a system dialog | those files and ES-DE's `es_settings.xml` |
 
 Nothing is reloaded live. RetroArch reads its config at the next game, and the firmwares read WiFi networks at

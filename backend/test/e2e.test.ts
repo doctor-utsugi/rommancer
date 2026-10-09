@@ -2345,3 +2345,81 @@ test('device config: muOS profiles on the card and ROCKNIX NetworkManager keyfil
   assert.equal(fs.readdirSync(nm).length, 2);
   assert.equal(fs.readdirSync(net).filter((f) => f.startsWith('rommancer-')).length, 2);
 });
+
+test('NextUI and ArkOS: minarch save and state names, a NextUI save reaching an ArkOS console, and their settings', async () => {
+  const b64 = (s: string) => Buffer.from(s).toString('base64');
+  const claim = async (name: string, firmware: string, root: string) => {
+    const r = await api('POST', '/link/claim', { name, firmware, root, offline: true });
+    assert.equal(r.status, 201, JSON.stringify(r.json));
+    const token = r.json.token as string;
+    return (p: string, init: RequestInit = {}) =>
+      fetch(`${base}/api/v1/agent${p}`, { ...init, headers: { 'X-Device-Token': token, 'Content-Type': 'application/octet-stream', ...(init.headers ?? {}) } });
+  };
+  const next = await claim('brick', 'nextui', '/mnt/SDCARD');
+  const roots = await (await next('/roots')).text();
+  assert.match(roots, /^saves\t\/mnt\/SDCARD\/Saves$/m);
+  assert.match(roots, /^saves\t\/mnt\/SDCARD\/\.userdata\/shared$/m);
+  const rom = '/mnt/SDCARD/Roms/Game Boy Advance (GBA)/Minarch Quest (USA).gba';
+  const manifest = (await (await next('/manifest', { headers: { 'X-Rom-B64': b64(rom) } })).text()).trim().split('\n');
+  assert.equal(manifest[0], '/mnt/SDCARD/Saves/GBA/Minarch Quest (USA).gba.sav', 'named after the whole rom file, in the tag folder');
+  assert.ok(manifest.includes('/mnt/SDCARD/.userdata/shared/GBA-gpsp/Minarch Quest (USA).gba.st0'));
+  assert.ok(manifest.includes('/mnt/SDCARD/.userdata/shared/GBA-gpsp/Minarch Quest (USA).gba.st9'), 'the auto-resume state');
+  assert.ok(!manifest.some((p) => p.endsWith('.st8') || p.endsWith('.st')));
+  const save = manifest[0];
+  const state = '/mnt/SDCARD/.userdata/shared/GBA-gpsp/Minarch Quest (USA).gba.st9';
+  const sav = Buffer.alloc(0x8000, 7);
+  const plan = await (await next('/sync', { method: 'POST', body: `rom\t${rom}\t${'e'.repeat(40)}\nfile\t${save}\t${crypto.createHash('sha1').update(sav).digest('hex')}\nfile\t${state}\t${'f'.repeat(40)}\n` })).text();
+  assert.match(plan, new RegExp(`^put\t${save.replace(/[().]/g, '\\$&')}\t`, 'm'));
+  assert.match(plan, new RegExp(`^put\t${state.replace(/[().]/g, '\\$&')}\t`, 'm'));
+  for (const [p, body] of [[save, sav], [state, Buffer.from('state')]] as const) {
+    const up = await next('/upload', { method: 'POST', body, headers: { 'X-Rom-B64': b64(rom), 'X-Path-B64': b64(p) } });
+    assert.equal((await up.text()).trim(), 'uploaded', p);
+  }
+  const { prisma } = await import('../src/lib/prisma.js');
+  const stored = await prisma.save.findMany({ where: { baseName: 'Minarch Quest (USA)' }, include: { emulator: true } });
+  assert.deepEqual(stored.map((s) => `${s.emulator.slug} ${s.kind} ${s.slot}`).sort(), ['minui-gpsp SAVE 0', 'minui-gpsp STATE -1']);
+
+  // ArkOS keeps RetroArch's .srm next to the rom: the NextUI save is offered there, the state is not (other emulator)
+  const ark = await claim('rg353', 'arkos', '/roms');
+  const arkRoots = await (await ark('/roots')).text();
+  assert.match(arkRoots, /^roms\t\/roms$/m);
+  const arkPlan = await (await ark('/sync', { method: 'POST', body: `rom\t/roms/gba/Minarch Quest (USA).gba\t${'e'.repeat(40)}\n` })).text();
+  assert.match(arkPlan, /^get\t\/roms\/gba\/Minarch Quest \(USA\)\.srm\t\d+\t/m);
+  assert.ok(!arkPlan.includes('.state'));
+
+  const { adapterFor, wpaPsk } = await import('../src/modules/devconfig/adapters.js');
+  const want = { ra: { username: 'raplayer', password: 'pw', token: 'TOK' }, wifi: [{ ssid: 'Casa', password: 'casa-pass', hidden: false }, { ssid: 'Oculta', password: 'x-pass', hidden: true }], managed: ['Casa', 'Oculta', 'Vieja'] };
+  // NextUI on a TrimUI: minuisettings.txt on the card, wpa_supplicant.conf inside the system
+  const nu = adapterFor('nextui')!;
+  const wpa = 'ctrl_interface=/etc/wifi/sockets\nupdate_config=1\n\nnetwork={\n\tssid="Vecino"\n\tpsk="v"\n}\n';
+  const files = new Map<string, string | null>([['.userdata/shared/minuisettings.txt', 'font=1\nraEnable=0\n'], ['.userdata/h700/wifi/wpa_supplicant.conf', null], ['/etc/wifi/wpa_supplicant/wpa_supplicant.conf', null], ['/etc/wifi/wpa_supplicant.conf', wpa]]);
+  const out = nu.apply(want, files, () => true);
+  assert.deepEqual(out.notes, []);
+  const cfg = out.writes.get('.userdata/shared/minuisettings.txt')!;
+  assert.match(cfg, /^font=1\nraEnable=1\n/);
+  for (const line of ['raUsername=raplayer', 'raToken=TOK', 'raAuthenticated=1']) assert.ok(cfg.split('\n').includes(line), line);
+  const conf = out.writes.get('/etc/wifi/wpa_supplicant.conf')!;
+  assert.match(conf, /^ctrl_interface=\/etc\/wifi\/sockets/);
+  assert.match(conf, /ssid="Oculta"\n\tpsk="x-pass"\n\tscan_ssid=1/);
+  assert.ok(conf.includes('ssid="Vecino"'), 'networks made on the console stay');
+  // From its card a TrimUI only gets RetroAchievements; without a token the user authenticates once
+  const card = nu.apply({ ...want, ra: { ...want.ra, token: null } }, new Map([['.userdata/shared/minuisettings.txt', null], ['.userdata/h700/wifi/wpa_supplicant.conf', null]]), (f) => !f.startsWith('/'));
+  assert.deepEqual(card.notes.sort(), ['raAuthenticate', 'wifiInternal']);
+  assert.match(card.writes.get('.userdata/shared/minuisettings.txt')!, /^raEnable=1\nraUsername=raplayer\nraPassword=pw\n$/);
+
+  // ArkOS: both RetroArch builds and NetworkManager; from the card, its one-network importer
+  const ak = adapterFor('arkos')!;
+  const ra64 = '/home/ark/.config/retroarch/retroarch.cfg';
+  const ra32 = '/home/ark/.config/retroarch32/retroarch.cfg';
+  const nm = '/etc/NetworkManager/system-connections/';
+  const aout = ak.apply(want, new Map<string, string | null>([[ra64, 'cheevos_enable = "false"\ncheevos_token = ""\n'], [ra32, 'cheevos_enable = "false"\n'], [`${nm}rommancer-vieja-abc123.nmconnection`, 'x'], [`${nm}MiRed.nmconnection`, 'y']]), () => true);
+  for (const f of [ra64, ra32]) assert.match(aout.writes.get(f)!, /^cheevos_enable = "true"$[\s\S]*^cheevos_token = "TOK"$/m);
+  const keyfiles = [...aout.writes.keys()].filter((f) => f.startsWith(nm));
+  assert.equal(keyfiles.length, 2);
+  assert.ok(keyfiles.every((f) => aout.modes?.[f] === '600'));
+  assert.ok(aout.writes.get(keyfiles.find((f) => f.includes('rommancer-casa-'))!)!.includes(`psk=${wpaPsk('Casa', 'casa-pass')}`));
+  assert.deepEqual(aout.deletes, [`${nm}rommancer-vieja-abc123.nmconnection`]);
+  const acard = ak.apply(want, new Map(), (f) => !f.startsWith('/'));
+  assert.equal(acard.writes.get('tools/wifikeyfile.txt'), 'ssid="Casa"\npsk="casa-pass"\n');
+  assert.deepEqual(acard.notes.sort(), ['raInternal', 'wifiOneAtBoot:Casa']);
+});

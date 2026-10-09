@@ -3,19 +3,21 @@ import path from 'node:path';
 import { prisma } from '../../lib/prisma.js';
 import { enqueue, registerJob, type JobContext } from '../../lib/jobs.js';
 import { layoutOf, openSink, type Sink } from '../devices/sink.js';
-import { parseSaveFile } from './service.js';
+import { parseDeviceSave } from './service.js';
 import { contentFor, decide, deviceFileName, findLogicalSave, receiveFromDevice, saveDirs, setBase, sha1 } from './core.js';
 import { identifyRom } from './service.js';
 
 /** Nombre base de la rom en el dispositivo (para que el emulador encuentre el save). */
-async function deviceRomBase(sink: Sink, romsDir: string, romName: string | null, fallback: string, cache: Map<string, string[]>): Promise<string> {
-  if (!cache.has(romsDir)) cache.set(romsDir, (await sink.list(romsDir)).filter((e) => !e.isDir).map((e) => e.name.replace(/\.[^.]+$/, '')));
-  const names = cache.get(romsDir)!;
-  if (romName && names.includes(romName)) return romName;
-  if (names.includes(fallback)) return fallback;
+/** withExt: NextUI names saves after the rom's whole file name, so the match keeps its extension */
+async function deviceRomBase(sink: Sink, romsDir: string, romName: string | null, fallback: string, cache: Map<string, string[]>, withExt = false): Promise<string | null> {
+  if (!cache.has(romsDir)) cache.set(romsDir, (await sink.list(romsDir)).filter((e) => !e.isDir).map((e) => e.name));
+  const files = cache.get(romsDir)!;
+  const noExt = (n: string) => n.replace(/\.[^.]+$/, '');
   const strip = (s: string) => s.replace(/\s*[([].*$/, '').toLowerCase();
   const target = strip(romName ?? fallback);
-  return names.find((n) => strip(n) === target) ?? romName ?? fallback;
+  const hit = files.find((f) => noExt(f) === romName) ?? files.find((f) => noExt(f) === fallback) ?? files.find((f) => strip(noExt(f)) === target);
+  if (withExt) return hit ?? null;
+  return hit ? noExt(hit) : (romName ?? fallback);
 }
 
 /** Sincronizacion de saves con un dispositivo accesible por SD montada o SSH. */
@@ -38,7 +40,7 @@ export async function syncDeviceSaves(deviceId: number, direction: 'pull' | 'pus
           for (const e of await sink.list(dir)) {
             const full = path.posix.join(dir, e.name);
             if (e.isDir || visited.has(full)) continue;
-            const parsed = parseSaveFile(e.name, emu);
+            const parsed = parseDeviceSave(e.name, emu, layout.savesLayout);
             if (!parsed) continue;
             // En carpetas compartidas por varios sistemas se decide por la rom
             if (layout.savesLayout === 'flat') {
@@ -72,8 +74,11 @@ export async function syncDeviceSaves(deviceId: number, direction: 'pull' | 'pus
         if (!logical || done.has(`${logical.id}`)) continue;
         done.add(`${logical.id}`);
         const dirs = saveDirs(layout, slug, target);
-        const base = await deviceRomBase(sink, dirs.roms, s.rom?.name ?? null, s.baseName, romCache);
-        const dest = path.posix.join(s.kind === 'SAVE' ? dirs.saves : dirs.states, deviceFileName(base, target, s.kind, s.slot));
+        const minui = layout.savesLayout === 'minui';
+        const base = await deviceRomBase(sink, dirs.roms, s.rom?.name ?? null, s.baseName, romCache, minui);
+        // Without its rom on the card a NextUI save has no name to take
+        if (base === null || (minui && s.kind === 'STATE' && s.slot > 7)) continue;
+        const dest = path.posix.join(s.kind === 'SAVE' ? dirs.saves : dirs.states, deviceFileName(base, target, s.kind, s.slot, minui));
         const exists = await sink.stat(dest);
         const deviceBuf = exists ? await sink.getBuffer(dest) : null;
         const d = await decide(logical, device, target, deviceBuf ? { sha1: sha1(deviceBuf) } : null);

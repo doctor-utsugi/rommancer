@@ -121,8 +121,11 @@ function candidatePaths(ctx: RomCtx, emu: Emulator = ctx.emu) {
   // "beside": flashcarts keep each save next to its rom, in whatever folder the rom is
   const dirs = ctx.layout.savesLayout === 'beside' ? { saves: path.posix.dirname(ctx.rel), states: path.posix.dirname(ctx.rel) } : saveDirs(ctx.layout, ctx.slug, ctx.emu);
   const abs = (p: string) => path.posix.join(ctx.root, p);
-  const files: { kind: 'SAVE' | 'STATE'; slot: number; path: string }[] = [{ kind: 'SAVE', slot: 0, path: abs(path.posix.join(dirs.saves, deviceFileName(ctx.baseName, ctx.emu, 'SAVE', 0))) }];
-  if (ctx.emu.stateExt) for (const slot of [-1, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9]) files.push({ kind: 'STATE', slot, path: abs(path.posix.join(dirs.states, deviceFileName(ctx.baseName, ctx.emu, 'STATE', slot))) });
+  const minui = ctx.layout.savesLayout === 'minui';
+  const base = minui ? path.posix.basename(ctx.rel) : ctx.baseName;
+  const files: { kind: 'SAVE' | 'STATE'; slot: number; path: string }[] = [{ kind: 'SAVE', slot: 0, path: abs(path.posix.join(dirs.saves, deviceFileName(base, ctx.emu, 'SAVE', 0))) }];
+  const slots = minui ? [-1, 0, 1, 2, 3, 4, 5, 6, 7] : [-1, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9];
+  if (ctx.emu.stateExt) for (const slot of slots) files.push({ kind: 'STATE', slot, path: abs(path.posix.join(dirs.states, deviceFileName(base, ctx.emu, 'STATE', slot, minui))) });
   return files;
 }
 
@@ -570,7 +573,7 @@ agentRouter.post('/upload', express.raw({ limit: '128mb', type: '*/*' }), async 
   const ctx = await romContext(device, b64(req.header('x-rom-b64')));
   const filePath = b64(req.header('x-path-b64'));
   const emu = await emulatorForPath(ctx, filePath);
-  const parsed = parseSaveFile(path.posix.basename(filePath), emu);
+  const parsed = candidatePaths(ctx, emu).find((f) => f.path === filePath) ?? parseSaveFile(path.posix.basename(filePath), emu);
   if (!parsed) throw badRequest('Not a save file for this emulator');
   const buf = Buffer.isBuffer(req.body) ? req.body : Buffer.alloc(0);
   if (!buf.length) throw badRequest('Empty file');

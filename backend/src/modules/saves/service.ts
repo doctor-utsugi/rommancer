@@ -53,6 +53,14 @@ export function parseSaveFile(name: string, emu: Emulator): { kind: SaveKind; sl
   return null;
 }
 
+/** A save file as found on a device; NextUI names it after the whole rom file ("Game.gba.sav", "Game.gba.st9") */
+export function parseDeviceSave(name: string, emu: Emulator, savesLayout: string) {
+  const parsed = parseSaveFile(name, emu);
+  if (!parsed || savesLayout !== 'minui') return parsed;
+  if (parsed.kind === 'STATE' && parsed.slot === 8) return null;
+  return { ...parsed, baseName: parsed.baseName.replace(/\.[^.]+$/, ''), slot: parsed.kind === 'STATE' && parsed.slot === 9 ? -1 : parsed.slot };
+}
+
 export async function storeVersion(key: SaveKey, buf: Buffer, fileMtime: Date, opts: { sourceDeviceId?: number; note?: string; gameId?: number | null; romId?: number | null; force?: boolean; makeCurrent?: boolean } = {}) {
   const sha1 = crypto.createHash('sha1').update(buf).digest('hex');
   let save = await prisma.save.findUnique({

@@ -254,6 +254,24 @@ const muos: Adapter = {
   },
 };
 
+/** NetworkManager keyfiles, one per network, mode 600 (NetworkManager ignores readable ones) */
+function nmKeyfiles(dir: string, want: DesiredSettings, files: Map<string, string | null>): Pick<Applied, 'writes' | 'deletes' | 'modes'> {
+  const uuid = (ssid: string) => {
+    const h = crypto.createHash('sha1').update(`rommancer:${ssid}`).digest('hex');
+    return `${h.slice(0, 8)}-${h.slice(8, 12)}-5${h.slice(13, 16)}-a${h.slice(17, 20)}-${h.slice(20, 32)}`;
+  };
+  // Higher autoconnect-priority wins in NetworkManager
+  const net = networkFiles(dir, 'nmconnection', want, files, (w, i) =>
+    [
+      '[connection]', `id=${w.ssid}`, `uuid=${uuid(w.ssid)}`, 'type=wifi', 'autoconnect=true', `autoconnect-priority=${(want.wifi.length - i) * 10}`, '',
+      '[wifi]', 'mode=infrastructure', `ssid=${w.ssid}`, ...(w.hidden ? ['hidden=true'] : []), '',
+      ...(w.password ? ['[wifi-security]', 'key-mgmt=wpa-psk', `psk=${wpaPsk(w.ssid, w.password)}`, ''] : []),
+      '[ipv4]', 'method=auto', '', '[ipv6]', 'method=auto', '',
+    ].join('\n'),
+  );
+  return { writes: net.writes, deletes: net.deletes, modes: Object.fromEntries([...net.writes.keys()].map((f) => [f, '600'])) };
+}
+
 /** ROCKNIX: RetroAchievements in system.cfg (RetroArch's config is rebuilt from it at each launch), WiFi as NetworkManager keyfiles */
 const ROCKNIX_CFG = '.config/system/configs/system.cfg';
 const ROCKNIX_NM = '/storage/.config/NetworkManager/system-connections/';
@@ -281,23 +299,9 @@ const rocknix: Adapter = {
     if (want.wifi.length || want.managed.length) {
       if (!reach(ROCKNIX_NM)) notes.push(note('wifiInternal'));
       else {
-        const uuid = (ssid: string) => {
-          const h = crypto.createHash('sha1').update(`rommancer:${ssid}`).digest('hex');
-          return `${h.slice(0, 8)}-${h.slice(8, 12)}-5${h.slice(13, 16)}-a${h.slice(17, 20)}-${h.slice(20, 32)}`;
-        };
-        // Higher autoconnect-priority wins in NetworkManager
-        const net = networkFiles(ROCKNIX_NM, 'nmconnection', want, files, (w, i) =>
-          [
-            '[connection]', `id=${w.ssid}`, `uuid=${uuid(w.ssid)}`, 'type=wifi', 'autoconnect=true', `autoconnect-priority=${(want.wifi.length - i) * 10}`, '',
-            '[wifi]', 'mode=infrastructure', `ssid=${w.ssid}`, ...(w.hidden ? ['hidden=true'] : []), '',
-            ...(w.password ? ['[wifi-security]', 'key-mgmt=wpa-psk', `psk=${wpaPsk(w.ssid, w.password)}`, ''] : []),
-            '[ipv4]', 'method=auto', '', '[ipv6]', 'method=auto', '',
-          ].join('\n'),
-        );
-        for (const [f, t] of net.writes) {
-          writes.set(f, t);
-          modes[f] = '600';
-        }
+        const net = nmKeyfiles(ROCKNIX_NM, want, files);
+        for (const [f, t] of net.writes) writes.set(f, t);
+        Object.assign(modes, net.modes);
         deletes = net.deletes ?? [];
       }
     }
@@ -362,6 +366,82 @@ const android: Adapter = {
   },
 };
 
+/** ArkOS/dArkOS: the cheevos_* keys of both RetroArch builds (nothing rewrites them at launch), WiFi as NetworkManager keyfiles.
+ * The card (/roms) only reaches its importer, which takes one network at boot and keeps it if it connects then */
+const ARK_RA = ['/home/ark/.config/retroarch/retroarch.cfg', '/home/ark/.config/retroarch32/retroarch.cfg'];
+const ARK_NM = '/etc/NetworkManager/system-connections/';
+const ARK_IMPORT = 'tools/wifikeyfile.txt';
+const arkos: Adapter = {
+  backup: [...ARK_RA, ARK_NM, '/home/ark/.emulationstation/es_settings.cfg'],
+  settingsFiles: [...ARK_RA, ARK_NM],
+  apply(want, files, reach) {
+    const notes: string[] = [];
+    const writes = new Map<string, string>();
+    if (want.ra) {
+      if (!reach(ARK_RA[0])) notes.push(note('raInternal'));
+      else {
+        let found = 0;
+        for (const f of ARK_RA) {
+          const text = files.get(f);
+          if (text == null) continue;
+          found++;
+          const next = setRetroArch(text, raKeys(want.ra));
+          if (next !== text) writes.set(f, next);
+        }
+        if (!found) notes.push(note('missing', ARK_RA[0]));
+      }
+    }
+    if (!want.wifi.length && !want.managed.length) return { writes, notes };
+    if (reach(ARK_NM)) {
+      const net = nmKeyfiles(ARK_NM, want, files);
+      for (const [f, t] of net.writes) writes.set(f, t);
+      return { writes, notes, modes: net.modes, deletes: net.deletes };
+    }
+    const first = want.wifi.find((w) => !w.hidden && w.password && !/["\n]/.test(w.ssid + w.password));
+    if (first) {
+      writes.set(ARK_IMPORT, `ssid="${first.ssid}"\npsk="${first.password}"\n`);
+      notes.push(note('wifiOneAtBoot', first.ssid));
+    } else notes.push(note('wifiInternal'));
+    return { writes, notes };
+  },
+};
+
+/** NextUI: RetroAchievements in minuisettings.txt on the card; WiFi in wpa_supplicant.conf, internal on TrimUI
+ * (tg5040, tg5050) and on the card on the H700 Anbernics */
+const NEXTUI_CFG = '.userdata/shared/minuisettings.txt';
+const NEXTUI_WPA = ['.userdata/h700/wifi/wpa_supplicant.conf', '/etc/wifi/wpa_supplicant/wpa_supplicant.conf', '/etc/wifi/wpa_supplicant.conf'];
+const nextui: Adapter = {
+  backup: [NEXTUI_CFG, ...NEXTUI_WPA],
+  settingsFiles: [NEXTUI_CFG, ...NEXTUI_WPA],
+  apply(want, files) {
+    const notes: string[] = [];
+    const writes = new Map<string, string>();
+    if (want.ra) {
+      // A card that never saved its settings has no file yet: NextUI takes defaults for every key left out
+      const text = files.get(NEXTUI_CFG) ?? '';
+      // minarch logs in with the token only; without one the user presses Authenticate in Settings
+      if (!want.ra.token) notes.push(note('raAuthenticate'));
+      const next = setKeys(text, {
+        raEnable: '1',
+        raUsername: want.ra.username,
+        ...(want.ra.password ? { raPassword: want.ra.password } : {}),
+        ...(want.ra.token ? { raToken: want.ra.token, raServerUsername: want.ra.username, raAuthenticated: '1' } : {}),
+      });
+      if (next !== text) writes.set(NEXTUI_CFG, next);
+    }
+    if (want.wifi.length || want.managed.length) {
+      const wpa = NEXTUI_WPA.find((f) => typeof files.get(f) === 'string');
+      if (wpa) {
+        const text = files.get(wpa)!;
+        const next = setWpaNetworks(text, want.wifi, want.managed);
+        if (next !== text) writes.set(wpa, next);
+      } else if (NEXTUI_WPA.some((f) => !files.has(f))) notes.push(note('wifiInternal'));
+      else notes.push(note('missing', 'wpa_supplicant.conf'));
+    }
+    return { writes, notes };
+  },
+};
+
 const ADAPTERS: Record<string, Adapter> = {
   knulli: batocera('system/batocera.conf', [
     'system/batocera.conf',
@@ -377,6 +457,8 @@ ADAPTERS.batocera = ADAPTERS.knulli;
 ADAPTERS.muos = muos;
 ADAPTERS.rocknix = rocknix;
 ADAPTERS['android-esde'] = android;
+ADAPTERS.arkos = arkos;
+ADAPTERS.nextui = nextui;
 
 export const adapterFor = (firmwareSlug: string): Adapter | null => ADAPTERS[firmwareSlug] ?? null;
 export const isAbsolute = (p: string) => p.startsWith('/');

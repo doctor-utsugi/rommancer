@@ -226,7 +226,9 @@ type PackageFile = { name: string; content: string | Buffer; mode?: number };
 const ONION_DIR = 'App/RommancerSync';
 
 /** Files of an installer that the user unzips on the device's card or share. */
-function packageFiles(flavor: 'onion' | 'knulli', server: string, enrollToken: string): PackageFile[] {
+const FLAVORS = ['onion', 'knulli', 'arkos', 'nextui'] as const;
+
+function packageFiles(flavor: (typeof FLAVORS)[number], server: string, enrollToken: string): PackageFile[] {
   const script = fs.readFileSync(CLIENT_SCRIPT);
   const ca = fs.readFileSync(path.join(CLIENT_DIR, 'cacert.pem'));
   const common = (dir: string): PackageFile[] => [
@@ -245,6 +247,18 @@ function packageFiles(flavor: 'onion' | 'knulli', server: string, enrollToken: s
       { name: '.tmp_update/startup/rommancer-sync.sh', content: `#!/bin/sh\n[ -f /mnt/SDCARD/${ONION_DIR}/rommancer-sync.sh ] && (cd /mnt/SDCARD/${ONION_DIR} && sh rommancer-sync.sh boot > last-run.txt 2>&1 &)\n`, mode: 0o755 },
     ];
   }
+  // ArkOS: unzip on the EASYROMS partition (/roms); Options -> Tools runs the launcher as ark (from /opt/system/Tools), the client needs root
+  if (flavor === 'arkos') {
+    return [
+      ...common('rommancer'),
+      { name: 'tools/Rommancer Sync.sh', content: '#!/bin/bash\ncd /roms/rommancer 2>/dev/null || cd /roms2/rommancer || exit 1\nprintf "\\033c" > /dev/tty1\n{ [ ! -f enroll.txt ] || sudo -n sh rommancer-sync.sh enroll; } && sudo -n sh rommancer-sync.sh install && sudo -n sh rommancer-sync.sh sync && sudo -n systemctl restart rommancer-sync.service\nsleep 5\n', mode: 0o755 },
+    ];
+  }
+  // NextUI: unzip at the card's root; Tools -> Rommancer Sync links, installs the boot and game hooks and syncs
+  if (flavor === 'nextui') {
+    const launch = '#!/bin/sh\ncd /mnt/SDCARD/rommancer || exit 1\n{ [ ! -f enroll.txt ] || sh rommancer-sync.sh enroll; } > last-run.txt 2>&1\nsh rommancer-sync.sh install >> last-run.txt 2>&1\nsh rommancer-sync.sh sync >> last-run.txt 2>&1\n(nohup sh rommancer-sync.sh daemon >/dev/null 2>&1 &)\n';
+    return [...common('rommancer'), ...['tg5040', 'tg5050', 'h700'].map((plat) => ({ name: `Tools/${plat}/Rommancer Sync.pak/launch.sh`, content: launch, mode: 0o755 }))];
+  }
   // Knulli/Batocera: unzip on the "share" (/userdata); the port runs once and installs boot and game hooks
   return [
     ...common('system/rommancer'),
@@ -257,7 +271,7 @@ function packageFiles(flavor: 'onion' | 'knulli', server: string, enrollToken: s
 }
 
 linkRouter.get('/package/:flavor', async (req, res) => {
-  const flavor = z.enum(['onion', 'knulli']).parse(req.params.flavor);
+  const flavor = z.enum(FLAVORS).parse(req.params.flavor);
   const enroll = crypto.randomBytes(32).toString('base64url');
   let code = newCode();
   while (await prisma.deviceLink.findUnique({ where: { code } })) code = newCode();

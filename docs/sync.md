@@ -20,7 +20,8 @@ Alternatives for unattended setups:
 
 - **Installer package**: Devices > *Onion installer* / *Knulli / Batocera installer* in the web app downloads a
   zip that already carries the server address and a one-time enrolment token (valid 30 days, one console).
-  Unzip it on the SD card (Onion) or the `share` folder (Knulli/Batocera); the console links itself.
+  Unzip it on the SD card (Onion, NextUI), the `share` folder (Knulli/Batocera) or the EASYROMS partition
+  (ArkOS); the console links itself. The ArkOS and NextUI packages are in Guides & downloads.
 - **Pairing code**: `rommancer-sync.sh link SERVER` shows a code to approve at `SERVER/link`.
 
 ## Clients
@@ -29,6 +30,8 @@ Alternatives for unattended setups:
 |---|---|---|
 | Onion (Miyoo Mini) | `clients/linux/rommancer-sync.sh` | `rommancer-sync.sh setup`, built on Onion's `prompt` menu and `kbinput` keyboard |
 | Knulli, Batocera, ROCKNIX | `rommancer-sync.sh` + `rommancer-ui.py` | pygame app; buttons come from EmulationStation's `es_input.cfg` |
+| ArkOS, dArkOS | `rommancer-sync.sh` in `/roms/rommancer`, launcher in Options > Tools | the launcher links, installs and syncs (runs the client with `sudo`) |
+| NextUI | `rommancer-sync.sh` in `/mnt/SDCARD/rommancer`, `Tools/<platform>/Rommancer Sync.pak` | the pak links, installs and syncs |
 | muOS, PCs | `rommancer-sync.sh` | command line (`link`, `sync`, `daemon`) |
 | Android | `clients/android` (Kotlin, Compose) | two-column screen like the pygame app, gamepad navigation |
 | SD card only (Nintendo DS with TWiLight Menu++, consoles without network) | `rommancer-sync.sh sd MOUNT` on a computer | command line |
@@ -43,7 +46,13 @@ Client commands: `setup`, `link SERVER`, `enroll`, `sync`, `daemon`, `boot`, `in
 
 - **Linux daemon**: checks sizes and mtimes of the save files every 15 s and syncs once they have stayed unchanged
   for 3 s (an emulator may still be writing). Knulli/Batocera also sync right after a game ends (`gameStop` event)
-  and fetch the server's saves right before it starts.
+  and fetch the server's saves right before it starts. ArkOS does the same through EmulationStation's
+  `game-start`/`game-end` scripts (`~/.emulationstation/scripts/`), with the daemon as a systemd service, and
+  NextUI through its hooks (`.userdata/<platform>/.hooks/boot.d`, `pre-launch.d/*.sync.sh`, `post-launch.d`).
+- **NextUI names**: minarch keeps saves in `Saves/<tag>/<rom file with its extension>.sav` (the tag is the text
+  in the roms folder's last parentheses) and states in `.userdata/shared/<tag>-<core>/<rom file>.st0`..`.st7`,
+  `.st9` being the auto-resume one (layout `minui`). Only its default save format (*MinUI*) is understood. Saves
+  are shared with RetroArch consoles; states only between NextUI consoles with the same core.
 - **Android**: a foreground service (`WatchService`, with a silent notification) watches the save folders with
   `FileObserver` and syncs 5 s after the last write; it also polls the server every 15 s for requests from the web
   app and starts at boot. WorkManager runs a full pass every 15 minutes as a fallback. Menu: *Upload when saving*.

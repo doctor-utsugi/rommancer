@@ -20,8 +20,15 @@ const family = (f: string) => (f.startsWith('ps1') ? 'ps1' : f);
 
 export type DeviceWithFirmware = Device & { firmware: Firmware };
 
+/** NextUI/MinUI: the tag in a rom folder's last parentheses ("Game Boy Advance (GBA)" is GBA), or the whole name */
+export const minuiTag = (folder: string) => /\(([^()]*)\)[^()]*$/.exec(folder)?.[1] ?? folder;
+
 export function saveDirs(layout: DeviceLayout, slug: string, emu: Emulator) {
   const folder = layout.systemMap[slug]?.folder ?? slug;
+  if (layout.savesLayout === 'minui') {
+    const tag = minuiTag(folder);
+    return { saves: path.posix.join(layout.savesRoot, tag), states: path.posix.join(layout.statesRoot, `${tag}-${emu.slug.replace(/^minui-/, '')}`), roms: path.posix.join(layout.romsRoot, folder) };
+  }
   const sub = (root: string) => {
     switch (layout.savesLayout) {
       case 'system':
@@ -45,8 +52,10 @@ export function saveDirs(layout: DeviceLayout, slug: string, emu: Emulator) {
 }
 
 /** Nombre del fichero en el dispositivo para un save de un tipo y ranura. */
-export function deviceFileName(base: string, emu: Emulator, kind: SaveKind, slot: number) {
+export function deviceFileName(base: string, emu: Emulator, kind: SaveKind, slot: number, minui = false) {
   if (kind === 'SAVE') return base + emu.saveExt;
+  // minarch: base is the rom's whole file name; slots 0-7 by number, 9 the auto-resume one
+  if (minui) return `${base}${emu.stateExt}${slot === -1 ? 9 : slot}`;
   return base + (emu.stateExt ?? '.state') + (slot > 0 ? String(slot) : slot === -1 ? '.auto' : '');
 }
 

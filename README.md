@@ -6,7 +6,7 @@ Stack: Node 22 + Express + Prisma + MySQL 8.4 · React + TypeScript + Vite + sha
 
 ## Rommancer Sync
 
-Sincronización de saves entre consolas (Onion, Knulli, Batocera, ROCKNIX, PC): ver [docs/sync.md](docs/sync.md). Almacenamiento en el servidor (carpetas, discos, destinos): [docs/storage.md](docs/storage.md). Configuración de las consolas (RetroAchievements, WiFi, copias): [docs/device-config.md](docs/device-config.md).
+Sincronización de saves entre consolas (Onion, Knulli, Batocera, ROCKNIX, muOS, ArkOS, NextUI, PC): ver [docs/sync.md](docs/sync.md). Almacenamiento en el servidor (carpetas, discos, destinos): [docs/storage.md](docs/storage.md). Configuración de las consolas (RetroAchievements, WiFi, copias): [docs/device-config.md](docs/device-config.md).
 
 ## Estructura
 
@@ -120,7 +120,7 @@ La carpeta `seed/` contiene los DATs de todas las consolas soportadas (No-Intro,
 2. Administración > Rutas: registrar las carpetas de roms y escanear. Se detecta el sistema por carpeta o extensión. Cada ruta puede ser destino de roms nuevas (subidas, parches) de uno o varios sistemas; si no hay destino se usa la predeterminada o `DATA_DIR/library`.
 3. Juegos / Faltantes: ver qué se tiene y qué falta. Añadir juegos, roms o romhacks a listas.
 4. Listas: compartir, crear sublistas con alternativas por región, idioma o compatibilidad RetroAchievements, descargar en zip o enviar a un dispositivo.
-5. Dispositivos: registrar consola + firmware (plantillas para Knulli, Batocera, ROCKNIX, muOS, Onion, Android, RetroArch) y su ruta local o SSH. Los que ejecutan scripts de eventos (ES-DE en Android y Linux, Batocera, Knulli, ROCKNIX) se dan de alta como "agente": Rommancer genera los scripts con un token propio; al iniciar un juego bajan el save adaptado y al cerrarlo lo suben. Si cambian el servidor y el dispositivo a la vez se guardan ambas versiones y se avisa. Las SD montadas en el servidor se sincronizan al conectarse; el resto, a mano.
+5. Dispositivos: registrar consola + firmware (plantillas para Knulli, Batocera, ROCKNIX, muOS, ArkOS, NextUI, Onion, Android, RetroArch) y su ruta local o SSH. Los que ejecutan scripts de eventos (ES-DE en Android y Linux, Batocera, Knulli, ROCKNIX) se dan de alta como "agente": Rommancer genera los scripts con un token propio; al iniciar un juego bajan el save adaptado y al cerrarlo lo suben. Si cambian el servidor y el dispositivo a la vez se guardan ambas versiones y se avisa. Las SD montadas en el servidor se sincronizan al conectarse; el resto, a mano.
 6. Subir roms: con permiso, las que coinciden por hash con la base de datos o con RetroAchievements; con otro permiso, roms no verificadas (homebrew, hacks, traducciones), que no cuentan en los porcentajes y pasan a verificadas si un DAT posterior las incluye.
 7. Permisos por usuario en Administración > Usuarios (también en invitaciones). Por defecto: ver colección, listas, saves y multimedia de sus listas con su propia cuenta.
 8. Revisión de agrupaciones: conflictos entre fuentes y enlaces dudosos con Wikidata.

@@ -172,6 +172,15 @@ export const emulators: EmulatorSeed[] = [
   { slug: 'ppsspp', name: 'PPSSPP', saveExt: '.bin', stateExt: '.ppst' },
   { slug: 'melonds', name: 'melonDS (standalone)', saveExt: '.sav', stateExt: '.ml1' },
   { slug: 'drastic', name: 'DraStic', saveExt: '.dsv', stateExt: '.dst' },
+  // NextUI/MinUI (minarch): "<rom with its extension>.sav" and states ".st0".."st7", ".st9" the auto-resume one.
+  // No core here: the slug after "minui-" names minarch's states folder (<tag>-<core>)
+  ...(
+    [
+      ['fceumm', 'FCEUmm'], ['snes9x', 'Snes9x'], ['gambatte', 'Gambatte'], ['gpsp', 'gpSP'], ['mgba', 'mGBA'], ['picodrive', 'PicoDrive'],
+      ['pcsx_rearmed', 'PCSX-ReARMed'], ['mednafen_pce_fast', 'Beetle PCE Fast'], ['pokemini', 'PokeMini'], ['mednafen_vb', 'Beetle VB'],
+      ['race', 'RACE'], ['handy', 'Handy'], ['stella2014', 'Stella 2014'], ['a5200', 'a5200'], ['prosystem', 'ProSystem'], ['bluemsx', 'blueMSX'], ['gearcoleco', 'Gearcoleco'],
+    ] as const
+  ).map(([core, name]): EmulatorSeed => ({ slug: `minui-${core}`, name: `NextUI ${name}`, saveFormat: core === 'pcsx_rearmed' ? 'ps1card' : 'raw', saveExt: '.sav', stateExt: '.st' })),
 ];
 
 // Emulador por defecto de cada sistema en firmwares basados en RetroArch
@@ -258,6 +267,27 @@ const muosFolders = {
   gba: 'Nintendo Game Boy Advance', n64: 'Nintendo N64', nds: 'Nintendo DS', sms: 'Sega Master System', gg: 'Sega Game Gear',
   md: 'Sega Mega Drive - Genesis', psx: 'Sony PlayStation', psp: 'Sony PlayStation Portable', fbneo: 'Arcade', lynx: 'Atari Lynx', a7800: 'Atari 7800',
 };
+// ArkOS/dArkOS: es_systems.cfg folders under /roms (or /roms2 with the second card)
+const arkosFolders = {
+  nes: 'nes', fds: 'fds', snes: 'snes', gb: 'gb', gbc: 'gbc', gba: 'gba', n64: 'n64', nds: 'nds', gc: 'gc', sms: 'mastersystem', gg: 'gamegear', md: 'megadrive',
+  psx: 'psx', psp: 'psp', fbneo: 'arcade', lynx: 'atarilynx', a7800: 'atari7800', atari2600: 'atari2600', atari5200: 'atari5200', atari800: 'atari800', jaguar: 'atarijaguar',
+  atarist: 'atarist', wswan: 'wonderswan', wswanc: 'wonderswancolor', colecovision: 'coleco', c64: 'c64', amiga500: 'amiga', advision: 'advision', scv: 'scv', channelf: 'channelf',
+  vectrex: 'vectrex', o2em: 'odyssey2', intellivision: 'intellivision', msx1: 'msx', msx2: 'msx2', pcengine: 'pcengine', supergrafx: 'supergrafx', n64dd: 'n64dd',
+  pokemini: 'pokemonmini', satellaview: 'satellaview', sufami: 'sufami', virtualboy: 'virtualboy', ngp: 'ngp', ngpc: 'ngpc', sega32x: 'sega32x', sg1000: 'sg-1000', x1: 'x1',
+  x68000: 'x68000', zxspectrum: 'zxspectrum', supervision: 'supervision', arduboy: 'arduboy', amigacd32: 'amigacd32', pcenginecd: 'pcenginecd', pc98: 'pc98', pcfx: 'pcfx',
+  cdi: 'cdimono1', neogeocd: 'neogeocd', dreamcast: 'dreamcast', segacd: 'segacd', naomi: 'naomi', saturn: 'saturn', '3do': '3do',
+};
+// NextUI: "<name> (<TAG>)" folders; the tag picks the emulator pak and names the Saves/Bios folders
+const nextuiSystems: Record<string, [string, string]> = {
+  nes: ['Nintendo Entertainment System (FC)', 'fceumm'], fds: ['Famicom Disk System (FDS)', 'fceumm'], snes: ['Super Nintendo Entertainment System (SFC)', 'snes9x'],
+  gb: ['Game Boy (GB)', 'gambatte'], gbc: ['Game Boy Color (GBC)', 'gambatte'], gba: ['Game Boy Advance (GBA)', 'gpsp'], md: ['Sega Genesis (MD)', 'picodrive'],
+  psx: ['Sony PlayStation (PS)', 'pcsx_rearmed'], sms: ['Sega Master System (SMS)', 'picodrive'], gg: ['Sega Game Gear (GG)', 'picodrive'], sega32x: ['Sega 32X (32X)', 'picodrive'],
+  segacd: ['Sega CD (SEGACD)', 'picodrive'], sg1000: ['Sega SG-1000 (SG1000)', 'picodrive'], pcengine: ['TurboGrafx-16 (PCE)', 'mednafen_pce_fast'],
+  pokemini: ['Pok\u00e9mon mini (PKM)', 'pokemini'], virtualboy: ['Virtual Boy (VB)', 'mednafen_vb'], ngp: ['Neo Geo Pocket (NGP)', 'race'], ngpc: ['Neo Geo Pocket Color (NGPC)', 'race'],
+  lynx: ['Atari Lynx (LYNX)', 'handy'], atari2600: ['Atari 2600 (A2600)', 'stella2014'], atari5200: ['Atari 5200 (A5200)', 'a5200'], a7800: ['Atari 7800 (A7800)', 'prosystem'],
+  msx1: ['Microsoft MSX (MSX)', 'bluemsx'], colecovision: ['Colecovision (COLECO)', 'gearcoleco'],
+};
+const nextuiMap = Object.fromEntries(Object.entries(nextuiSystems).map(([slug, [folder, core]]) => [slug, { folder, emulator: `minui-${core}` }]));
 const onionFolders = {
   nes: 'FC', fds: 'FDS', snes: 'SFC', gb: 'GB', gbc: 'GBC', gba: 'GBA', n64: 'N64', nds: 'NDS', sms: 'MS', gg: 'GG', md: 'MD',
   psx: 'PS', fbneo: 'FBNEO', lynx: 'LYNX', a7800: 'SEVEN',
@@ -271,7 +301,7 @@ export interface FirmwareSeed {
   savesRoot: string;
   statesRoot: string;
   biosRoot: string;
-  savesLayout: 'flat' | 'system' | 'core' | 'rom' | 'rom-core' | 'rom-saves' | 'beside';
+  savesLayout: 'flat' | 'system' | 'core' | 'rom' | 'rom-core' | 'rom-saves' | 'beside' | 'minui';
   systemMap: Record<string, { folder: string; emulator: string }>;
 }
 
@@ -280,6 +310,9 @@ export const firmwares: FirmwareSeed[] = [
   { slug: 'knulli', name: 'Knulli', romsRoot: 'roms', savesRoot: 'saves', statesRoot: 'saves', biosRoot: 'bios', savesLayout: 'system', systemMap: map(batoceraFolders) },
   { slug: 'batocera', name: 'Batocera', romsRoot: 'roms', savesRoot: 'saves', statesRoot: 'saves', biosRoot: 'bios', savesLayout: 'system', systemMap: map(batoceraFolders) },
   { slug: 'muos', name: 'muOS', romsRoot: 'ROMS', savesRoot: 'MUOS/save/file', statesRoot: 'MUOS/save/state', biosRoot: 'MUOS/bios', savesLayout: 'core', systemMap: map(muosFolders) },
+  // The card's EASYROMS partition is mounted at /roms; RetroArch keeps saves and states next to each rom
+  { slug: 'arkos', name: 'ArkOS / dArkOS', romsRoot: '', savesRoot: '', statesRoot: '', biosRoot: 'bios', savesLayout: 'rom', systemMap: map(arkosFolders) },
+  { slug: 'nextui', name: 'NextUI', romsRoot: 'Roms', savesRoot: 'Saves', statesRoot: '.userdata/shared', biosRoot: 'Bios', savesLayout: 'minui', systemMap: nextuiMap },
   { slug: 'onion', name: 'Onion OS', romsRoot: 'Roms', savesRoot: 'Saves/CurrentProfile/saves', statesRoot: 'Saves/CurrentProfile/states', biosRoot: 'BIOS', savesLayout: 'core', systemMap: map(onionFolders) },
   { slug: 'android-esde', name: 'Android (ES-DE + RetroArch)', romsRoot: 'ROMs', savesRoot: 'RetroArch/saves', statesRoot: 'RetroArch/states', biosRoot: 'RetroArch/system', savesLayout: 'flat', systemMap: map(esdeFolders, { psx: 'duckstation', gba: 'ra-mgba', nds: 'melonds' }) },
   { slug: 'retroarch-desktop', name: 'RetroArch (Windows/Linux/macOS)', romsRoot: 'roms', savesRoot: 'saves', statesRoot: 'states', biosRoot: 'system', savesLayout: 'flat', systemMap: map(esdeFolders) },

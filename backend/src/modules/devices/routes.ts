@@ -30,7 +30,7 @@ devicesRouter.use(requirePerm('roms.download', 'saves'));
 const publicDevice = { sshPassword: true, sshKey: true, tokenHash: true } as const;
 
 /** Where each firmware's card or data lives, for consoles added over SSH */
-const DEFAULT_ROOTS: Record<string, string> = { onion: '/mnt/SDCARD', knulli: '/userdata', batocera: '/userdata', rocknix: '/storage', muos: '/mnt/mmc' };
+const DEFAULT_ROOTS: Record<string, string> = { onion: '/mnt/SDCARD', knulli: '/userdata', batocera: '/userdata', rocknix: '/storage', muos: '/mnt/mmc', arkos: '/roms', nextui: '/mnt/SDCARD' };
 
 // --- Catalogo de consolas y firmwares ---
 devicesRouter.get('/consoles', async (_req, res) => {
@@ -53,7 +53,7 @@ const firmwareBody = z.object({
   savesRoot: z.string().max(255),
   statesRoot: z.string().max(255),
   biosRoot: z.string().max(255),
-  savesLayout: z.enum(['flat', 'system', 'core', 'rom', 'rom-core', 'rom-saves', 'beside']),
+  savesLayout: z.enum(['flat', 'system', 'core', 'rom', 'rom-core', 'rom-saves', 'beside', 'minui']),
   systemMap: z.record(z.string(), z.object({ folder: z.string(), emulator: z.string() })),
 });
 
@@ -93,7 +93,7 @@ const deviceBody = z.object({
       savesRoot: z.string().optional(),
       statesRoot: z.string().optional(),
       biosRoot: z.string().optional(),
-      savesLayout: z.enum(['flat', 'system', 'core', 'rom', 'rom-core', 'rom-saves', 'beside']).optional(),
+      savesLayout: z.enum(['flat', 'system', 'core', 'rom', 'rom-core', 'rom-saves', 'beside', 'minui']).optional(),
       systemMap: z.record(z.string(), z.object({ folder: z.string(), emulator: z.string() })).optional(),
     })
     .nullable()

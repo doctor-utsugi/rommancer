@@ -13,7 +13,7 @@ use std::time::UNIX_EPOCH;
 /// Roms up to this size are hashed (once, cached), so games are recognised whatever their file name
 const HASH_MAX: u64 = 64 * 1024 * 1024;
 const NOT_ROMS: &[&str] = &[
-    ".png", ".jpg", ".jpeg", ".mp4", ".xml", ".txt", ".json", ".cfg", ".db", ".ini", ".pdf", ".srm", ".sav", ".mcd", ".mcr", ".dsv", ".cht", ".log", ".sh", ".lpl", ".part",
+    ".png", ".jpg", ".jpeg", ".mp4", ".xml", ".txt", ".json", ".cfg", ".db", ".ini", ".pdf", ".srm", ".sav", ".mcd", ".mcr", ".dsv", ".cht", ".log", ".sh", ".lpl", ".part", ".pem",
 ];
 
 #[derive(Serialize, Clone, Default)]

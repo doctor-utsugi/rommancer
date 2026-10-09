@@ -85,7 +85,13 @@ pub fn remove_own_link(root: &Path) -> std::io::Result<()> {
 /// Firmware suggested by the card's folders (the user can pick another when linking)
 pub fn guess_firmware(root: &Path) -> Option<String> {
     let has = |p: &str| root.join(p).exists();
-    if has(".tmp_update") || has("App/RommancerSync") {
+    // NextUI keeps a .tmp_update folder too, so it goes before Onion
+    if has(".system/version.txt") && has("Roms") || has(".userdata/shared/minuisettings.txt") {
+        Some("nextui".into())
+    } else if has("tools") && has("bios") && (has("megadrive") || has("atarilynx") || has("ports")) {
+        // ArkOS's EASYROMS partition: the systems' folders straight at the root
+        Some("arkos".into())
+    } else if has(".tmp_update") || has("App/RommancerSync") {
         Some("onion".into())
     } else if has("MUOS") {
         Some("muos".into())

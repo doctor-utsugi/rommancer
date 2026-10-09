@@ -1,5 +1,5 @@
 #!/bin/sh
-# Rommancer Sync for Linux handhelds (Onion, muOS, Knulli, Batocera, ROCKNIX) and PCs.
+# Rommancer Sync for Linux handhelds (Onion, muOS, Knulli, Batocera, ROCKNIX, ArkOS, NextUI) and PCs.
 # POSIX sh for busybox: needs curl or wget, sha1sum and base64.
 #
 #   rommancer-sync.sh link SERVER   pair this device (shows a code to approve in the web app)
@@ -7,7 +7,7 @@
 #   rommancer-sync.sh sync          one sync pass
 #   rommancer-sync.sh daemon        sync whenever a save changes, and every few minutes
 #   rommancer-sync.sh setup         on-screen setup with the gamepad (Onion)
-#   rommancer-sync.sh install       start the daemon at boot and sync when a game ends (Knulli, Batocera)
+#   rommancer-sync.sh install       start the daemon at boot and sync around each game (Knulli, Batocera, ArkOS, NextUI)
 #   rommancer-sync.sh update        fetch a newer client from the server (the daemon does it by itself)
 #   rommancer-sync.sh roms          download the roms of the lists assigned to this device
 #   rommancer-sync.sh conflicts | resolve ID device|server
@@ -22,7 +22,7 @@
 #                                   Menu++...) mounted on this computer; the link lives on the card itself,
 #                                   so any computer with this script can sync it. Without a command: sync.
 set -u
-CLIENT_VERSION=20261010
+CLIENT_VERSION=20261011
 # Onion keeps curl (with TLS) and friends outside the default PATH
 [ -d /mnt/SDCARD/.tmp_update/bin ] && PATH="/mnt/SDCARD/.tmp_update/bin:$PATH"
 
@@ -130,7 +130,19 @@ fix_clock() {
 
 detect() {
   FW=""; ROOT=""; MODEL=""
-  if [ -d /mnt/SDCARD/.tmp_update ]; then
+  # NextUI also has the .tmp_update folder Onion is told by
+  if [ "${IS_NEXT:-}" = yes ] || head -c 6 /mnt/SDCARD/.system/version.txt 2>/dev/null | grep -q '^NextUI' || ls /mnt/SDCARD/.system/*/bin/nextui.elf >/dev/null 2>&1; then
+    FW=nextui; ROOT=/mnt/SDCARD
+    case "${DEVICE:-}" in brick) MODEL="TrimUI Brick" ;; brickpro) MODEL="TrimUI Brick Pro" ;; smartpro) MODEL="TrimUI Smart Pro" ;; smartpros) MODEL="TrimUI Smart Pro S" ;; esac
+  elif grep -qs ArkOS /usr/share/plymouth/themes/text.plymouth; then
+    # With "Switch to SD2 for Roms" the systems point at the second card
+    FW=arkos; ROOT=/roms
+    grep -qs '/roms2/' /etc/emulationstation/es_systems.cfg && ROOT=/roms2
+    case "$(cat /home/ark/.config/.DEVICE 2>/dev/null)" in
+      RG353V) MODEL="Anbernic RG353V" ;; RG353M) MODEL="Anbernic RG353M" ;; RG503) MODEL="Anbernic RG503" ;; RG351MP) MODEL="Anbernic RG351MP" ;;
+      RGB30) MODEL="Powkiddy RGB30" ;; RGB20PRO) MODEL="Powkiddy RGB20 Pro" ;; RGB10) MODEL="Powkiddy RGB10" ;; ?*) MODEL="$(cat /home/ark/.config/.DEVICE)" ;;
+    esac
+  elif [ -d /mnt/SDCARD/.tmp_update ]; then
     FW=onion; ROOT=/mnt/SDCARD
     if [ -f /customer/app/axp_test ]; then MODEL="Miyoo Mini Plus"; else MODEL="Miyoo Mini"; fi
   elif [ -d /mnt/mmc/MUOS ]; then
@@ -282,7 +294,7 @@ is_save() {
 
 is_rom() {
   case "$(printf '%s' "$1" | tr 'A-Z' 'a-z')" in
-    *.png|*.jpg|*.jpeg|*.mp4|*.xml|*.txt|*.json|*.cfg|*.db|*.ini|*.pdf|*.srm|*.sav|*.state*|*.ss[0-9]|*.mcd|*.mcr|*.dsv|*.cht|*.log|*.sh|*.lpl) return 1 ;;
+    *.png|*.jpg|*.jpeg|*.mp4|*.xml|*.txt|*.json|*.cfg|*.db|*.ini|*.pdf|*.srm|*.sav|*.state*|*.ss[0-9]|*.mcd|*.mcr|*.dsv|*.cht|*.log|*.sh|*.lpl|*.pem) return 1 ;;
   esac
   is_save "$1" && return 1
   return 0
@@ -302,7 +314,7 @@ build_request() {
   total="$(wc -l < "$WORK/roms")"; i=0
   while IFS= read -r f; do
     i=$((i + 1)); [ $((i % 10)) -eq 0 ] && progress roms "$i" "$total"
-    case "$f" in */.*|*"$TAB"*) continue ;; esac
+    case "$f" in */.*|*"$TAB"*|"$DIR"/*) continue ;; esac
     is_rom "$f" && rom_line "$f" >> "$out"
   done < "$WORK/roms"
   printf '%s\n' "$roots" | sed -n "s/^saves$TAB//p" | while IFS= read -r d; do find "$d" -type f 2>/dev/null; done > "$WORK/saves"
@@ -421,7 +433,9 @@ cmd_config() {
         del) rm -f "$dest" || cerr="$cp" ;;
         put)
           mkdir -p "$(dirname "$dest")" 2>/dev/null
-          if http GET "$SERVER/api/v1/agent/config/out/$op/$n" - "$dest.rommancer-tmp" && { [ -z "$mode" ] || chmod "$mode" "$dest.rommancer-tmp"; } && mv "$dest.rommancer-tmp" "$dest"; then :
+          # Running as root (ArkOS) must not leave the user's own files root-owned (RetroArch could no longer save them)
+          own="$(stat -c %u:%g "$dest" 2>/dev/null)"
+          if http GET "$SERVER/api/v1/agent/config/out/$op/$n" - "$dest.rommancer-tmp" && { [ -z "$mode" ] || chmod "$mode" "$dest.rommancer-tmp"; } && { [ -z "$own" ] || chown "$own" "$dest.rommancer-tmp" 2>/dev/null || :; } && mv "$dest.rommancer-tmp" "$dest"; then :
           else rm -f "$dest.rommancer-tmp"; cerr="$cp"; fi ;;
       esac
     done < "$cput"
@@ -555,6 +569,44 @@ cmd_install() {
       printf '#!/bin/sh\n[ -f "%s" ] && (cd "%s" && sh "%s" boot >/dev/null 2>&1)\n' "$self" "$DIR" "$self" > "$WORK/boot.sh"
       cmp -s "$WORK/boot.sh" "$boot" || cat "$WORK/boot.sh" > "$boot"
       say "Installed: daemon at boot ($boot)" ;;
+    arkos)
+      # Everything runs as root (passwordless sudo): NetworkManager's files need it, and the game events share one lock
+      su=""; [ "$(id -u)" = 0 ] || su="sudo -n"
+      printf '[Unit]\nDescription=Rommancer Sync\nAfter=network.target\n\n[Service]\nType=simple\nExecStart=/bin/sh "%s" daemon\nRestart=on-failure\nRestartSec=30\n\n[Install]\nWantedBy=multi-user.target\n' "$self" > "$WORK/unit"
+      if ! cmp -s "$WORK/unit" /etc/systemd/system/rommancer-sync.service; then
+        $su cp "$WORK/unit" /etc/systemd/system/rommancer-sync.service && $su systemctl daemon-reload && $su systemctl enable rommancer-sync.service >/dev/null 2>&1
+      fi
+      # EmulationStation runs these as ark before and after each game, the rom as an escaped path
+      for ev in game-start game-end; do
+        d=/home/ark/.emulationstation/scripts/$ev; mkdir -p "$d"
+        if [ "$ev" = game-start ]; then
+          printf '#!/bin/sh\n# rommancer-sync: fetch the save before the game\nrom="$1"; [ -e "$rom" ] || rom="$(printf %%s "$1" | sed "s/\\\\\\\\\\\\(.\\\\)/\\\\1/g")"\nsudo -n sh "%s" game-start "$rom" >/dev/null 2>&1\nexit 0\n' "$self" > "$WORK/hook.sh"
+        else
+          printf '#!/bin/sh\n# rommancer-sync: upload saves after the game\n(sudo -n nohup sh "%s" game-stop >/dev/null 2>&1 &)\nexit 0\n' "$self" > "$WORK/hook.sh"
+        fi
+        cmp -s "$WORK/hook.sh" "$d/rommancer-sync.sh" || cat "$WORK/hook.sh" > "$d/rommancer-sync.sh"
+        chmod +x "$d/rommancer-sync.sh"; chown ark:ark "$d" "$d/rommancer-sync.sh" 2>/dev/null
+      done
+      say "Installed: daemon at boot (rommancer-sync.service), save fetched before each game and uploaded after it" ;;
+    nextui)
+      # Hooks live per platform; the folder is created at every boot
+      found=""
+      for h in /mnt/SDCARD/.userdata/*/.hooks "/mnt/SDCARD/.userdata/${PLATFORM:-none}/.hooks"; do
+        [ -d "$(dirname "$h")" ] && [ "$h" != "/mnt/SDCARD/.userdata/shared/.hooks" ] || continue
+        case "$h" in *"/*/"*) continue ;; esac
+        mkdir -p "$h/boot.d" "$h/pre-launch.d" "$h/post-launch.d" && found=1
+        # boot.d waits for its scripts before the menu: the daemon goes to the background
+        printf '#!/bin/sh\n[ -f "%s" ] && (cd "%s" && nohup sh "%s" boot >/dev/null 2>&1 &)\nexit 0\n' "$self" "$DIR" "$self" > "$WORK/hook.sh"
+        cmp -s "$WORK/hook.sh" "$h/boot.d/rommancer-sync.sh" || cat "$WORK/hook.sh" > "$h/boot.d/rommancer-sync.sh"
+        # *.sync.sh runs before the game starts, so its save is in place; HOOK_ROM_PATH breaks on apostrophes
+        printf '#!/bin/sh\n[ "$HOOK_TYPE" = rom ] || exit 0\neval "set -- $HOOK_CMD"\nsh "%s" game-start "$2" >/dev/null 2>&1\nexit 0\n' "$self" > "$WORK/hook.sh"
+        cmp -s "$WORK/hook.sh" "$h/pre-launch.d/rommancer-sync.sync.sh" || cat "$WORK/hook.sh" > "$h/pre-launch.d/rommancer-sync.sync.sh"
+        printf '#!/bin/sh\n[ "$HOOK_TYPE" = rom ] || exit 0\n(nohup sh "%s" game-stop >/dev/null 2>&1 &)\nexit 0\n' "$self" > "$WORK/hook.sh"
+        cmp -s "$WORK/hook.sh" "$h/post-launch.d/rommancer-sync.sh" || cat "$WORK/hook.sh" > "$h/post-launch.d/rommancer-sync.sh"
+        chmod +x "$h"/*/rommancer-sync*.sh
+      done
+      if [ -n "$found" ]; then say "Installed: daemon at boot, save fetched before each game and uploaded after it"
+      else say "NextUI hooks folder not found: start NextUI once and run install again"; fi ;;
     *) say "No automatic install for $FW yet; run '$self daemon' at startup" ;;
   esac
 }
@@ -623,7 +675,7 @@ pulls_running() { [ -f "$WORK/pull-lock/pid" ] && kill -0 "$(cat "$WORK/pull-loc
 # (a crashed game may never send its end event)
 playing() {
   [ -f "$WORK/playing" ] || return 1
-  ps 2>/dev/null | grep -q '[e]mulatorlauncher\|[r]etroarch' && return 0
+  ps 2>/dev/null | grep -q '[e]mulatorlauncher\|[r]etroarch\|[m]inarch\|[d]rastic\|[p]pssppSDL\|[m]upen64plus\|[d]uckstation\|[r]etrorun' && return 0
   rm -f "$WORK/playing"; return 1
 }
 

@@ -20,6 +20,8 @@ export function GuidesPage() {
   const guides: Guide[] = [
     { key: 'knulli', devices: 'Anbernic RG40XX, RG35XX, RG406H…', downloads: [{ label: 'Knulli / Batocera (.zip)', href: authUrl('/link/package/knulli') }] },
     { key: 'onion', devices: 'Miyoo Mini, Miyoo Mini Plus', downloads: [{ label: 'Onion (.zip)', href: authUrl('/link/package/onion') }] },
+    { key: 'arkos', devices: 'Anbernic RG353, RG503, Powkiddy RGB30…', downloads: [{ label: 'ArkOS / dArkOS (.zip)', href: authUrl('/link/package/arkos') }] },
+    { key: 'nextui', devices: 'TrimUI Brick, TrimUI Smart Pro, Anbernic H700', downloads: [{ label: 'NextUI (.zip)', href: authUrl('/link/package/nextui') }] },
     { key: 'android', devices: 'AYN Thor, AYN Odin, Retroid Pocket…', downloads: [{ label: 'Android (.apk)', href: '/api/v1/link/android/rommancer-sync.apk' }] },
     {
       key: 'pc',
