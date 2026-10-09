@@ -11,6 +11,9 @@ export interface Me {
   locale: string
   hasScreenScraper: boolean
   hasRetroAchievements: boolean
+  raUser: string | null
+  ssUser: string | null
+  raConsoles: boolean
   hasTheGamesDb: boolean
   permissions: string[]
   mustChangePassword: boolean

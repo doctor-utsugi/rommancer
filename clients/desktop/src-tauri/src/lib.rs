@@ -4,6 +4,7 @@
 mod api;
 mod card;
 mod sync;
+mod wifi;
 
 use api::{DeviceApi, RootHeader, UserApi};
 use serde::{Deserialize, Serialize};
@@ -217,6 +218,12 @@ async fn attach_card(app: AppHandle, state: State<'_, AppState>, root: String, d
 }
 
 /// Interface language from the system: the first of the locale variables that says one
+/// The WiFi networks this computer knows, to hand them to the consoles; nothing leaves the app until the user picks them
+#[tauri::command]
+async fn local_wifi() -> Result<Vec<wifi::LocalWifi>, String> {
+    tauri::async_runtime::spawn_blocking(wifi::known_networks).await.map_err(|e| e.to_string())?
+}
+
 #[tauri::command]
 fn system_lang() -> String {
     ["LANGUAGE", "LC_ALL", "LC_MESSAGES", "LANG", "LC_TIME"]
@@ -410,7 +417,7 @@ pub fn run() {
                 let _ = window.hide();
             }
         })
-        .invoke_handler(tauri::generate_handler![status, login, logout, api, cards, set_options, add_folder, remove_folder, link_card, attach_card, system_lang, restart_app, unlink_card, device_id, sync_card, cancel_sync])
+        .invoke_handler(tauri::generate_handler![status, login, logout, api, cards, set_options, add_folder, remove_folder, link_card, attach_card, system_lang, restart_app, unlink_card, device_id, sync_card, cancel_sync, local_wifi])
         .run(tauri::generate_context!())
         .expect("error while running Rommancer");
 }

@@ -5,8 +5,8 @@ import { z } from 'zod';
 import { env } from '../../config/env.js';
 import { prisma } from '../../lib/prisma.js';
 import { forceSync } from '../sync/service.js';
-import { refreshProgress } from '../ra/progress.js';
-import { encrypt } from '../../lib/crypto.js';
+import { checkKey, refreshProgress } from '../ra/progress.js';
+import { decrypt, encrypt } from '../../lib/crypto.js';
 import { HttpError, intParam } from '../../lib/http.js';
 import { DEFAULT_PERMISSIONS, PERMISSIONS, normalizePermissions } from '../../lib/permissions.js';
 import { me, requireAdmin } from '../auth/middleware.js';
@@ -44,6 +44,10 @@ usersRouter.get('/me', async (req, res) => {
     mustChangePassword: u.mustChangePassword,
     hasScreenScraper: !!u.ssUser,
     hasRetroAchievements: !!u.raApiKey,
+    // What is set, so the profile can say so: user names are shown, secrets only as present or not
+    ssUser: decrypt(u.ssUser),
+    raUser: decrypt(u.raUser),
+    raConsoles: !!(u.raPassword || u.raToken),
     hasTheGamesDb: !!u.tgdbApiKey,
   });
 });
@@ -72,6 +76,12 @@ usersRouter.patch('/me', async (req, res) => {
     if (weakPassword(body.newPassword) || body.newPassword === body.currentPassword) throw new HttpError(400, 'WEAK_PASSWORD');
     data.passwordHash = await bcrypt.hash(body.newPassword, 10);
     data.mustChangePassword = false;
+  }
+  // A Web API key is checked with RetroAchievements before it is kept
+  if (body.raApiKey) {
+    const raUser = body.raUser ?? decrypt(u.raUser);
+    if (!raUser) throw new HttpError(400, 'Set your RetroAchievements user first');
+    await checkKey(raUser, body.raApiKey);
   }
   for (const k of ['ssUser', 'ssPassword', 'raUser', 'raApiKey', 'tgdbApiKey'] as const) {
     if (body[k] !== undefined) data[k] = encrypt(body[k]);

@@ -464,3 +464,65 @@ button.command {
   border-top: 1px solid var(--border);
   padding-top: 10px;
 }
+
+.status-line {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+
+.ok.big {
+  font-size: 20px;
+  font-weight: 700;
+}
+
+.block {
+  display: block;
+}
+
+.inline-form {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+
+.empty {
+  border: 1px dashed var(--border);
+  border-radius: 10px;
+  padding: 14px;
+  text-align: center;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+ul.net-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+
+ul.net-list li {
+  padding: 8px 12px;
+}
+
+ul.net-list li + li {
+  border-top: 1px solid var(--border);
+}
+
+.pill {
+  margin-left: 8px;
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: var(--accent);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 600;
+}

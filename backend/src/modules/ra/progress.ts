@@ -16,6 +16,12 @@ async function raGet<T>(endpoint: string, params: Record<string, string>): Promi
   return (await r.json()) as T;
 }
 
+/** Whether RetroAchievements accepts this user and Web API key (throws a 400 when not) */
+export async function checkKey(user: string, key: string) {
+  const p = await raGet<{ User?: string }>('API_GetUserProfile.php', { u: user, y: key });
+  if (!p?.User) throw badRequest('RetroAchievements does not know that user');
+}
+
 interface Completion {
   Total: number;
   Results: { GameID: number; MaxPossible: number; NumAwarded: number; NumAwardedHardcore: number; MostRecentAwardedDate?: string | null }[];

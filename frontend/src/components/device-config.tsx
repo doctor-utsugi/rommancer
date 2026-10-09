@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
-import { ArrowDown, ArrowUp, Download, Pencil, RotateCcw, Trash2 } from 'lucide-react'
+import { ArrowDown, ArrowUp, Download, Pencil, Plus, RotateCcw, Trash2, Wifi } from 'lucide-react'
 import { toast } from 'sonner'
 import { authUrl, del, get, patch, post, put } from '@/lib/api'
 import { Badge } from '@/components/ui/badge'
@@ -43,12 +43,13 @@ interface ConsoleSettings {
 }
 
 /** The user's RetroAchievements login and WiFi networks, kept applied on their consoles */
-export function ConsoleSettingsCard() {
+/** The user's WiFi networks for every console: one marked as default (tried first), the rest in order */
+export function WifiNetworksCard() {
   const { t } = useTranslation()
   const qc = useQueryClient()
   const q = useQuery({ queryKey: ['console-settings'], queryFn: () => get<ConsoleSettings>('/settings/consoles') })
-  const [ra, setRa] = useState({ username: '', password: '' })
   const [net, setNet] = useState({ ssid: '', password: '', band: 'dual', hidden: false })
+  const [adding, setAdding] = useState(false)
   const [busy, setBusy] = useState(false)
   const reload = () => void qc.invalidateQueries({ queryKey: ['console-settings'] })
   const run = async (f: () => Promise<unknown>, ok?: string) => {
@@ -57,131 +58,125 @@ export function ConsoleSettingsCard() {
       await f()
       if (ok) toast.success(ok)
       reload()
+      return true
     } catch (e) {
       toast.error(errMsg(e))
+      return false
     } finally {
       setBusy(false)
     }
   }
-  const s = q.data
+  const nets = q.data?.wifi ?? []
+  const order = (ids: number[]) => void run(() => put('/settings/consoles/wifi-order', { ids }))
   const move = (i: number, d: number) => {
-    const ids = s!.wifi.map((w) => w.id)
+    const ids = nets.map((w) => w.id)
     ;[ids[i], ids[i + d]] = [ids[i + d], ids[i]]
-    void run(() => put('/settings/consoles/wifi-order', { ids }))
+    order(ids)
   }
+  const makeDefault = (id: number) => order([id, ...nets.map((w) => w.id).filter((x) => x !== id)])
   return (
     <Card>
       <CardHeader>
-        <CardTitle>{t('more.config.settingsTitle')}</CardTitle>
-        <CardDescription>{t('more.config.settingsHelp')}</CardDescription>
+        <CardTitle>{t('more.config.wifiTitle')}</CardTitle>
+        <CardDescription>{t('more.config.wifiHelp')}</CardDescription>
       </CardHeader>
-      <CardContent className="grid gap-6">
-        <div className="grid gap-3">
-          <div className="flex items-center gap-2 text-sm font-medium">
-            RetroAchievements
-            <Badge variant={s?.ra.hasPassword ? 'default' : 'outline'}>{s?.ra.hasPassword ? s.ra.username : t('profile.notConfigured')}</Badge>
+      <CardContent className="grid gap-4">
+        {q.isSuccess && !nets.length && !adding && (
+          <div className="rounded-md border border-dashed p-4 text-center text-sm text-muted-foreground">
+            <p>{t('more.config.wifiEmpty')}</p>
           </div>
-          <p className="text-xs text-muted-foreground">{t('more.config.raHelp')}</p>
-          <div className="grid gap-3 md:grid-cols-2">
-            <Field label={t('profile.raUser')}>
-              <Input value={ra.username} placeholder={s?.ra.username ?? ''} onChange={(e) => setRa({ ...ra, username: e.target.value })} autoComplete="off" />
-            </Field>
-            <Field label={t('more.config.raPassword')}>
-              <Input type="password" value={ra.password} onChange={(e) => setRa({ ...ra, password: e.target.value })} autoComplete="new-password" />
-            </Field>
-          </div>
-          <div className="flex gap-2">
-            <Button
-              size="sm"
-              disabled={busy || !(ra.username || s?.ra.username) || !ra.password}
-              onClick={() => void run(() => put('/settings/consoles/ra', { username: ra.username || s?.ra.username, password: ra.password }).then(() => setRa({ username: '', password: '' })), t('more.config.raOk'))}
-            >
-              {t('more.config.raCheck')}
-            </Button>
-            {s?.ra.hasPassword && (
-              <Button size="sm" variant="outline" disabled={busy} onClick={() => void run(() => del('/settings/consoles/ra'))}>
-                {t('common.delete')}
+        )}
+        {nets.length > 0 && (
+          <ul className="divide-y rounded-md border">
+            {nets.map((w, i) => (
+              <li key={w.id} className="flex flex-wrap items-center gap-3 px-3 py-2">
+                <Wifi className="size-4 text-muted-foreground" />
+                <div className="min-w-0 grow">
+                  <p className="text-sm font-medium">
+                    {w.ssid}
+                    {i === 0 && <Badge className="ml-2">{t('more.config.wifiDefault')}</Badge>}
+                  </p>
+                  <p className="text-xs text-muted-foreground">
+                    {[w.hasPassword ? t('more.config.wifiSaved') : t('more.config.open'), w.hidden ? t('more.config.hidden') : null].filter(Boolean).join(' · ')}
+                  </p>
+                </div>
+                <NativeSelect className="w-36" value={w.band} onChange={(e) => void run(() => patch(`/settings/consoles/wifi/${w.id}`, { band: e.target.value }))}>
+                  <option value="dual">{t('more.config.bandDual')}</option>
+                  <option value="2.4">2.4 GHz</option>
+                  <option value="5">{t('more.config.band5')}</option>
+                </NativeSelect>
+                {i > 0 && (
+                  <Button size="sm" variant="ghost" disabled={busy} onClick={() => makeDefault(w.id)}>
+                    {t('more.config.wifiMakeDefault')}
+                  </Button>
+                )}
+                <Button size="icon" variant="ghost" disabled={busy || i === 0} onClick={() => move(i, -1)} aria-label={t('more.config.up')}>
+                  <ArrowUp className="size-4" />
+                </Button>
+                <Button size="icon" variant="ghost" disabled={busy || i === nets.length - 1} onClick={() => move(i, 1)} aria-label={t('more.config.down')}>
+                  <ArrowDown className="size-4" />
+                </Button>
+                <Button
+                  size="icon"
+                  variant="ghost"
+                  disabled={busy}
+                  onClick={() => confirm(t('more.config.wifiRemoveConfirm', { ssid: w.ssid })) && void run(() => del(`/settings/consoles/wifi/${w.id}`), t('more.config.wifiRemoved'))}
+                  aria-label={t('common.delete')}
+                >
+                  <Trash2 className="size-4" />
+                </Button>
+              </li>
+            ))}
+          </ul>
+        )}
+        {adding ? (
+          <form
+            className="grid gap-3 rounded-md border bg-muted/30 p-3"
+            onSubmit={(e) => {
+              e.preventDefault()
+              void run(() => post('/settings/consoles/wifi', { ...net, password: net.password || null }), t('more.config.wifiAdded', { ssid: net.ssid })).then((ok) => {
+                if (ok) setNet({ ssid: '', password: '', band: 'dual', hidden: false })
+              })
+            }}
+          >
+            <div className="grid gap-3 md:grid-cols-[1fr_1fr_10rem]">
+              <Field label={t('more.config.ssid')}>
+                <Input value={net.ssid} onChange={(e) => setNet({ ...net, ssid: e.target.value })} autoComplete="off" autoFocus />
+              </Field>
+              <Field label={t('more.config.wifiPassword')} hint={t('more.config.wifiPasswordHint')}>
+                <Input type="password" value={net.password} onChange={(e) => setNet({ ...net, password: e.target.value })} autoComplete="new-password" />
+              </Field>
+              <Field label={t('more.config.band')}>
+                <NativeSelect value={net.band} onChange={(e) => setNet({ ...net, band: e.target.value })}>
+                  <option value="dual">{t('more.config.bandDual')}</option>
+                  <option value="2.4">2.4 GHz</option>
+                  <option value="5">{t('more.config.band5')}</option>
+                </NativeSelect>
+              </Field>
+            </div>
+            <p className="text-xs text-muted-foreground">{t('more.config.bandHelp')}</p>
+            <div className="flex flex-wrap items-center gap-3">
+              <label className="flex grow items-center gap-2 text-sm">
+                <Checkbox checked={net.hidden} onCheckedChange={(v) => setNet({ ...net, hidden: !!v })} />
+                {t('more.config.hiddenLong')}
+              </label>
+              <Button size="sm" type="submit" disabled={busy || !net.ssid || (!!net.password && net.password.length < 8)}>
+                {t('more.config.addWifi')}
               </Button>
-            )}
-          </div>
-        </div>
-
-        <div className="grid gap-3">
-          <div className="text-sm font-medium">{t('more.config.wifiTitle')}</div>
-          <p className="text-xs text-muted-foreground">{t('more.config.wifiHelp')}</p>
-          {!!s?.wifi.length && (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>{t('more.config.ssid')}</TableHead>
-                  <TableHead className="w-40">{t('more.config.band')}</TableHead>
-                  <TableHead className="w-24">{t('more.config.hidden')}</TableHead>
-                  <TableHead className="w-32" />
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {s.wifi.map((w, i) => (
-                  <TableRow key={w.id}>
-                    <TableCell>
-                      {w.ssid}
-                      {!w.hasPassword && <span className="ml-2 text-xs text-muted-foreground">{t('more.config.open')}</span>}
-                    </TableCell>
-                    <TableCell>
-                      <NativeSelect value={w.band} onChange={(e) => void run(() => patch(`/settings/consoles/wifi/${w.id}`, { band: e.target.value }))}>
-                        <option value="dual">{t('more.config.bandDual')}</option>
-                        <option value="2.4">2.4 GHz</option>
-                        <option value="5">{t('more.config.band5')}</option>
-                      </NativeSelect>
-                    </TableCell>
-                    <TableCell>
-                      <Checkbox checked={w.hidden} onCheckedChange={(v) => void run(() => patch(`/settings/consoles/wifi/${w.id}`, { hidden: !!v }))} />
-                    </TableCell>
-                    <TableCell className="text-right">
-                      <Button size="icon" variant="ghost" disabled={busy || i === 0} onClick={() => move(i, -1)} aria-label={t('more.config.up')}>
-                        <ArrowUp className="size-4" />
-                      </Button>
-                      <Button size="icon" variant="ghost" disabled={busy || i === s.wifi.length - 1} onClick={() => move(i, 1)} aria-label={t('more.config.down')}>
-                        <ArrowDown className="size-4" />
-                      </Button>
-                      <Button size="icon" variant="ghost" disabled={busy} onClick={() => void run(() => del(`/settings/consoles/wifi/${w.id}`))} aria-label={t('common.delete')}>
-                        <Trash2 className="size-4" />
-                      </Button>
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          )}
-          <div className="grid gap-3 md:grid-cols-[1fr_1fr_10rem]">
-            <Field label={t('more.config.ssid')}>
-              <Input value={net.ssid} onChange={(e) => setNet({ ...net, ssid: e.target.value })} autoComplete="off" />
-            </Field>
-            <Field label={t('more.config.wifiPassword')} hint={t('more.config.wifiPasswordHint')}>
-              <Input type="password" value={net.password} onChange={(e) => setNet({ ...net, password: e.target.value })} autoComplete="new-password" />
-            </Field>
-            <Field label={t('more.config.band')}>
-              <NativeSelect value={net.band} onChange={(e) => setNet({ ...net, band: e.target.value })}>
-                <option value="dual">{t('more.config.bandDual')}</option>
-                <option value="2.4">2.4 GHz</option>
-                <option value="5">{t('more.config.band5')}</option>
-              </NativeSelect>
-            </Field>
-          </div>
-          <p className="text-xs text-muted-foreground">{t('more.config.bandHelp')}</p>
-          <div className="flex items-center gap-4">
-            <label className="flex items-center gap-2 text-sm">
-              <Checkbox checked={net.hidden} onCheckedChange={(v) => setNet({ ...net, hidden: !!v })} />
-              {t('more.config.hiddenLong')}
-            </label>
-            <Button
-              size="sm"
-              disabled={busy || !net.ssid || (!!net.password && net.password.length < 8)}
-              onClick={() => void run(() => post('/settings/consoles/wifi', { ...net, password: net.password || null }).then(() => setNet({ ssid: '', password: '', band: 'dual', hidden: false })))}
-            >
-              {t('more.config.addWifi')}
+              <Button size="sm" type="button" variant="ghost" onClick={() => setAdding(false)}>
+                {t('common.close')}
+              </Button>
+            </div>
+          </form>
+        ) : (
+          <div>
+            <Button size="sm" variant={nets.length ? 'outline' : 'default'} onClick={() => setAdding(true)}>
+              <Plus className="size-4" />
+              {nets.length ? t('more.config.addAnother') : t('more.config.addWifi')}
             </Button>
           </div>
-        </div>
+        )}
+        <p className="text-xs text-muted-foreground">{t('more.config.wifiFromComputer')}</p>
       </CardContent>
     </Card>
   )

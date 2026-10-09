@@ -305,11 +305,15 @@ test('auth: login admin, invitacion y registro de usuario', async () => {
   assert.equal(reuse.status, 400);
   const forbidden = await api('GET', '/admin/paths', undefined, userToken);
   assert.equal(forbidden.status, 403);
-  const meR = await api('PATCH', '/users/me', { locale: 'en', raUser: 'someone', raApiKey: 'secret' }, userToken);
+  const badKey = await api('PATCH', '/users/me', { locale: 'en', raUser: 'someone', raApiKey: 'secret' }, userToken);
+  assert.equal(badKey.status, 400, 'a Web API key RetroAchievements refuses is not kept');
+  const meR = await api('PATCH', '/users/me', { locale: 'en', raUser: 'someone' }, userToken);
   assert.equal(meR.status, 204);
   const me = await api('GET', '/users/me', undefined, userToken);
   assert.equal(me.json.locale, 'en');
-  assert.equal(me.json.hasRetroAchievements, true);
+  assert.equal(me.json.hasRetroAchievements, false);
+  assert.equal(me.json.raUser, 'someone');
+  assert.equal(me.json.raConsoles, false);
   assert.deepEqual(me.json.permissions, ['collection.view', 'lists', 'saves', 'scrape.lists']);
 });
 
@@ -2264,9 +2268,8 @@ test('favourite roms mark their game; RetroAchievements progress read with the u
   // RA progress: nothing until the user sets their RA user and Web API key
   assert.equal((await api('GET', '/ra/me')).json.configured, false);
   raProgressGames.push(rom.raGameId!);
-  await api('PATCH', '/users/me', { raUser: 'raplayer', raApiKey: 'wrong-key' });
-  assert.equal((await api('POST', '/ra/me/refresh')).status, 400, 'a key RA refuses is said so');
-  await api('PATCH', '/users/me', { raApiKey: 'user-web-key' });
+  assert.equal((await api('PATCH', '/users/me', { raUser: 'raplayer', raApiKey: 'wrong-key' })).status, 400, 'a key RA refuses is said so');
+  assert.equal((await api('PATCH', '/users/me', { raUser: 'raplayer', raApiKey: 'user-web-key' })).status, 204);
   const me = (await api('POST', '/ra/me/refresh')).json;
   assert.equal(me.configured, true);
   assert.equal(me.profile.points, 1234);

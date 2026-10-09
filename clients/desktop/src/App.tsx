@@ -769,11 +769,22 @@ interface ConsoleSettingsData {
   wifi: { id: number; ssid: string; hasPassword: boolean; band: string; hidden: boolean }[]
 }
 
+interface LocalWifi {
+  ssid: string
+  password: string | null
+  band: string
+  hidden: boolean
+  locked: boolean
+}
+
 /** The same settings as the web profile: the RetroAchievements login and WiFi networks pushed to every console */
 function ConsoleSettings() {
   const [s, setS] = useState<ConsoleSettingsData | null>(null)
   const [ra, setRa] = useState({ username: '', password: '' })
+  const [raForm, setRaForm] = useState(false)
   const [net, setNet] = useState({ ssid: '', password: '', band: 'dual', hidden: false })
+  const [adding, setAdding] = useState(false)
+  const [local, setLocal] = useState<(LocalWifi & { pick: boolean })[] | null>(null)
   const [busy, setBusy] = useState(false)
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null)
   const load = useCallback(() => void api<ConsoleSettingsData>('GET', '/settings/consoles').then(setS, (e) => setMsg({ ok: false, text: String(e) })), [])
@@ -785,17 +796,42 @@ function ConsoleSettings() {
       await f()
       if (ok) setMsg({ ok: true, text: ok })
       load()
+      return true
     } catch (e) {
       setMsg({ ok: false, text: String(e) })
+      return false
     } finally {
       setBusy(false)
     }
   }
+  const nets = s?.wifi ?? []
+  const order = (ids: number[]) => void run(() => api('PUT', '/settings/consoles/wifi-order', { ids }))
   const move = (i: number, d: number) => {
-    const ids = s!.wifi.map((w) => w.id)
+    const ids = nets.map((w) => w.id)
     ;[ids[i], ids[i + d]] = [ids[i + d], ids[i]]
-    void run(() => api('PUT', '/settings/consoles/wifi-order', { ids }))
+    order(ids)
   }
+  const connected = !!s?.ra.hasPassword
+  const login = (username: string) =>
+    run(
+      () =>
+        api('PUT', '/settings/consoles/ra', { username, password: ra.password }).then(() => {
+          setRa({ username: '', password: '' })
+          setRaForm(false)
+        }),
+      t('raConnectedOk', { user: username }),
+    )
+  const scan = () =>
+    void run(async () => {
+      const found = await invoke<LocalWifi[]>('local_wifi')
+      setLocal(found.map((w) => ({ ...w, pick: !w.locked && !nets.some((n) => n.ssid === w.ssid) })))
+    })
+  const importPicked = () =>
+    void run(async () => {
+      const picked = (local ?? []).filter((w) => w.pick)
+      for (const w of picked) await api('POST', '/settings/consoles/wifi', { ssid: w.ssid, password: w.password, band: w.band, hidden: w.hidden })
+      setLocal(null)
+    }, t('wifiImported', { count: (local ?? []).filter((w) => w.pick).length }))
   const bands = (
     <>
       <option value="dual">{t('bandDual')}</option>
@@ -808,94 +844,188 @@ function ConsoleSettings() {
       <h1>{t('consoleSettings')}</h1>
       <p className="muted small">{t('consoleSettingsHelp')}</p>
       {msg && <p className={msg.ok ? 'ok' : 'error'}>{msg.text}</p>}
+
       <div className="panel">
-        <h2>
-          RetroAchievements{' '}
-          <span className={s?.ra.hasPassword ? 'ok small' : 'muted small'}>{s?.ra.hasPassword ? `· ${s.ra.username}` : `· ${t('raNotSet')}`}</span>
-        </h2>
-        <p className="muted small">{t('raHelp')}</p>
-        <div className="row wrap">
-          <label className="grow">
-            {t('username')}
-            <input value={ra.username} placeholder={s?.ra.username ?? ''} onChange={(e) => setRa({ ...ra, username: e.target.value })} autoComplete="off" />
-          </label>
-          <label className="grow">
-            {t('raPassword')}
-            <input type="password" value={ra.password} onChange={(e) => setRa({ ...ra, password: e.target.value })} autoComplete="new-password" />
-          </label>
-        </div>
         <div className="row">
-          <button
-            className="primary"
-            disabled={busy || !(ra.username || s?.ra.username) || !ra.password}
-            onClick={() => void run(() => api('PUT', '/settings/consoles/ra', { username: ra.username || s?.ra.username, password: ra.password }).then(() => setRa({ username: '', password: '' })), t('raOk'))}
-          >
-            {t('raCheck')}
-          </button>
-          {s?.ra.hasPassword && (
-            <button className="ghost danger" disabled={busy} onClick={() => void run(() => api('DELETE', '/settings/consoles/ra'))}>
-              {t('remove')}
+          <h2 className="grow">🏆 RetroAchievements</h2>
+          {connected && !raForm && (
+            <button
+              className="ghost danger"
+              disabled={busy}
+              onClick={() => confirm(t('raDisconnectConfirm')) && void run(() => api('DELETE', '/settings/consoles/ra'), t('disconnected'))}
+            >
+              {t('disconnect')}
             </button>
           )}
         </div>
+        {connected && !raForm ? (
+          <div className="status-line">
+            <span className="ok big">✓</span>
+            <span className="grow">
+              <strong>{t('raConnectedAs', { user: s!.ra.username ?? '' })}</strong>
+              <span className="muted small block">{t('raConnectedHelp')}</span>
+            </span>
+            <button onClick={() => setRaForm(true)}>{t('changePassword')}</button>
+          </div>
+        ) : raForm || s ? (
+          <form
+            className="inline-form"
+            onSubmit={(e) => {
+              e.preventDefault()
+              void login(connected ? s!.ra.username! : ra.username.trim())
+            }}
+          >
+            {!connected && <p className="muted small">{t('raHelp')}</p>}
+            <div className="row wrap">
+              {!connected && (
+                <label className="grow">
+                  {t('username')}
+                  <input value={ra.username} placeholder={s?.ra.username ?? ''} onChange={(e) => setRa({ ...ra, username: e.target.value })} autoComplete="off" />
+                </label>
+              )}
+              <label className="grow">
+                {connected ? t('passwordFor', { user: s!.ra.username ?? '' }) : t('raPassword')}
+                <input type="password" value={ra.password} onChange={(e) => setRa({ ...ra, password: e.target.value })} autoComplete="new-password" autoFocus={connected} />
+              </label>
+            </div>
+            <div className="row">
+              <button className="primary" type="submit" disabled={busy || !ra.password || (!connected && !ra.username.trim())}>
+                {connected ? t('raCheck') : t('connect')}
+              </button>
+              {raForm && (
+                <button type="button" className="ghost" onClick={() => (setRaForm(false), setRa({ username: '', password: '' }))}>
+                  {t('cancel')}
+                </button>
+              )}
+            </div>
+          </form>
+        ) : null}
       </div>
+
       <div className="panel">
         <h2>{t('wifiTitle')}</h2>
         <p className="muted small">{t('wifiHelp')}</p>
-        {s?.wifi.map((w, i) => (
-          <div key={w.id} className="row">
-            <span className="grow">
-              {w.ssid}
-              {!w.hasPassword && <span className="muted small"> · {t('wifiOpen')}</span>}
-            </span>
-            <select value={w.band} style={{ width: 'auto' }} onChange={(e) => void run(() => api('PATCH', `/settings/consoles/wifi/${w.id}`, { band: e.target.value }))}>
-              {bands}
-            </select>
-            <label className="check">
-              <input type="checkbox" checked={w.hidden} onChange={(e) => void run(() => api('PATCH', `/settings/consoles/wifi/${w.id}`, { hidden: e.target.checked }))} />
-              {t('wifiHidden')}
-            </label>
-            <button className="small-btn" disabled={busy || i === 0} onClick={() => move(i, -1)} title={t('up')}>
-              ↑
-            </button>
-            <button className="small-btn" disabled={busy || i === s.wifi.length - 1} onClick={() => move(i, 1)} title={t('down')}>
-              ↓
-            </button>
-            <button className="small-btn danger" disabled={busy} onClick={() => void run(() => api('DELETE', `/settings/consoles/wifi/${w.id}`))} title={t('remove')}>
-              ✕
-            </button>
+        {s && !nets.length && !adding && !local && <p className="empty">{t('wifiEmpty')}</p>}
+        {nets.length > 0 && (
+          <ul className="net-list">
+            {nets.map((w, i) => (
+              <li key={w.id} className="row">
+                <span className="grow">
+                  <strong>{w.ssid}</strong>
+                  {i === 0 && <span className="pill">{t('wifiDefault')}</span>}
+                  <span className="muted small block">{[w.hasPassword ? t('wifiSaved') : t('wifiOpen'), w.hidden ? t('wifiHidden') : null].filter(Boolean).join(' · ')}</span>
+                </span>
+                <select value={w.band} style={{ width: 'auto' }} onChange={(e) => void run(() => api('PATCH', `/settings/consoles/wifi/${w.id}`, { band: e.target.value }))}>
+                  {bands}
+                </select>
+                {i > 0 && (
+                  <button className="ghost" disabled={busy} onClick={() => order([w.id, ...nets.map((n) => n.id).filter((x) => x !== w.id)])}>
+                    {t('wifiMakeDefault')}
+                  </button>
+                )}
+                <button className="small-btn" disabled={busy || i === 0} onClick={() => move(i, -1)} title={t('up')}>
+                  ↑
+                </button>
+                <button className="small-btn" disabled={busy || i === nets.length - 1} onClick={() => move(i, 1)} title={t('down')}>
+                  ↓
+                </button>
+                <button
+                  className="small-btn danger"
+                  disabled={busy}
+                  onClick={() => confirm(t('wifiRemoveConfirm', { ssid: w.ssid })) && void run(() => api('DELETE', `/settings/consoles/wifi/${w.id}`))}
+                  title={t('remove')}
+                >
+                  ✕
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
+
+        {local && (
+          <div className="inline-form">
+            <strong>{t('wifiLocalTitle')}</strong>
+            <p className="muted small">{t('wifiLocalHelp')}</p>
+            {!local.length && <p className="muted small">{t('wifiLocalNone')}</p>}
+            {local.map((w, i) => {
+              const have = nets.some((n) => n.ssid === w.ssid)
+              return (
+                <label key={w.ssid} className="check">
+                  <input type="checkbox" checked={w.pick} disabled={have || w.locked} onChange={(e) => setLocal(local.map((x, j) => (j === i ? { ...x, pick: e.target.checked } : x)))} />
+                  <span className="grow">
+                    {w.ssid}
+                    <span className="muted small">
+                      {' · '}
+                      {have ? t('wifiAlready') : w.locked ? t('wifiLocked') : w.password ? t('wifiWithPassword') : t('wifiOpen')}
+                    </span>
+                  </span>
+                  <select value={w.band} style={{ width: 'auto' }} disabled={have || w.locked} onChange={(e) => setLocal(local.map((x, j) => (j === i ? { ...x, band: e.target.value } : x)))}>
+                    {bands}
+                  </select>
+                </label>
+              )
+            })}
+            <div className="row">
+              <button className="primary" disabled={busy || !local.some((w) => w.pick)} onClick={importPicked}>
+                {t('wifiImport', { count: local.filter((w) => w.pick).length })}
+              </button>
+              <button className="ghost" onClick={() => setLocal(null)}>
+                {t('cancel')}
+              </button>
+            </div>
           </div>
-        ))}
-        <div className="row wrap">
-          <label className="grow">
-            {t('ssid')}
-            <input value={net.ssid} onChange={(e) => setNet({ ...net, ssid: e.target.value })} autoComplete="off" />
-          </label>
-          <label className="grow">
-            {t('wifiPassword')}
-            <input type="password" value={net.password} placeholder={t('wifiPasswordHint')} onChange={(e) => setNet({ ...net, password: e.target.value })} autoComplete="new-password" />
-          </label>
-          <label>
-            {t('band')}
-            <select value={net.band} onChange={(e) => setNet({ ...net, band: e.target.value })}>
-              {bands}
-            </select>
-          </label>
-        </div>
-        <p className="muted small">{t('bandHelp')}</p>
-        <div className="row">
-          <label className="check grow">
-            <input type="checkbox" checked={net.hidden} onChange={(e) => setNet({ ...net, hidden: e.target.checked })} />
-            {t('wifiHiddenLong')}
-          </label>
-          <button
-            className="primary"
-            disabled={busy || !net.ssid || (!!net.password && net.password.length < 8)}
-            onClick={() => void run(() => api('POST', '/settings/consoles/wifi', { ...net, password: net.password || null }).then(() => setNet({ ssid: '', password: '', band: 'dual', hidden: false })))}
+        )}
+
+        {adding ? (
+          <form
+            className="inline-form"
+            onSubmit={(e) => {
+              e.preventDefault()
+              void run(() => api('POST', '/settings/consoles/wifi', { ...net, password: net.password || null }), t('wifiAdded', { ssid: net.ssid })).then((ok) => {
+                if (ok) setNet({ ssid: '', password: '', band: 'dual', hidden: false })
+              })
+            }}
           >
-            {t('addWifi')}
-          </button>
-        </div>
+            <div className="row wrap">
+              <label className="grow">
+                {t('ssid')}
+                <input value={net.ssid} onChange={(e) => setNet({ ...net, ssid: e.target.value })} autoComplete="off" autoFocus />
+              </label>
+              <label className="grow">
+                {t('wifiPassword')}
+                <input type="password" value={net.password} placeholder={t('wifiPasswordHint')} onChange={(e) => setNet({ ...net, password: e.target.value })} autoComplete="new-password" />
+              </label>
+              <label>
+                {t('band')}
+                <select value={net.band} onChange={(e) => setNet({ ...net, band: e.target.value })}>
+                  {bands}
+                </select>
+              </label>
+            </div>
+            <p className="muted small">{t('bandHelp')}</p>
+            <div className="row">
+              <label className="check grow">
+                <input type="checkbox" checked={net.hidden} onChange={(e) => setNet({ ...net, hidden: e.target.checked })} />
+                {t('wifiHiddenLong')}
+              </label>
+              <button className="primary" type="submit" disabled={busy || !net.ssid || (!!net.password && net.password.length < 8)}>
+                {t('addWifi')}
+              </button>
+              <button type="button" className="ghost" onClick={() => setAdding(false)}>
+                {t('close')}
+              </button>
+            </div>
+          </form>
+        ) : (
+          !local && (
+            <div className="row wrap">
+              <button className="primary" disabled={busy} onClick={scan}>
+                {t('wifiFromComputer')}
+              </button>
+              <button onClick={() => setAdding(true)}>+ {nets.length ? t('addAnother') : t('addWifi')}</button>
+            </div>
+          )
+        )}
       </div>
     </div>
   )
