@@ -54,4 +54,10 @@
     <string name="wifi_done">Networks saved. Android will join them when they are in range.</string>
     <string name="wifi_none">There are no networks for this device in Rommancer (add them in your profile, on the web).</string>
     <string name="wifi_cancelled">No networks were saved.</string>
+    <string name="shizuku_off">Emulator settings: Shizuku is off</string>
+    <string name="shizuku_allow">Emulator settings: allow Shizuku</string>
+    <string name="shizuku_ready">Emulator settings: apply now (Shizuku on)</string>
+    <string name="applying_config">Applying the configuration</string>
+    <string name="config_done">Done (%1$d tasks). Open emulators are never touched: they get it next time.</string>
+    <string name="shizuku_help">RetroArch and PPSSPP keep their settings in Android/data, where Android does not let other apps in. Shizuku lets Rommancer put your RetroAchievements there and copy their settings. Install Shizuku (Play Store or GitHub), start it with wireless debugging (or root), then come back here and allow it. Without it, only settings in public folders are changed.</string>
 </resources>

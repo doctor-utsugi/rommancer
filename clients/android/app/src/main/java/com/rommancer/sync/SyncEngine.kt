@@ -191,6 +191,7 @@ class SyncEngine(private val context: Context, private val store: Store, private
         val r = sync()
         val sent = runCatching { pulls() }.getOrDefault("")
         val roms = if (store.autoRoms) roms() else ""
+        runCatching { ConfigEngine(context, store).run() }
         return listOf("sync: $r", sent, roms).filter { it.isNotBlank() }.joinToString(" · ")
     }
 

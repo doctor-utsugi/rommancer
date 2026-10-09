@@ -43,6 +43,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -274,6 +275,21 @@ private fun Linked(store: Store, onUnlinked: () -> Unit) {
         screen = Screen.Message(if (r.resultCode == android.app.Activity.RESULT_OK) wifiDone else wifiCancelled)
     }
 
+    // Shizuku starting, stopping or granting its permission redraws its menu entry
+    DisposableEffect(Unit) {
+        val granted = rikka.shizuku.Shizuku.OnRequestPermissionResultListener { _, _ -> settingsTick++ }
+        val alive = rikka.shizuku.Shizuku.OnBinderReceivedListener { settingsTick++ }
+        val dead = rikka.shizuku.Shizuku.OnBinderDeadListener { settingsTick++ }
+        rikka.shizuku.Shizuku.addRequestPermissionResultListener(granted)
+        rikka.shizuku.Shizuku.addBinderReceivedListenerSticky(alive)
+        rikka.shizuku.Shizuku.addBinderDeadListener(dead)
+        onDispose {
+            rikka.shizuku.Shizuku.removeRequestPermissionResultListener(granted)
+            rikka.shizuku.Shizuku.removeBinderReceivedListener(alive)
+            rikka.shizuku.Shizuku.removeBinderDeadListener(dead)
+        }
+    }
+
     // A newer app on the server: offered at the top of the menu
     var update by remember { mutableStateOf<Updater.Available?>(null) }
     LaunchedEffect(Unit) { update = withContext(Dispatchers.IO) { Updater.check(context, store) } }
@@ -331,6 +347,20 @@ private fun Linked(store: Store, onUnlinked: () -> Unit) {
                             else -> addWifi.launch(intent)
                         }
                     }
+                }
+            }
+            val shizuku = remember(settingsTick) { Privileged.state() }
+            val titleConfig = stringResource(R.string.applying_config)
+            val shizukuHelp = stringResource(R.string.shizuku_help)
+            MenuItem(stringResource(when (shizuku) {
+                Privileged.State.READY -> R.string.shizuku_ready
+                Privileged.State.NOT_ALLOWED -> R.string.shizuku_allow
+                Privileged.State.NOT_RUNNING -> R.string.shizuku_off
+            })) {
+                when (shizuku) {
+                    Privileged.State.READY -> run(titleConfig) { e -> context.getString(R.string.config_done, ConfigEngine(context, store).run()) }
+                    Privileged.State.NOT_ALLOWED -> { Privileged.request(1); settingsTick++ }
+                    Privileged.State.NOT_RUNNING -> screen = Screen.Message(shizukuHelp)
                 }
             }
             MenuItem(stringResource(R.string.conflicts, n)) { screen = Screen.Conflicts }

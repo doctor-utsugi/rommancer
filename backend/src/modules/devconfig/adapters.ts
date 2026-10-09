@@ -305,6 +305,63 @@ const rocknix: Adapter = {
   },
 };
 
+/** "key = value" lines inside one [section] of an ini file (PPSSPP), creating the section or keys when missing */
+export function setIniSection(text: string, section: string, set: Record<string, string>): string {
+  const lines = text.split('\n');
+  while (lines.length && lines[lines.length - 1] === '') lines.pop();
+  let start = lines.findIndex((l) => l.trim() === `[${section}]`);
+  if (start < 0) {
+    lines.push(`[${section}]`);
+    start = lines.length - 1;
+  }
+  let end = lines.findIndex((l, i) => i > start && /^\s*\[.*\]\s*$/.test(l));
+  if (end < 0) end = lines.length;
+  const left = new Map(Object.entries(set));
+  for (let i = start + 1; i < end; i++) {
+    const m = /^\s*([^=\s]+)\s*=/.exec(lines[i]);
+    if (m && left.has(m[1])) {
+      lines[i] = `${m[1]} = ${left.get(m[1])}`;
+      left.delete(m[1]);
+    }
+  }
+  lines.splice(end, 0, ...[...left].map(([k, v]) => `${k} = ${v}`));
+  return lines.join('\n') + '\n';
+}
+
+/** Android (ES-DE + RetroArch): the emulators' own files; those under Android/data need Shizuku in the app */
+const ANDROID_RA = ['Android/data/com.retroarch.aarch64/files/retroarch.cfg', 'Android/data/com.retroarch/files/retroarch.cfg', 'RetroArch/retroarch.cfg'];
+const ANDROID_PSP = ['PSP/SYSTEM/', 'Android/data/org.ppsspp.ppsspp/files/PSP/SYSTEM/'];
+const android: Adapter = {
+  backup: [...ANDROID_RA, ...ANDROID_PSP.map((d) => `${d}ppsspp.ini`), 'ES-DE/settings/es_settings.xml'],
+  settingsFiles: [...ANDROID_RA, ...ANDROID_PSP.flatMap((d) => [`${d}ppsspp.ini`, `${d}ppsspp_retroachievements.dat`])],
+  apply(want, files) {
+    const notes: string[] = [];
+    const writes = new Map<string, string>();
+    if (!want.ra) return { writes, notes };
+    let found = 0;
+    const unread = [...ANDROID_RA, ...ANDROID_PSP.map((d) => `${d}ppsspp.ini`)].some((f) => f.startsWith('Android/data/') && !files.has(f));
+    for (const f of ANDROID_RA) {
+      const text = files.get(f);
+      if (text == null) continue;
+      found++;
+      const next = setRetroArch(text, raKeys(want.ra));
+      if (next !== text) writes.set(f, next);
+    }
+    for (const d of ANDROID_PSP) {
+      const ini = files.get(`${d}ppsspp.ini`);
+      if (ini == null) continue;
+      found++;
+      const next = setIniSection(ini, 'Achievements', { AchievementsEnable: 'True', AchievementsUserName: want.ra.username });
+      if (next !== ini) writes.set(`${d}ppsspp.ini`, next);
+      // PPSSPP keeps the token next to its ini, never in it
+      if (want.ra.token && files.get(`${d}ppsspp_retroachievements.dat`) !== want.ra.token) writes.set(`${d}ppsspp_retroachievements.dat`, want.ra.token);
+    }
+    if (unread) notes.push(note('needShizuku'));
+    else if (!found) notes.push(note('noEmulators'));
+    return { writes, notes };
+  },
+};
+
 const ADAPTERS: Record<string, Adapter> = {
   knulli: batocera('system/batocera.conf', [
     'system/batocera.conf',
@@ -319,6 +376,7 @@ const ADAPTERS: Record<string, Adapter> = {
 ADAPTERS.batocera = ADAPTERS.knulli;
 ADAPTERS.muos = muos;
 ADAPTERS.rocknix = rocknix;
+ADAPTERS['android-esde'] = android;
 
 export const adapterFor = (firmwareSlug: string): Adapter | null => ADAPTERS[firmwareSlug] ?? null;
 export const isAbsolute = (p: string) => p.startsWith('/');

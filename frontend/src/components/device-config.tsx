@@ -243,7 +243,7 @@ export function DeviceConfigTab({ deviceId, canEdit }: { deviceId: number; canEd
   }
   const c = q.data
   if (!c) return null
-  if (!c.supported) return <p className="text-sm text-muted-foreground">{t(c.firmware.startsWith('android') ? 'more.config.android' : 'more.config.unsupported')}</p>
+  if (!c.supported) return <p className="text-sm text-muted-foreground">{t('more.config.unsupported')}</p>
   const source = (v: ConfigVersion) => (v.source === 'backup' ? t('more.config.srcBackup') : v.source === 'edit' ? t('more.config.srcEdit') : t('more.config.srcBefore'))
   return (
     <div className="space-y-4">
@@ -252,6 +252,7 @@ export function DeviceConfigTab({ deviceId, canEdit }: { deviceId: number; canEd
           <CardTitle className="text-base">{t('more.config.yourSettings')}</CardTitle>
         </CardHeader>
         <CardContent className="space-y-3 text-sm">
+          {c.firmware.startsWith('android') && <p className="text-muted-foreground">{t('more.config.android')}</p>}
           <label className="flex items-center gap-2">
             <Checkbox checked={c.keepSettings} disabled={!canEdit} onCheckedChange={(v) => void run(() => patch(`/devices/${deviceId}/config`, { keepSettings: !!v }))} />
             {t('more.config.keep')}

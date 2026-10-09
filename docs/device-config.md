@@ -41,10 +41,18 @@ longer apply (removed from your list, or not visible to that device) are removed
 | Onion | `RetroArch/.retroarch/retroarch.cfg` (`cheevos_*`, token) | `/appconfigs/wpa_supplicant.conf` (internal memory) | `retroarch.cfg` and overrides, `.tmp_update/config/`, profile config, `/appconfigs/system.json`, `wpa_supplicant.conf` |
 | muOS | `/opt/muos/share/info/config/retroarch.cfg` and `retroarch.cheevos.cfg` (appended at each launch; internal) | one profile per network in `MUOS/network/rommancer-*.ini` on the card (`pass` is the derived 64-hex key; priority 1 wins) | the network profiles and both RetroArch files |
 | ROCKNIX | `.config/system/configs/system.cfg` (`global.retroachievements.*`, password; RetroArch's config is rebuilt from it) | NetworkManager keyfiles `rommancer-*.nmconnection` in `/storage/.config/NetworkManager/system-connections/`, mode 600 (only the console or SSH writes them) | `system.cfg` and the keyfiles |
-| Android | not reachable (emulators keep their config in app-private storage) | handed to Android with `ACTION_WIFI_ADD_NETWORKS`: the user confirms them in a system dialog | none |
+| Android | RetroArch's `retroarch.cfg` (`RetroArch/` or `Android/data/com.retroarch*/files/`) and PPSSPP's `PSP/SYSTEM/ppsspp.ini` (`[Achievements]`) with its token in `ppsspp_retroachievements.dat` | handed to Android with `ACTION_WIFI_ADD_NETWORKS`: the user confirms them in a system dialog | those files and ES-DE's `es_settings.xml` |
 
 Nothing is reloaded live. RetroArch reads its config at the next game, and the firmwares read WiFi networks at
 boot, so a sync running over WiFi is never cut short.
+
+## Android and Shizuku
+
+Most emulators keep their configuration under `Android/data`, which Android keeps from other apps. With
+[Shizuku](https://shizuku.rikka.app/) running and allowed, the app reads and writes there with shell
+permissions, and stops the emulator before changing its files; an emulator that is open is never stopped (the
+work waits for the next sync). Without Shizuku only the public folders are changed and the device shows the
+`needShizuku` note.
 
 ## Copies
 
