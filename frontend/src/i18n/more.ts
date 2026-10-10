@@ -601,6 +601,13 @@ export const esMore = {
     gameTab: 'Partidas',
     gameMine: 'Tus partidas de este juego',
     gameShared: 'Compartidas por otros usuarios',
+    consoles: 'Consolas',
+    status: {
+      synced: 'tiene la última versión',
+      pending: 'la recibirá en su próxima sincronización',
+      conflict: 'conflicto: elige qué versión conservar',
+      incompatible: 'usa otro emulador: este savestate no le sirve',
+    },
   },
   sync: {
     title: 'Sincronización de fuentes externas',
@@ -1243,6 +1250,13 @@ export const enMore: typeof esMore = {
     gameTab: 'Saves',
     gameMine: 'Your saves of this game',
     gameShared: 'Shared by other users',
+    consoles: 'Consoles',
+    status: {
+      synced: 'has the latest version',
+      pending: 'gets it at its next sync',
+      conflict: 'conflict: choose which version to keep',
+      incompatible: 'uses another emulator: this savestate is of no use there',
+    },
   },
   sync: {
     title: 'External sources synchronisation',

@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { Link } from 'react-router'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
-import { Download, History, ImageOff, Share2, Trash2, TriangleAlert } from 'lucide-react'
+import { Ban, Check, Clock, Download, History, ImageOff, Share2, Trash2, TriangleAlert } from 'lucide-react'
 import { toast } from 'sonner'
 import { authUrl, del, get, patch, post, put, upload } from '@/lib/api'
 import { Badge } from '@/components/ui/badge'
@@ -74,6 +74,32 @@ function CoreWarning({ warnings, version, short }: { warnings?: { name: string; 
   )
 }
 
+const STATUS = {
+  synced: { icon: Check, className: 'border-green-600/40 text-green-700 dark:text-green-400' },
+  pending: { icon: Clock, className: 'text-muted-foreground' },
+  conflict: { icon: TriangleAlert, className: 'border-amber-500/50 text-amber-600 dark:text-amber-400' },
+  incompatible: { icon: Ban, className: 'text-muted-foreground line-through' },
+} as const
+
+/** Each of the user's consoles that has (or will get) this save, and how it stands there */
+function SaveConsoles({ devices }: { devices?: { deviceId: number; name: string; status: keyof typeof STATUS }[] }) {
+  const { t } = useTranslation()
+  if (!devices?.length) return <span className="text-xs text-muted-foreground">-</span>
+  return (
+    <div className="flex flex-wrap gap-1">
+      {devices.map((d) => {
+        const { icon: Icon, className } = STATUS[d.status]
+        return (
+          <span key={d.deviceId} title={`${d.name}: ${t(`more.saves.status.${d.status}`)}`} className={`inline-flex items-center gap-1 rounded-md border px-1.5 py-0.5 text-xs ${className}`}>
+            <Icon className="size-3" />
+            {d.name}
+          </span>
+        )
+      })}
+    </div>
+  )
+}
+
 export function MySaves({ saves, onOpen }: { saves: any[] | undefined; onOpen(id: number): void }) {
   const { t } = useTranslation()
   if (!saves?.length) return <Empty />
@@ -86,6 +112,7 @@ export function MySaves({ saves, onOpen }: { saves: any[] | undefined; onOpen(id
           <TableHead>{t('common.type')}</TableHead>
           <TableHead>{t('saves.versions')}</TableHead>
           <TableHead>{t('saves.current')}</TableHead>
+          <TableHead>{t('more.saves.consoles')}</TableHead>
           <TableHead />
         </TableRow>
       </TableHeader>
@@ -96,7 +123,7 @@ export function MySaves({ saves, onOpen }: { saves: any[] | undefined; onOpen(id
             <TableRow key={s.id}>
               <TableCell className="max-w-md">
                 <div className="flex items-center gap-3">
-                  {cur?.thumbPath && <Thumb src={authUrl(`/saves/${s.id}/versions/${cur.id}/thumb`)} className="h-10" />}
+                  {cur?.thumbPath && <Thumb src={authUrl(`/saves/${s.id}/versions/${cur.id}/thumb`)} className="h-14" />}
                   <div className="min-w-0">
                     {s.game ? (
                       <Link className="font-medium hover:underline" to={`/games/${s.game.id}`}>
@@ -133,6 +160,9 @@ export function MySaves({ saves, onOpen }: { saves: any[] | undefined; onOpen(id
               <TableCell className="text-xs">
                 {formatDate(cur?.fileMtime)}
                 <p className="text-muted-foreground">{cur?.sourceDevice?.name ?? t('saves.web')}</p>
+              </TableCell>
+              <TableCell className="max-w-xs">
+                <SaveConsoles devices={s.devices} />
               </TableCell>
               <TableCell>
                 <Button variant="outline" size="sm" onClick={() => onOpen(s.id)}>
@@ -219,6 +249,7 @@ export function VersionsDialog({ saveId, onClose }: { saveId: number; onClose():
             </div>
           </Field>
         </div>
+        <SaveConsoles devices={s.devices} />
         <CoreWarning warnings={s.coreWarnings} version={s.versions.find((v: any) => v.id === s.currentVersionId)?.coreVersion} />
         <Table>
           <TableHeader>

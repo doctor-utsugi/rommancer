@@ -26,6 +26,7 @@ sysinfo = { version = "0.37", default-features = false, features = ["disk"] }
 base64 = "0.22"
 urlencoding = "2"
 anyhow = "1"
+tauri-plugin-notification = "2"
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"

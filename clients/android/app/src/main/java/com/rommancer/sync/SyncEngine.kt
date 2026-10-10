@@ -82,6 +82,8 @@ class SyncEngine(private val context: Context, private val store: Store, private
         var up = 0
         var down = 0
         var errors = 0
+        // Games whose save or state arrived, for the notification
+        val received = linkedSetOf<String>()
         val steps = plan.lines().filter { it.isNotBlank() }
         for ((n, line) in steps.withIndex()) {
             onProgress(Progress("transfer", n + 1, steps.size))
@@ -101,6 +103,7 @@ class SyncEngine(private val context: Context, private val store: Store, private
                     "get" -> {
                         api.download("/agent/file?v=${f[2]}", mapOf("X-Rom-B64" to Api.b64(f[3]), "X-Path-B64" to Api.b64(f[1])), File(f[1]))
                         down++
+                        received += File(f[3]).nameWithoutExtension
                     }
                     // Savestate screenshots: ours when the server lacks it, the server's beside a state it sent
                     "tput" -> thumbPut(api, f[1], f[2])
@@ -110,6 +113,7 @@ class SyncEngine(private val context: Context, private val store: Store, private
                 errors++
             }
         }
+        Notices.received(context, received.toList())
         return Result(up, down, errors).also {
             store.lastResult = "${java.text.DateFormat.getDateTimeInstance().format(java.util.Date())}: $it"
             store.addLog("sync: $it")

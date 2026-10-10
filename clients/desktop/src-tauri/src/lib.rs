@@ -372,6 +372,7 @@ pub fn run() {
         .plugin(tauri_plugin_autostart::init(tauri_plugin_autostart::MacosLauncher::LaunchAgent, Some(vec!["--hidden"])))
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_notification::init())
         .setup(|app| {
             let handle = app.handle().clone();
             let settings: Settings = std::fs::read_to_string(settings_path(&handle)).ok().and_then(|t| serde_json::from_str(&t).ok()).unwrap_or_default();

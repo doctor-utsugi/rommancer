@@ -1,9 +1,10 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import { open } from '@tauri-apps/plugin-dialog'
 import { openUrl } from '@tauri-apps/plugin-opener'
 import { disable, enable, isEnabled } from '@tauri-apps/plugin-autostart'
+import { isPermissionGranted, requestPermission, sendNotification } from '@tauri-apps/plugin-notification'
 import { bytes, locale, setLang, t, type Lang } from './i18n'
 import { SavePoint } from './SavePoint'
 
@@ -145,6 +146,9 @@ function Main({ status, onChange }: { status: Status; onChange: () => void }) {
     return () => void u.then((f) => f())
   }, [])
   const loadCards = useCallback(() => void invoke<Card[]>('cards').then(setCards), [])
+  // The listener below lives as long as the window: it reads the cards through a ref
+  const cardsRef = useRef<Card[]>([])
+  cardsRef.current = cards
 
   useEffect(() => {
     loadCards()
@@ -158,6 +162,7 @@ function Main({ status, onChange }: { status: Status; onChange: () => void }) {
         })
         setResults((r) => ({ ...r, [e.payload.root]: e.payload }))
         onChange()
+        void notifyFinished(e.payload, cardsRef.current)
       }),
     ]
     return () => subs.forEach((s) => void s.then((u) => u()))
@@ -1383,4 +1388,17 @@ function AddGames({ deviceId, onAdded }: { deviceId: number; onAdded: () => void
       </button>
     </div>
   )
+}
+
+/** A system notification when a sync brought something (saves, games) while the window is hidden or in the background */
+async function notifyFinished(f: Finished, cards: Card[]) {
+  if (!f.ok || document.hasFocus()) return
+  const o = f.outcome
+  const parts = [o.down === 1 ? t('notifySave') : o.down > 1 ? t('notifySaves', { n: o.down }) : '', o.roms > 0 ? t('notifyRoms', { n: o.roms }) : ''].filter(Boolean)
+  if (!parts.length) return
+  let granted = await isPermissionGranted()
+  if (!granted) granted = (await requestPermission()) === 'granted'
+  if (!granted) return
+  const card = cards.find((c) => c.root === f.root)?.label ?? f.root
+  sendNotification({ title: t('notifyTitle', { card }), body: parts.join(' · ') })
 }

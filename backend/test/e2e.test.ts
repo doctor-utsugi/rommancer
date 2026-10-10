@@ -240,6 +240,8 @@ before(async () => {
     ADMIN_USERNAME: 'admin',
     ADMIN_PASSWORD: 'admin1234',
   });
+  // The shell client would pop desktop notifications on the machine running the tests
+  process.env.ROMMANCER_NO_NOTIFY = '1';
   execSync('npx prisma migrate reset --force --skip-seed --skip-generate', { cwd: path.join(ROOT, 'backend'), env: process.env, stdio: 'ignore' });
   fs.rmSync(DATA, { recursive: true, force: true });
   fs.mkdirSync(path.join(DATA, 'dats'), { recursive: true });
@@ -2555,7 +2557,8 @@ test('shared savestates: screenshots travel with the state, the core version is 
     assert.equal(r.status, 201, JSON.stringify(r.json));
     fs.mkdirSync(state, { recursive: true });
     fs.writeFileSync(path.join(state, 'config'), `SERVER=${base}\nTOKEN=${r.json.token}\nUSER=admin\n`);
-    const sync = async () => (await execFileP('sh', [client, 'sync'], { env: { ...process.env, ROMMANCER_STATE: state, ROMMANCER_ROOT: root, ROMMANCER_FIRMWARE: 'onion', VERBOSE: '1' } })).stdout;
+    const sync = async (env: Record<string, string> = {}) =>
+      (await execFileP('sh', [client, 'sync'], { env: { ...process.env, ROMMANCER_STATE: state, ROMMANCER_ROOT: root, ROMMANCER_FIRMWARE: 'onion', VERBOSE: '1', ...env } })).stdout;
     return { id: r.json.deviceId as number, root, sync, states: path.join(root, 'Saves/CurrentProfile/states/mGBA') };
   };
   const a = await device('mini-a', '0.10.3');
@@ -2578,13 +2581,30 @@ test('shared savestates: screenshots travel with the state, the core version is 
   assert.equal(thumb.headers.get('content-type'), 'image/png');
   assert.deepEqual(Buffer.from(await thumb.arrayBuffer()), PNG);
 
-  // Another console with the same core gets the state and its screenshot; its core is newer, which the web app warns about
-  assert.match(await b.sync(), /0 up, 1 down, 0 errors/);
+  // Another console with the same core gets the state and its screenshot; its core is newer, which the web app warns about.
+  // On Knulli EmulationStation says what arrived
+  const notes: string[] = [];
+  const es = http.createServer((req, res) => {
+    let body = '';
+    req.on('data', (c) => (body += c));
+    req.on('end', () => (notes.push(`${req.method} ${req.url} ${body}`), res.end('ok')));
+  });
+  await new Promise<void>((r) => es.listen(0, '127.0.0.1', r));
+  const esUrl = `http://127.0.0.1:${(es.address() as AddressInfo).port}/notify`;
+  assert.match(await b.sync({ ROMMANCER_FIRMWARE: 'knulli', ROMMANCER_NO_NOTIFY: '', ROMMANCER_ES_NOTIFY: esUrl, LANG: 'C' }), /0 up, 1 down, 0 errors/);
+  assert.deepEqual(notes, [`POST /notify Rommancer · Save received: ${rom}`]);
   assert.equal(fs.readFileSync(path.join(b.states, `${rom}.state1`), 'utf8'), 'STATE-FROM-A');
   assert.deepEqual(fs.readFileSync(path.join(b.states, `${rom}.state1.png`)), PNG);
   const warned = (await api('GET', `/saves/${mine.id}`)).json;
+  // Where it is: both consoles hold the current version
+  assert.deepEqual(
+    warned.devices.filter((d: any) => d.deviceId === a.id || d.deviceId === b.id).map((d: any) => `${d.name} ${d.status}`),
+    ['mini-a synced', 'mini-b synced'],
+  );
   assert.deepEqual(warned.coreWarnings.filter((w: any) => w.deviceId === b.id || w.deviceId === a.id), [{ deviceId: b.id, name: 'mini-b', version: '0.11.0' }]);
-  assert.match(await b.sync(), /0 up, 0 down, 0 errors/, 'nothing moves twice');
+  assert.match(await b.sync({ ROMMANCER_FIRMWARE: 'knulli', ROMMANCER_NO_NOTIFY: '', ROMMANCER_ES_NOTIFY: esUrl }), /0 up, 0 down, 0 errors/, 'nothing moves twice');
+  assert.equal(notes.length, 1, 'nothing received, nothing said');
+  es.close();
 
   // A state synced before screenshots were kept gets its screenshot at the next pass
   await prisma.saveVersion.update({ where: { id: cur.id }, data: { thumbPath: null } });
@@ -2622,6 +2642,22 @@ test('shared savestates: screenshots travel with the state, the core version is 
   assert.equal((await api('DELETE', `/saves/${mine.id}/versions/${cur.id}/share`)).status, 204);
   assert.equal((await api('GET', `/saves/shared?q=${encodeURIComponent('Shared Quest')}`, undefined, userToken)).json.length, 0);
   assert.equal((await fetch(`${base}/api/v1/saves/shared/${cur.id}/thumb?token=${userFiles}`)).status, 404);
+
+  // A newer state on one console: the other gets it at its next sync; a NextUI console with the game cannot use it
+  const brick = await api('POST', '/link/claim', { name: 'brick', firmware: 'nextui', root: '/mnt/SDCARD', offline: true });
+  const inv = await fetch(`${base}/api/v1/agent/sync`, {
+    method: 'POST',
+    body: `rom\t/mnt/SDCARD/Roms/Game Boy Advance (GBA)/${rom}.gba\t\t\t2048\n`,
+    headers: { 'X-Device-Token': brick.json.token, 'Content-Type': 'text/plain' },
+  });
+  assert.equal(inv.status, 200);
+  fs.writeFileSync(stateFile, 'STATE-FROM-A-2');
+  await a.sync();
+  const later = (await api('GET', `/saves/${mine.id}`)).json.devices;
+  assert.deepEqual(
+    later.filter((d: any) => [a.id, b.id, brick.json.deviceId].includes(d.deviceId)).map((d: any) => `${d.name} ${d.status}`),
+    ['brick incompatible', 'mini-a synced', 'mini-b pending'],
+  );
 
   // RetroArch is told to write the screenshots where Rommancer edits its config
   const { adapterFor } = await import('../src/modules/devconfig/adapters.js');

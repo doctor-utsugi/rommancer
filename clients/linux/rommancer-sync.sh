@@ -22,7 +22,7 @@
 #                                   Menu++...) mounted on this computer; the link lives on the card itself,
 #                                   so any computer with this script can sync it. Without a command: sync.
 set -u
-CLIENT_VERSION=20261013
+CLIENT_VERSION=20261014
 # A clock before this date is surely wrong (no battery-backed clock); kept apart from the version, which may run ahead
 CLOCK_MIN=20261001
 # Onion keeps curl (with TLS) and friends outside the default PATH
@@ -372,6 +372,31 @@ thumb_get() {
   http GET "$SERVER/api/v1/agent/thumb?v=$2" - "$1.rommancer-tmp" && mv "$1.rommancer-tmp" "$1" || rm -f "$1.rommancer-tmp"
 }
 
+# The system's language, as Knulli/Batocera, Onion or the desktop say it
+lang_es() {
+  grep -qs '^system\.language=es' /userdata/system/knulli.conf /userdata/system/batocera.conf && return 0
+  tr_es && return 0
+  case "${LANG:-}" in es*) return 0 ;; esac
+  return 1
+}
+
+# A short note on screen when saves arrived: EmulationStation's popup (Knulli, Batocera), the desktop's
+# notifications (PCs). Onion, muOS, ArkOS and NextUI have nothing to show it with; never during a game
+notify_received() {
+  [ -z "$SD" ] && [ -z "${ROMMANCER_NO_NOTIFY:-}" ] && [ -s "$WORK/received" ] || return 0
+  playing && return 0
+  n="$(grep -c . "$WORK/received")"; first="$(head -n 1 "$WORK/received")"
+  if lang_es; then
+    if [ "$n" -eq 1 ]; then msg="Partida recibida: $first"; else msg="$n partidas recibidas: $first y más"; fi
+  elif [ "$n" -eq 1 ]; then msg="Save received: $first"; else msg="$n saves received: $first and more"; fi
+  [ -n "${FW:-}" ] || detect
+  case "$FW" in
+    knulli|batocera) printf 'Rommancer · %s' "$msg" > "$WORK/notify" && curl -fsS -m 3 -X POST -H 'Content-Type: text/plain' --data-binary "@$WORK/notify" "${ROMMANCER_ES_NOTIFY:-http://127.0.0.1:1234/notify}" >/dev/null 2>&1 ;;
+    retroarch-desktop) command -v notify-send >/dev/null 2>&1 && notify-send -a Rommancer -i media-floppy Rommancer "$msg" 2>/dev/null ;;
+  esac
+  return 0
+}
+
 cmd_sync() {
   need_link
   # A sync asked for on screen goes first: background passes step aside while it waits
@@ -397,6 +422,7 @@ cmd_sync() {
   space="$(df -k "$ROMS" 2>/dev/null | awk 'NR == 2 { printf "%.0f %.0f", $4 * 1024, $2 * 1024 }')"
   http POST "$SERVER/api/v1/agent/sync" "$req" "$plan" "X-Allow-Pull: $ALLOW_PULL" "X-Ssh: $(ssh_offer)" "X-Client-Path-B64: $(b64 "$DIR/$(basename "$0")")" "X-Space: ${space:-}" "X-Wifi-Bands: $(wifi_bands)" || { log "sync request failed"; drop_lock; return 1; }
   ups=0; downs=0; errs=0; moved=0; total="$(grep -c . "$plan")"
+  : > "$WORK/received"
   while IFS="$TAB" read -r action p a b; do
     moved=$((moved + 1)); progress transfer "$moved" "$total"
     case "$action" in
@@ -411,12 +437,16 @@ cmd_sync() {
         mkdir -p "$(dirname "$p")"
         if http GET "$SERVER/api/v1/agent/file?v=$a" - "$p.rommancer-tmp" "X-Rom-B64: $(b64 "$b")" "X-Path-B64: $(b64 "$p")" && mv "$p.rommancer-tmp" "$p"; then
           downs=$((downs + 1))
+          rn="$(basename "$b")"; printf '%s\n' "${rn%.*}" >> "$WORK/received"
         else rm -f "$p.rommancer-tmp"; errs=$((errs + 1)); fi ;;
       tput) thumb_put "$p" "$a" ;;
       tget) thumb_get "$p" "$a" ;;
     esac
   done < "$plan"
   progress finished "$ups" "$downs"
+  # One line per game: its save and its states count once
+  sort -u "$WORK/received" -o "$WORK/received" 2>/dev/null
+  notify_received
   log "sync: $ups up, $downs down, $errs errors"
   # The last log lines go to the server so problems can be seen without access to the device
   { tail -n 40 "$LOG"; [ -f "$DIR/last-run.txt" ] && { echo "--- last-run.txt"; tail -n 20 "$DIR/last-run.txt"; }; } > "$WORK/report" 2>/dev/null

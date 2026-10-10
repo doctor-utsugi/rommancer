@@ -10,6 +10,8 @@ import { enqueue } from '../../lib/jobs.js';
 import { me, requirePerm, type AuthUser } from '../auth/middleware.js';
 import { Prisma, type Emulator, type Save, type SaveVersion } from '@prisma/client';
 import { coreVersionOf, resolveConflict } from './core.js';
+import { layoutOf } from '../devices/sink.js';
+import { raDefaults } from '../../seed/data.js';
 import { convertSave, type SaveFormat } from './convert.js';
 import { identifyRom, parseSaveFile, readThumb, readVersion, removeVersion, storeThumb, storeVersion } from './service.js';
 import './sync.js';
@@ -60,10 +62,63 @@ async function coreChecker(userId: number) {
   };
 }
 
-type WithVersions = Save & { emulator: Emulator; versions: SaveVersion[] };
+type DeviceSaveStatus = 'synced' | 'pending' | 'conflict' | 'incompatible';
+
+/**
+ * Where each save is among the user's consoles: holding the current version, about to get it at their next sync,
+ * waiting for a conflict to be settled, or unable to use it (a savestate of another emulator). Consoles without
+ * the game (by their last inventory) and that never held the save are left out.
+ */
+async function deviceStatuses(userId: number, saves: (Save & { game?: { system?: { slug: string } | null } | null })[]) {
+  const out = new Map<number, { deviceId: number; name: string; status: DeviceSaveStatus }[]>(saves.map((s) => [s.id, []]));
+  if (!saves.length) return out;
+  const devices = await prisma.device.findMany({ where: { userId }, include: { firmware: true }, orderBy: { name: 'asc' } });
+  if (!devices.length) return out;
+  const ids = saves.map((s) => s.id);
+  const [bases, conflicts, emulators] = await Promise.all([
+    prisma.saveDeviceState.findMany({ where: { saveId: { in: ids } } }),
+    prisma.saveConflict.findMany({ where: { saveId: { in: ids }, resolvedAt: null }, select: { saveId: true, deviceId: true } }),
+    prisma.emulator.findMany({ select: { id: true, slug: true } }),
+  ]);
+  const gameIds = [...new Set(saves.map((s) => s.gameId).filter((g): g is number => g !== null))];
+  const unnamed = [...new Set(saves.filter((s) => s.gameId === null).map((s) => s.baseName))];
+  const inventory = await prisma.deviceRom.findMany({
+    where: { deviceId: { in: devices.map((d) => d.id) }, OR: [{ gameId: { in: gameIds } }, ...unnamed.slice(0, 200).map((b) => ({ path: { contains: `/${b}.` } }))] },
+    select: { deviceId: true, gameId: true, path: true, systemSlug: true },
+  });
+  // The game on each console, with the system its folder says (unidentified roms have no other)
+  const has = new Map(inventory.flatMap((r) => [`${r.deviceId}:g${r.gameId}`, `${r.deviceId}:n${path.posix.basename(r.path).replace(/\.[^.]+$/, '')}`].map((k) => [k, r.systemSlug] as const)));
+  const base = new Map(bases.map((b) => [`${b.saveId}:${b.deviceId}`, b]));
+  const open = new Set(conflicts.map((c) => `${c.saveId}:${c.deviceId}`));
+  const emuId = new Map(emulators.map((e) => [e.slug, e.id]));
+  for (const s of saves) {
+    for (const d of devices) {
+      const key = s.gameId !== null ? `${d.id}:g${s.gameId}` : `${d.id}:n${s.baseName}`;
+      const slug = s.game?.system?.slug ?? has.get(key) ?? undefined;
+      const b = base.get(`${s.id}:${d.id}`);
+      let status: DeviceSaveStatus | null = null;
+      if (open.has(`${s.id}:${d.id}`)) status = 'conflict';
+      else if (b) status = b.versionId === s.currentVersionId ? 'synced' : 'pending';
+      else if (has.has(key)) {
+        // A savestate only loads in the emulator the console uses for that system
+        const emu = slug ? (layoutOf(d).systemMap[slug]?.emulator ?? raDefaults[slug]) : undefined;
+        status = s.kind === 'STATE' && emu && emuId.get(emu) !== s.emulatorId ? 'incompatible' : 'pending';
+      }
+      if (status) out.get(s.id)!.push({ deviceId: d.id, name: d.name, status });
+    }
+  }
+  return out;
+}
+
+type WithVersions = Save & { emulator: Emulator; versions: SaveVersion[]; game?: { system?: { slug: string } | null } | null };
 async function withCoreWarnings<T extends WithVersions>(userId: number, saves: T[]) {
   const check = await coreChecker(userId);
-  return saves.map((s) => ({ ...s, coreWarnings: s.kind === 'STATE' ? check(s.emulator, s.versions.find((v) => v.id === s.currentVersionId)?.coreVersion) : [] }));
+  const where = await deviceStatuses(userId, saves);
+  return saves.map((s) => ({
+    ...s,
+    coreWarnings: s.kind === 'STATE' ? check(s.emulator, s.versions.find((v) => v.id === s.currentVersionId)?.coreVersion) : [],
+    devices: where.get(s.id) ?? [],
+  }));
 }
 
 savesRouter.get('/', async (req, res) => {
@@ -182,7 +237,7 @@ savesRouter.get('/:id', async (req, res) => {
   const s = await ownSave(intParam(req), u);
   const full = await prisma.save.findUniqueOrThrow({
     where: { id: s.id },
-    include: { emulator: true, game: true, rom: true, versions: { orderBy: { fileMtime: 'desc' }, include: { sourceDevice: { select: { id: true, name: true } } } } },
+    include: { emulator: true, game: { include: { system: true } }, rom: true, versions: { orderBy: { fileMtime: 'desc' }, include: { sourceDevice: { select: { id: true, name: true } } } } },
   });
   res.json((await withCoreWarnings(u.id, [full]))[0]);
 });

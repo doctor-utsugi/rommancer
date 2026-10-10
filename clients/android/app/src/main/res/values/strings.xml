@@ -60,4 +60,7 @@
     <string name="applying_config">Applying the configuration</string>
     <string name="config_done">Done (%1$d tasks). Open emulators are never touched: they get it next time.</string>
     <string name="shizuku_help">RetroArch and PPSSPP keep their settings in Android/data, where Android does not let other apps in. Shizuku lets Rommancer put your RetroAchievements there and copy their settings. Install Shizuku (Play Store or GitHub), start it with wireless debugging (or root), then come back here and allow it. Without it, only settings in public folders are changed.</string>
+    <string name="received_channel">Saves received</string>
+    <string name="received_one">Save received: %1$s</string>
+    <string name="received_many">%1$d saves received: %2$s and more</string>
 </resources>
