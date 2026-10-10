@@ -11,7 +11,8 @@ import { extractEntryStream } from '../../lib/tools.js';
 import { me, requirePerm, type AuthUser } from '../auth/middleware.js';
 import { queueListScrape } from '../scrape/routes.js';
 import { ownedRomIds, pickFromWork, pickRom, type RomPreference } from '../roms/service.js';
-import { itemKey, loadList, resolveListFiles } from './service.js';
+import { favoritesList, itemKey, loadList, resolveListFiles, toRomItems } from './service.js';
+import { previewDerive, resolveDerive, specOf, type DerivedSpec } from './derive.js';
 
 export const listsRouter = Router();
 listsRouter.use(requirePerm('lists'));
@@ -31,10 +32,18 @@ const prefSchema = z.object({
   strictRegions: z.boolean().optional(),
   excludeFlags: z.array(z.string()).optional(),
   platforms: z.array(z.string()).optional(),
+  strictLanguages: z.boolean().optional(),
+  verifiedOnly: z.boolean().optional(),
+});
+
+const decisionsSchema = z.object({
+  perGame: z.record(z.string(), z.number().int().nullable()).default({}),
+  rest: z.union([z.object({ mode: z.literal('skip') }), z.object({ mode: z.literal('like'), romId: z.number().int() })]).default({ mode: 'skip' }),
 });
 
 listsRouter.get('/', async (req, res) => {
   const u = me(req);
+  await favoritesList(u.id);
   const scope = z.enum(['mine', 'shared', 'public', 'all']).default('all').parse(req.query.scope);
   const where: Prisma.ListWhereInput =
     scope === 'mine'
@@ -49,7 +58,8 @@ listsRouter.get('/', async (req, res) => {
     orderBy: { updatedAt: 'desc' },
     include: { owner: { select: { id: true, username: true } }, _count: { select: { items: true } }, shares: { select: { userId: true, canEdit: true } } },
   });
-  res.json(lists);
+  // The user's favourites always come first
+  res.json(lists.sort((a, b) => Number(b.kind === 'favorites' && b.ownerId === u.id) - Number(a.kind === 'favorites' && a.ownerId === u.id)));
 });
 
 listsRouter.post('/', async (req, res) => {
@@ -114,6 +124,9 @@ listsRouter.get('/:id', async (req, res) => {
         workId: i.workId,
         platforms: i.work?.games.map((g) => g.system.slug),
         title: i.rom?.name ?? i.hack?.title ?? i.game?.title ?? i.work?.title,
+        gameTitle: i.rom?.game.title ?? i.hack?.game.title ?? null,
+        regions: (i.rom?.regions as string[] | undefined) ?? [],
+        languages: (i.rom?.languages as string[] | undefined) ?? [],
         system: i.game?.system ?? i.rom?.game.system ?? i.hack?.game.system ?? workPick?.game.system ?? i.work?.games[0]?.system,
         pendingMedia: !cover && !!gameId && pendingGames.has(gameId),
         cover: cover ? `/api/v1/media/${cover.id}` : null,
@@ -131,6 +144,7 @@ listsRouter.patch('/:id', async (req, res) => {
   const body = listBody.partial().parse(req.body);
   // Solo el propietario cambia visibilidad y modo colaborativo
   if (list.ownerId !== u.id && (body.visibility || body.isCollaborative !== undefined)) throw badRequest('Only the owner can change sharing');
+  if (list.kind === 'favorites' && body.name && body.name !== list.name) throw badRequest('FAVORITES_FIXED');
   res.json(await prisma.list.update({ where: { id: list.id }, data: body }));
 });
 
@@ -138,6 +152,7 @@ listsRouter.delete('/:id', async (req, res) => {
   const u = me(req);
   const list = await loadList(intParam(req), u);
   if (list.ownerId !== u.id && u.role !== 'ADMIN') throw badRequest('Only the owner can delete');
+  if (list.kind === 'favorites') throw badRequest('FAVORITES_FIXED');
   await prisma.list.delete({ where: { id: list.id } });
   res.status(204).end();
 });
@@ -152,7 +167,8 @@ const itemSchema = z
   })
   .refine((i) => i.gameId || i.romId || i.hackId || i.workId, 'gameId, romId, hackId or workId required');
 
-async function addItems(listId: number, items: z.infer<typeof itemSchema>[], user?: AuthUser) {
+async function addItems(listId: number, given: z.infer<typeof itemSchema>[], user?: AuthUser) {
+  const items = await toRomItems(given);
   const max = await prisma.listItem.aggregate({ where: { listId }, _max: { position: true } });
   let pos = (max._max.position ?? -1) + 1;
   const data = items.map((i) => ({
@@ -184,13 +200,25 @@ async function addItems(listId: number, items: z.infer<typeof itemSchema>[], use
 listsRouter.post('/:id/items', async (req, res) => {
   const list = await loadList(intParam(req), me(req), true);
   const body = z.union([itemSchema, z.object({ items: z.array(itemSchema).max(10000) })]).parse(req.body);
-  const items = 'items' in body ? body.items : [body];
-  res.status(201).json({ added: await addItems(list.id, items, me(req)) });
+  let items = 'items' in body ? body.items : [body];
+  if (list.kind === 'favorites') {
+    // Favourites are roms: what goes in is marked as favourite too
+    items = (await toRomItems(items)).filter((i) => i.romId);
+    await prisma.romFavorite.createMany({ data: items.map((i) => ({ userId: list.ownerId, romId: i.romId! })), skipDuplicates: true });
+  }
+  const added = await addItems(list.id, items, me(req));
+  if (added) void refreshChildren(list.id);
+  res.status(201).json({ added });
 });
 
 listsRouter.delete('/:id/items/:itemId', async (req, res) => {
   const list = await loadList(intParam(req), me(req), true);
-  await prisma.listItem.deleteMany({ where: { id: intParam(req, 'itemId'), listId: list.id } });
+  const item = await prisma.listItem.findFirst({ where: { id: intParam(req, 'itemId'), listId: list.id } });
+  if (item) {
+    await prisma.listItem.delete({ where: { id: item.id } });
+    if (list.kind === 'favorites' && item.romId) await prisma.romFavorite.deleteMany({ where: { userId: list.ownerId, romId: item.romId } });
+    void refreshChildren(list.id);
+  }
   res.status(204).end();
 });
 
@@ -231,45 +259,28 @@ listsRouter.post('/:id/clone', async (req, res) => {
   res.status(201).json(copy);
 });
 
-/** Genera los elementos de una sublista derivada: para cada juego, la mejor rom segun preferencias. */
-async function deriveItems(sourceListId: number, pref: RomPreference) {
-  const items = await prisma.listItem.findMany({
-    where: { listId: sourceListId },
-    orderBy: { position: 'asc' },
-    include: { game: { include: { roms: true } }, rom: { include: { game: { include: { roms: true } } } }, hack: true, work: { include: { games: { include: { system: true, roms: true } } } } },
-  });
-  const allRomIds = items.flatMap((i) => (i.game ?? i.rom?.game)?.roms.map((r) => r.id) ?? i.work?.games.flatMap((g) => g.roms.map((r) => r.id)) ?? []);
-  const owned = await ownedRomIds({ romIds: allRomIds, include: 'any' });
-  const out: { romId?: number; hackId?: number }[] = [];
-  const skipped: string[] = [];
-  for (const i of items) {
-    if (i.hack) {
-      out.push({ hackId: i.hack.id });
-      continue;
-    }
-    if (i.work) {
-      // Obra: se elige plataforma segun la preferencia ordenada y despues region/idioma/RA
-      const w = pickFromWork(i.work.games, pref, owned);
-      if (w) out.push({ romId: w.rom.id });
-      else skipped.push(i.work.title);
-      continue;
-    }
-    const game = i.game ?? i.rom?.game;
-    if (!game) continue;
-    const pick = pickRom(game.roms, pref, owned);
-    if (pick) out.push({ romId: pick.id });
-    else skipped.push(game.title);
+/** Sublists of a list follow it: their filters and decisions are applied again when it changes */
+export async function refreshChildren(listId: number) {
+  for (const child of await prisma.list.findMany({ where: { parentListId: listId } })) {
+    const { items } = await resolveDerive(listId, specOf(child.derivedFilter));
+    await prisma.listItem.deleteMany({ where: { listId: child.id } });
+    await addItems(child.id, items);
   }
-  return { items: out, skipped };
 }
+
+listsRouter.post('/:id/derive/preview', async (req, res) => {
+  const src = await loadList(intParam(req), me(req));
+  res.json(await previewDerive(src.id, prefSchema.parse(req.body ?? {})));
+});
 
 listsRouter.post('/:id/derive', async (req, res) => {
   const u = me(req);
   const src = await loadList(intParam(req), u);
-  const body = prefSchema.extend({ name: z.string().min(1).max(191) }).parse(req.body);
-  const { name, ...pref } = body;
-  const { items, skipped } = await deriveItems(src.id, pref);
-  const list = await prisma.list.create({ data: { ownerId: u.id, name, parentListId: src.id, derivedFilter: pref } });
+  const body = prefSchema.merge(decisionsSchema).extend({ name: z.string().min(1).max(191) }).parse(req.body);
+  const { name, perGame, rest, ...filters } = body;
+  const spec: DerivedSpec = { v: 2, filters, perGame, rest };
+  const { items, skipped } = await resolveDerive(src.id, spec);
+  const list = await prisma.list.create({ data: { ownerId: u.id, name, parentListId: src.id, derivedFilter: spec as unknown as Prisma.InputJsonValue } });
   const added = await addItems(list.id, items, me(req));
   res.status(201).json({ ...list, added, skipped });
 });
@@ -277,7 +288,7 @@ listsRouter.post('/:id/derive', async (req, res) => {
 listsRouter.post('/:id/refresh', async (req, res) => {
   const list = await loadList(intParam(req), me(req), true);
   if (!list.parentListId) throw badRequest('Not a derived list');
-  const { items, skipped } = await deriveItems(list.parentListId, (list.derivedFilter ?? {}) as RomPreference);
+  const { items, skipped } = await resolveDerive(list.parentListId, specOf(list.derivedFilter));
   await prisma.listItem.deleteMany({ where: { listId: list.id } });
   res.json({ added: await addItems(list.id, items), skipped });
 });

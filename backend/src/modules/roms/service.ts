@@ -85,6 +85,7 @@ export interface RomPreference {
   raOnly?: boolean;
   ownedOnly?: boolean;
   strictRegions?: boolean;
+  strictLanguages?: boolean;
   excludeFlags?: string[];
   // Obras multiplataforma: sistemas (slugs) por orden de preferencia
   platforms?: string[];
@@ -112,25 +113,30 @@ export function pickRom<T extends RomForPick>(roms: T[], pref: RomPreference, ow
   const regions = pref.regions ?? [];
   if (pref.strictRegions && regions.length)
     cands = cands.filter((r) => (r.regions as string[]).some((x) => regions.includes(x) || x === 'World'));
-  if (!cands.length) return null;
   const langs = pref.languages ?? [];
-  const score = (r: T) => {
-    const rr = r.regions as string[];
-    const ll = r.languages as string[];
-    let s = 0;
-    const ri = regions.findIndex((x) => rr.includes(x) || (x !== 'World' && rr.includes('World')));
-    s += ri >= 0 ? (regions.length - ri) * 1000 : 0;
-    const li = langs.findIndex((x) => ll.includes(x));
-    s += li >= 0 ? (langs.length - li) * 100 : 0;
-    if (owned?.has(r.id)) s += 50;
-    if (r.raGameId) s += 20;
-    if ((r.flags as string[]).length === 0) s += 10;
-    // Revisiones mas altas primero
-    const rev = r.revision?.match(/[\d.]+|[A-Z]$/)?.[0];
-    if (rev) s += Math.min(9, isNaN(Number(rev)) ? rev.charCodeAt(0) - 64 : Number(rev));
-    return s;
-  };
-  return cands.sort((a, b) => score(b) - score(a))[0];
+  if (pref.strictLanguages && langs.length) cands = cands.filter((r) => (r.languages as string[]).some((x) => langs.includes(x)));
+  if (!cands.length) return null;
+  return cands.sort((a, b) => romScore(b, pref, owned) - romScore(a, pref, owned))[0];
+}
+
+/** How well a rom fits the preferences: region and language order, owned, achievements, clean dump, newest revision */
+export function romScore(r: RomForPick, pref: RomPreference = {}, owned?: Set<number>) {
+  const regions = pref.regions ?? [];
+  const langs = pref.languages ?? [];
+  const rr = r.regions as string[];
+  const ll = r.languages as string[];
+  let s = 0;
+  const ri = regions.findIndex((x) => rr.includes(x) || (x !== 'World' && rr.includes('World')));
+  s += ri >= 0 ? (regions.length - ri) * 1000 : 0;
+  const li = langs.findIndex((x) => ll.includes(x));
+  s += li >= 0 ? (langs.length - li) * 100 : 0;
+  if (owned?.has(r.id)) s += 50;
+  if (r.raGameId) s += 20;
+  if ((r.flags as string[]).length === 0) s += 10;
+  // Revisiones mas altas primero
+  const rev = r.revision?.match(/[\d.]+|[A-Z]$/)?.[0];
+  if (rev) s += Math.min(9, isNaN(Number(rev)) ? rev.charCodeAt(0) - 64 : Number(rev));
+  return s;
 }
 
 /** Elige juego y rom de una obra: primero la plataforma preferida que tenga una rom valida. */

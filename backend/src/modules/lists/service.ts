@@ -130,3 +130,61 @@ export async function romFiles(romId: number) {
   }
   return files;
 }
+
+export interface ItemInput {
+  gameId?: number;
+  romId?: number;
+  hackId?: number;
+  workId?: number;
+  note?: string;
+}
+
+/** Lists hold roms (and romhacks): a game or a work given by the web app becomes its best rom, owned ones first */
+export async function toRomItems<T extends ItemInput>(items: T[]): Promise<(T & { romId?: number; hackId?: number })[]> {
+  const gameIds = [...new Set(items.flatMap((i) => (!i.romId && !i.hackId && i.gameId ? [i.gameId] : [])))];
+  const workIds = [...new Set(items.flatMap((i) => (!i.romId && !i.hackId && !i.gameId && i.workId ? [i.workId] : [])))];
+  const games = gameIds.length ? await prisma.game.findMany({ where: { id: { in: gameIds } }, include: { roms: true, hacks: { select: { id: true }, take: 1 } } }) : [];
+  const works = workIds.length ? await prisma.work.findMany({ where: { id: { in: workIds } }, include: { games: { include: { system: true, roms: true } } } }) : [];
+  const owned = await ownedRomIds({ romIds: [...games.flatMap((g) => g.roms.map((r) => r.id)), ...works.flatMap((w) => w.games.flatMap((g) => g.roms.map((r) => r.id)))], include: 'any' });
+  // Asked for by hand: a game whose only versions are betas, pirates or demos still goes in
+  const gameRom = new Map(games.map((g) => [g.id, (pickRom(g.roms, {}, owned) ?? pickRom(g.roms, { excludeFlags: [] }, owned))?.id]));
+  const workRom = new Map(works.map((w) => [w.id, (pickFromWork(w.games, {}, owned) ?? pickFromWork(w.games, { excludeFlags: [] }, owned))?.rom.id]));
+  return items.flatMap((i) => {
+    if (i.romId || i.hackId) return [{ ...i, gameId: undefined, workId: undefined }];
+    const romId = i.gameId ? gameRom.get(i.gameId) : i.workId ? workRom.get(i.workId) : undefined;
+    if (romId) return [{ ...i, romId, gameId: undefined, workId: undefined }];
+    // A game known only through romhacks goes in as its romhack
+    const hackId = i.gameId ? games.find((g) => g.id === i.gameId)?.hacks[0]?.id : undefined;
+    return hackId ? [{ ...i, hackId, gameId: undefined, workId: undefined }] : [];
+  });
+}
+
+/** Game and work items saved before lists held roms only: each becomes its best rom (or goes, if it has none) */
+export async function convertLegacyItems() {
+  const legacy = await prisma.listItem.findMany({ where: { romId: null, hackId: null }, select: { id: true, listId: true, gameId: true, workId: true } });
+  let converted = 0;
+  for (const it of legacy) {
+    const [rom] = await toRomItems([{ gameId: it.gameId ?? undefined, workId: it.workId ?? undefined }]);
+    const key = rom?.romId ? `r${rom.romId}` : null;
+    const taken = key ? await prisma.listItem.findUnique({ where: { listId_itemKey: { listId: it.listId, itemKey: key } } }) : null;
+    if (!key || taken) await prisma.listItem.delete({ where: { id: it.id } });
+    else {
+      await prisma.listItem.update({ where: { id: it.id }, data: { romId: rom.romId, gameId: null, workId: null, itemKey: key } });
+      converted++;
+    }
+  }
+  return { converted, removed: legacy.length - converted };
+}
+
+/** The user's favourites list, created on first use with the roms already marked */
+export async function favoritesList(userId: number) {
+  // Named in the user's language, so every client (desktop app, consoles) shows it right
+  const { locale } = await prisma.user.findUniqueOrThrow({ where: { id: userId }, select: { locale: true } });
+  const name = locale === 'es' ? 'Favoritos' : 'Favorites';
+  const existing = await prisma.list.findFirst({ where: { ownerId: userId, kind: 'favorites' } });
+  if (existing) return existing.name === name ? existing : prisma.list.update({ where: { id: existing.id }, data: { name } });
+  const list = await prisma.list.create({ data: { ownerId: userId, name, kind: 'favorites' } });
+  const favs = await prisma.romFavorite.findMany({ where: { userId }, orderBy: { createdAt: 'asc' } });
+  if (favs.length) await prisma.listItem.createMany({ data: favs.map((f, i) => ({ listId: list.id, romId: f.romId, itemKey: `r${f.romId}`, position: i })), skipDuplicates: true });
+  return list;
+}

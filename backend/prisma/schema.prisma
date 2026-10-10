@@ -427,6 +427,8 @@ model List {
   isCollaborative Boolean      @default(false)
   parentListId    Int?
   derivedFilter   Json?
+  // null: a normal list | favorites: the user's favourite roms (one per user, kept in step with RomFavorite)
+  kind            String?      @db.VarChar(16)
   createdAt       DateTime     @default(now())
   updatedAt       DateTime     @updatedAt
   owner           User         @relation(fields: [ownerId], references: [id], onDelete: Cascade)
@@ -444,7 +446,7 @@ model ListItem {
   romId    Int?
   hackId   Int?
   workId   Int?
-  // Clave unica: g<id> | r<id> | h<id> | w<id>
+  // Clave unica: r<id> | h<id> (game and work items are turned into one of their roms)
   itemKey  String   @db.VarChar(24)
   position Int      @default(0)
   note     String?  @db.VarChar(512)

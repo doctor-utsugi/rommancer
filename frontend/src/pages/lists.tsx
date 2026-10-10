@@ -3,6 +3,7 @@ import { Link, useNavigate } from 'react-router'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
+import { Star } from 'lucide-react'
 import { get, patch, post } from '@/lib/api'
 import { useAuth } from '@/lib/auth'
 import { Badge } from '@/components/ui/badge'
@@ -64,7 +65,10 @@ export function ListsPage() {
               <Card className="h-full transition-colors hover:bg-muted/50">
                 <CardHeader>
                   <CardTitle className="flex items-start justify-between gap-2">
-                    <span>{l.name}</span>
+                    <span className="flex items-center gap-2">
+                      {l.kind === 'favorites' && <Star className="size-4 fill-amber-400 text-amber-500" />}
+                      {l.kind === 'favorites' ? t('more.fav.listName') : l.name}
+                    </span>
                     <Badge variant="outline">{t(`lists.${l.visibility}`)}</Badge>
                   </CardTitle>
                 </CardHeader>

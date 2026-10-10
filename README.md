@@ -6,7 +6,7 @@ Stack: Node 22 + Express + Prisma + MySQL 8.4 · React + TypeScript + Vite + sha
 
 ## Rommancer Sync
 
-Sincronización de saves entre consolas (Onion, Knulli, Batocera, ROCKNIX, muOS, ArkOS, NextUI, PC): ver [docs/sync.md](docs/sync.md). Almacenamiento en el servidor (carpetas, discos, destinos): [docs/storage.md](docs/storage.md). Configuración de las consolas (RetroAchievements, WiFi, copias): [docs/device-config.md](docs/device-config.md).
+Sincronización de saves entre consolas (Onion, Knulli, Batocera, ROCKNIX, muOS, ArkOS, NextUI, PC): ver [docs/sync.md](docs/sync.md). Almacenamiento en el servidor (carpetas, discos, destinos): [docs/storage.md](docs/storage.md). Configuración de las consolas (RetroAchievements, WiFi, copias): [docs/device-config.md](docs/device-config.md). Listas, favoritos y sublistas: [docs/lists.md](docs/lists.md).
 
 ## Estructura
 

@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
-import { ArrowDown, ArrowUp, Check, ImageOff, Trash2, Trophy, X } from 'lucide-react'
+import { ArrowDown, ArrowUp, Check, ImageOff, Star, Trash2, Trophy, X } from 'lucide-react'
 import { toast } from 'sonner'
 import { authUrl, del, get, post, put } from '@/lib/api'
 import { useAuth } from '@/lib/auth'
@@ -10,12 +10,11 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
-import { Input } from '@/components/ui/input'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
-import { Empty, Field, JobProgress, NativeSelect, PageHeader, errMsg, useJob, useSystems, formatBytes } from '@/components/common'
+import { Empty, Field, JobProgress, NativeSelect, PageHeader, errMsg, useJob, formatBytes } from '@/components/common'
 import { VerifiedUpload } from '@/pages/upload'
 import { ListFormDialog } from './lists'
-import { useRegions } from './games'
+import { DeriveWizard } from '@/components/derive-wizard'
 
 type DialogKind = 'edit' | 'share' | 'derive' | 'zip' | 'device' | null
 
@@ -33,6 +32,7 @@ export function ListPage() {
   const [incoming, setIncoming] = useState<File[]>([])
   if (!list) return <p className="text-sm text-muted-foreground">{t('common.loading')}</p>
   const isOwner = list.ownerId === user?.id
+  const isFavorites = list.kind === 'favorites'
 
   const run = async (fn: () => Promise<unknown>) => {
     try {
@@ -99,12 +99,13 @@ export function ListPage() {
       <PageHeader
         title={
           <span className="flex items-center gap-3">
-            {list.name}
+            {isFavorites && <Star className="size-6 fill-amber-400 text-amber-500" />}
+            {isFavorites ? t('more.fav.listName') : list.name}
             <Badge variant="outline">{t(`lists.${list.visibility}`)}</Badge>
           </span>
         }
       >
-        {list.canEdit && (
+        {list.canEdit && !isFavorites && (
           <Button variant="outline" size="sm" onClick={() => setDialog('edit')}>
             {t('common.edit')}
           </Button>
@@ -146,13 +147,14 @@ export function ListPage() {
             {t('lists.sendToDevice')}
           </Button>
         )}
-        {(isOwner || user?.role === 'ADMIN') && (
+        {(isOwner || user?.role === 'ADMIN') && !isFavorites && (
           <Button variant="destructive" size="sm" onClick={() => void remove()}>
             <Trash2 className="size-4" />
           </Button>
         )}
       </PageHeader>
       <div className="mb-4 space-y-1 text-sm text-muted-foreground">
+        {isFavorites && <p>{t('more.fav.listHelp')}</p>}
         {list.description && <p>{list.description}</p>}
         <p>
           {t('lists.owner')}: {list.owner.username} · {t('lists.items', { count: list.items.length })}
@@ -166,7 +168,7 @@ export function ListPage() {
             </>
           )}
         </p>
-        {list.derivedFilter && <p className="font-mono text-xs">{JSON.stringify(list.derivedFilter)}</p>}
+        {list.derivedFilter && <DerivedSummary spec={list.derivedFilter} />}
         <ListDevicesProgress listId={list.id} />
       </div>
       {jobId && (
@@ -200,7 +202,6 @@ export function ListPage() {
               <TableHead>{t('common.title')}</TableHead>
               <TableHead className="w-24">{t('common.type')}</TableHead>
               <TableHead className="w-36">{t('common.system')}</TableHead>
-              <TableHead className="w-56">{t('lists.selected')}</TableHead>
               <TableHead className="w-24">{t('common.owned')}</TableHead>
               <TableHead className="w-28" />
             </TableRow>
@@ -215,8 +216,20 @@ export function ListPage() {
                 </TableCell>
                 <TableCell>
                   <Link className="block truncate font-medium hover:underline" title={i.title} to={i.kind === 'work' ? `/works/${i.workId}` : `/games/${i.gameId}`}>
-                    {i.title}
+                    {i.gameTitle ?? i.title}
                   </Link>
+                  {i.kind === 'rom' && (
+                    <p className="flex flex-wrap items-center gap-1 text-xs text-muted-foreground">
+                      <span className="truncate" title={i.title}>
+                        {i.title}
+                      </span>
+                      {i.regions?.map((x: string) => (
+                        <Badge key={x} variant="outline">
+                          {x}
+                        </Badge>
+                      ))}
+                    </p>
+                  )}
                   {/* Badges go under the title so they never cover the next columns */}
                   {(i.pendingMedia || i.ra) && (
                     <div className="mt-1 flex flex-wrap gap-1">
@@ -233,7 +246,6 @@ export function ListPage() {
                 </TableCell>
                 <TableCell>{i.kind === 'work' ? t('more.lists.work') : t(`lists.kind.${i.kind}`)}</TableCell>
                 <TableCell className="truncate" title={i.system?.name}>{i.system?.name}</TableCell>
-                <TableCell className="truncate text-xs text-muted-foreground" title={i.selectedRom?.name}>{i.selectedRom?.name ?? '-'}</TableCell>
                 <TableCell>{i.owned ? <Check className="size-4 text-green-600" /> : <X className="size-4 text-muted-foreground" />}</TableCell>
                 <TableCell>
                   {list.canEdit && (
@@ -257,7 +269,7 @@ export function ListPage() {
       )}
       {dialog === 'edit' && <ListFormDialog list={list} onClose={() => setDialog(null)} onSaved={() => void refetch()} />}
       {dialog === 'share' && <ShareDialog list={list} onClose={() => setDialog(null)} onSaved={() => void refetch()} />}
-      {dialog === 'derive' && <DeriveDialog list={list} onClose={() => setDialog(null)} />}
+      {dialog === 'derive' && <DeriveWizard list={{ id: list.id, name: isFavorites ? t('more.fav.listName') : list.name }} onClose={() => setDialog(null)} />}
       {dialog === 'zip' && <ZipDialog list={list} onClose={() => setDialog(null)} />}
       {dialog === 'device' && <DeviceDialog list={list} onClose={() => setDialog(null)} />}
     </div>
@@ -319,115 +331,6 @@ function ShareDialog({ list, onClose, onSaved }: { list: any; onClose(): void; o
   )
 }
 
-const LANGS = ['Es', 'En', 'Fr', 'De', 'It', 'Ja', 'Pt']
-
-function DeriveDialog({ list, onClose }: { list: any; onClose(): void }) {
-  const { t } = useTranslation()
-  const nav = useNavigate()
-  const regions = useRegions()
-  const [name, setName] = useState(`${list.name} (EU/USA)`)
-  const [pref, setPref] = useState<string[]>(['Europe', 'USA'])
-  const [langs, setLangs] = useState<string[]>([])
-  const [strict, setStrict] = useState(false)
-  const [raOnly, setRaOnly] = useState(false)
-  const [ownedOnly, setOwnedOnly] = useState(false)
-  const [next, setNext] = useState('')
-  const systems = useSystems()
-  const [platforms, setPlatforms] = useState<string[]>([])
-  const hasWorks = list.items.some((i: any) => i.kind === 'work')
-  const submit = async () => {
-    try {
-      const r = await post(`/lists/${list.id}/derive`, { name, regions: pref, languages: langs, strictRegions: strict, raOnly, ownedOnly, ...(platforms.length ? { platforms } : {}) })
-      toast.success(`${t('lists.added', { count: r.added })} · ${t('lists.skipped', { count: r.skipped.length })}`)
-      nav(`/lists/${r.id}`)
-      onClose()
-    } catch (e) {
-      toast.error(errMsg(e))
-    }
-  }
-  return (
-    <Dialog open onOpenChange={(o) => !o && onClose()}>
-      <DialogContent>
-        <DialogHeader>
-          <DialogTitle>{t('lists.derive')}</DialogTitle>
-          <DialogDescription>{t('lists.deriveHelp')}</DialogDescription>
-        </DialogHeader>
-        <div className="grid gap-4">
-          <Field label={t('common.name')}>
-            <Input value={name} onChange={(e) => setName(e.target.value)} />
-          </Field>
-          <Field label={t('lists.regionsPref')}>
-            <div className="flex flex-wrap gap-1">
-              {pref.map((r, i) => (
-                <Badge key={r} variant="secondary" className="cursor-pointer" onClick={() => setPref(pref.filter((x) => x !== r))}>
-                  {i + 1}. {r} <X className="size-3" />
-                </Badge>
-              ))}
-            </div>
-            <NativeSelect
-              value={next}
-              onChange={(e) => {
-                if (e.target.value && !pref.includes(e.target.value)) setPref([...pref, e.target.value])
-                setNext('')
-              }}
-            >
-              <option value="">+</option>
-              {regions.data?.filter((r) => !pref.includes(r)).map((r) => <option key={r}>{r}</option>)}
-            </NativeSelect>
-          </Field>
-          <Field label={t('lists.languagesPref')}>
-            <div className="flex flex-wrap gap-2">
-              {LANGS.map((l) => (
-                <label key={l} className="flex items-center gap-1 text-sm">
-                  <Checkbox checked={langs.includes(l)} onCheckedChange={(c) => setLangs(c ? [...langs, l] : langs.filter((x) => x !== l))} />
-                  {l}
-                </label>
-              ))}
-            </div>
-          </Field>
-          {hasWorks && (
-            <Field label={t('more.lists.platforms')}>
-              <div className="flex flex-wrap gap-1">
-                {platforms.map((p, i) => (
-                  <Badge key={p} variant="secondary" className="cursor-pointer" onClick={() => setPlatforms(platforms.filter((x) => x !== p))}>
-                    {i + 1}. {systems.data?.find((s) => s.slug === p)?.name ?? p} <X className="size-3" />
-                  </Badge>
-                ))}
-              </div>
-              <NativeSelect value="" onChange={(e) => e.target.value && setPlatforms([...platforms, e.target.value])}>
-                <option value="">{t('more.lists.addPlatform')}</option>
-                {systems.data
-                  ?.filter((s) => s.roms > 0 && !platforms.includes(s.slug))
-                  .map((s) => (
-                    <option key={s.slug} value={s.slug}>
-                      {s.name}
-                    </option>
-                  ))}
-              </NativeSelect>
-            </Field>
-          )}
-          <label className="flex items-center gap-2 text-sm">
-            <Checkbox checked={strict} onCheckedChange={(c) => setStrict(!!c)} />
-            {t('lists.strictRegions')}
-          </label>
-          <label className="flex items-center gap-2 text-sm">
-            <Checkbox checked={raOnly} onCheckedChange={(c) => setRaOnly(!!c)} />
-            {t('lists.raOnly')}
-          </label>
-          <label className="flex items-center gap-2 text-sm">
-            <Checkbox checked={ownedOnly} onCheckedChange={(c) => setOwnedOnly(!!c)} />
-            {t('lists.ownedOnly')}
-          </label>
-        </div>
-        <DialogFooter>
-          <Button onClick={() => void submit()} disabled={!name}>
-            {t('common.create')}
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
-  )
-}
 
 function useFirmwares() {
   return useQuery({ queryKey: ['firmwares'], queryFn: () => get<any[]>('/devices/firmwares'), staleTime: 300_000 })
@@ -580,5 +483,26 @@ function ListDevicesProgress({ listId }: { listId: number }) {
         </Link>
       ))}
     </div>
+  )
+}
+
+/** A sublist's filters and decisions in words */
+function DerivedSummary({ spec }: { spec: any }) {
+  const { t } = useTranslation()
+  const f = spec?.v === 2 ? spec.filters : spec
+  const parts = [
+    f?.regions?.length ? f.regions.join(', ') : null,
+    f?.languages?.length ? f.languages.join(', ') : null,
+    f?.raOnly ? t('more.derive.raOnly') : null,
+    f?.ownedOnly ? t('more.derive.ownedOnly') : null,
+    f?.verifiedOnly ? t('more.derive.verifiedOnly') : null,
+  ].filter(Boolean)
+  const decisions = spec?.v === 2 ? Object.keys(spec.perGame ?? {}).length : 0
+  return (
+    <p className="text-xs">
+      {t('more.derive.summary', { filters: parts.join(' · ') || t('more.derive.noFilters') })}
+      {decisions > 0 && ` · ${t('more.derive.summaryDecisions', { count: decisions })}`}
+      {spec?.v === 2 && spec.rest?.mode === 'like' && ` · ${t('more.derive.reviewRuleLike')}`}
+    </p>
   )
 }

@@ -16,6 +16,8 @@ import { applyMeta } from '../scrape/meta.js';
 import { addPatch, makePatch, materializeHack } from '../patches/service.js';
 import { ownedGameIds, ownedRomIds, systemStats } from './service.js';
 import { progressFor } from '../ra/progress.js';
+import { favoritesList } from '../lists/service.js';
+import { refreshChildren } from '../lists/routes.js';
 
 export const collectionRouter = Router();
 collectionRouter.use(requirePerm('collection.view'));
@@ -583,11 +585,21 @@ collectionRouter.get('/roms/:id/download', requirePerm('roms.download'), async (
 collectionRouter.put('/roms/:id/favorite', async (req, res) => {
   const romId = intParam(req);
   if (!(await prisma.rom.findUnique({ where: { id: romId }, select: { id: true } }))) throw notFound('Rom');
-  await prisma.romFavorite.upsert({ where: { userId_romId: { userId: me(req).id, romId } }, create: { userId: me(req).id, romId }, update: {} });
+  const userId = me(req).id;
+  await prisma.romFavorite.upsert({ where: { userId_romId: { userId, romId } }, create: { userId, romId }, update: {} });
+  // The favourites list follows, and so do its sublists
+  const fav = await favoritesList(userId);
+  const max = await prisma.listItem.aggregate({ where: { listId: fav.id }, _max: { position: true } });
+  await prisma.listItem.createMany({ data: [{ listId: fav.id, romId, itemKey: `r${romId}`, position: (max._max.position ?? -1) + 1 }], skipDuplicates: true });
+  void refreshChildren(fav.id);
   res.status(204).end();
 });
 
 collectionRouter.delete('/roms/:id/favorite', async (req, res) => {
-  await prisma.romFavorite.deleteMany({ where: { userId: me(req).id, romId: intParam(req) } });
+  const userId = me(req).id;
+  await prisma.romFavorite.deleteMany({ where: { userId, romId: intParam(req) } });
+  const fav = await favoritesList(userId);
+  await prisma.listItem.deleteMany({ where: { listId: fav.id, romId: intParam(req) } });
+  void refreshChildren(fav.id);
   res.status(204).end();
 });

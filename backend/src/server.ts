@@ -3,6 +3,7 @@ import { env } from './config/env.js';
 import { createApp } from './app.js';
 import { enqueue, startJobRunner } from './lib/jobs.js';
 import { seed } from './seed/seed.js';
+import { convertLegacyItems } from './modules/lists/service.js';
 import { startLocalDeviceWatcher } from './modules/saves/sync.js';
 import { startSshSweep } from './modules/devices/ssh.js';
 import { startHealthWatch } from './modules/storage/health.js';
@@ -11,6 +12,8 @@ import { startExternalSyncCron } from './modules/sync/service.js';
 for (const d of [env.dataDir, env.mediaDir, env.savesDir, env.uploadsDir, env.datsDir, env.tmpDir, env.patchesDir]) fs.mkdirSync(d, { recursive: true });
 
 await seed();
+// Lists hold roms now: game and work items saved before are turned into their best rom
+console.log('list items', await convertLegacyItems());
 await startJobRunner();
 startExternalSyncCron();
 startLocalDeviceWatcher();

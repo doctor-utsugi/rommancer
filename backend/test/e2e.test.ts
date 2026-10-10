@@ -495,7 +495,8 @@ test('listas: crear, compartir, colaborar, clonar, sublistas, exportar e importa
   assert.ok(pub.json.some((l: any) => l.id === ctx.favId));
   const clone = await api('POST', `/lists/${ctx.favId}/clone`, { name: 'Mi copia' }, userToken);
   assert.equal(clone.status, 201);
-  assert.equal((await api('GET', `/lists/${clone.json.id}`, undefined, userToken)).json.items.length, 8);
+  // The SMB3 game and the SMB3 rom are the same rom now that lists hold roms
+  assert.equal((await api('GET', `/lists/${clone.json.id}`, undefined, userToken)).json.items.length, (await api('GET', `/lists/${ctx.favId}`)).json.items.length);
 
   // Lista colaborativa publica: cualquiera puede editar
   const collab = await api('POST', '/lists', { name: 'Colaborativa', visibility: 'PUBLIC', isCollaborative: true });
@@ -1399,7 +1400,7 @@ test('fase2: obras multiplataforma con Wikidata, sagas y listas por plataforma',
   const l = await api('POST', '/lists', { name: 'Obras' }, userToken);
   await api('POST', `/lists/${l.json.id}/items`, { items: [{ workId: work.id }] }, userToken);
   const items = (await api('GET', `/lists/${l.json.id}`, undefined, userToken)).json.items;
-  assert.equal(items[0].kind, 'work');
+  assert.equal(items[0].kind, 'rom', 'a work goes in as one of its roms');
   const gbFirst = await api('POST', `/lists/${l.json.id}/derive`, { name: 'GB primero', platforms: ['gb', 'nes'] }, userToken);
   const gbList = (await api('GET', `/lists/${gbFirst.json.id}`, undefined, userToken)).json;
   assert.equal(gbList.items[0].system.slug, 'gb');
@@ -1408,7 +1409,7 @@ test('fase2: obras multiplataforma con Wikidata, sagas y listas por plataforma',
   assert.equal(ownedList.items[0].romId, ctx.smb3RomId);
   // Exportar/importar conserva la obra
   const exp = (await api('GET', `/lists/${l.json.id}/export`, undefined, userToken)).json;
-  assert.equal(exp.items[0].wikidataId, 'Q400');
+  assert.equal(exp.items[0].type, 'rom');
   assert.equal((await api('POST', '/lists/import', exp, userToken)).json.unresolved.length, 0);
 });
 
@@ -2466,4 +2467,66 @@ test('sync client daemon: a full pass that hashed roms still applies the setting
   } finally {
     process.kill(-daemon.pid!, 'SIGTERM');
   }
+});
+
+test('lists hold roms: the Favorites list follows favourite roms; sublists ask what to do with games lacking the version', async () => {
+  const { prisma } = await import('../src/lib/prisma.js');
+  // Favorites: first in the index, cannot be deleted or renamed
+  const lists = (await api('GET', '/lists?scope=mine')).json;
+  const fav = lists[0];
+  assert.equal(fav.kind, 'favorites');
+  assert.equal((await api('DELETE', `/lists/${fav.id}`)).status, 400);
+  assert.equal((await api('PATCH', `/lists/${fav.id}`, { name: 'Otra' })).status, 400);
+  // Marking a rom adds it; adding a game to the list marks its best rom
+  assert.equal((await api('PUT', `/roms/${ctx.smb3RomId}/favorite`)).status, 204);
+  let items = (await api('GET', `/lists/${fav.id}`)).json.items;
+  assert.deepEqual(items.map((i: any) => i.romId), [ctx.smb3RomId]);
+  const games = (await api('GET', `/games?systemId=${ctx.nesSystemId}&status=owned&pageSize=20`)).json.items.filter((g: any) => g.id !== ctx.smb3GameId).slice(0, 4);
+  assert.equal((await api('POST', `/lists/${fav.id}/items`, { items: games.map((g: any) => ({ gameId: g.id })) })).status, 201);
+  items = (await api('GET', `/lists/${fav.id}`)).json.items;
+  assert.ok(items.every((i: any) => i.kind === 'rom'), 'only roms in lists');
+  assert.equal((await api('GET', '/games?favorites=1&pageSize=50')).json.total, items.length);
+  // Removing it from the list unmarks it
+  await api('DELETE', `/lists/${fav.id}/items/${items[items.length - 1].id}`);
+  assert.equal((await api('GET', '/games?favorites=1&pageSize=50')).json.total, items.length - 1);
+
+  // A sublist of European versions: games without one are listed with their versions
+  const filters = { regions: ['Europe'], strictRegions: true };
+  const preview = (await api('POST', `/lists/${fav.id}/derive/preview`, filters)).json;
+  assert.equal(preview.matched.length + preview.missing.length, items.length - 1);
+  assert.ok(preview.matched.some((m: any) => m.rom.id === ctx.smb3EuropeRomId), 'SMB3 has a European version');
+  for (const m of preview.missing) assert.ok(m.versions.length > 0 && m.versions.every((v: any) => !v.regions.includes('Europe')));
+  const perGame: Record<string, number | null> = {};
+  if (preview.missing[0]) perGame[preview.missing[0].gameId] = preview.missing[0].versions.at(-1).id;
+  if (preview.missing[1]) perGame[preview.missing[1].gameId] = null;
+  const like = preview.missing[0]?.versions[0];
+  const sub = await api('POST', `/lists/${fav.id}/derive`, { name: 'Favoritos EU', ...filters, perGame, rest: like ? { mode: 'like', romId: like.id } : { mode: 'skip' } });
+  assert.equal(sub.status, 201, JSON.stringify(sub.json));
+  const subItems = (await api('GET', `/lists/${sub.json.id}`)).json.items;
+  const subRoms = subItems.map((i: any) => i.romId);
+  assert.ok(subRoms.includes(ctx.smb3EuropeRomId));
+  if (preview.missing[0]) assert.ok(subRoms.includes(perGame[preview.missing[0].gameId]), 'the chosen version');
+  if (preview.missing[1]) assert.ok(sub.json.skipped.includes(preview.missing[1].title), 'left out as decided');
+  // A refresh repeats the decisions
+  const refreshed = await api('POST', `/lists/${sub.json.id}/refresh`);
+  assert.equal(refreshed.json.added, subItems.length);
+  // A new favourite reaches the sublist by itself
+  const extra = (await api('GET', `/games?systemId=${ctx.nesSystemId}&status=owned&pageSize=40`)).json.items.find((g: any) => !games.some((x: any) => x.id === g.id) && g.id !== ctx.smb3GameId);
+  const extraRom = (await api('GET', `/games/${extra.id}`)).json.roms[0];
+  await api('PUT', `/roms/${extraRom.id}/favorite`);
+  let grew = false;
+  for (let i = 0; i < 20 && !grew; i++) {
+    await new Promise((r) => setTimeout(r, 200));
+    grew = (await api('GET', `/lists/${sub.json.id}`)).json.items.length > subItems.length || (await api('POST', `/lists/${fav.id}/derive/preview`, filters)).json.missing.some((m: any) => m.gameId === extra.id);
+  }
+  assert.ok(grew, 'the sublist followed the new favourite');
+
+  // Lists saved with games before: each game becomes its best rom
+  const old = await api('POST', '/lists', { name: 'Antigua' });
+  await prisma.listItem.create({ data: { listId: old.json.id, gameId: ctx.smb3GameId, itemKey: `g${ctx.smb3GameId}` } });
+  const { convertLegacyItems } = await import('../src/modules/lists/service.js');
+  await convertLegacyItems();
+  const conv = (await api('GET', `/lists/${old.json.id}`)).json.items;
+  assert.equal(conv.length, 1);
+  assert.equal(conv[0].kind, 'rom');
 });
