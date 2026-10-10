@@ -1,3 +1,5 @@
+<p align="center"><img src="docs/logo.png" alt="Rommancer" width="200" /></p>
+
 # Rommancer
 
 Gestor multiusuario de colecciones de roms: base de datos de juegos y roms a partir de DATs (No-Intro, Redump, FBNeo, hacks), verificación por checksum, agrupación por evidencias (regiones, plataformas y sagas), listas compartibles, copia a dispositivos (SD o SSH), parches de romhacks, multimedia bajo demanda y saves sincronizados al estilo Steam Cloud.

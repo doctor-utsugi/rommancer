@@ -1627,7 +1627,7 @@ test('sync client: installer package enrols the device by itself, once', async (
   fs.writeFileSync(zip, Buffer.from(await r.arrayBuffer()));
   execSync(`${SEVENZIP} x -y -o"${sd}" "${zip}"`, { stdio: 'ignore' });
   const app = path.join(sd, 'App/RommancerSync');
-  for (const f of ['rommancer-sync.sh', 'cacert.pem', 'server.txt', 'enroll.txt', 'config.json', 'launch.sh']) assert.ok(fs.existsSync(path.join(app, f)), f);
+  for (const f of ['rommancer-sync.sh', 'cacert.pem', 'server.txt', 'enroll.txt', 'config.json', 'launch.sh', 'icon.png']) assert.ok(fs.existsSync(path.join(app, f)), f);
   assert.ok(fs.existsSync(path.join(sd, '.tmp_update/startup/rommancer-sync.sh')), 'Onion boot hook');
   assert.equal(fs.readFileSync(path.join(app, 'server.txt'), 'utf8').trim(), process.env.PUBLIC_URL || base);
   fs.writeFileSync(path.join(app, 'server.txt'), base + '\n');

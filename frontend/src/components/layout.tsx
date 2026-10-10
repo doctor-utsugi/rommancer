@@ -11,7 +11,6 @@ import {
   FileSearch,
   FolderSearch,
   Gamepad2,
-  HardDriveDownload,
   Home,
   ListChecks,
   LogOut,
@@ -59,7 +58,7 @@ export function Layout() {
     <div className="flex min-h-screen">
       <aside className="sticky top-0 flex h-screen w-60 shrink-0 flex-col gap-1 overflow-y-auto border-r bg-sidebar p-3">
         <div className="mb-4 flex items-center gap-2 px-2 pt-1 text-lg font-semibold">
-          <HardDriveDownload className="size-5" />
+          <img src="/logo.png" alt="" className="size-7" />
           {t('app.name')}
         </div>
         <Item to="/" icon={Home} label={t('nav.dashboard')} />

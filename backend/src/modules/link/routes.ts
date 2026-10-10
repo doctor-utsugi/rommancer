@@ -240,7 +240,8 @@ function packageFiles(flavor: (typeof FLAVORS)[number], server: string, enrollTo
   if (flavor === 'onion') {
     return [
       ...common(ONION_DIR),
-      { name: `${ONION_DIR}/config.json`, content: JSON.stringify({ label: 'Rommancer Sync', icon: '../../Icons/Default/app/otaupdate.png', iconsel: '', launch: 'launch.sh', description: 'Sync saves with Rommancer' }, null, 2) + '\n' },
+      { name: `${ONION_DIR}/icon.png`, content: fs.readFileSync(path.join(CLIENT_DIR, 'icon.png')) },
+      { name: `${ONION_DIR}/config.json`, content: JSON.stringify({ label: 'Rommancer Sync', icon: 'icon.png', iconsel: '', launch: 'launch.sh', description: 'Sync saves with Rommancer' }, null, 2) + '\n' },
       // The app opens the setup menu (server, log in or create account) with Onion's own menu and keyboard
       { name: `${ONION_DIR}/launch.sh`, content: '#!/bin/sh\ncd "$(dirname "$0")"\nsh rommancer-sync.sh setup > last-run.txt 2>&1\n', mode: 0o755 },
       // Onion runs every script in .tmp_update/startup at boot: the device enrols and syncs without opening the app

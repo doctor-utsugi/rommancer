@@ -2,7 +2,6 @@ import { useState, type FormEvent } from 'react'
 import { useNavigate, useParams } from 'react-router'
 import { useQuery } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
-import { HardDriveDownload } from 'lucide-react'
 import { useAuth } from '@/lib/auth'
 import { get } from '@/lib/api'
 import { Button } from '@/components/ui/button'
@@ -17,7 +16,7 @@ function Shell({ title, children }: { title: string; children: React.ReactNode }
       <Card className="w-full max-w-sm">
         <CardHeader>
           <div className="mb-2 flex items-center gap-2 text-lg font-semibold">
-            <HardDriveDownload className="size-5" />
+            <img src="/logo.png" alt="" className="size-7" />
             {t('app.name')}
           </div>
           <CardTitle>{title}</CardTitle>
