@@ -2375,10 +2375,15 @@ test('NextUI and ArkOS: minarch save and state names, a NextUI save reaching an 
   const plan = await (await next('/sync', { method: 'POST', body: `rom\t${rom}\t${'e'.repeat(40)}\nfile\t${save}\t${crypto.createHash('sha1').update(sav).digest('hex')}\nfile\t${state}\t${'f'.repeat(40)}\n` })).text();
   assert.match(plan, new RegExp(`^put\t${save.replace(/[().]/g, '\\$&')}\t`, 'm'));
   assert.match(plan, new RegExp(`^put\t${state.replace(/[().]/g, '\\$&')}\t`, 'm'));
+  const replies: string[] = [];
   for (const [p, body] of [[save, sav], [state, Buffer.from('state')]] as const) {
     const up = await next('/upload', { method: 'POST', body, headers: { 'X-Rom-B64': b64(rom), 'X-Path-B64': b64(p) } });
-    assert.equal((await up.text()).trim(), 'uploaded', p);
+    replies.push(await up.text());
+    assert.equal(replies.at(-1)!.split('\n')[0], 'uploaded', p);
   }
+  assert.equal(replies[0], 'uploaded\n', 'a save has no screenshot');
+  // minarch keeps each slot's screenshot (PNG data in a .bmp) under .minui/<tag>, named after the rom file
+  assert.match(replies[1], /^tput\t\/mnt\/SDCARD\/\.userdata\/shared\/\.minui\/GBA\/Minarch Quest \(USA\)\.gba\.9\.bmp\t\d+$/m);
   const { prisma } = await import('../src/lib/prisma.js');
   const stored = await prisma.save.findMany({ where: { baseName: 'Minarch Quest (USA)' }, include: { emulator: true } });
   assert.deepEqual(stored.map((s) => `${s.emulator.slug} ${s.kind} ${s.slot}`).sort(), ['minui-gpsp SAVE 0', 'minui-gpsp STATE -1']);
@@ -2529,4 +2534,99 @@ test('lists hold roms: the Favorites list follows favourite roms; sublists ask w
   const conv = (await api('GET', `/lists/${old.json.id}`)).json.items;
   assert.equal(conv.length, 1);
   assert.equal(conv[0].kind, 'rom');
+});
+
+test('shared savestates: screenshots travel with the state, the core version is kept, other users copy them', async () => {
+  const { prisma } = await import('../src/lib/prisma.js');
+  const client = path.join(ROOT, 'clients/linux/rommancer-sync.sh');
+  const dir = path.join(DATA, 'shared-states');
+  fs.rmSync(dir, { recursive: true, force: true });
+  const rom = 'Shared Quest (USA)';
+  const device = async (name: string, version: string) => {
+    const root = path.join(dir, name);
+    const state = path.join(dir, `${name}-state`);
+    fs.mkdirSync(path.join(root, 'Roms/GBA'), { recursive: true });
+    fs.writeFileSync(path.join(root, 'Roms/GBA', `${rom}.gba`), crypto.randomBytes(2048));
+    // Onion's RetroArch names its info folder relative to itself
+    fs.mkdirSync(path.join(root, 'RetroArch/.retroarch/info'), { recursive: true });
+    fs.writeFileSync(path.join(root, 'RetroArch/.retroarch/retroarch.cfg'), 'libretro_info_path = ":/info"\n');
+    fs.writeFileSync(path.join(root, 'RetroArch/.retroarch/info/mgba_libretro.info'), `corename = "mGBA"\ndisplay_version = "${version}"\n`);
+    const r = await api('POST', '/link/claim', { name, firmware: 'onion', root });
+    assert.equal(r.status, 201, JSON.stringify(r.json));
+    fs.mkdirSync(state, { recursive: true });
+    fs.writeFileSync(path.join(state, 'config'), `SERVER=${base}\nTOKEN=${r.json.token}\nUSER=admin\n`);
+    const sync = async () => (await execFileP('sh', [client, 'sync'], { env: { ...process.env, ROMMANCER_STATE: state, ROMMANCER_ROOT: root, ROMMANCER_FIRMWARE: 'onion', VERBOSE: '1' } })).stdout;
+    return { id: r.json.deviceId as number, root, sync, states: path.join(root, 'Saves/CurrentProfile/states/mGBA') };
+  };
+  const a = await device('mini-a', '0.10.3');
+  const b = await device('mini-b', '0.11.0');
+  fs.mkdirSync(a.states, { recursive: true });
+  const stateFile = path.join(a.states, `${rom}.state1`);
+  fs.writeFileSync(stateFile, 'STATE-FROM-A');
+  fs.writeFileSync(`${stateFile}.png`, PNG);
+
+  // The state goes up with the screenshot RetroArch wrote beside it, dated with the core that made it
+  assert.match(await a.sync(), /1 up, 0 down, 0 errors/);
+  const devA = await prisma.device.findUniqueOrThrow({ where: { id: a.id } });
+  // The card's RetroArch config comes first (this computer's own RetroArch may add other cores)
+  assert.equal((devA.coreVersions as Record<string, string>).mGBA, '0.10.3');
+  const mine = (await api('GET', '/saves?kind=STATE')).json.find((s: any) => s.baseName === rom);
+  const cur = mine.versions.find((v: any) => v.id === mine.currentVersionId);
+  assert.equal(cur.coreVersion, '0.10.3');
+  assert.ok(cur.thumbPath, 'screenshot kept');
+  const thumb = await fetch(`${base}/api/v1/saves/${mine.id}/versions/${cur.id}/thumb`, { headers: { Authorization: `Bearer ${adminToken}` } });
+  assert.equal(thumb.headers.get('content-type'), 'image/png');
+  assert.deepEqual(Buffer.from(await thumb.arrayBuffer()), PNG);
+
+  // Another console with the same core gets the state and its screenshot; its core is newer, which the web app warns about
+  assert.match(await b.sync(), /0 up, 1 down, 0 errors/);
+  assert.equal(fs.readFileSync(path.join(b.states, `${rom}.state1`), 'utf8'), 'STATE-FROM-A');
+  assert.deepEqual(fs.readFileSync(path.join(b.states, `${rom}.state1.png`)), PNG);
+  const warned = (await api('GET', `/saves/${mine.id}`)).json;
+  assert.deepEqual(warned.coreWarnings.filter((w: any) => w.deviceId === b.id || w.deviceId === a.id), [{ deviceId: b.id, name: 'mini-b', version: '0.11.0' }]);
+  assert.match(await b.sync(), /0 up, 0 down, 0 errors/, 'nothing moves twice');
+
+  // A state synced before screenshots were kept gets its screenshot at the next pass
+  await prisma.saveVersion.update({ where: { id: cur.id }, data: { thumbPath: null } });
+  await a.sync();
+  assert.ok((await prisma.saveVersion.findUniqueOrThrow({ where: { id: cur.id } })).thumbPath);
+
+  // Not an image: refused
+  const tokenA = fs.readFileSync(path.join(dir, 'mini-a-state', 'config'), 'utf8').match(/TOKEN=(.*)/)![1];
+  const notImage = await fetch(`${base}/api/v1/agent/thumb?v=${cur.id}`, { method: 'POST', body: 'hello', headers: { 'X-Device-Token': tokenA, 'Content-Type': 'application/octet-stream' } });
+  assert.equal(notImage.status, 400);
+
+  // Shared with every user: they see it in the game, with its screenshot, and copy it into a slot of theirs
+  const shared = await api('PUT', `/saves/${mine.id}/versions/${cur.id}/share`, { note: 'before the boss' });
+  assert.equal(shared.status, 200, JSON.stringify(shared.json));
+  const seen = (await api('GET', `/saves/shared?q=${encodeURIComponent('Shared Quest')}`, undefined, userToken)).json;
+  assert.equal(seen.length, 1);
+  assert.equal(seen[0].mine, false);
+  assert.equal(seen[0].hasThumb, true);
+  assert.equal(seen[0].shareNote, 'before the boss');
+  assert.equal(seen[0].coreVersion, '0.10.3');
+  assert.ok(!('path' in seen[0]) && !('thumbPath' in seen[0]), 'no server paths');
+  const sharedThumb = await fetch(`${base}/api/v1/saves/shared/${cur.id}/thumb?token=${userFiles}`);
+  assert.equal(sharedThumb.status, 200);
+  const copy = await api('POST', `/saves/shared/${cur.id}/import`, { slot: 3 }, userToken);
+  assert.equal(copy.status, 201, JSON.stringify(copy.json));
+  const theirs = (await api('GET', '/saves?kind=STATE', undefined, userToken)).json.find((s: any) => s.id === copy.json.saveId);
+  assert.equal(theirs.slot, 3);
+  const theirVersion = theirs.versions[0];
+  assert.match(theirVersion.note, /^shared by /);
+  assert.equal(theirVersion.coreVersion, '0.10.3');
+  assert.ok(theirVersion.thumbPath, 'the screenshot comes along');
+  assert.equal((await api('GET', `/saves/${mine.id}`, undefined, userToken)).status, 403, 'the original stays private');
+
+  // Unsharing hides it again
+  assert.equal((await api('DELETE', `/saves/${mine.id}/versions/${cur.id}/share`)).status, 204);
+  assert.equal((await api('GET', `/saves/shared?q=${encodeURIComponent('Shared Quest')}`, undefined, userToken)).json.length, 0);
+  assert.equal((await fetch(`${base}/api/v1/saves/shared/${cur.id}/thumb?token=${userFiles}`)).status, 404);
+
+  // RetroArch is told to write the screenshots where Rommancer edits its config
+  const { adapterFor } = await import('../src/modules/devconfig/adapters.js');
+  const out = adapterFor('onion')!.apply({ ra: null, wifi: [], managed: [], stateThumbs: true }, new Map([['RetroArch/.retroarch/retroarch.cfg', 'video_smooth = "false"\n']]), () => true);
+  assert.match(out.writes.get('RetroArch/.retroarch/retroarch.cfg')!, /^savestate_thumbnail_enable = "true"$/m);
+  assert.deepEqual(out.notes, []);
+  assert.equal(adapterFor('knulli')!.stateThumbs, undefined, 'Batocera and Knulli turn it on themselves');
 });

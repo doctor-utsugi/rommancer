@@ -93,13 +93,18 @@ class SyncEngine(private val context: Context, private val store: Store, private
                             "X-Rom-B64" to Api.b64(f[2]), "X-Path-B64" to Api.b64(f[1]),
                             "X-Rom-Sha1" to (romHashes[f[2]] ?: ""), "X-Save-Exact" to (f.getOrNull(3) ?: "0"),
                         )
-                        api.text("/agent/upload", "POST", File(f[1]).readBytes(), headers)
+                        val reply = api.text("/agent/upload", "POST", File(f[1]).readBytes(), headers)
                         up++
+                        // A new savestate: the server asks for its screenshot
+                        reply.lines().map { it.split('\t') }.filter { it.size >= 3 && it[0] == "tput" }.forEach { runCatching { thumbPut(api, it[1], it[2]) } }
                     }
                     "get" -> {
                         api.download("/agent/file?v=${f[2]}", mapOf("X-Rom-B64" to Api.b64(f[3]), "X-Path-B64" to Api.b64(f[1])), File(f[1]))
                         down++
                     }
+                    // Savestate screenshots: ours when the server lacks it, the server's beside a state it sent
+                    "tput" -> thumbPut(api, f[1], f[2])
+                    "tget" -> api.download("/agent/thumb?v=${f[2]}", emptyMap(), File(f[1]))
                 }
             } catch (e: Exception) {
                 errors++
@@ -109,6 +114,11 @@ class SyncEngine(private val context: Context, private val store: Store, private
             store.lastResult = "${java.text.DateFormat.getDateTimeInstance().format(java.util.Date())}: $it"
             store.addLog("sync: $it")
         }
+    }
+
+    private fun thumbPut(api: Api, path: String, version: String) {
+        val file = File(path)
+        if (file.isFile && file.length() <= THUMB_MAX) api.text("/agent/thumb?v=$version", "POST", file.readBytes())
     }
 
     /** Roms of the lists assigned to this device that are not here yet; never deletes anything */
@@ -261,6 +271,7 @@ class SyncEngine(private val context: Context, private val store: Store, private
 
     companion object {
         const val HASH_MAX = 64L * 1024 * 1024
+        const val THUMB_MAX = 4L * 1024 * 1024
         private val LOCK = Any()
         private val PULLING = java.util.concurrent.atomic.AtomicBoolean(false)
         private val NOT_ROMS = listOf(".png", ".jpg", ".jpeg", ".mp4", ".xml", ".txt", ".json", ".cfg", ".db", ".ini", ".pdf", ".srm", ".sav", ".mcd", ".mcr", ".dsv", ".cht", ".log", ".sh", ".lpl")

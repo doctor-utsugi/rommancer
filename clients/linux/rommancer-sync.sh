@@ -22,7 +22,7 @@
 #                                   Menu++...) mounted on this computer; the link lives on the card itself,
 #                                   so any computer with this script can sync it. Without a command: sync.
 set -u
-CLIENT_VERSION=20261012
+CLIENT_VERSION=20261013
 # A clock before this date is surely wrong (no battery-backed clock); kept apart from the version, which may run ahead
 CLOCK_MIN=20261001
 # Onion keeps curl (with TLS) and friends outside the default PATH
@@ -327,12 +327,49 @@ build_request() {
     is_save "$f" || continue
     s="$(cached_sha1 "$f")" && printf 'file\t%s\t%s\n' "$f" "$s" >> "$out"
   done < "$WORK/saves"
+  core_lines >> "$out" 2>/dev/null
   save_cache
+}
+
+# Folders with RetroArch's core info files: the one its config names, then the usual ones
+info_dirs() {
+  [ -n "${ROOT:-}" ] || detect
+  for c in "${ROOT%/}/RetroArch/.retroarch/retroarch.cfg" /userdata/system/configs/retroarch/retroarchcustom.cfg /storage/.config/retroarch/retroarch.cfg \
+    /opt/muos/share/info/config/retroarch.cfg /home/ark/.config/retroarch/retroarch.cfg "${HOME:-/root}/.config/retroarch/retroarch.cfg"; do
+    [ -f "$c" ] || continue
+    # "~/..." is the home folder, ":/..." RetroArch's own folder
+    sed -n 's/^[[:space:]]*libretro_info_path[[:space:]]*=[[:space:]]*"\(.*\)"[[:space:]]*$/\1/p' "$c" | sed "s#^~#${HOME:-/root}#; s#^:#$(dirname "$c")#"
+  done
+  printf '%s\n' /usr/share/libretro/info /usr/lib/libretro /tmp/cores "${ROOT%/}/RetroArch/.retroarch/info" "${ROOT%/}/RetroArch/.retroarch/cores"
+}
+
+# "core<TAB>name<TAB>version" per installed core: the server dates each savestate with the version that made it
+core_lines() {
+  [ -z "$SD" ] || return 0
+  info_dirs | while IFS= read -r d; do
+    [ -d "$d" ] || continue
+    set -- "$d"/*.info
+    [ -f "$1" ] && awk -F'"' '
+      FNR == 1 { if (n != "" && v != "") printf "core\t%s\t%s\n", n, v; n = ""; v = "" }
+      /^[[:space:]]*corename[[:space:]]*=/ { n = $2 }
+      /^[[:space:]]*display_version[[:space:]]*=/ { v = $2 }
+      END { if (n != "" && v != "") printf "core\t%s\t%s\n", n, v }' "$@"
+  done | awk -F"$TAB" '!seen[$2]++'
 }
 
 save_cache() {
   cmp -s "$CACHE" "$CACHE_DISK" 2>/dev/null && return 0
   cp "$CACHE" "$CACHE_DISK.new" 2>/dev/null && mv "$CACHE_DISK.new" "$CACHE_DISK"
+}
+
+# A savestate's screenshot, sent after the state ("tput" from the server) or written beside it ("tget")
+thumb_put() {
+  [ -f "$1" ] && [ "$(stat -c %s "$1" 2>/dev/null || echo 0)" -le 4194304 ] || return 0
+  http POST "$SERVER/api/v1/agent/thumb?v=$2" "$1" - >/dev/null 2>&1 || log "screenshot not sent: $1"
+}
+thumb_get() {
+  mkdir -p "$(dirname "$1")"
+  http GET "$SERVER/api/v1/agent/thumb?v=$2" - "$1.rommancer-tmp" && mv "$1.rommancer-tmp" "$1" || rm -f "$1.rommancer-tmp"
 }
 
 cmd_sync() {
@@ -365,12 +402,18 @@ cmd_sync() {
     case "$action" in
       put)
         rh="$(grep -F "rom$TAB$a$TAB" "$req" | head -n 1 | cut -f3,4 | tr '\t' ',')"
-        if http POST "$SERVER/api/v1/agent/upload" "$p" - "X-Rom-B64: $(b64 "$a")" "X-Path-B64: $(b64 "$p")" "X-Rom-Sha1: $rh" "X-Save-Exact: ${b:-0}" >/dev/null; then ups=$((ups + 1)); else errs=$((errs + 1)); fi ;;
+        if http POST "$SERVER/api/v1/agent/upload" "$p" "$WORK/uploaded" "X-Rom-B64: $(b64 "$a")" "X-Path-B64: $(b64 "$p")" "X-Rom-Sha1: $rh" "X-Save-Exact: ${b:-0}"; then
+          ups=$((ups + 1))
+          # A new savestate: the server asks for its screenshot
+          while IFS="$TAB" read -r tk tp tv; do [ "$tk" = tput ] && thumb_put "$tp" "$tv"; done < "$WORK/uploaded"
+        else errs=$((errs + 1)); fi ;;
       get)
         mkdir -p "$(dirname "$p")"
         if http GET "$SERVER/api/v1/agent/file?v=$a" - "$p.rommancer-tmp" "X-Rom-B64: $(b64 "$b")" "X-Path-B64: $(b64 "$p")" && mv "$p.rommancer-tmp" "$p"; then
           downs=$((downs + 1))
         else rm -f "$p.rommancer-tmp"; errs=$((errs + 1)); fi ;;
+      tput) thumb_put "$p" "$a" ;;
+      tget) thumb_get "$p" "$a" ;;
     esac
   done < "$plan"
   progress finished "$ups" "$downs"
@@ -661,6 +704,7 @@ cmd_game_start() {
   while IFS= read -r p; do [ -f "$p" ] && printf '%s\t%s\n' "$p" "$(sha1 "$p")" >> "$WORK/gs-present"; done < "$WORK/gs-manifest"
   http POST "$SERVER/api/v1/agent/start" "$WORK/gs-present" "$WORK/gs-plan" "$rh" || return 0
   while IFS="$TAB" read -r action p v; do
+    [ "$action" = tget ] && { thumb_get "$p" "$v"; continue; }
     [ "$action" = get ] || continue
     mkdir -p "$(dirname "$p")"
     http GET "$SERVER/api/v1/agent/file?v=$v" - "$p.rommancer-tmp" "$rh" "X-Path-B64: $(b64 "$p")" && mv "$p.rommancer-tmp" "$p" && log "game-start: got $(basename "$p")"

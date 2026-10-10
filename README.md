@@ -131,5 +131,5 @@ La carpeta `seed/` contiene los DATs de todas las consolas soportadas (No-Intro,
 - RVZ/WIA: se soportan las compresiones Zstandard y sin comprimir (RVZ) y PURGE (WIA). Los WIA con bzip2/LZMA no se leen.
 - WBFS y CISO de GameCube no conservan la imagen original: se identifican por id de disco y revisión y quedan como no verificados. CSO/ZSO sí se verifican contra Redump.
 - Daijishō no tiene eventos de juego documentados: sus dispositivos se sincronizan a mano.
-- Los savestates no se convierten entre emuladores (solo se sincronizan entre dispositivos con el mismo emulador).
+- Los savestates no se convierten entre emuladores (solo se sincronizan entre dispositivos con el mismo emulador). Cada uno guarda la versión del core que lo hizo y se avisa si otra consola tiene otra; las capturas solo llegan de RetroArch y NextUI.
 - PS3 y Xbox 360 quedan fuera.

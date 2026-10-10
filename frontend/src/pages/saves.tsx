@@ -2,14 +2,15 @@ import { useState } from 'react'
 import { Link } from 'react-router'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
-import { History, Trash2 } from 'lucide-react'
+import { Download, History, ImageOff, Share2, Trash2, TriangleAlert } from 'lucide-react'
 import { toast } from 'sonner'
-import { authUrl, del, get, patch, post, upload } from '@/lib/api'
+import { authUrl, del, get, patch, post, put, upload } from '@/lib/api'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Empty, Field, NativeSelect, PageHeader, errMsg, formatBytes, formatDate } from '@/components/common'
 
 const family = (f: string) => (f.startsWith('ps1') ? 'ps1' : f)
@@ -31,26 +32,72 @@ export function SavesPage() {
         </Button>
       </PageHeader>
       <Conflicts />
-      {!data?.length ? (
-        <Empty />
-      ) : (
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>{t('saves.game')}</TableHead>
-              <TableHead>{t('saves.emulator')}</TableHead>
-              <TableHead>{t('common.type')}</TableHead>
-              <TableHead>{t('saves.versions')}</TableHead>
-              <TableHead>{t('saves.current')}</TableHead>
-              <TableHead />
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {data.map((s) => {
-              const cur = s.versions.find((v: any) => v.id === s.currentVersionId)
-              return (
-                <TableRow key={s.id}>
-                  <TableCell className="max-w-md">
+      <Tabs defaultValue="mine">
+        <TabsList>
+          <TabsTrigger value="mine">{t('more.saves.mine')}</TabsTrigger>
+          <TabsTrigger value="shared">{t('more.saves.shared')}</TabsTrigger>
+        </TabsList>
+        <TabsContent value="mine">
+          <MySaves saves={data} onOpen={setOpen} />
+        </TabsContent>
+        <TabsContent value="shared">
+          <SharedSaves />
+        </TabsContent>
+      </Tabs>
+      {open && <VersionsDialog saveId={open} onClose={() => setOpen(null)} />}
+      {uploading && <UploadDialog onClose={() => setUploading(false)} />}
+    </div>
+  )
+}
+
+const slotLabel = (slot: number) => (slot === -1 ? 'auto' : `#${slot}`)
+
+/** The emulator's screenshot of a savestate, opened full size on click */
+function Thumb({ src, className = 'h-14' }: { src: string; className?: string }) {
+  return (
+    <a href={src} target="_blank" rel="noreferrer" className="shrink-0">
+      <img src={src} loading="lazy" alt="" className={`${className} rounded border bg-black object-contain [image-rendering:pixelated]`} />
+    </a>
+  )
+}
+
+/** Consoles of the user with another version of the core a savestate was made with */
+function CoreWarning({ warnings, version, short }: { warnings?: { name: string; version: string }[]; version?: string | null; short?: boolean }) {
+  const { t } = useTranslation()
+  if (!warnings?.length) return null
+  const text = t('more.saves.coreWarning', { version, devices: warnings.map((w) => `${w.name} (${w.version})`).join(', ') })
+  return (
+    <span className="inline-flex items-start gap-1 text-xs text-amber-600 dark:text-amber-400" title={text}>
+      <TriangleAlert className="mt-px size-3.5 shrink-0" />
+      {!short && text}
+    </span>
+  )
+}
+
+export function MySaves({ saves, onOpen }: { saves: any[] | undefined; onOpen(id: number): void }) {
+  const { t } = useTranslation()
+  if (!saves?.length) return <Empty />
+  return (
+    <Table>
+      <TableHeader>
+        <TableRow>
+          <TableHead>{t('saves.game')}</TableHead>
+          <TableHead>{t('saves.emulator')}</TableHead>
+          <TableHead>{t('common.type')}</TableHead>
+          <TableHead>{t('saves.versions')}</TableHead>
+          <TableHead>{t('saves.current')}</TableHead>
+          <TableHead />
+        </TableRow>
+      </TableHeader>
+      <TableBody>
+        {saves.map((s) => {
+          const cur = s.versions.find((v: any) => v.id === s.currentVersionId)
+          return (
+            <TableRow key={s.id}>
+              <TableCell className="max-w-md">
+                <div className="flex items-center gap-3">
+                  {cur?.thumbPath && <Thumb src={authUrl(`/saves/${s.id}/versions/${cur.id}/thumb`)} className="h-10" />}
+                  <div className="min-w-0">
                     {s.game ? (
                       <Link className="font-medium hover:underline" to={`/games/${s.game.id}`}>
                         {s.game.title}
@@ -62,36 +109,46 @@ export function SavesPage() {
                       {s.baseName}
                       {s.game && ` · ${s.game.system.name}`}
                     </p>
-                  </TableCell>
-                  <TableCell>{s.emulator.name}</TableCell>
-                  <TableCell>
-                    <Badge variant={s.kind === 'SAVE' ? 'default' : 'secondary'}>{t(`saves.kind.${s.kind}`)}</Badge>
-                    {s.kind === 'STATE' && <span className="ml-1 text-xs text-muted-foreground">{s.slot === -1 ? 'auto' : `#${s.slot}`}</span>}
-                  </TableCell>
-                  <TableCell>{s.versions.length}</TableCell>
-                  <TableCell className="text-xs">
-                    {formatDate(cur?.fileMtime)}
-                    <p className="text-muted-foreground">{cur?.sourceDevice?.name ?? t('saves.web')}</p>
-                  </TableCell>
-                  <TableCell>
-                    <Button variant="outline" size="sm" onClick={() => setOpen(s.id)}>
-                      <History className="size-4" />
-                      {t('saves.versions')}
-                    </Button>
-                  </TableCell>
-                </TableRow>
-              )
-            })}
-          </TableBody>
-        </Table>
-      )}
-      {open && <VersionsDialog saveId={open} onClose={() => setOpen(null)} />}
-      {uploading && <UploadDialog onClose={() => setUploading(false)} />}
-    </div>
+                  </div>
+                </div>
+              </TableCell>
+              <TableCell>
+                {s.emulator.name}
+                {cur?.coreVersion && <p className="text-xs text-muted-foreground">{t('more.saves.core', { version: cur.coreVersion })}</p>}
+              </TableCell>
+              <TableCell>
+                <Badge variant={s.kind === 'SAVE' ? 'default' : 'secondary'}>{t(`saves.kind.${s.kind}`)}</Badge>
+                {s.kind === 'STATE' && <span className="ml-1 text-xs text-muted-foreground">{slotLabel(s.slot)}</span>}
+                {s.versions.some((v: any) => v.sharedAt) && (
+                  <Badge variant="outline" className="ml-1">
+                    <Share2 className="size-3" />
+                    {t('more.saves.sharedBadge')}
+                  </Badge>
+                )}
+                <div>
+                  <CoreWarning warnings={s.coreWarnings} version={cur?.coreVersion} short />
+                </div>
+              </TableCell>
+              <TableCell>{s.versions.length}</TableCell>
+              <TableCell className="text-xs">
+                {formatDate(cur?.fileMtime)}
+                <p className="text-muted-foreground">{cur?.sourceDevice?.name ?? t('saves.web')}</p>
+              </TableCell>
+              <TableCell>
+                <Button variant="outline" size="sm" onClick={() => onOpen(s.id)}>
+                  <History className="size-4" />
+                  {t('saves.versions')}
+                </Button>
+              </TableCell>
+            </TableRow>
+          )
+        })}
+      </TableBody>
+    </Table>
   )
 }
 
-function VersionsDialog({ saveId, onClose }: { saveId: number; onClose(): void }) {
+export function VersionsDialog({ saveId, onClose }: { saveId: number; onClose(): void }) {
   const { t } = useTranslation()
   const qc = useQueryClient()
   const emus = useEmulators()
@@ -99,6 +156,7 @@ function VersionsDialog({ saveId, onClose }: { saveId: number; onClose(): void }
   const [as, setAs] = useState('')
   const [convertTo, setConvertTo] = useState('')
   const [baseName, setBaseName] = useState<string | null>(null)
+  const [sharing, setSharing] = useState<any | null>(null)
   if (!s) return null
   const compatible = (emus.data ?? []).filter((e) => family(e.saveFormat) === family(s.emulator.saveFormat))
   const act = async (fn: () => Promise<unknown>) => {
@@ -106,6 +164,7 @@ function VersionsDialog({ saveId, onClose }: { saveId: number; onClose(): void }
       await fn()
       await refetch()
       void qc.invalidateQueries({ queryKey: ['saves'] })
+      void qc.invalidateQueries({ queryKey: ['saves-shared'] })
     } catch (e) {
       toast.error(errMsg(e))
     }
@@ -160,6 +219,7 @@ function VersionsDialog({ saveId, onClose }: { saveId: number; onClose(): void }
             </div>
           </Field>
         </div>
+        <CoreWarning warnings={s.coreWarnings} version={s.versions.find((v: any) => v.id === s.currentVersionId)?.coreVersion} />
         <Table>
           <TableHeader>
             <TableRow>
@@ -173,13 +233,26 @@ function VersionsDialog({ saveId, onClose }: { saveId: number; onClose(): void }
             {s.versions.map((v: any) => (
               <TableRow key={v.id}>
                 <TableCell className="text-xs">
-                  {formatDate(v.fileMtime)}
-                  {v.id === s.currentVersionId && (
-                    <Badge className="ml-2" variant="default">
-                      {t('saves.current')}
-                    </Badge>
-                  )}
-                  {v.note && <p className="text-muted-foreground">{v.note}</p>}
+                  <div className="flex items-center gap-3">
+                    {v.thumbPath && <Thumb src={authUrl(`/saves/${s.id}/versions/${v.id}/thumb`)} />}
+                    <div>
+                      {formatDate(v.fileMtime)}
+                      {v.id === s.currentVersionId && (
+                        <Badge className="ml-2" variant="default">
+                          {t('saves.current')}
+                        </Badge>
+                      )}
+                      {v.sharedAt && (
+                        <Badge className="ml-2" variant="outline">
+                          <Share2 className="size-3" />
+                          {t('more.saves.sharedBadge')}
+                        </Badge>
+                      )}
+                      {v.note && <p className="text-muted-foreground">{v.note}</p>}
+                      {v.coreVersion && <p className="text-muted-foreground">{t('more.saves.core', { version: v.coreVersion })}</p>}
+                      {v.shareNote && <p className="italic text-muted-foreground">«{v.shareNote}»</p>}
+                    </div>
+                  </div>
                 </TableCell>
                 <TableCell>{formatBytes(v.size)}</TableCell>
                 <TableCell>{v.sourceDevice?.name ?? t('saves.web')}</TableCell>
@@ -187,6 +260,16 @@ function VersionsDialog({ saveId, onClose }: { saveId: number; onClose(): void }
                   <Button variant="outline" size="sm" nativeButton={false} render={<a href={authUrl(`/saves/${s.id}/versions/${v.id}/download${as ? `?emulator=${as}` : ''}`)} />}>
                     {t('common.download')}
                   </Button>
+                  {v.sharedAt ? (
+                    <Button variant="outline" size="sm" onClick={() => void act(() => del(`/saves/${s.id}/versions/${v.id}/share`))}>
+                      {t('more.saves.unshare')}
+                    </Button>
+                  ) : (
+                    <Button variant="outline" size="sm" onClick={() => setSharing(v)}>
+                      <Share2 className="size-4" />
+                      {t('more.saves.share')}
+                    </Button>
+                  )}
                   {v.id !== s.currentVersionId && (
                     <>
                       <Button variant="outline" size="sm" onClick={() => void act(() => post(`/saves/${s.id}/restore`, { versionId: v.id }))}>
@@ -215,6 +298,157 @@ function VersionsDialog({ saveId, onClose }: { saveId: number; onClose(): void }
           >
             {t('common.delete')}
           </Button>
+        </DialogFooter>
+        {sharing && (
+          <ShareDialog
+            onClose={() => setSharing(null)}
+            onShare={(note) =>
+              void act(async () => {
+                await put(`/saves/${s.id}/versions/${sharing.id}/share`, { note })
+                setSharing(null)
+              })
+            }
+          />
+        )}
+      </DialogContent>
+    </Dialog>
+  )
+}
+
+function ShareDialog({ onClose, onShare }: { onClose(): void; onShare(note: string): void }) {
+  const { t } = useTranslation()
+  const [note, setNote] = useState('')
+  return (
+    <Dialog open onOpenChange={(o) => !o && onClose()}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>{t('more.saves.shareTitle')}</DialogTitle>
+        </DialogHeader>
+        <p className="text-sm text-muted-foreground">{t('more.saves.shareHelp')}</p>
+        <Field label={t('more.saves.shareNote')}>
+          <Input value={note} maxLength={255} placeholder={t('more.saves.shareNotePlaceholder')} onChange={(e) => setNote(e.target.value)} />
+        </Field>
+        <DialogFooter>
+          <Button onClick={() => onShare(note)}>
+            <Share2 className="size-4" />
+            {t('more.saves.share')}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
+/** Saves any user made public; GAMEID narrows them to one game (its page), leaving out the user's own */
+export function SharedSaves({ gameId }: { gameId?: number }) {
+  const { t } = useTranslation()
+  const [q, setQ] = useState('')
+  const [importing, setImporting] = useState<any | null>(null)
+  const params = new URLSearchParams()
+  if (gameId) params.set('gameId', String(gameId))
+  if (q.trim()) params.set('q', q.trim())
+  const { data } = useQuery({ queryKey: ['saves-shared', gameId ?? null, q.trim()], queryFn: () => get<any[]>(`/saves/shared?${params}`) })
+  const list = gameId ? data?.filter((v) => !v.mine) : data
+  return (
+    <div className="space-y-4">
+      {!gameId && (
+        <div className="flex flex-wrap items-center gap-3">
+          <Input className="w-64" value={q} placeholder={t('more.saves.search')} onChange={(e) => setQ(e.target.value)} />
+          <p className="text-sm text-muted-foreground">{t('more.saves.sharedHelp')}</p>
+        </div>
+      )}
+      {!list?.length ? (
+        <Empty>{t('more.saves.noShared')}</Empty>
+      ) : (
+        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+          {list.map((v) => (
+            <div key={v.id} className="flex gap-3 rounded-xl border p-3">
+              {v.hasThumb ? (
+                <Thumb src={authUrl(`/saves/shared/${v.id}/thumb`)} className="h-20 w-28" />
+              ) : (
+                <div className="flex h-20 w-28 shrink-0 items-center justify-center rounded border bg-muted text-muted-foreground">
+                  <ImageOff className="size-5" />
+                </div>
+              )}
+              <div className="min-w-0 flex-1 space-y-1 text-sm">
+                <p className="truncate font-medium">
+                  {v.save.game && !gameId ? (
+                    <Link className="hover:underline" to={`/games/${v.save.game.id}`}>
+                      {v.save.game.title}
+                    </Link>
+                  ) : (
+                    (v.save.game?.title ?? v.save.baseName)
+                  )}
+                </p>
+                <div className="flex flex-wrap items-center gap-1">
+                  <Badge variant={v.save.kind === 'SAVE' ? 'default' : 'secondary'}>{t(`saves.kind.${v.save.kind}`)}</Badge>
+                  {v.save.kind === 'STATE' && <span className="text-xs text-muted-foreground">{slotLabel(v.save.slot)}</span>}
+                  <span className="text-xs text-muted-foreground">
+                    {v.save.emulator.name}
+                    {v.coreVersion && ` · ${t('more.saves.core', { version: v.coreVersion })}`}
+                  </span>
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  {v.mine ? t('more.saves.yours') : t('more.saves.by', { user: v.save.user.username })} · {formatDate(v.sharedAt)}
+                </p>
+                {v.shareNote && <p className="text-xs italic">«{v.shareNote}»</p>}
+                <CoreWarning warnings={v.coreWarnings} version={v.coreVersion} />
+                <div className="flex flex-wrap gap-1 pt-1">
+                  {!v.mine && (
+                    <Button size="sm" onClick={() => setImporting(v)}>
+                      {t('more.saves.import')}
+                    </Button>
+                  )}
+                  <Button variant="outline" size="sm" nativeButton={false} render={<a href={authUrl(`/saves/shared/${v.id}/download`)} />}>
+                    <Download className="size-4" />
+                    {t('common.download')}
+                  </Button>
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+      {importing && <ImportDialog version={importing} onClose={() => setImporting(null)} />}
+    </div>
+  )
+}
+
+function ImportDialog({ version: v, onClose }: { version: any; onClose(): void }) {
+  const { t } = useTranslation()
+  const qc = useQueryClient()
+  const state = v.save.kind === 'STATE'
+  const [slot, setSlot] = useState(String(v.save.slot))
+  const submit = async () => {
+    try {
+      await post(`/saves/shared/${v.id}/import`, state ? { slot: Number(slot) } : {})
+      void qc.invalidateQueries({ queryKey: ['saves'] })
+      toast.success(t('more.saves.imported'))
+      onClose()
+    } catch (e) {
+      toast.error(errMsg(e))
+    }
+  }
+  return (
+    <Dialog open onOpenChange={(o) => !o && onClose()}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>{t('more.saves.import')}</DialogTitle>
+        </DialogHeader>
+        <p className="text-sm text-muted-foreground">{state ? t('more.saves.importHelpState', { emulator: v.save.emulator.name }) : t('more.saves.importHelpSave')}</p>
+        {state && (
+          <Field label={t('more.saves.importSlot')}>
+            <NativeSelect value={slot} onChange={(e) => setSlot(e.target.value)}>
+              {[-1, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9].map((n) => (
+                <option key={n} value={n}>
+                  {slotLabel(n)}
+                </option>
+              ))}
+            </NativeSelect>
+          </Field>
+        )}
+        <DialogFooter>
+          <Button onClick={() => void submit()}>{t('more.saves.import')}</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>

@@ -61,7 +61,12 @@ export function parseDeviceSave(name: string, emu: Emulator, savesLayout: string
   return { ...parsed, baseName: parsed.baseName.replace(/\.[^.]+$/, ''), slot: parsed.kind === 'STATE' && parsed.slot === 9 ? -1 : parsed.slot };
 }
 
-export async function storeVersion(key: SaveKey, buf: Buffer, fileMtime: Date, opts: { sourceDeviceId?: number; note?: string; gameId?: number | null; romId?: number | null; force?: boolean; makeCurrent?: boolean } = {}) {
+export async function storeVersion(
+  key: SaveKey,
+  buf: Buffer,
+  fileMtime: Date,
+  opts: { sourceDeviceId?: number; note?: string; gameId?: number | null; romId?: number | null; force?: boolean; makeCurrent?: boolean; coreVersion?: string | null } = {},
+) {
   const sha1 = crypto.createHash('sha1').update(buf).digest('hex');
   let save = await prisma.save.findUnique({
     where: { userId_emulatorId_kind_slot_baseName: key },
@@ -82,7 +87,7 @@ export async function storeVersion(key: SaveKey, buf: Buffer, fileMtime: Date, o
   const dir = path.join(env.savesDir, String(key.userId), String(save.id));
   await fs.promises.mkdir(dir, { recursive: true });
   const version = await prisma.saveVersion.create({
-    data: { saveId: save.id, path: '', size: buf.length, sha1, fileMtime, sourceDeviceId: opts.sourceDeviceId ?? null, note: opts.note ?? null },
+    data: { saveId: save.id, path: '', size: buf.length, sha1, fileMtime, sourceDeviceId: opts.sourceDeviceId ?? null, note: opts.note ?? null, coreVersion: opts.coreVersion?.slice(0, 64) || null },
   });
   const rel = path.join(String(key.userId), String(save.id), `${version.id}-${sha1.slice(0, 8)}.bin`);
   await fs.promises.writeFile(path.join(env.savesDir, rel), buf);
@@ -99,10 +104,41 @@ async function pruneVersions(saveId: number) {
   const old = await prisma.saveVersion.findMany({ where: { saveId }, orderBy: { createdAt: 'desc' }, skip: MAX_VERSIONS });
   const keep = new Set((await prisma.saveConflict.findMany({ where: { saveId, resolvedAt: null } })).flatMap((c) => [c.deviceVersionId, c.serverVersionId]));
   for (const v of old) {
-    if (v.id === save.currentVersionId || keep.has(v.id)) continue;
-    await fs.promises.rm(path.join(env.savesDir, v.path), { force: true });
-    await prisma.saveVersion.delete({ where: { id: v.id } });
+    // Shared versions stay until their owner stops sharing them
+    if (v.id === save.currentVersionId || keep.has(v.id) || v.sharedAt) continue;
+    await removeVersion(v);
   }
+}
+
+export async function removeVersion(v: { id: number; path: string; thumbPath: string | null }) {
+  await fs.promises.rm(path.join(env.savesDir, v.path), { force: true });
+  if (v.thumbPath) await fs.promises.rm(path.join(env.savesDir, v.thumbPath), { force: true });
+  await prisma.saveVersion.delete({ where: { id: v.id } });
+}
+
+export const THUMB_MAX = 4 * 1024 * 1024;
+
+/** Media type of a screenshot by its first bytes; NextUI writes PNG data into its .bmp files */
+export function imageType(buf: Buffer): string | null {
+  if (buf.length > 8 && buf.readUInt32BE(0) === 0x89504e47) return 'image/png';
+  if (buf.length > 3 && buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff) return 'image/jpeg';
+  if (buf.length > 26 && buf[0] === 0x42 && buf[1] === 0x4d) return 'image/bmp';
+  return null;
+}
+
+/** Keeps the emulator's screenshot of a savestate next to the version's file */
+export async function storeThumb(versionId: number, buf: Buffer) {
+  if (!buf.length || buf.length > THUMB_MAX || !imageType(buf)) return false;
+  const v = await prisma.saveVersion.findUniqueOrThrow({ where: { id: versionId } });
+  const rel = v.path.replace(/\.bin$/, '') + '-thumb';
+  await fs.promises.writeFile(path.join(env.savesDir, rel), buf);
+  if (v.thumbPath !== rel) await prisma.saveVersion.update({ where: { id: v.id }, data: { thumbPath: rel } });
+  return true;
+}
+
+export async function readThumb(thumbPath: string) {
+  const buf = await fs.promises.readFile(path.join(env.savesDir, thumbPath));
+  return { buf, type: imageType(buf) ?? 'application/octet-stream' };
 }
 
 export async function readVersion(versionId: number): Promise<Buffer> {

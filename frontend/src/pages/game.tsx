@@ -15,6 +15,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Empty, Field, JobProgress, NativeSelect, errMsg, formatBytes, useJob } from '@/components/common'
 import { AddToListButton } from '@/components/add-to-list'
+import { MySaves, SharedSaves, VersionsDialog } from './saves'
 
 const ALL_MEDIA = ['COVER', 'BOX_BACK', 'BOX_SIDE', 'BOX_3D', 'SUPPORT', 'SCREENSHOT', 'TITLE', 'FLYER', 'FANART', 'WHEEL', 'MARQUEE', 'MANUAL', 'VIDEO']
 const LARGE = ['MANUAL', 'VIDEO']
@@ -234,6 +235,7 @@ export function GamePage() {
           <TabsTrigger value="media">
             {t('game.media')} ({g.media.length})
           </TabsTrigger>
+          {can('saves') && <TabsTrigger value="saves">{t('more.saves.gameTab')}</TabsTrigger>}
         </TabsList>
         <TabsContent value="roms">
           {/* Fixed layout: the name takes the free width and long texts truncate inside their column */}
@@ -448,6 +450,11 @@ export function GamePage() {
             </figure>
           ))}
         </TabsContent>
+        {can('saves') && (
+          <TabsContent value="saves">
+            <GameSaves gameId={g.id} />
+          </TabsContent>
+        )}
       </Tabs>
 
       <Dialog open={dialog === 'merge'} onOpenChange={close}>
@@ -624,6 +631,26 @@ export function GamePage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+    </div>
+  )
+}
+
+/** The user's own saves of a game and those other users shared */
+function GameSaves({ gameId }: { gameId: number }) {
+  const { t } = useTranslation()
+  const { data } = useQuery({ queryKey: ['saves', { gameId }], queryFn: () => get<any[]>(`/saves?gameId=${gameId}`) })
+  const [open, setOpen] = useState<number | null>(null)
+  return (
+    <div className="space-y-6">
+      <section className="space-y-2">
+        <h3 className="font-medium">{t('more.saves.gameMine')}</h3>
+        <MySaves saves={data} onOpen={setOpen} />
+      </section>
+      <section className="space-y-2">
+        <h3 className="font-medium">{t('more.saves.gameShared')}</h3>
+        <SharedSaves gameId={gameId} />
+      </section>
+      {open && <VersionsDialog saveId={open} onClose={() => setOpen(null)} />}
     </div>
   )
 }

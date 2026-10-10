@@ -12,6 +12,7 @@ use std::time::UNIX_EPOCH;
 
 /// Roms up to this size are hashed (once, cached), so games are recognised whatever their file name
 const HASH_MAX: u64 = 64 * 1024 * 1024;
+const THUMB_MAX: u64 = 4 * 1024 * 1024;
 const NOT_ROMS: &[&str] = &[
     ".png", ".jpg", ".jpeg", ".mp4", ".xml", ".txt", ".json", ".cfg", ".db", ".ini", ".pdf", ".srm", ".sav", ".mcd", ".mcr", ".dsv", ".cht", ".log", ".sh", ".lpl", ".part", ".pem",
 ];
@@ -242,7 +243,7 @@ impl<'a> Engine<'a> {
         // Free and total bytes of the card: the server copies list roms only while a reserve is kept
         let space = crate::card::space_of(Path::new(&self.root)).map(|(f, t)| format!("{f} {t}")).unwrap_or_default();
         let plan = pairs(&self.api.post_text("/agent/sync", request.into_bytes(), &[("X-Allow-Pull", "1".into()), ("X-Space", space)])?);
-        let steps: Vec<_> = plan.into_iter().filter(|s| s.len() >= 3 && (s[0] == "put" || s[0] == "get")).collect();
+        let steps: Vec<_> = plan.into_iter().filter(|s| s.len() >= 3 && ["put", "get", "tput", "tget"].contains(&s[0].as_str())).collect();
         for (n, s) in steps.iter().enumerate() {
             self.check()?;
             self.progress("transfer", n as u64 + 1, steps.len() as u64);
@@ -255,8 +256,17 @@ impl<'a> Engine<'a> {
                         ("X-Rom-Sha1", rom_hashes.get(&s[2]).cloned().unwrap_or_default()),
                         ("X-Save-Exact", s.get(3).cloned().unwrap_or_else(|| "0".into())),
                     ];
-                    self.api.post_text("/agent/upload", body, &headers).map(|_| out.up += 1)
+                    self.api.post_text("/agent/upload", body, &headers).map(|reply| {
+                        out.up += 1;
+                        // A new savestate: the server asks for its screenshot
+                        for t in pairs(&reply).into_iter().filter(|t| t.len() >= 3 && t[0] == "tput") {
+                            let _ = self.thumb_put(&t[1], &t[2]);
+                        }
+                    })
                 }),
+                // Savestate screenshots: ours when the server lacks it, the server's beside a state it sent
+                "tput" => self.thumb_put(&s[1], &s[2]),
+                "tget" => self.api.download(&format!("/agent/thumb?v={}", s[2]), &[], Path::new(&s[1]), &mut |_| {}, self.cancelled),
                 // get <file> <version> <rom>
                 _ => {
                     let headers = [("X-Rom-B64", b64(s.get(3).map(String::as_str).unwrap_or(""))), ("X-Path-B64", b64(&s[1]))];
@@ -266,6 +276,14 @@ impl<'a> Engine<'a> {
             if r.is_err() {
                 out.errors += 1;
             }
+        }
+        Ok(())
+    }
+
+    fn thumb_put(&self, path: &str, version: &str) -> Result<()> {
+        let p = Path::new(path);
+        if p.is_file() && fs::metadata(p).map(|m| m.len()).unwrap_or(u64::MAX) <= THUMB_MAX {
+            self.api.post_text(&format!("/agent/thumb?v={version}"), fs::read(p)?, &[])?;
         }
         Ok(())
     }

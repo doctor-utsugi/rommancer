@@ -120,6 +120,25 @@ in `roms/nds/saves`, layout `rom-saves`); set `ROMMANCER_FIRMWARE`/`ROMMANCER_MO
 - Systems: 89, from libretro-database (No-Intro cartridges, Redump discs, FBNeo); their DATs download by themselves
   (`dats/presets.ts`) and the committed seed carries them for a fresh server.
 
+### Savestates: screenshots, core versions and sharing
+
+- **Screenshots.** RetroArch writes `<state>.png` beside each state when `savestate_thumbnail_enable` is on
+  (Batocera and Knulli turn it on at every launch; on Onion, muOS, ArkOS and Android Rommancer sets it with the
+  user's other console settings). NextUI's minarch keeps one per slot in
+  `.userdata/shared/.minui/<tag>/<rom file>.<slot>.bmp` (PNG data despite the name). The client sends it after the
+  state and writes the server's copy beside a state it receives, so the emulator's menu shows the right picture.
+  Standalone emulators (PPSSPP, DuckStation...) are left out.
+- **Core versions.** The shell client reads RetroArch's core info files (`libretro_info_path` from
+  `retroarch.cfg`, then the usual folders) and reports each core's `display_version`. Every state version keeps
+  the version of the core that made it; the web app warns when another console of the user has a different one,
+  because a state may not load there. States still sync: the console's previous file stays in the history.
+  Android cannot read RetroArch's core folder, and SD cards synced from a computer have no cores to read.
+- **Sharing.** Any version of a save or state can be shared with every user of the server, with a note. Others
+  see it in the game's *Saves* tab (or *Saves > Shared*) with its screenshot and core version, and copy it into
+  their own saves: a state into the slot they pick (same emulator only), a save into the one they already have
+  for the game, converted to its emulator's format. Whatever they had becomes history. Shared versions are kept
+  past the 50-version history limit until their owner stops sharing them.
+
 ## Credits
 
 The spinning save point of the setup screen is pre-rendered by `tools/render_savepoint.py` from
@@ -140,12 +159,14 @@ clients need no JSON parser.
 | `GET /agent/roots` | device token | folders to scan and save extensions |
 | `POST /agent/sync` | device token | full-device plan (below) |
 | `GET /agent/file`, `POST /agent/upload` | device token | transfer one save |
+| `GET /agent/thumb`, `POST /agent/thumb` | device token | a savestate's screenshot (`?v=versionId`) |
 
 `POST /agent/sync` receives one line per rom and per save file:
 
 ```
 rom<TAB>/path/to/rom<TAB>sha1<TAB>headerless sha1
 file<TAB>/path/to/save<TAB>sha1
+core<TAB>mGBA<TAB>0.10.3
 ```
 
 and answers what to move:
@@ -153,7 +174,13 @@ and answers what to move:
 ```
 put<TAB>/path/to/save<TAB>/path/to/rom
 get<TAB>/path/to/save<TAB>versionId<TAB>/path/to/rom
+tget<TAB>/path/to/state.png<TAB>versionId
+tput<TAB>/path/to/state.png<TAB>versionId
 ```
+
+`tget` follows the `get` of a state whose version has a screenshot; `tput` asks for the screenshot of a state the
+server already has without one. `POST /agent/upload` of a new state answers `uploaded` plus a `tput` line. Clients
+that do not know these lines skip them.
 
 ## Decisions
 

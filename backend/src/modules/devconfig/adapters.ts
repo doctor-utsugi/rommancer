@@ -9,6 +9,8 @@ export interface DesiredSettings {
   wifi: { ssid: string; password: string | null; hidden: boolean }[];
   /** Every network Rommancer manages for the user (or wrote before): others found on the device are theirs and stay */
   managed: string[];
+  /** RetroArch saves a screenshot with each savestate, which Rommancer keeps with the state */
+  stateThumbs?: boolean;
 }
 
 export interface Applied {
@@ -28,6 +30,8 @@ export interface Adapter {
   /** Files (or folders, ending in "/") copied by a backup */
   backup: string[];
   settingsFiles: string[];
+  /** Writes RetroArch's savestate screenshots setting (Batocera and Knulli already turn it on at each launch) */
+  stateThumbs?: boolean;
   /** REACH: whether the channel at work reaches a path (the card does not reach internal memory) */
   apply(want: DesiredSettings, files: Map<string, string | null>, reach: (path: string) => boolean): Applied;
 }
@@ -167,20 +171,18 @@ export function setWpaNetworks(text: string, nets: DesiredSettings['wifi'], mana
 const onion: Adapter = {
   backup: ['RetroArch/.retroarch/retroarch.cfg', 'RetroArch/.retroarch/config/', '.tmp_update/config/', 'Saves/CurrentProfile/config/', '/appconfigs/system.json', '/appconfigs/wpa_supplicant.conf'],
   settingsFiles: ['RetroArch/.retroarch/retroarch.cfg', '/appconfigs/wpa_supplicant.conf'],
+  stateThumbs: true,
   apply(want, files) {
     const notes: string[] = [];
     const writes = new Map<string, string>();
     const cfg = 'RetroArch/.retroarch/retroarch.cfg';
-    if (want.ra) {
+    const keys = raSettings(want);
+    if (Object.keys(keys).length) {
       const text = files.get(cfg);
-      if (text == null) notes.push(note('missing', cfg));
-      else {
-        const next = setRetroArch(text, {
-          cheevos_enable: 'true',
-          cheevos_username: raQuote(want.ra.username),
-          // With a token RetroArch does not need the password (and would replace it with a token anyway)
-          ...(want.ra.token ? { cheevos_token: raQuote(want.ra.token), cheevos_password: '' } : { cheevos_password: raQuote(want.ra.password ?? '') }),
-        });
+      if (text == null) {
+        if (want.ra) notes.push(note('missing', cfg));
+      } else {
+        const next = setRetroArch(text, keys);
         if (next !== text) writes.set(cfg, next);
       }
     }
@@ -221,8 +223,14 @@ function networkFiles(dir: string, ext: string, want: DesiredSettings, files: Ma
 const raKeys = (ra: NonNullable<DesiredSettings['ra']>): Record<string, string> => ({
   cheevos_enable: 'true',
   cheevos_username: raQuote(ra.username),
+  // With a token RetroArch does not need the password (and would replace it with a token anyway)
   ...(ra.token ? { cheevos_token: raQuote(ra.token), cheevos_password: '' } : { cheevos_password: raQuote(ra.password ?? '') }),
 });
+
+/** Everything Rommancer keeps set in a retroarch.cfg */
+function raSettings(want: DesiredSettings): Record<string, string> {
+  return { ...(want.ra ? raKeys(want.ra) : {}), ...(want.stateThumbs ? { savestate_thumbnail_enable: 'true' } : {}) };
+}
 
 /** muOS: RetroArch's config and the cheevos file it appends at each launch (internal), WiFi profiles on the card */
 const MUOS_RA = '/opt/muos/share/info/config/retroarch.cfg';
@@ -231,17 +239,19 @@ const MUOS_NET = 'MUOS/network/';
 const muos: Adapter = {
   backup: [MUOS_NET, MUOS_RA, MUOS_CHEEVOS],
   settingsFiles: [MUOS_RA, MUOS_CHEEVOS, MUOS_NET],
+  stateThumbs: true,
   apply(want, files, reach) {
     const notes: string[] = [];
     const writes = new Map<string, string>();
-    if (want.ra) {
-      if (!reach(MUOS_RA)) notes.push(note('raInternal'));
-      else {
-        const cfg = files.get(MUOS_RA);
-        if (cfg != null) {
-          const next = setRetroArch(cfg, raKeys(want.ra));
-          if (next !== cfg) writes.set(MUOS_RA, next);
-        }
+    if (want.ra && !reach(MUOS_RA)) notes.push(note('raInternal'));
+    if (reach(MUOS_RA)) {
+      const cfg = files.get(MUOS_RA);
+      const keys = raSettings(want);
+      if (cfg != null && Object.keys(keys).length) {
+        const next = setRetroArch(cfg, keys);
+        if (next !== cfg) writes.set(MUOS_RA, next);
+      }
+      if (want.ra) {
         const ch = files.get(MUOS_CHEEVOS) ?? '';
         const nextCh = setRetroArch(ch, raKeys(want.ra));
         if (nextCh !== ch) writes.set(MUOS_CHEEVOS, nextCh);
@@ -340,19 +350,20 @@ const ANDROID_PSP = ['PSP/SYSTEM/', 'Android/data/org.ppsspp.ppsspp/files/PSP/SY
 const android: Adapter = {
   backup: [...ANDROID_RA, ...ANDROID_PSP.map((d) => `${d}ppsspp.ini`), 'ES-DE/settings/es_settings.xml'],
   settingsFiles: [...ANDROID_RA, ...ANDROID_PSP.flatMap((d) => [`${d}ppsspp.ini`, `${d}ppsspp_retroachievements.dat`])],
+  stateThumbs: true,
   apply(want, files) {
     const notes: string[] = [];
     const writes = new Map<string, string>();
-    if (!want.ra) return { writes, notes };
-    let found = 0;
-    const unread = [...ANDROID_RA, ...ANDROID_PSP.map((d) => `${d}ppsspp.ini`)].some((f) => f.startsWith('Android/data/') && !files.has(f));
+    const keys = raSettings(want);
     for (const f of ANDROID_RA) {
       const text = files.get(f);
-      if (text == null) continue;
-      found++;
-      const next = setRetroArch(text, raKeys(want.ra));
+      if (text == null || !Object.keys(keys).length) continue;
+      const next = setRetroArch(text, keys);
       if (next !== text) writes.set(f, next);
     }
+    if (!want.ra) return { writes, notes };
+    let found = ANDROID_RA.filter((f) => files.get(f) != null).length;
+    const unread = [...ANDROID_RA, ...ANDROID_PSP.map((d) => `${d}ppsspp.ini`)].some((f) => f.startsWith('Android/data/') && !files.has(f));
     for (const d of ANDROID_PSP) {
       const ini = files.get(`${d}ppsspp.ini`);
       if (ini == null) continue;
@@ -376,22 +387,22 @@ const ARK_IMPORT = 'tools/wifikeyfile.txt';
 const arkos: Adapter = {
   backup: [...ARK_RA, ARK_NM, '/home/ark/.emulationstation/es_settings.cfg'],
   settingsFiles: [...ARK_RA, ARK_NM],
+  stateThumbs: true,
   apply(want, files, reach) {
     const notes: string[] = [];
     const writes = new Map<string, string>();
-    if (want.ra) {
-      if (!reach(ARK_RA[0])) notes.push(note('raInternal'));
-      else {
-        let found = 0;
-        for (const f of ARK_RA) {
-          const text = files.get(f);
-          if (text == null) continue;
-          found++;
-          const next = setRetroArch(text, raKeys(want.ra));
-          if (next !== text) writes.set(f, next);
-        }
-        if (!found) notes.push(note('missing', ARK_RA[0]));
+    const keys = raSettings(want);
+    if (want.ra && !reach(ARK_RA[0])) notes.push(note('raInternal'));
+    else if (reach(ARK_RA[0]) && Object.keys(keys).length) {
+      let found = 0;
+      for (const f of ARK_RA) {
+        const text = files.get(f);
+        if (text == null) continue;
+        found++;
+        const next = setRetroArch(text, keys);
+        if (next !== text) writes.set(f, next);
       }
+      if (!found && want.ra) notes.push(note('missing', ARK_RA[0]));
     }
     if (!want.wifi.length && !want.managed.length) return { writes, notes };
     if (reach(ARK_NM)) {

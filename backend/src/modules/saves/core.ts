@@ -60,6 +60,31 @@ export function deviceFileName(base: string, emu: Emulator, kind: SaveKind, slot
 }
 
 /**
+ * Where the emulator keeps its screenshot of a savestate: RetroArch writes "<state>.png" (with
+ * savestate_thumbnail_enable), NextUI's minarch "<shared>/.minui/<tag>/<rom file>.<slot>.bmp". Null for the others.
+ */
+export function deviceThumbPath(statePath: string, emu: Emulator, savesLayout: string): string | null {
+  if (savesLayout === 'minui') {
+    const dir = path.posix.dirname(statePath);
+    const core = emu.slug.replace(/^minui-/, '');
+    const folder = path.posix.basename(dir);
+    const m = /^(.*)\.st(\d)$/.exec(path.posix.basename(statePath));
+    if (!m || !folder.endsWith(`-${core}`)) return null;
+    return path.posix.join(path.posix.dirname(dir), '.minui', folder.slice(0, -core.length - 1), `${m[1]}.${m[2]}.bmp`);
+  }
+  return emu.core ? `${statePath}.png` : null;
+}
+
+/** Version of the emulator's core on a device, as its client reported it (RetroArch's core info files) */
+export function coreVersionOf(device: Device, emu: Emulator): string | null {
+  if (!emu.core || !device.coreVersions || typeof device.coreVersions !== 'object') return null;
+  const cores = device.coreVersions as Record<string, string>;
+  const name = emu.core.toLowerCase();
+  const key = Object.keys(cores).find((k) => k.toLowerCase() === name);
+  return key ? String(cores[key]) : null;
+}
+
+/**
  * Save logico de un juego para un emulador: el del propio emulador o, si no existe, uno de formato
  * compatible de otro emulador (asi un save de SNES de Snes9x sirve en cualquier dispositivo).
  * Los savestates solo valen para el mismo emulador.
@@ -147,25 +172,26 @@ export async function receiveFromDevice(
     kind === 'STATE' || target.emulator.saveFormat === emu.saveFormat ? buf : convertSave(buf, emu.saveFormat as SaveFormat, target.emulator.saveFormat as SaveFormat);
   const keyFor = (target: (Save & { emulator: Emulator }) | null) =>
     target ? { userId: target.userId, emulatorId: target.emulatorId, kind: target.kind, slot: target.slot, baseName: target.baseName } : { userId: device.userId, emulatorId: emu.id, kind, slot, baseName };
+  const coreVersion = kind === 'STATE' ? coreVersionOf(device, emu) : null;
 
   if (d.action === 'upload') {
-    const r = await storeVersion(keyFor(save), save ? toSaveFormat(save) : buf, new Date(), { sourceDeviceId: device.id, gameId: ident?.gameId ?? null, romId: ident?.romId ?? null });
+    const r = await storeVersion(keyFor(save), save ? toSaveFormat(save) : buf, new Date(), { sourceDeviceId: device.id, gameId: ident?.gameId ?? null, romId: ident?.romId ?? null, coreVersion });
     await setBase(r.save.id, device.id, r.version.id, deviceSha1);
-    return { action: 'uploaded' as const, saveId: r.save.id };
+    return { action: 'uploaded' as const, saveId: r.save.id, versionId: r.version.id };
   }
   if (d.action === 'adopt' && save) {
     await setBase(save.id, device.id, save.currentVersionId, deviceSha1);
-    return { action: 'unchanged' as const, saveId: save.id };
+    return { action: 'unchanged' as const, saveId: save.id, versionId: null };
   }
   if (d.action === 'conflict' && save) {
-    const r = await storeVersion(keyFor(save), toSaveFormat(save), new Date(), { sourceDeviceId: device.id, note: 'conflict', makeCurrent: false, force: true });
+    const r = await storeVersion(keyFor(save), toSaveFormat(save), new Date(), { sourceDeviceId: device.id, note: 'conflict', makeCurrent: false, force: true, coreVersion });
     await prisma.saveConflict.create({ data: { saveId: save.id, deviceId: device.id, deviceVersionId: r.version.id, serverVersionId: save.currentVersionId! } });
     // El dispositivo conserva su fichero; se anota lo que tiene para no repetir el conflicto
     const base = await prisma.saveDeviceState.findUnique({ where: { saveId_deviceId: { saveId: save.id, deviceId: device.id } } });
     await setBase(save.id, device.id, base?.versionId ?? null, deviceSha1);
-    return { action: 'conflict' as const, saveId: save.id };
+    return { action: 'conflict' as const, saveId: save.id, versionId: r.version.id };
   }
-  return { action: d.action === 'download' ? ('server-newer' as const) : ('unchanged' as const), saveId: save?.id ?? null };
+  return { action: d.action === 'download' ? ('server-newer' as const) : ('unchanged' as const), saveId: save?.id ?? null, versionId: null };
 }
 
 /** Resuelve un conflicto quedandose con la version del dispositivo o con la del servidor. */

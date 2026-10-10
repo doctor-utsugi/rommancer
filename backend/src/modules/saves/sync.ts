@@ -3,9 +3,23 @@ import path from 'node:path';
 import { prisma } from '../../lib/prisma.js';
 import { enqueue, registerJob, type JobContext } from '../../lib/jobs.js';
 import { layoutOf, openSink, type Sink } from '../devices/sink.js';
-import { parseDeviceSave } from './service.js';
-import { contentFor, decide, deviceFileName, findLogicalSave, receiveFromDevice, saveDirs, setBase, sha1 } from './core.js';
+import { parseDeviceSave, readThumb, storeThumb, THUMB_MAX } from './service.js';
+import { contentFor, decide, deviceFileName, deviceThumbPath, findLogicalSave, receiveFromDevice, saveDirs, setBase, sha1 } from './core.js';
 import { identifyRom } from './service.js';
+import type { Emulator } from '@prisma/client';
+
+/** A savestate's screenshot on the device, kept with VERSIONID (a new version, or the current one still without one) */
+async function takeThumb(sink: Sink, statePath: string, emu: Emulator, savesLayout: string, versionId: number | null) {
+  const thumb = versionId ? deviceThumbPath(statePath, emu, savesLayout) : null;
+  if (!thumb) return;
+  // A screenshot that cannot be read is left out; the state itself is already synced
+  try {
+    const st = await sink.stat(thumb);
+    if (st && st.size <= THUMB_MAX) await storeThumb(versionId!, await sink.getBuffer(thumb));
+  } catch {
+    /* ignored */
+  }
+}
 
 /** Nombre base de la rom en el dispositivo (para que el emulador encuentre el save). */
 /** withExt: NextUI names saves after the rom's whole file name, so the match keeps its extension */
@@ -49,7 +63,14 @@ export async function syncDeviceSaves(deviceId: number, direction: 'pull' | 'pus
               if (!ident) stats.unknown++;
             }
             visited.add(full);
-            const r = await receiveFromDevice(device, slug, emu, parsed.kind, parsed.slot, parsed.baseName, await sink.getBuffer(full));
+            const buf = await sink.getBuffer(full);
+            const r = await receiveFromDevice(device, slug, emu, parsed.kind, parsed.slot, parsed.baseName, buf);
+            if (parsed.kind === 'STATE') {
+              const saved = !r.versionId && r.saveId ? await prisma.save.findUnique({ where: { id: r.saveId }, select: { currentVersionId: true } }) : null;
+              const current = saved?.currentVersionId ? await prisma.saveVersion.findUnique({ where: { id: saved.currentVersionId }, select: { id: true, sha1: true, thumbPath: true } }) : null;
+              const bare = current && !current.thumbPath && current.sha1 === sha1(buf) ? current.id : null;
+              await takeThumb(sink, full, emu, layout.savesLayout, r.versionId ?? bare);
+            }
             if (r.action === 'uploaded') {
               stats.pulled++;
               ctx?.log(`Pulled ${full}`);
@@ -92,6 +113,9 @@ export async function syncDeviceSaves(deviceId: number, direction: 'pull' | 'pus
           }
           await sink.putBuffer(content, dest);
           await setBase(logical.id, device.id, d.versionId, sha1(content));
+          const v = s.kind === 'STATE' ? await prisma.saveVersion.findUnique({ where: { id: d.versionId }, select: { thumbPath: true } }) : null;
+          const thumb = v?.thumbPath ? deviceThumbPath(dest, target, layout.savesLayout) : null;
+          if (thumb) await readThumb(v!.thumbPath!).then((t) => sink.putBuffer(t.buf, thumb)).catch(() => ctx?.log(`Screenshot not written: ${thumb}`));
           stats.pushed++;
           ctx?.log(`Pushed ${dest}`);
         } else if (d.action === 'adopt' && deviceBuf) {

@@ -552,6 +552,8 @@ model Device {
   // WiFi bands the device reported (or the user set: wifiBandsManual); null = the console model's
   wifiBands       String?               @db.VarChar(8)
   wifiBandsManual Boolean               @default(false)
+  // RetroArch cores installed and their versions ({ "mGBA": "0.10.3" }), as the client last reported them
+  coreVersions    Json?
   // The user's settings (RetroAchievements, WiFi) are kept applied on it; what was last applied and when
   keepSettings    Boolean               @default(true)
   settingsHash    String?               @db.Char(40)
@@ -614,11 +616,19 @@ model SaveVersion {
   fileMtime      DateTime
   sourceDeviceId Int?
   note           String?  @db.VarChar(255)
+  // Savestates: the core's version on the device that made it (states may not load in another one)
+  coreVersion    String?  @db.VarChar(64)
+  // The emulator's screenshot of a savestate (RetroArch .png, NextUI .bmp), relative to the saves folder
+  thumbPath      String?  @db.VarChar(512)
+  // Shared with every user of the server, who can see it in the game and take a copy
+  sharedAt       DateTime?
+  shareNote      String?  @db.VarChar(255)
   createdAt      DateTime @default(now())
   save           Save     @relation(fields: [saveId], references: [id], onDelete: Cascade)
   sourceDevice   Device?  @relation(fields: [sourceDeviceId], references: [id], onDelete: SetNull)
 
   @@index([saveId])
+  @@index([sharedAt])
 }
 
 model RaGame {

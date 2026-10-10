@@ -11,8 +11,8 @@ import { sha256 } from '../../lib/crypto.js';
 import { HttpError, badRequest } from '../../lib/http.js';
 import { copiesSystem, folderFor, layoutOf, systemFilterOf, type DeviceLayout } from '../devices/sink.js';
 import { raDefaults } from '../../seed/data.js';
-import { contentFor, decide, deviceFileName, findLogicalSave, receiveFromDevice, saveDirs, setBase, sha1 } from './core.js';
-import { identifyRom, parseSaveFile } from './service.js';
+import { contentFor, decide, deviceFileName, deviceThumbPath, findLogicalSave, receiveFromDevice, saveDirs, setBase, sha1 } from './core.js';
+import { THUMB_MAX, identifyRom, parseSaveFile, readThumb, storeThumb } from './service.js';
 import fs from 'node:fs';
 import crypto from 'node:crypto';
 import { env } from '../../config/env.js';
@@ -228,6 +228,26 @@ async function storeInventory(device: AgentDevice, scanned: { path: string; hash
   ]);
 }
 
+/**
+ * Savestate screenshots travel beside their state: "tget<TAB>path<TAB>version" sends the server's with a state it
+ * sends, "tput<TAB>path<TAB>version" asks for the device's when the server has none for the state the device holds.
+ */
+async function thumbLine(statePath: string, emu: Emulator, savesLayout: string, versionId: number | null, deviceSha1: string | null) {
+  const thumb = versionId ? deviceThumbPath(statePath, emu, savesLayout) : null;
+  if (!thumb) return null;
+  const v = await prisma.saveVersion.findUnique({ where: { id: versionId! }, select: { sha1: true, thumbPath: true } });
+  if (!v) return null;
+  if (deviceSha1 === null) return v.thumbPath ? `tget\t${thumb}\t${versionId}` : null;
+  return !v.thumbPath && deviceSha1 === v.sha1 ? `tput\t${thumb}\t${versionId}` : null;
+}
+
+/** "core<TAB>name<TAB>version" lines: the RetroArch cores installed on the device, kept to date its savestates */
+async function storeCoreVersions(device: AgentDevice, cores: Map<string, string>) {
+  if (!cores.size) return;
+  const data = Object.fromEntries([...cores].slice(0, 500).map(([k, v]) => [k.slice(0, 64), v.slice(0, 64)]));
+  await prisma.device.update({ where: { id: device.id }, data: { coreVersions: data } });
+}
+
 const coreLayout = (layout: { savesLayout: string }) => layout.savesLayout === 'core' || layout.savesLayout === 'rom-core';
 
 /** In per-core layouts the save's folder names the core, which may differ from the firmware default. */
@@ -248,11 +268,14 @@ agentRouter.post('/sync', express.text({ limit: '16mb', type: '*/*' }), async (r
   // "rom<TAB>path[<TAB>sha1[<TAB>headerless sha1[<TAB>size]]]": the hashes identify roms with non-DAT names
   const roms: { path: string; hashes: string[]; size: number }[] = [];
   const present = new Map<string, string>();
+  const cores = new Map<string, string>();
   for (const line of String(req.body ?? '').split('\n')) {
     const [kind, p, h, h2, size] = line.replace(/\r$/, '').split('\t');
     if (kind === 'rom' && p) roms.push({ path: p, hashes: [h ?? '', h2 ?? ''].filter(Boolean), size: Number(size) || 0 });
     else if (kind === 'file' && p && SHA1.test(h ?? '')) present.set(p, h);
+    else if (kind === 'core' && p && h) cores.set(p, h);
   }
+  await storeCoreVersions(device, cores);
   // An unreadable body (a client that sent no content type) must not wipe the device's list
   if (typeof req.body === 'string' && req.body.length) await storeInventory(device, roms, req.header('x-allow-pull'));
   await storeSshOffer(device, req);
@@ -301,6 +324,14 @@ agentRouter.post('/sync', express.text({ limit: '16mb', type: '*/*' }), async (r
       if (d.action === 'download') out.push(`get\t${f.path}\t${d.versionId}\t${rom}`);
       else if (d.action === 'upload' || d.action === 'conflict') out.push(`put\t${f.path}\t${rom}${exactOnly ? '\t1' : ''}`);
       else if (d.action === 'adopt' && save) await setBase(save.id, device.id, save.currentVersionId, deviceSha1!);
+      if (f.kind !== 'STATE') continue;
+      const thumb =
+        d.action === 'download'
+          ? await thumbLine(f.path, f.emu, ctx.layout.savesLayout, d.versionId, null)
+          : deviceSha1 && save && d.action !== 'upload' && d.action !== 'conflict'
+            ? await thumbLine(f.path, f.emu, ctx.layout.savesLayout, save.currentVersionId, deviceSha1)
+            : null;
+      if (thumb) out.push(thumb);
     }
   }
   await prisma.device.update({ where: { id: device.id }, data: { lastSyncAt: new Date() } });
@@ -550,6 +581,8 @@ agentRouter.post('/start', express.text({ limit: '1mb', type: '*/*' }), async (r
     // En conflicto tambien se sube: el servidor guarda ambas versiones y avisa
     else if (d.action === 'upload' || d.action === 'conflict') out.push(`put\t${f.path}`);
     else if (d.action === 'adopt' && save) await setBase(save.id, device.id, save.currentVersionId, deviceSha1!);
+    const thumb = d.action === 'download' && f.kind === 'STATE' ? await thumbLine(f.path, ctx.emu, ctx.layout.savesLayout, d.versionId, null) : null;
+    if (thumb) out.push(thumb);
   }
   res.type('text/plain').send(out.join('\n') + (out.length ? '\n' : ''));
 });
@@ -581,5 +614,29 @@ agentRouter.post('/upload', express.raw({ limit: '128mb', type: '*/*' }), async 
   const byHash = await gameByHash((req.header('x-rom-sha1') ?? '').split(',').map((h) => h.trim()), systemId);
   const r = await receiveFromDevice(device, ctx.slug, emu, parsed.kind, parsed.slot, ctx.baseName, buf, byHash, req.header('x-save-exact') === '1');
   await prisma.device.update({ where: { id: device.id }, data: { lastSyncAt: new Date() } });
-  res.type('text/plain').send(`${r.action}\n`);
+  // A new savestate: the client sends the emulator's screenshot of it next
+  const thumb = parsed.kind === 'STATE' && r.versionId ? deviceThumbPath(filePath, emu, ctx.layout.savesLayout) : null;
+  res.type('text/plain').send(`${r.action}\n${thumb ? `tput\t${thumb}\t${r.versionId}\n` : ''}`);
+});
+
+async function stateVersion(device: AgentDevice, id: number) {
+  const v = await prisma.saveVersion.findUnique({ where: { id }, include: { save: true } });
+  if (!v || v.save.userId !== device.userId || v.save.kind !== 'STATE') throw new HttpError(404, 'Version not found');
+  return v;
+}
+
+// The emulator's screenshot of a savestate version ("tput" lines)
+agentRouter.post('/thumb', express.raw({ limit: THUMB_MAX, type: '*/*' }), async (req, res) => {
+  const device = await deviceFromToken(req);
+  const v = await stateVersion(device, Number(req.query.v));
+  if (!(await storeThumb(v.id, Buffer.isBuffer(req.body) ? req.body : Buffer.alloc(0)))) throw badRequest('Not an image');
+  res.type('text/plain').send('stored\n');
+});
+
+// The screenshot of a savestate the device just received ("tget" lines)
+agentRouter.get('/thumb', async (req, res) => {
+  const device = await deviceFromToken(req);
+  const v = await stateVersion(device, Number(req.query.v));
+  if (!v.thumbPath) throw new HttpError(404, 'No screenshot');
+  res.type('application/octet-stream').send((await readThumb(v.thumbPath)).buf);
 });
