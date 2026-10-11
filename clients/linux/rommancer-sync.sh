@@ -22,7 +22,7 @@
 #                                   Menu++...) mounted on this computer; the link lives on the card itself,
 #                                   so any computer with this script can sync it. Without a command: sync.
 set -u
-CLIENT_VERSION=20261027
+CLIENT_VERSION=20261028
 # A clock before this date is surely wrong (no battery-backed clock); kept apart from the version, which may run ahead
 CLOCK_MIN=20261001
 # Onion keeps curl (with TLS) and friends outside the default PATH
@@ -998,7 +998,9 @@ cmd_roms() {
   if [ -z "${VERBOSE:-}" ]; then [ -f "$STATE/roms-stopped" ] && return 0; else rm -f "$STATE/roms-stopped"; fi
   if roms_running; then
     [ -n "${VERBOSE:-}" ] || return 0
+    # On screen while the daemon downloads: its progress is shown, and a stop ends both
     while roms_running; do sleep 1; done
+    if [ -f "$STATE/roms-stopped" ]; then progress roms-finished 0 0; echo "roms: stopped"; return 0; fi
   fi
   rm -rf "$WORK/roms-lock"; mkdir -p "$WORK" && mkdir "$WORK/roms-lock" 2>/dev/null || return 0
   rm -f "$WORK/roms-stop"
@@ -1217,7 +1219,7 @@ t() {
       pruneintro) echo "Rommancer puede borrar de esta consola las roms que no esten en ninguna de sus listas (las que el servidor no tenga se suben antes). Los saves se quedan. Se puede cambiar luego aqui o en la web. Activarlo?" ;;
       pruneask) echo "Se ha activado desde el servidor el borrado de roms que no estan en ninguna lista. Se borraran $2 roms ($3). Mantener esta opcion?" ;;
       prunehold) echo "Se van a borrar $2 de las $3 roms de esta consola (mas de la mitad) por no estar en ninguna lista. Puede que una lista se haya vaciado. Borrarlas?" ;;
-      romsstop) echo "Parar descarga de roms $2" ;; romsbg) echo "Descargando roms en segundo plano. Vuelve a abrir Rommancer para ver por donde va o pararla." ;; romsstopped) echo "Descarga de roms parada. No se reanuda sola hasta que pidas sincronizar." ;;
+      romswatch) echo "Ver descarga de roms $2" ;; stophint) echo "(B para parar)" ;;
       pruneon) echo "Si, borrarlas" ;; pruneoff) echo "No, desactivarlo" ;; prunelater) echo "Ahora no" ;; cleaned) echo "Saves borrados: $2" ;; *) echo "$1" ;;
     esac
   else
@@ -1240,7 +1242,7 @@ t() {
       pruneintro) echo "Rommancer can delete from this console the roms that are in none of its lists (the ones the server lacks are uploaded first). Saves stay. You can change it later here or on the web. Turn it on?" ;;
       pruneask) echo "Deleting roms that are not in any list was turned on from the server. $2 roms ($3) will be deleted. Keep this option?" ;;
       prunehold) echo "$2 of the $3 roms on this console (more than half) would be deleted for being in no list. A list may have been emptied. Delete them?" ;;
-      romsstop) echo "Stop rom download $2" ;; romsbg) echo "Downloading roms in the background. Open Rommancer again to see how far it got or to stop it." ;; romsstopped) echo "Rom download stopped. It does not resume by itself until you ask for a sync." ;;
+      romswatch) echo "Watch rom download $2" ;; stophint) echo "(B to stop)" ;;
       pruneon) echo "Yes, delete them" ;; pruneoff) echo "No, turn it off" ;; prunelater) echo "Not now" ;; cleaned) echo "Saves deleted: $2" ;; *) echo "$1" ;;
     esac
   fi
@@ -1259,11 +1261,27 @@ link_with() {
 }
 
 # Runs a command in the background and keeps an Onion panel updated with its phase and percentage
+# The B button while a progress panel shows (Onion's panels take no input): it stops a rom download. One 16-byte
+# input event at a time (the Miyoo's 32-bit layout: time, type, code, value); B is KEY_LEFTCTRL (29)
+key_watch() {
+  [ -r /dev/input/event0 ] || return 0
+  while :; do
+    set -- $(dd if=/dev/input/event0 bs=16 count=1 2>/dev/null | od -An -tu2)
+    [ "${5:-}" = 1 ] && [ "${6:-}" = 29 ] && [ "${7:-}" = 1 ] && sh "$DIR/$(basename "$0")" roms-stop > /dev/null 2>&1
+  done
+}
+key_watch_end() {
+  kill "$1" 2>/dev/null
+  for c in /proc/[0-9]*/cmdline; do grep -q 'if=/dev/input/event0' "$c" 2>/dev/null && { p="${c#/proc/}"; kill "${p%/cmdline}" 2>/dev/null; }; done
+}
+
 with_progress() {
   title="$1"; shift
-  rm -f "$WORK/progress"
+  # A download under way keeps its progress on screen from the start
+  roms_running || rm -f "$WORK/progress"
   ( VERBOSE=1; "$@" > "$WORK/run-out" 2>&1 ) &
   job=$!
+  key_watch & kw=$!
   shown=""
   while kill -0 "$job" 2>/dev/null; do
     line="$(cat "$WORK/progress" 2>/dev/null)"
@@ -1276,7 +1294,7 @@ with_progress() {
       [ "${fsize:-0}" -gt 0 ] 2>/dev/null && filepct=$((cur * 100 / fsize))
       pct=$(( ((done_n - 1) * 100 + filepct) / total ))
       bar="["; k=0; while [ "$k" -lt 10 ]; do if [ "$k" -lt $((pct / 10)) ]; then bar="$bar#"; else bar="$bar-"; fi; k=$((k + 1)); done; bar="$bar]"
-      text="$text $done_n/$total $bar $pct% $(printf '%s' "$name" | cut -c1-30) ($filepct%)"
+      text="$text $done_n/$total $bar $pct% $(printf '%s' "$name" | cut -c1-30) ($filepct%) $(t stophint)"
     elif [ -n "$total" ] && [ "$total" -gt 0 ] 2>/dev/null; then
       text="$text $done_n/$total ($((done_n * 100 / total))%)"
     fi
@@ -1284,6 +1302,7 @@ with_progress() {
     sleep 2
   done
   wait "$job" 2>/dev/null
+  key_watch_end "$kw"
   panel_close
   panel "$title" "$(tail -n 1 "$WORK/run-out")" wait
 }
@@ -1312,13 +1331,6 @@ setup_prune() {
     esac
   fi
   [ -f "$SETTINGS" ] && . "$SETTINGS"
-}
-
-# The lists' roms downloading in the background (Onion's screens cannot be interrupted)
-roms_start() {
-  rm -f "$STATE/roms-stopped"
-  roms_running || (nohup sh "$DIR/$(basename "$0")" roms > /dev/null 2>&1 &)
-  panel "Rommancer Sync" "$(t romsbg)" wait
 }
 
 setup_after_link() {
@@ -1361,6 +1373,8 @@ cmd_setup() {
   # An installer package links by itself with its token
   if [ -z "$TOKEN" ] && [ -f "$DIR/enroll.txt" ] && cmd_enroll > /dev/null 2>&1; then setup_after_link; fi
   [ -n "$SERVER" ] || SERVER="https://"
+  # Opened while the daemon downloads the lists' roms: their progress first
+  [ -n "$TOKEN" ] && roms_running && with_progress "$(t roms)" cmd_roms
   while :; do
     if [ -n "$TOKEN" ]; then
       cmd_conflicts > "$WORK/conflicts" 2>/dev/null || : > "$WORK/conflicts"
@@ -1373,13 +1387,12 @@ cmd_setup() {
       cleanable="$(cat "$STATE/pruned" 2>/dev/null | grep -c .)"
       # While roms download, the roms item stops them instead
       rs="$(roms_status)"; romsitem="$(t roms)"
-      [ -n "$rs" ] && romsitem="$(t romsstop "$(printf '%s' "$rs" | awk -F"$TAB" '$2 { printf "(%s/%s)", $1, $2 }')")"
+      [ -n "$rs" ] && romsitem="$(t romswatch "$(printf '%s' "$rs" | awk -F"$TAB" '$2 { printf "(%s/%s)", $1, $2 }')")"
       menu "Rommancer Sync" "$(t connected). $(updated_line)" "$(t sync)" "$romsitem" "$(t autoroms "$auto")" "$(t allowpull "$pull")" "$(t allowssh "$ssh")" "$(t prune "$prune")" "$(t pruneclean "$cleanable")" "$(t conflicts "$nconf")" "$(t status)" "$(t unlink)" "$(t quit)"; rc=$?
       case $rc in
-        # Saves and settings on screen; the roms then go on in the background, where they can be stopped
-        0) with_progress "$(t sync)" sh "$DIR/$(basename "$0")" saves-now; [ "$AUTO_ROMS" = 1 ] && roms_start ;;
-        1) if [ -n "$rs" ]; then panel "Rommancer Sync" "$(t romsstop "")"; cmd_roms_stop > /dev/null 2>&1; panel_close; panel "Rommancer Sync" "$(t romsstopped)" wait
-           else roms_start; fi ;;
+        # On screen with its progress until done; B stops the roms (a download the daemon started is shown too)
+        0) with_progress "$(t sync)" cmd_all ;;
+        1) with_progress "$(t roms)" cmd_roms ;;
         2) if [ "$AUTO_ROMS" = 1 ]; then AUTO_ROMS=0; else AUTO_ROMS=1; fi; set_setting AUTO_ROMS "$AUTO_ROMS" ;;
         3) if [ "$ALLOW_PULL" = 1 ]; then ALLOW_PULL=0; else ALLOW_PULL=1; fi; set_setting ALLOW_PULL "$ALLOW_PULL" ;;
         4) if [ "$ALLOW_SSH" = 1 ]; then ALLOW_SSH=0; else ALLOW_SSH=1; fi; set_setting ALLOW_SSH "$ALLOW_SSH" ;;
@@ -1442,8 +1455,6 @@ case "${1:-}" in
   roms) VERBOSE=1 cmd_roms; cmd_collections > /dev/null 2>&1 ;;
   roms-stop) cmd_roms_stop ;;
   roms-bg) cmd_roms > /dev/null 2>&1; cmd_collections > /dev/null 2>&1 ;;
-  # "Sync now" without the roms (they go on in the background)
-  saves-now) VERBOSE=1; cmd_sync; cmd_config; cmd_prune; cmd_collections > /dev/null 2>&1 ;;
   roms-status) roms_status ;;
   collections) cmd_collections ;;
   config) VERBOSE=1 cmd_config ;;

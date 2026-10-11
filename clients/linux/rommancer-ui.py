@@ -96,7 +96,7 @@ TEXTS = {
         "prune_delete": "Sí, borrarlas",
         "prune_later": "Ahora no",
         "p_prune": "Borrando roms fuera de listas",
-        "roms_stop": "Parar descarga de roms {n}",
+        "roms_watch": "Ver descarga de roms {n}",
         "stop_keys": "B parar la descarga de roms",
         "stopping": "Parando la descarga...",
     },
@@ -167,7 +167,7 @@ TEXTS = {
         "prune_delete": "Yes, delete them",
         "prune_later": "Not now",
         "p_prune": "Deleting roms not in lists",
-        "roms_stop": "Stop rom download {n}",
+        "roms_watch": "Watch rom download {n}",
         "stop_keys": "B stop the rom download",
         "stopping": "Stopping the download...",
     },
@@ -687,10 +687,12 @@ class App:
 
     def run_with_progress(self, command, title, *args):
         """Runs a client command in the background, showing its phase and percentage while it works."""
-        try:
-            os.remove(self.progress_file())
-        except OSError:
-            pass
+        # A download under way keeps its progress on screen from the start
+        if not self.roms_status():
+            try:
+                os.remove(self.progress_file())
+            except OSError:
+                pass
         proc = subprocess.Popen(["sh", SCRIPT, command, *args], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
         s = self.screen
         stopping = False
@@ -815,11 +817,6 @@ class App:
         parts = out.rstrip("\n").split("\t") + ["", ""]
         return parts[0], parts[1]
 
-    def stop_roms(self):
-        self.message(T["stopping"], wait=False)
-        out = subprocess.run(["sh", SCRIPT, "roms-stop"], capture_output=True, text=True, timeout=60).stdout.strip()
-        self.message(out or T["stopping"])
-
     def toggle_prune(self):
         self.prune_set(self.settings().get("PRUNE_ROMS", "0") != "1")
 
@@ -884,6 +881,9 @@ class App:
         self.message(T["logged_out"])
 
     def run(self):
+        # Opened while the daemon downloads the lists' roms: their progress first (B stops them)
+        if self.linked() and self.roms_status():
+            self.sync_roms()
         while True:
             if self.linked():
                 info = [T["connected"].format(server=self.cfg.get("SERVER", "")), T["as"].format(user=self.cfg.get("USER", "?"))]
@@ -897,10 +897,10 @@ class App:
                 self.cleanable = (self.prune_state().get("cleanable") or ["0"])[0]
                 n = "…" if self.conflict_count is None else self.conflict_count
                 running = self.roms_status()
-                roms_label = T["roms_stop"].format(n=f"({running[0]}/{running[1]})" if running and running[1] else "") if running else T["sync_roms"]
+                roms_label = T["roms_watch"].format(n=f"({running[0]}/{running[1]})" if running and running[1] else "") if running else T["sync_roms"]
                 items = [T["sync_now"], roms_label, T["auto_roms"].format(v=auto), T["allow_pull"].format(v=pull), T["allow_ssh"].format(v=ssh), T["prune"].format(v=prune), T["prune_clean"].format(n=self.cleanable), T["conflicts"].format(n=n), T["status"], T["logout"], T["quit"]]
                 choice = self.menu(T["title"], items, info, refresh=lambda: T["conflicts"].format(n="…" if self.conflict_count is None else self.conflict_count), refresh_index=7)
-                actions = [self.sync_now, self.stop_roms if running else self.sync_roms, self.toggle_auto_roms, self.toggle_allow_pull, self.toggle_allow_ssh, self.toggle_prune, self.prune_clean, self.resolve_conflicts, self.status, self.logout]
+                actions = [self.sync_now, self.sync_roms, self.toggle_auto_roms, self.toggle_allow_pull, self.toggle_allow_ssh, self.toggle_prune, self.prune_clean, self.resolve_conflicts, self.status, self.logout]
             else:
                 choice = self.menu(T["title"], [f"{T['server']}: {self.server}", T["login"], T["signup"], T["quit"]])
                 actions = [self.edit_server, self.login, self.signup]

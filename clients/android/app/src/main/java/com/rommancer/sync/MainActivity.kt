@@ -49,6 +49,8 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
+import kotlinx.coroutines.delay
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
@@ -339,6 +341,10 @@ private fun Linked(store: Store, onUnlinked: () -> Unit) {
         }
     }
 
+    // Opened while the background downloads the lists' roms: their progress first, on screen until done or stopped
+    val titleRomsOpen = stringResource(R.string.sync_roms)
+    LaunchedEffect(Unit) { if (SyncEngine.LIVE != null) run(titleRomsOpen) { it.roms() } }
+
     // What the deletion of roms in no list needs from the user, checked whenever the menu shows
     var holdLater by remember { mutableStateOf(false) }
     LaunchedEffect(screen, settingsTick) {
@@ -425,6 +431,9 @@ private fun Linked(store: Store, onUnlinked: () -> Unit) {
             LaunchedEffect(Unit) { runCatching { firstItem.requestFocus() } }
         }
         is Screen.Working -> {
+            // A download the background started shows its own progress (this pass waits for it)
+            val live by produceState(SyncEngine.LIVE) { while (true) { value = SyncEngine.LIVE; delay(500) } }
+            val progress = if (progress.phase.startsWith("roms") || progress.phase == "connecting") live ?: progress else progress
             Text(s.title, fontSize = 22.sp)
             val label = when (progress.phase) {
                 "roms" -> stringResource(R.string.p_roms)

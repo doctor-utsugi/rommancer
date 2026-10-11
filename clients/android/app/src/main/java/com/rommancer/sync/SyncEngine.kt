@@ -322,9 +322,17 @@ class SyncEngine(private val context: Context, private val store: Store, private
         return synchronized(LOCK) { romsOnce() }
     }
 
-    private fun romsOnce(): String {
+    private fun romsOnce(): String = try { romsPass() } finally { LIVE = null }
+
+    // Every screen sees a rom download, whoever started it (the background worker or the save watcher)
+    private fun romsProgress(p: Progress) {
+        LIVE = p
+        onProgress(p)
+    }
+
+    private fun romsPass(): String {
         val api = Api(store.server, store.token ?: error("Not linked"))
-        onProgress(Progress("roms-plan"))
+        romsProgress(Progress("roms-plan"))
         val plan = api.text("/agent/roms").lines().mapNotNull { l -> l.split('\t').takeIf { it.size >= 4 && it[0] == "rom" } }
         var got = 0
         var have = 0
@@ -342,7 +350,7 @@ class SyncEngine(private val context: Context, private val store: Store, private
             val part = File(dest.path + ".part")
             val watcher = Thread {
                 while (!Thread.currentThread().isInterrupted) {
-                    onProgress(Progress("roms-download", i + 1, plan.size, dest.name, if (size > 0) part.length().toFloat() / size else 0f))
+                    romsProgress(Progress("roms-download", i + 1, plan.size, dest.name, if (size > 0) part.length().toFloat() / size else 0f))
                     try { Thread.sleep(500) } catch (_: InterruptedException) { break }
                 }
             }.apply { start() }
@@ -477,6 +485,10 @@ class SyncEngine(private val context: Context, private val store: Store, private
         private val LOCK = Any()
         private val PULLING = java.util.concurrent.atomic.AtomicBoolean(false)
         private val STOP_ROMS = java.util.concurrent.atomic.AtomicBoolean(false)
+
+        /** The rom download under way, whoever started it; null when there is none */
+        @Volatile var LIVE: Progress? = null
+            private set
 
         /** Stops the rom download under way (the transfer is cut); background passes skip roms until asked on screen */
         fun stopRoms(store: Store) {
