@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
-import { ArrowDown, ArrowUp, Check, ImageOff, Star, Trash2, Trophy, X } from 'lucide-react'
+import { ArrowDown, ArrowUp, Check, ImageOff, Loader2, Star, Trash2, Trophy, X } from 'lucide-react'
 import { toast } from 'sonner'
 import { authUrl, del, get, post, put } from '@/lib/api'
 import { useAuth } from '@/lib/auth'
@@ -32,6 +32,7 @@ export function ListPage() {
   const [q, setQ] = useState('')
   const job = useJob(jobId, [['list', String(id)]])
   const [dragging, setDragging] = useState(false)
+  const [deleting, setDeleting] = useState(false)
   const [incoming, setIncoming] = useState<File[]>([])
   if (!list) return <p className="text-sm text-muted-foreground">{t('common.loading')}</p>
   const isOwner = list.ownerId === user?.id
@@ -59,13 +60,19 @@ export function ListPage() {
       void qc.invalidateQueries({ queryKey: ['lists'] })
       nav(`/lists/${c.id}`)
     })
-  const remove = () =>
-    run(async () => {
-      if (!confirm(t('common.confirmDelete'))) return
+  // A big list takes a while to delete: the button says so until it is gone
+  const remove = async () => {
+    if (!confirm(t('common.confirmDelete'))) return
+    setDeleting(true)
+    try {
       await del(`/lists/${list.id}`)
       void qc.invalidateQueries({ queryKey: ['lists'] })
       nav('/lists')
-    })
+    } catch (e) {
+      toast.error(errMsg(e))
+      setDeleting(false)
+    }
+  }
   const refreshDerived = () =>
     run(async () => {
       const r = await post(`/lists/${list.id}/refresh`)
@@ -156,8 +163,9 @@ export function ListPage() {
           </Button>
         )}
         {(isOwner || user?.role === 'ADMIN') && !isFavorites && (
-          <Button variant="destructive" size="sm" onClick={() => void remove()}>
-            <Trash2 className="size-4" />
+          <Button variant="destructive" size="sm" onClick={() => void remove()} disabled={deleting}>
+            {deleting ? <Loader2 className="size-4 animate-spin" /> : <Trash2 className="size-4" />}
+            {deleting && t('more.list.deleting')}
           </Button>
         )}
       </PageHeader>
@@ -485,6 +493,7 @@ function DeviceDialog({ list, onClose }: { list: any; onClose(): void }) {
             </div>
           )}
         </div>
+        <DialogFooter cancel="close" />
       </DialogContent>
     </Dialog>
   )

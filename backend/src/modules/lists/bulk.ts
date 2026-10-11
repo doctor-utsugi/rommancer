@@ -16,7 +16,7 @@ export const bulkSchema = z.object({
 });
 export type BulkSpec = z.infer<typeof bulkSchema>;
 
-/** The roms such a pick takes, and how many per system */
+/** The roms such a pick takes, and how many per system. Only roms the server has: a list never fills up with missing ones. */
 export async function bulkRoms(spec: BulkSpec) {
   const pref = {
     regions: spec.regions,
@@ -24,7 +24,7 @@ export async function bulkRoms(spec: BulkSpec) {
     languages: spec.languages,
     strictLanguages: !!spec.languages?.length,
     raOnly: spec.raOnly,
-    ownedOnly: spec.ownedOnly,
+    ownedOnly: true,
     excludeFlags: spec.excludeFlags,
   };
   const games = await prisma.game.findMany({
@@ -36,7 +36,7 @@ export async function bulkRoms(spec: BulkSpec) {
       roms: { select: { id: true, name: true, regions: true, languages: true, flags: true, revision: true, raGameId: true, isBios: true, datSource: { select: { type: true } } } },
     },
   });
-  const owned = spec.ownedOnly || spec.mode === 'best' ? await ownedRomIds({ include: 'any' }) : undefined;
+  const owned = await ownedRomIds({ include: 'any' });
   const romIds: number[] = [];
   const per = new Map<number, { systemId: number; games: number; roms: number }>(spec.systemIds.map((id) => [id, { systemId: id, games: 0, roms: 0 }]));
   for (const g of games) {

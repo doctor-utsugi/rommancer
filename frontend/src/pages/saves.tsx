@@ -478,7 +478,7 @@ export function VersionsDialog({ saveId, onClose }: { saveId: number; onClose():
             ))}
           </TableBody>
         </Table>
-        <DialogFooter>
+        <DialogFooter cancel="close">
           <Button
             variant="destructive"
             onClick={() =>

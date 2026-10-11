@@ -82,7 +82,7 @@ function AddToListDialog({ items, onClose }: { items: ListItemRef[]; onClose(): 
             </Field>
           )}
         </div>
-        <DialogFooter>
+        <DialogFooter cancel={false}>
           <Button variant="outline" onClick={onClose}>
             {t('common.cancel')}
           </Button>

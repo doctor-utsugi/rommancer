@@ -219,7 +219,7 @@ function RetroAchievementsBlock() {
               <li key={i}>{step}</li>
             ))}
           </ol>
-          <DialogFooter>
+          <DialogFooter cancel={false}>
             <Button variant="outline" nativeButton={false} render={<a href="https://retroachievements.org/controlpanel.php" target="_blank" rel="noreferrer" />}>
               <ExternalLink className="size-4" />
               {t('more.profile.raKeyOpen')}

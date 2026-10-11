@@ -165,7 +165,7 @@ export const en: Dict = {
     downloadZip: 'Download zip',
     zipLayout: 'Folder layout',
     plainLayout: 'By system',
-    sendToDevice: 'Send to device',
+    sendToDevice: 'Assign list to device(s)',
     device: 'Device',
     overwrite: 'Overwrite existing',
     dryRun: 'Dry run',

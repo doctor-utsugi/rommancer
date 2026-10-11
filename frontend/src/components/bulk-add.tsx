@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
+import { Loader2 } from 'lucide-react'
 import { post } from '@/lib/api'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -34,12 +35,13 @@ export function BulkAddDialog({ listId, onClose }: { listId: number; onClose(): 
   const [systemIds, setSystemIds] = useState<string[]>([])
   const [regions, setRegions] = useState<string[]>([])
   const [mode, setMode] = useState<'best' | 'all'>('best')
-  const [ownedOnly, setOwnedOnly] = useState(false)
+  // Always on: lists only take roms the server has (the box stays hidden in case it comes back)
+  const [ownedOnly, setOwnedOnly] = useState(true)
   const [verifiedOnly, setVerifiedOnly] = useState(false)
   const [extras, setExtras] = useState(false)
   const [preview, setPreview] = useState<Preview | null>(null)
   const [busy, setBusy] = useState(false)
-  const systemOptions = useMemo(() => (systems.data ?? []).filter((s) => s.roms > 0).map((s) => ({ value: String(s.id), label: s.name })), [systems.data])
+  const systemOptions = useMemo(() => (systems.data ?? []).filter((s) => s.owned > 0).map((s) => ({ value: String(s.id), label: s.name })), [systems.data])
   const regionOptions = useMemo(() => (allRegions.data ?? []).map((r) => ({ value: r, label: r })), [allRegions.data])
   const nameOf = new Map(systemOptions.map((o) => [Number(o.value), o.label]))
   const body = useMemo(
@@ -75,7 +77,7 @@ export function BulkAddDialog({ listId, onClose }: { listId: number; onClose(): 
     }
   }
   return (
-    <Dialog open onOpenChange={(o) => !o && onClose()}>
+    <Dialog open onOpenChange={(o) => !o && !busy && onClose()}>
       <DialogContent className="sm:max-w-xl">
         <DialogHeader>
           <DialogTitle>{t('more.bulk.title')}</DialogTitle>
@@ -108,7 +110,7 @@ export function BulkAddDialog({ listId, onClose }: { listId: number; onClose(): 
             </label>
           </div>
           <div className="flex flex-wrap gap-x-4 gap-y-1.5 text-sm">
-            <label className="flex items-center gap-2">
+            <label className="hidden items-center gap-2">
               <Checkbox checked={ownedOnly} onCheckedChange={(c) => setOwnedOnly(!!c)} />
               {t('more.derive.ownedOnly')}
             </label>
@@ -134,9 +136,13 @@ export function BulkAddDialog({ listId, onClose }: { listId: number; onClose(): 
             </div>
           )}
         </div>
-        <DialogFooter>
+        <DialogFooter cancel={false}>
+          <Button variant="outline" onClick={onClose} disabled={busy}>
+            {t('common.cancel')}
+          </Button>
           <Button onClick={() => void add()} disabled={busy || !preview?.roms}>
-            {t('more.bulk.go', { count: preview?.roms ?? 0 })}
+            {busy && <Loader2 className="size-4 animate-spin" />}
+            {busy ? t('more.bulk.adding', { count: preview?.roms ?? 0 }) : t('more.bulk.go', { count: preview?.roms ?? 0 })}
           </Button>
         </DialogFooter>
       </DialogContent>

@@ -396,7 +396,7 @@ function DeviceDialog({ device, onClose }: { device: any | null; onClose(): void
             </div>
           </details>
         )}
-        <DialogFooter>
+        <DialogFooter cancel={false}>
           <Button variant="outline" onClick={onClose}>
             {t('common.cancel')}
           </Button>
@@ -496,7 +496,7 @@ function SshInstallDialog({ onClose }: { onClose: () => void }) {
         </div>
         <p className="text-xs text-muted-foreground">{t('more.ssh.keyHelp')}</p>
         <Textarea readOnly rows={3} className="font-mono text-xs break-all" value={key.data?.publicKey ?? ''} onFocus={(e) => e.currentTarget.select()} />
-        <DialogFooter>
+        <DialogFooter cancel={false}>
           <Button variant="outline" onClick={onClose} disabled={busy}>
             {t('common.cancel')}
           </Button>

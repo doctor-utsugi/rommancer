@@ -437,7 +437,7 @@ function VersionDialog({ deviceId, versionId, canEdit, onClose, onQueued }: { de
             )}
           </div>
         </div>
-        <DialogFooter className="gap-2">
+        <DialogFooter cancel="close" className="gap-2">
           {canEdit && file && text !== null && text !== original && (
             <Button onClick={() => void act(() => put(`/devices/${deviceId}/config/versions/${versionId}/file`, { path: file, content: text }))}>{t('more.config.saveSend')}</Button>
           )}

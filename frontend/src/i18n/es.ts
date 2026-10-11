@@ -164,7 +164,7 @@ export const es = {
     downloadZip: 'Descargar zip',
     zipLayout: 'Estructura de carpetas',
     plainLayout: 'Por sistema',
-    sendToDevice: 'Enviar a dispositivo',
+    sendToDevice: 'Asignar lista a dispositivo/s',
     device: 'Dispositivo',
     overwrite: 'Sobrescribir existentes',
     dryRun: 'Simular',

@@ -545,6 +545,7 @@ export function GamePage() {
             <DialogTitle>{t('game.manual')}</DialogTitle>
           </DialogHeader>
           {manualUrl && <iframe title="manual" src={manualUrl} className="h-full w-full rounded border" />}
+          <DialogFooter cancel="close" />
         </DialogContent>
       </Dialog>
 

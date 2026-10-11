@@ -3,7 +3,7 @@ import { useQuery } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
 import { get } from '@/lib/api'
 import { Button } from '@/components/ui/button'
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
+import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Progress } from '@/components/ui/progress'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { JobStatusBadge, PageHeader, formatDate, type Job } from '@/components/common'
@@ -56,6 +56,7 @@ export function AdminJobsPage() {
           </DialogHeader>
           {detail.data?.result && <pre className="max-h-48 overflow-auto rounded bg-muted p-2 text-xs">{JSON.stringify(detail.data.result, null, 1)}</pre>}
           <pre className="max-h-[50vh] overflow-auto rounded bg-muted p-2 text-xs whitespace-pre-wrap">{detail.data?.log ?? ''}</pre>
+          <DialogFooter cancel="close" />
         </DialogContent>
       </Dialog>
     </div>

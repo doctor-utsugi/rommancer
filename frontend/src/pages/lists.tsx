@@ -144,7 +144,7 @@ export function ListFormDialog({ list, onClose, onSaved }: { list?: any; onClose
             {t('lists.collaborative')}
           </label>
         </div>
-        <DialogFooter>
+        <DialogFooter cancel={false}>
           <Button variant="outline" onClick={onClose}>
             {t('common.cancel')}
           </Button>

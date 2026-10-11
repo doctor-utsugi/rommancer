@@ -6,9 +6,11 @@ import { cn } from "cn"
 
 import { Button } from "@/components/ui/button"
 import { XIcon } from "lucide-react"
+import { useTranslation } from "react-i18next"
 
-function Dialog({ ...props }: DialogPrimitive.Root.Props) {
-  return <DialogPrimitive.Root data-slot="dialog" {...props} />
+// A click outside never closes a dialog (a half-filled form would be lost): its buttons, the X and Escape do
+function Dialog({ disablePointerDismissal = true, ...props }: DialogPrimitive.Root.Props) {
+  return <DialogPrimitive.Root data-slot="dialog" disablePointerDismissal={disablePointerDismissal} {...props} />
 }
 
 function DialogTrigger({ ...props }: DialogPrimitive.Trigger.Props) {
@@ -90,14 +92,21 @@ function DialogHeader({ className, ...props }: React.ComponentProps<"div">) {
   )
 }
 
+/**
+ * The dialog's actions. Every dialog offers a way out: CANCEL adds a button that closes it ("close" names it
+ * Close, for dialogs that only show or fetch something); false when the dialog brings its own.
+ */
 function DialogFooter({
   className,
+  cancel = true,
   showCloseButton = false,
   children,
   ...props
 }: React.ComponentProps<"div"> & {
+  cancel?: boolean | "close"
   showCloseButton?: boolean
 }) {
+  const { t } = useTranslation()
   return (
     <div
       data-slot="dialog-footer"
@@ -107,10 +116,15 @@ function DialogFooter({
       )}
       {...props}
     >
+      {cancel && (
+        <DialogPrimitive.Close render={<Button variant="outline" />}>
+          {t(cancel === "close" ? "common.close" : "common.cancel")}
+        </DialogPrimitive.Close>
+      )}
       {children}
       {showCloseButton && (
         <DialogPrimitive.Close render={<Button variant="outline" />}>
-          Close
+          {t("common.close")}
         </DialogPrimitive.Close>
       )}
     </div>
