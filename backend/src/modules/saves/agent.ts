@@ -189,6 +189,9 @@ async function storeSshOffer(device: AgentDevice, req: Request) {
 }
 
 /** Keeps the device's rom list (only names and hashes) and identifies each game by its content. */
+/** A rom file's name as databases write it: the file name without its extension */
+const romName = (p: string) => path.posix.basename(p).replace(/\.[^.]+$/, '');
+
 async function storeInventory(device: AgentDevice, scanned: { path: string; hashes: string[]; size?: number }[], allowPull: string | undefined) {
   // Kept under the device's own root, so requests made later reach the console with its paths
   const roms = device.homeRoot ? scanned.map((r) => ({ ...r, path: reroot(r.path, device.rootPath, device.homeRoot!) })) : scanned;
@@ -208,9 +211,25 @@ async function storeInventory(device: AgentDevice, scanned: { path: string; hash
     const folder = r.path.startsWith(base) ? r.path.slice(base.length).split('/')[0] : '';
     systemsOf.set(r.path, await systemOf(layout, folder, r.path));
   }
+  // No hash or no match (big files go unhashed; .chd, .cso and .rvz never hash like the dump in a database):
+  // the file name, exactly as a database names the rom, within the system of its folder. A file in no system's
+  // folder counts only when the name means one game
+  const unmatched = roms.filter((r) => !r.hashes.some((h) => known.has(h)));
+  const byName = new Map<string, { romId: number; gameId: number; system: string }[]>();
+  const names = [...new Set(unmatched.map((r) => romName(r.path)))];
+  for (let i = 0; i < names.length; i += 500) {
+    const found = await prisma.rom.findMany({ where: { name: { in: names.slice(i, i + 500) } }, select: { id: true, name: true, gameId: true, game: { select: { system: { select: { slug: true } } } } } });
+    for (const f of found) byName.set(f.name, [...(byName.get(f.name) ?? []), { romId: f.id, gameId: f.gameId, system: f.game.system.slug }]);
+  }
+  const nameHit = (r: (typeof roms)[number], folder: string) => {
+    const all = byName.get(romName(r.path)) ?? [];
+    const sys = systemsOf.get(r.path) ?? byFolder.get(folder);
+    if (sys) return all.find((c) => c.system === sys);
+    return new Set(all.map((c) => c.gameId)).size === 1 ? all[0] : undefined;
+  };
   const rows = roms.map((r) => {
     const folder = r.path.startsWith(base) ? r.path.slice(base.length).split('/')[0] : '';
-    const hit = r.hashes.map((h) => known.get(h)).find(Boolean);
+    const hit = r.hashes.map((h) => known.get(h)).find(Boolean) ?? nameHit(r, folder);
     return {
       deviceId: device.id,
       pathHash: crypto.createHash('sha1').update(r.path).digest('hex'),
