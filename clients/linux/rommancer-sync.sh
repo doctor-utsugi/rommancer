@@ -22,7 +22,7 @@
 #                                   Menu++...) mounted on this computer; the link lives on the card itself,
 #                                   so any computer with this script can sync it. Without a command: sync.
 set -u
-CLIENT_VERSION=20261020
+CLIENT_VERSION=20261021
 # A clock before this date is surely wrong (no battery-backed clock); kept apart from the version, which may run ahead
 CLOCK_MIN=20261001
 # Onion keeps curl (with TLS) and friends outside the default PATH
@@ -732,8 +732,8 @@ cmd_update() {
   # they were updated by it
   printf '%s\n' "$man" | sed -n "s/^now$TAB//p" > "$WORK/server-now"
   # Onion apps installed before the app had its own icon point at one of Onion's
-  if [ -f "$DIR/config.json" ] && ! grep -q '"icon": "icon.png"' "$DIR/config.json"; then
-    sed 's#"icon": "[^"]*"#"icon": "icon.png"#' "$DIR/config.json" > "$DIR/config.json.new" && mv "$DIR/config.json.new" "$DIR/config.json"
+  if [ -f "$DIR/config.json" ] && ! grep -q '"icon" *: *"icon.png"' "$DIR/config.json"; then
+    sed 's#"icon" *: *"[^"]*"#"icon": "icon.png"#' "$DIR/config.json" > "$DIR/config.json.new" && mv "$DIR/config.json.new" "$DIR/config.json"
   fi
   printf '%s\n' "$man" | while IFS="$TAB" read -r kind name hash; do
     [ "$kind" = file ] || continue

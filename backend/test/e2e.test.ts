@@ -1752,7 +1752,7 @@ test('sync client: updates itself from the server', async () => {
   assert.equal((await fetch(`${base}/api/v1/link/client/file/..%2F.env`)).status, 404);
 
   // An Onion app from before it had an icon: the icon arrives and its config.json points at it
-  fs.writeFileSync(path.join(dir, 'config.json'), JSON.stringify({ label: 'Rommancer Sync', icon: '../../Icons/Default/app/otaupdate.png', launch: 'launch.sh' }, null, 2));
+  fs.writeFileSync(path.join(dir, 'config.json'), '{\n"label":"Rommancer Sync",\n"icon":"../../Icons/Default/app/otaupdate.png",\n"launch":"launch.sh"\n}\n');
   await run();
   assert.ok(fs.existsSync(path.join(dir, 'icon.png')));
   assert.equal(JSON.parse(fs.readFileSync(path.join(dir, 'config.json'), 'utf8')).icon, 'icon.png');
