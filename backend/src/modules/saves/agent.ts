@@ -694,8 +694,12 @@ agentRouter.post('/pull/:id', async (req, res) => {
         if (!system) throw badRequest('Unknown system for an unverified rom');
         const title = parseRomName(name.replace(/\.[^.]+$/, '')).title || name;
         const game = await prisma.game.findFirst({ where: { systemId: system.id, titleNormalized: normalizeTitle(title).slice(0, 255) } });
+        // A hack or translation whose header named its game: stored as that game's, never as a new game
+        const base = inv?.baseGameId ? await prisma.game.findFirst({ where: { id: inv.baseGameId, systemId: system.id } }) : null;
+        const lang = /\[T[+-]([A-Za-z]{2,3})/.exec(name)?.[1] ?? /\((english|spanish|french|german|italian|portuguese) v[\d.]+\)/i.exec(name)?.[1];
+        const fan = base ? { gameId: base.id, kind: /\[T[+-]|\((english|spanish|french|german|italian|portuguese) v[\d.]+\)/i.test(name) ? 'translation' : 'hack', ...(lang ? { hackLanguage: lang.slice(0, 32) } : {}) } : null;
         try {
-          await ingestUnverified(tmp, name, owner, { systemId: system.id, ...(game ? { gameId: game.id } : { newGameTitle: title }) });
+          await ingestUnverified(tmp, name, owner, { systemId: system.id, ...(fan ?? (game ? { gameId: game.id } : { newGameTitle: title })) });
           result = 'stored as unverified';
         } catch (dup) {
           // The same file came in before: nothing missing, not a failure

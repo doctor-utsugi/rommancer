@@ -330,9 +330,10 @@ export const esMore = {
   },
   copyPick: {
     title: 'Copiar al servidor',
-    help: 'Juegos de esta consola que tu colección no tiene, por plataforma. Los sin identificar no cuentan para la colección y van desmarcados.',
+    help: 'Juegos de esta consola que tu colección no tiene, por plataforma. Los hacks y traducciones se guardan con el juego del que salen. Los sin identificar no cuentan para la colección y van desmarcados.',
     all: 'Todas las plataformas',
     unidentified: 'Sin identificar',
+    hacks: 'Hacks y traducciones',
     platform: 'Plataforma',
     newCol: 'Nuevos para tu colección',
     noSystem: 'Sin sistema',
@@ -1030,9 +1031,10 @@ export const enMore: typeof esMore = {
   },
   copyPick: {
     title: 'Copy to the server',
-    help: "Games on this console your collection lacks, by platform. Unidentified files don't count for the collection and start unticked.",
+    help: "Games on this console your collection lacks, by platform. Hacks and translations are stored with the game they come from. Unidentified files don't count for the collection and start unticked.",
     all: 'All platforms',
     unidentified: 'Unidentified',
+    hacks: 'Hacks and translations',
     platform: 'Platform',
     newCol: 'New to your collection',
     noSystem: 'No system',

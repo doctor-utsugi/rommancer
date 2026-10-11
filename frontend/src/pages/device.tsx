@@ -91,7 +91,7 @@ export function DevicePage() {
   const shown = items.filter(
     (i) =>
       (!system || i.system === system) &&
-      (show === 'all' || (show === 'new' && i.gameId && !i.onServer) || (show === 'unidentified' && !i.gameId && !i.onServer) || (show === 'onServer' && i.onServer)) &&
+      (show === 'all' || (show === 'new' && i.gameId && !i.onServer) || (show === 'unidentified' && !i.gameId && !i.baseGameId && !i.onServer) || (show === 'onServer' && i.onServer)) &&
       (!q || `${i.name} ${i.gameTitle ?? ''} ${i.baseTitle ?? ''}`.toLowerCase().includes(q.toLowerCase())),
   )
   const allowPull = !!inventory.data?.allowPull && can('roms.upload')
@@ -164,9 +164,9 @@ export function DevicePage() {
           items={items}
           admin={user?.role === 'ADMIN'}
           onClose={() => setCopying(false)}
-          onCopy={(systems, unidentified) => {
+          onCopy={(systems, unidentified, hacks) => {
             setCopying(false)
-            void pull({ systems, unidentifiedSystems: unidentified })
+            void pull({ systems, unidentifiedSystems: unidentified, hackSystems: hacks })
           }}
         />
       )}
@@ -542,13 +542,15 @@ function PickCell({ g, checked, onChange }: { g?: { files: number; bytes: number
  * (not ticked). Below, every destination folder of the server with its disk and what the selection would bring
  * to it, by the same rules the copy follows; nothing is copied while something would not fit anywhere.
  */
-function CopyDialog({ deviceId, items, admin, onClose, onCopy }: { deviceId: string; items: InventoryItem[]; admin: boolean; onClose: () => void; onCopy: (systems: string[], unidentified: string[]) => void }) {
+function CopyDialog({ deviceId, items, admin, onClose, onCopy }: { deviceId: string; items: InventoryItem[]; admin: boolean; onClose: () => void; onCopy: (systems: string[], unidentified: string[], hacks: string[]) => void }) {
   const { t } = useTranslation()
-  // Per system: the identified games the collection lacks, and apart the files no database knows ("" = no system)
-  const groupsOf = (identified: boolean) => {
+  // Per system: the identified games the collection lacks, the hacks and translations of known games, and apart
+  // the files no database knows ("" = no system)
+  const kindOf = (i: InventoryItem) => (i.gameId ? 'new' : i.baseGameId ? 'hack' : 'rest')
+  const groupsOf = (kind: 'new' | 'hack' | 'rest') => {
     const by = new Map<string, { slug: string; name: string; files: number; bytes: number }>()
     for (const i of items) {
-      if (i.onServer || i.pullPending || !!i.gameId !== identified || (identified && !i.system)) continue
+      if (i.onServer || i.pullPending || kindOf(i) !== kind || (kind === 'new' && !i.system)) continue
       const slug = i.system ?? ''
       const g = by.get(slug) ?? { slug, name: i.systemName ?? (i.system || t('more.copyPick.noSystem')), files: 0, bytes: 0 }
       g.files++
@@ -557,26 +559,30 @@ function CopyDialog({ deviceId, items, admin, onClose, onCopy }: { deviceId: str
     }
     return [...by.values()].sort((a, b) => a.name.localeCompare(b.name))
   }
-  const groups = useMemo(() => groupsOf(true), [items])
-  const rest = useMemo(() => groupsOf(false), [items])
-  // One line per platform: its new games and its unidentified files side by side
+  const groups = useMemo(() => groupsOf('new'), [items])
+  const hackGroups = useMemo(() => groupsOf('hack'), [items])
+  const rest = useMemo(() => groupsOf('rest'), [items])
+  // One line per platform: its new games, its hacks and its unidentified files side by side
   const platforms = useMemo(() => {
     const by = new Map<string, { slug: string; name: string }>()
-    for (const g of [...groups, ...rest]) if (!by.has(g.slug)) by.set(g.slug, { slug: g.slug, name: g.name })
+    for (const g of [...groups, ...hackGroups, ...rest]) if (!by.has(g.slug)) by.set(g.slug, { slug: g.slug, name: g.name })
     return [...by.values()].sort((a, b) => (a.slug === '' ? 1 : b.slug === '' ? -1 : a.name.localeCompare(b.name)))
-  }, [groups, rest])
+  }, [groups, hackGroups, rest])
   const newOf = new Map(groups.map((g) => [g.slug, g]))
+  const hackOf = new Map(hackGroups.map((g) => [g.slug, g]))
   const restOf = new Map(rest.map((g) => [g.slug, g]))
   const [picked, setPicked] = useState(() => new Set(groups.map((g) => g.slug)))
+  const [pickedHacks, setPickedHacks] = useState(() => new Set(hackGroups.map((g) => g.slug)))
   const [pickedRest, setPickedRest] = useState(() => new Set<string>())
-  const chosen = [...groups.filter((g) => picked.has(g.slug)), ...rest.filter((g) => pickedRest.has(g.slug))]
+  const chosen = [...groups.filter((g) => picked.has(g.slug)), ...hackGroups.filter((g) => pickedHacks.has(g.slug)), ...rest.filter((g) => pickedRest.has(g.slug))]
   const files = chosen.reduce((n, g) => n + g.files, 0)
   const bytes = chosen.reduce((n, g) => n + g.bytes, 0)
   const systems = [...picked].sort()
+  const hacks = [...pickedHacks].sort()
   const unidentified = [...pickedRest].sort()
   const preview = useQuery({
-    queryKey: ['pull-preview', deviceId, systems.join(','), unidentified.join(',')],
-    queryFn: () => post<Placement>(`/devices/${deviceId}/pull-preview`, { systems, unidentifiedSystems: unidentified }),
+    queryKey: ['pull-preview', deviceId, systems.join(','), hacks.join(','), unidentified.join(',')],
+    queryFn: () => post<Placement>(`/devices/${deviceId}/pull-preview`, { systems, hackSystems: hacks, unidentifiedSystems: unidentified }),
     placeholderData: (prev) => prev,
   })
   const p = preview.data
@@ -584,7 +590,7 @@ function CopyDialog({ deviceId, items, admin, onClose, onCopy }: { deviceId: str
   const all = groups.length > 0 && picked.size === groups.length
   return (
     <Dialog open onOpenChange={(o) => !o && onClose()}>
-      <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-2xl">
+      <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-3xl">
         <DialogHeader>
           <DialogTitle>{t('more.copyPick.title')}</DialogTitle>
         </DialogHeader>
@@ -602,6 +608,12 @@ function CopyDialog({ deviceId, items, admin, onClose, onCopy }: { deviceId: str
                 </th>
                 <th className="py-1.5 text-left font-medium">
                   <label className="flex items-center gap-1.5">
+                    <Checkbox checked={hackGroups.length > 0 && pickedHacks.size === hackGroups.length} disabled={!hackGroups.length} onCheckedChange={(c) => setPickedHacks(new Set(c ? hackGroups.map((g) => g.slug) : []))} />
+                    {t('more.copyPick.hacks')}
+                  </label>
+                </th>
+                <th className="py-1.5 text-left font-medium">
+                  <label className="flex items-center gap-1.5">
                     <Checkbox checked={rest.length > 0 && pickedRest.size === rest.length} disabled={!rest.length} onCheckedChange={(c) => setPickedRest(new Set(c ? rest.map((g) => g.slug) : []))} />
                     {t('more.copyPick.unidentified')}
                   </label>
@@ -614,6 +626,9 @@ function CopyDialog({ deviceId, items, admin, onClose, onCopy }: { deviceId: str
                   <td className="py-1.5 pr-2">{pl.name}</td>
                   <td className="py-1.5 pr-2">
                     <PickCell g={newOf.get(pl.slug)} checked={picked.has(pl.slug)} onChange={(c) => setPicked(toggled(picked, pl.slug, c))} />
+                  </td>
+                  <td className="py-1.5 pr-2">
+                    <PickCell g={hackOf.get(pl.slug)} checked={pickedHacks.has(pl.slug)} onChange={(c) => setPickedHacks(toggled(pickedHacks, pl.slug, c))} />
                   </td>
                   <td className="py-1.5">
                     <PickCell g={restOf.get(pl.slug)} checked={pickedRest.has(pl.slug)} onChange={(c) => setPickedRest(toggled(pickedRest, pl.slug, c))} />
@@ -664,7 +679,7 @@ function CopyDialog({ deviceId, items, admin, onClose, onCopy }: { deviceId: str
           {p && p.noTarget.files > 0 && <p className="text-xs text-destructive">{t('more.copyPick.noTarget', { count: p.noTarget.files, size: formatBytes(p.noTarget.bytes) })}</p>}
         </div>
         <DialogFooter>
-          <Button onClick={() => onCopy(systems, unidentified)} disabled={!files || blocked}>
+          <Button onClick={() => onCopy(systems, unidentified, hacks)} disabled={!files || blocked}>
             <Download className="size-4" />
             {t('more.copyPick.go', { count: files, size: formatBytes(bytes) })}
           </Button>
@@ -941,7 +956,7 @@ function SpaceTree({ deviceId, plan, onClose }: { deviceId: string; plan: Device
   const fits = plan.budget === null || missing <= plan.budget
   return (
     <Dialog open onOpenChange={(o) => !o && onClose()}>
-      <DialogContent className="sm:max-w-2xl">
+      <DialogContent className="sm:max-w-3xl">
         <DialogHeader>
           <DialogTitle>{t('more.space.treeTitle')}</DialogTitle>
         </DialogHeader>

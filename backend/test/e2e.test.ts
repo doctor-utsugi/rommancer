@@ -3048,4 +3048,9 @@ test('header probes: roms read by their product code, inside a CHD too; hacks li
   assert.match(plan, /^backups\t20$/m);
   assert.equal((await item(loose)).gameId, picks[0].gameId);
   assert.equal((await item('Pokemon Radical Red.gba')).baseGameId, picks[1].gameId);
+  // The copy window counts hacks apart: neither new games nor unidentified
+  const summary = (await api('GET', `/devices/${id}/inventory`)).json.summary;
+  assert.equal(summary.hacks, 1);
+  assert.equal(summary.unidentified, 1, 'only the file with an unknown code');
+  assert.equal((await api('POST', `/devices/${id}/pull`, { systems: [], unidentifiedSystems: [], hackSystems: ['gba'] })).json.queued, 1);
 });

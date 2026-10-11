@@ -239,10 +239,14 @@ devicesRouter.get('/:id/inventory', async (req, res) => {
   const pending = new Set((await prisma.devicePull.findMany({ where: { deviceId: d.id, status: { in: QUEUED_PULL } }, select: { path: true } })).map((p) => p.path));
   const sizes = await catalogSizes(rows);
   const romsBase = path.posix.join(d.rootPath.replace(/\/+$/, ''), layoutOf(d).romsRoot) + '/';
+  // Hacks and other unidentified files already stored on the server, by their content
+  const loose = rows.flatMap((r) => (!r.gameId && r.sha1 ? [r.sha1] : []));
+  const stored = new Set(loose.length ? (await prisma.romFile.findMany({ where: { sha1: { in: loose } }, select: { sha1: true } })).map((f) => f.sha1) : []);
   const items = rows.map((r) => {
     const game = r.gameId ? gameById.get(r.gameId) : undefined;
-    // Identified games know their system even in folders the firmware map does not list
-    const sys = r.systemSlug ?? (game ? sysById.get(game.systemId)?.slug : undefined) ?? null;
+    const base = r.baseGameId ? gameById.get(r.baseGameId) : undefined;
+    // Identified games (and hacks, by their game) know their system even in folders the firmware map does not list
+    const sys = r.systemSlug ?? ((game ?? base) ? sysById.get((game ?? base)!.systemId)?.slug : undefined) ?? null;
     const folder = r.path.startsWith(romsBase) ? r.path.slice(romsBase.length).split('/')[0] : null;
     return {
       id: r.id,
@@ -258,7 +262,7 @@ devicesRouter.get('/:id/inventory', async (req, res) => {
       baseGameId: r.baseGameId,
       baseTitle: r.baseGameId ? (gameById.get(r.baseGameId)?.title ?? null) : null,
       serial: r.serial,
-      onServer: !!((r.romId && ownedRoms.has(r.romId)) || (r.gameId && ownedGames.has(r.gameId))),
+      onServer: !!((r.romId && ownedRoms.has(r.romId)) || (r.gameId && ownedGames.has(r.gameId)) || (!r.gameId && r.sha1 && stored.has(r.sha1))),
       pullPending: pending.has(r.path),
     };
   });
@@ -277,7 +281,8 @@ devicesRouter.get('/:id/inventory', async (req, res) => {
       newFiles: helpful.length,
       newBytes: helpful.reduce((n, i) => n + i.size, 0),
       waiting: helpful.filter((i) => i.pullPending).length,
-      unidentified: items.filter((i) => !i.gameId && !i.onServer).length,
+      unidentified: items.filter((i) => !i.gameId && !i.baseGameId && !i.onServer).length,
+      hacks: items.filter((i) => i.baseGameId && !i.onServer).length,
       collection: { total: catalogTotal, before: ownedGames.size, after: ownedGames.size + newGames.size },
       consoleSystems: { total: systemsTotal, before: ownedInSystems, after: ownedInSystems + newGames.size },
     },
@@ -300,6 +305,8 @@ const pullBody = z.object({
   // ("" for files in no system's folder); unidentified: all unidentified files
   systems: z.array(z.string().max(32)).max(500).optional(),
   unidentifiedSystems: z.array(z.string().max(32)).max(500).optional(),
+  // Hacks and translations (files whose header names the game they were made from) of these systems
+  hackSystems: z.array(z.string().max(32)).max(500).optional(),
   unidentified: z.boolean().optional(),
 });
 
@@ -309,17 +316,23 @@ async function pullRows(d: Device, body: z.infer<typeof pullBody>) {
     where: { deviceId: d.id, ...(body.paths ? { path: { in: body.paths } } : {}), ...(body.system ? { systemSlug: body.system } : {}), ...(body.identified ? { gameId: { not: null } } : {}) },
   });
   // A game's system when its folder named none (the same rule as the inventory)
-  const games = await prisma.game.findMany({ where: { id: { in: [...new Set(rows.flatMap((r) => (r.gameId ? [r.gameId] : [])))] } }, select: { id: true, system: { select: { slug: true } } } });
+  const games = await prisma.game.findMany({ where: { id: { in: [...new Set(rows.flatMap((r) => [r.gameId, r.baseGameId].filter((x): x is number => !!x)))] } }, select: { id: true, system: { select: { slug: true } } } });
   const slugOf = new Map(games.map((g) => [g.id, g.system.slug]));
-  const withSystem = rows.map((r) => ({ ...r, system: r.systemSlug ?? (r.gameId ? slugOf.get(r.gameId) : undefined) ?? null }));
+  const withSystem = rows.map((r) => ({ ...r, system: r.systemSlug ?? slugOf.get(r.gameId ?? r.baseGameId ?? 0) ?? null }));
   const systems = body.systems ? new Set(body.systems) : null;
   const unidentified = new Set(body.unidentifiedSystems ?? []);
-  const chosen = systems ? withSystem.filter((r) => (r.gameId ? systems.has(r.system ?? '') : !!body.unidentified || unidentified.has(r.system ?? ''))) : withSystem;
+  const hacks = new Set(body.hackSystems ?? []);
+  const chosen = systems
+    ? withSystem.filter((r) => (r.gameId ? systems.has(r.system ?? '') : r.baseGameId ? hacks.has(r.system ?? '') : !!body.unidentified || unidentified.has(r.system ?? '')))
+    : withSystem;
+  // Hacks and other unidentified files the server already holds, by their content
+  const sha1s = chosen.flatMap((r) => (!r.gameId && r.sha1 ? [r.sha1] : []));
+  const stored = new Set(sha1s.length ? (await prisma.romFile.findMany({ where: { sha1: { in: sha1s } }, select: { sha1: true } })).map((f) => f.sha1) : []);
   const ownedRoms = await ownedRomIds({ romIds: [...new Set(chosen.flatMap((r) => (r.romId ? [r.romId] : [])))], include: 'any' });
   const ownedGames = await ownedGameIds();
   const pending = new Set((await prisma.devicePull.findMany({ where: { deviceId: d.id, status: { in: QUEUED_PULL } }, select: { path: true } })).map((p) => p.path));
   // Explicit paths are fetched even if the game is owned (another version); bulk requests only bring what is missing
-  return chosen.filter((r) => !pending.has(r.path) && (body.paths || !((r.romId && ownedRoms.has(r.romId)) || (r.gameId && ownedGames.has(r.gameId)))));
+  return chosen.filter((r) => !pending.has(r.path) && (body.paths || !((r.romId && ownedRoms.has(r.romId)) || (r.gameId && ownedGames.has(r.gameId)) || (r.sha1 && stored.has(r.sha1)))));
 }
 
 // Bring roms the server lacks from the device: given paths, a whole system, chosen systems or everything missing
