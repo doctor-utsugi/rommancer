@@ -1750,6 +1750,15 @@ test('sync client: updates itself from the server', async () => {
   assert.ok(!fs.existsSync(path.join(dir, 'savepoint.png')), 'setup-app files only where the app is installed');
   assert.equal((await run()).stdout.trim(), '', 'nothing to do when up to date');
   assert.equal((await fetch(`${base}/api/v1/link/client/file/..%2F.env`)).status, 404);
+
+  // An Onion app from before it had an icon: the icon arrives and its config.json points at it
+  fs.writeFileSync(path.join(dir, 'config.json'), JSON.stringify({ label: 'Rommancer Sync', icon: '../../Icons/Default/app/otaupdate.png', launch: 'launch.sh' }, null, 2));
+  await run();
+  assert.ok(fs.existsSync(path.join(dir, 'icon.png')));
+  assert.equal(JSON.parse(fs.readFileSync(path.join(dir, 'config.json'), 'utf8')).icon, 'icon.png');
+  assert.ok(!fs.existsSync(path.join(dir, 'rommancer-art.png')), 'EmulationStation art only where the setup app is');
+  // The server's clock comes with the manifest, for the update date of consoles whose clock drifts
+  assert.match(await (await fetch(`${base}/api/v1/link/client/manifest`)).text(), /^now\t\d{4}-\d\d-\d\d \d\d:\d\d$/m);
 });
 
 test('sync client: roms of assigned lists, save before a game, conflicts resolved on the console', async () => {

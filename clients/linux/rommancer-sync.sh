@@ -22,7 +22,7 @@
 #                                   Menu++...) mounted on this computer; the link lives on the card itself,
 #                                   so any computer with this script can sync it. Without a command: sync.
 set -u
-CLIENT_VERSION=20261019
+CLIENT_VERSION=20261020
 # A clock before this date is surely wrong (no battery-backed clock); kept apart from the version, which may run ahead
 CLOCK_MIN=20261001
 # Onion keeps curl (with TLS) and friends outside the default PATH
@@ -514,10 +514,18 @@ VERSION_FILE="$STATE/version"
 mark_version() {
   was="$(cut -f1 "$VERSION_FILE" 2>/dev/null)"
   [ "$was" = "$CLIENT_VERSION" ] && return 0
-  printf '%s\t%s\n' "$CLIENT_VERSION" "$(date '+%Y-%m-%d %H:%M')" > "$VERSION_FILE" 2>/dev/null
+  when="$(cat "$WORK/server-now" 2>/dev/null)"; [ -n "$when" ] || when="$(date '+%Y-%m-%d %H:%M')"
+  printf '%s\t%s\n' "$CLIENT_VERSION" "$when" > "$VERSION_FILE" 2>/dev/null
   # Said on screen when it updated itself (not on a first install, the setup already shows it)
   [ -n "$was" ] && [ -z "$SD" ] && [ -z "${ROMMANCER_NO_NOTIFY:-}" ] && ! playing || return 0
   if lang_es; then notify "Actualizado a la versión $CLIENT_VERSION"; else notify "Updated to version $CLIENT_VERSION"; fi
+}
+# "Actualizado el 11 oct 2026, 19:07": when this client arrived, on every setup screen
+updated_line() {
+  since="$(cut -f2 "$VERSION_FILE" 2>/dev/null)"
+  [ -n "$since" ] || return 0
+  if lang_es; then m="ene feb mar abr may jun jul ago sep oct nov dic"; w="Actualizado el"; else m="Jan Feb Mar Apr May Jun Jul Aug Sep Oct Nov Dec"; w="Updated"; fi
+  printf '%s\n' "$since" | awk -v m="$m" -v w="$w" '{ split($1, d, "-"); split(m, n, " "); printf "%s %d %s %s, %s", w, d[3], n[d[2] + 0], d[1], $2 }'
 }
 version_line() {
   since="$(cut -f2 "$VERSION_FILE" 2>/dev/null)"
@@ -720,6 +728,13 @@ fingerprint() {
 cmd_update() {
   need_link
   man="$(http GET "$SERVER/api/v1/link/client/manifest" - -)" || return 1
+  # The server's clock ("YYYY-MM-DD HH:MM", its time zone): handhelds without a clock that keeps time say when
+  # they were updated by it
+  printf '%s\n' "$man" | sed -n "s/^now$TAB//p" > "$WORK/server-now"
+  # Onion apps installed before the app had its own icon point at one of Onion's
+  if [ -f "$DIR/config.json" ] && ! grep -q '"icon": "icon.png"' "$DIR/config.json"; then
+    sed 's#"icon": "[^"]*"#"icon": "icon.png"#' "$DIR/config.json" > "$DIR/config.json.new" && mv "$DIR/config.json.new" "$DIR/config.json"
+  fi
   printf '%s\n' "$man" | while IFS="$TAB" read -r kind name hash; do
     [ "$kind" = file ] || continue
     case "$name" in */*|.*|"") continue ;; esac
@@ -727,8 +742,9 @@ cmd_update() {
     # Only what this device uses: the script always, the setup app's files where the app is installed
     case "$name" in
       rommancer-sync.sh|cacert.pem) ;;
-      # The app's icon (Onion) and its picture in EmulationStation, where they already are
-      icon.png|rommancer-art.png) [ -f "$target" ] || [ -f "$DIR/rommancer-ui.py" ] || continue ;;
+      # The app's icon (Onion, whose app folder has a config.json) and its picture in EmulationStation
+      icon.png) [ -f "$target" ] || [ -f "$DIR/config.json" ] || [ -f "$DIR/rommancer-ui.py" ] || continue ;;
+      rommancer-art.png) [ -f "$target" ] || [ -f "$DIR/rommancer-ui.py" ] || continue ;;
       *) [ -f "$DIR/rommancer-ui.py" ] || continue ;;
     esac
     [ -f "$target" ] && [ "$(sha1 "$target")" = "$hash" ] && continue
@@ -1164,7 +1180,7 @@ cmd_setup() {
       if [ "$AUTO_ROMS" = 1 ]; then auto="$(t yes)"; else auto="$(t no)"; fi
       if [ "$ALLOW_PULL" = 1 ]; then pull="$(t yes)"; else pull="$(t no)"; fi
       if [ "$ALLOW_SSH" = 1 ]; then ssh="$(t yes)"; else ssh="$(t no)"; fi
-      menu "Rommancer Sync" "$(t connected)" "$(t sync)" "$(t roms)" "$(t autoroms "$auto")" "$(t allowpull "$pull")" "$(t allowssh "$ssh")" "$(t conflicts "$nconf")" "$(t status)" "$(t unlink)" "$(t quit)"; rc=$?
+      menu "Rommancer Sync" "$(t connected). $(updated_line)" "$(t sync)" "$(t roms)" "$(t autoroms "$auto")" "$(t allowpull "$pull")" "$(t allowssh "$ssh")" "$(t conflicts "$nconf")" "$(t status)" "$(t unlink)" "$(t quit)"; rc=$?
       case $rc in
         0) with_progress "$(t sync)" cmd_all ;;
         1) with_progress "$(t roms)" cmd_roms ;;
@@ -1177,7 +1193,7 @@ cmd_setup() {
         *) return 0 ;;
       esac
     else
-      menu "Rommancer Sync" "$(t notlinked)" "$(t server): $SERVER" "$(t login)" "$(t signup)" "$(t quit)"; rc=$?
+      menu "Rommancer Sync" "$(t notlinked). $(updated_line)" "$(t server): $SERVER" "$(t login)" "$(t signup)" "$(t quit)"; rc=$?
       case $rc in
         0) v="$(ask "$(t server)" "$SERVER")" && SERVER="${v%/}" ;;
         1|2)

@@ -30,6 +30,7 @@ case "${1:-}" in
     until podman exec rommancer-mysql mysqladmin ping -h127.0.0.1 -uroot -p"$MYSQL_ROOT_PASSWORD" --silent 2>/dev/null; do sleep 2; done
     podman run -d --name rommancer-api --network "$NET" --network-alias api --restart=always --env-file "$ENV_FILE" \
       -e DATABASE_URL="mysql://rommancer:$MYSQL_PASSWORD@mysql:3306/rommancer" -e DATA_DIR=/data -e SEED_DIR=/seed \
+      -e TZ="${TZ:-$(timedatectl show -p Timezone --value 2>/dev/null || echo UTC)}" \
       -v "$DATA/app:/data:Z" -v "$SRC/seed:/seed:Z" -v "$ROMS:/roms:z" -v "$SRC/clients:/app/clients:ro,Z" localhost/rommancer-api:latest
     podman run -d --name rommancer-web --network "$NET" --restart=always -p "127.0.0.1:$WEB_PORT:80" localhost/rommancer-web:latest
     systemctl --user enable --now podman-restart.service >/dev/null 2>&1 || true

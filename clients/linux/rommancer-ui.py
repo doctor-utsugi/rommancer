@@ -299,14 +299,23 @@ def client_version():
         return "?"
 
 
+# The client's state folder, where it notes its version and when it arrived (by the server's clock)
+STATE_DIR = None
+
+
 def updated_at():
-    """When this console last got a new client: the sync script's time, as 11 oct 2026, 18:40"""
+    """When this console last got a new client, as: Actualizado el 11 oct 2026, 18:40"""
     try:
-        t = time.localtime(os.path.getmtime(os.path.join(HERE, "rommancer-sync.sh")))
-    except OSError:
-        return ""
-    month = T["months"].split()[t.tm_mon - 1]
-    return T["updated"].format(d=f"{t.tm_mday} {month} {t.tm_year}, {t.tm_hour:02d}:{t.tm_min:02d}")
+        with open(os.path.join(STATE_DIR or "", "version"), encoding="utf-8") as f:
+            day, hour = f.read().strip().split("\t")[1].split(" ")
+        y, mo, d = (int(x) for x in day.split("-"))
+    except (OSError, ValueError, IndexError):
+        try:
+            t = time.localtime(os.path.getmtime(os.path.join(HERE, "rommancer-sync.sh")))
+        except OSError:
+            return ""
+        y, mo, d, hour = t.tm_year, t.tm_mon, t.tm_mday, f"{t.tm_hour:02d}:{t.tm_min:02d}"
+    return T["updated"].format(d=f"{d} {T['months'].split()[mo - 1]} {y}, {hour}")
 
 
 class Screen:
@@ -406,6 +415,8 @@ class App:
         self.pad = Pad()
         self.hints = hints()
         self.state = self.hints.get("state") or os.path.join(HERE, ".rommancer")
+        global STATE_DIR
+        STATE_DIR = self.state
         self.cfg = read_config(self.state)
         saved = self.cfg.get("SERVER") or self._read(os.path.join(HERE, "server.txt"))
         self.server = (saved or "https://").strip()

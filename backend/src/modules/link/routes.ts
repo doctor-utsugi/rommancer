@@ -150,6 +150,8 @@ const CLIENT_FILES = ['rommancer-sync.sh', 'rommancer-ui.py', 'savepoint.png', '
 
 linkPublicRouter.get('/client/manifest', (_req, res) => {
   const lines = CLIENT_FILES.filter((f) => fs.existsSync(path.join(CLIENT_DIR, f))).map((f) => `file\t${f}\t${crypto.createHash('sha1').update(fs.readFileSync(path.join(CLIENT_DIR, f))).digest('hex')}`);
+  // The server's clock in its time zone: handhelds without a clock that keeps time date their updates by it
+  lines.push(`now\t${new Date().toLocaleString('sv-SE', { hour12: false }).slice(0, 16)}`);
   res.type('text/plain').send(lines.join('\n') + '\n');
 });
 
