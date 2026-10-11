@@ -19,7 +19,6 @@ import { env } from '../../config/env.js';
 import { extractEntryStream } from '../../lib/tools.js';
 import { resolveListFiles } from '../lists/service.js';
 import { resolveConflict } from './core.js';
-import os from 'node:os';
 import { pipeline } from 'node:stream/promises';
 import { normalizeTitle, parseRomName } from '../../lib/romname.js';
 import { ingestUnverified, ingestVerified } from '../uploads/ingest.js';
@@ -64,9 +63,24 @@ export async function deviceFromToken(req: Request): Promise<AgentDevice> {
   const root = b64(req.header('x-device-root-b64'));
   const temp = b64(req.header('x-device-root-temp-b64'));
   const moved = ROOT.test(root) && root.length <= 512 && trimRoot(root) !== trimRoot(device.rootPath);
-  await prisma.device.update({ where: { id: device.id }, data: { lastSeenAt: new Date(), ...(moved ? { rootPath: root } : {}) } });
+  // "Seen" needs no write on every request (a rom download is one): the web app calls a device online for a minute
+  const stale = !device.lastSeenAt || Date.now() - device.lastSeenAt.getTime() > SEEN_EVERY_MS;
+  if (stale || moved) await prisma.device.update({ where: { id: device.id }, data: { lastSeenAt: new Date(), ...(moved ? { rootPath: root } : {}) } });
   if (ROOT.test(temp) && temp.length <= 512) return { ...device, rootPath: temp, homeRoot: device.rootPath };
   return moved ? { ...device, rootPath: root } : device;
+}
+
+const SEEN_EVERY_MS = 15_000;
+const INVENTORY_REFRESH_MS = 30 * 60_000;
+
+/** Emulators by slug, kept a minute (every rom of a sync asks for one) */
+const emulatorCache = new Map<string, { at: number; emu: Emulator }>();
+async function emulatorBySlug(slug: string) {
+  const hit = emulatorCache.get(slug);
+  if (hit && Date.now() - hit.at < 60_000) return hit.emu;
+  const emu = await prisma.emulator.findUniqueOrThrow({ where: { slug } });
+  emulatorCache.set(slug, { at: Date.now(), emu });
+  return emu;
 }
 
 /** Extensions that belong to one system only (".gb", ".sfc"...), to tell a rom's system without its folder */
@@ -120,7 +134,7 @@ async function romContext(device: AgentDevice, romPath: string) {
   // Systems the firmware does not list are played with RetroArch's usual core for them
   const emuSlug = layout.systemMap[slug]?.emulator ?? raDefaults[slug];
   if (!emuSlug) throw badRequest(`No emulator known for ${slug}`);
-  const emu = await prisma.emulator.findUniqueOrThrow({ where: { slug: emuSlug } });
+  const emu = await emulatorBySlug(emuSlug);
   return { layout, slug, emu, baseName, root, rel };
 }
 
@@ -169,6 +183,59 @@ async function gameByHash(hashes: string[], systemId: number | undefined): Promi
   if (part) return { gameId: part.rom.gameId, romId: part.rom.id };
   const hack = await prisma.romHack.findFirst({ where: { OR: [{ sha1: { in: list } }, { headerlessSha1: { in: list } }] }, select: { gameId: true } });
   return hack ? { gameId: hack.gameId, romId: null } : null;
+}
+
+type HashHit = { id: number; gameId: number; romId: number | null; systemId: number | null };
+
+/**
+ * Every rom part and hack matching these hashes, looked up once for a whole sync; gameByHashIn then answers as
+ * gameByHash would (the first match by id, of the system when one is given; hacks of any system after parts)
+ */
+async function hashIndex(hashes: string[]) {
+  const list = [...new Set(hashes.filter((h) => SHA1.test(h)))];
+  const parts = new Map<string, HashHit[]>();
+  const hacks = new Map<string, HashHit[]>();
+  const add = (map: Map<string, HashHit[]>, h: string | null, hit: HashHit) => h && map.set(h, [...(map.get(h) ?? []), hit]);
+  for (let i = 0; i < list.length; i += 500) {
+    const chunk = list.slice(i, i + 500);
+    const found = await prisma.romPart.findMany({
+      where: { OR: [{ sha1: { in: chunk } }, { headerlessSha1: { in: chunk } }] },
+      select: { id: true, sha1: true, headerlessSha1: true, rom: { select: { id: true, gameId: true, game: { select: { systemId: true } } } } },
+    });
+    for (const p of found) {
+      const hit = { id: p.id, gameId: p.rom.gameId, romId: p.rom.id, systemId: p.rom.game.systemId };
+      add(parts, p.sha1, hit);
+      if (p.headerlessSha1 !== p.sha1) add(parts, p.headerlessSha1, hit);
+    }
+    const fan = await prisma.romHack.findMany({ where: { OR: [{ sha1: { in: chunk } }, { headerlessSha1: { in: chunk } }] }, select: { id: true, sha1: true, headerlessSha1: true, gameId: true } });
+    for (const h of fan) {
+      const hit = { id: h.id, gameId: h.gameId, romId: null, systemId: null };
+      add(hacks, h.sha1, hit);
+      if (h.headerlessSha1 !== h.sha1) add(hacks, h.headerlessSha1, hit);
+    }
+  }
+  return { parts, hacks };
+}
+
+function gameByHashIn(index: Awaited<ReturnType<typeof hashIndex>>, hashes: string[], systemId: number | undefined) {
+  const first = (hits: HashHit[]) => hits.reduce<HashHit | null>((a, b) => (!a || b.id < a.id ? b : a), null);
+  const list = hashes.filter((h) => SHA1.test(h));
+  const part = first(list.flatMap((h) => index.parts.get(h) ?? []).filter((p) => !systemId || p.systemId === systemId));
+  if (part) return { gameId: part.gameId, romId: part.romId };
+  const hack = first(list.flatMap((h) => index.hacks.get(h) ?? []));
+  return hack ? { gameId: hack.gameId, romId: null } : null;
+}
+
+/** Games of roms by their exact name, looked up once for a whole sync: name -> [{gameId, systemId}] by rom id */
+async function nameIndex(names: string[]) {
+  const list = [...new Set(names)];
+  const index = new Map<string, { id: number; gameId: number; systemId: number }[]>();
+  for (let i = 0; i < list.length; i += 500) {
+    const found = await prisma.rom.findMany({ where: { name: { in: list.slice(i, i + 500) } }, select: { id: true, name: true, gameId: true, game: { select: { systemId: true } } } });
+    for (const r of found) index.set(r.name, [...(index.get(r.name) ?? []), { id: r.id, gameId: r.gameId, systemId: r.game.systemId }]);
+  }
+  for (const rows of index.values()) rows.sort((a, b) => a.id - b.id);
+  return index;
 }
 
 /**
@@ -234,7 +301,7 @@ async function titleIndex(slug: string) {
 }
 
 /** Stores the inventory; returns the files to read by their header (paths as the device sent them) */
-async function storeInventory(device: AgentDevice, scanned: { path: string; hashes: string[]; size: number }[], allowPull: string | undefined) {
+async function storeInventory(device: AgentDevice, scanned: { path: string; hashes: string[]; size: number }[], allowPull: string | undefined, hash: string | null = null) {
   const sent = new Map(scanned.map((r) => [device.homeRoot ? reroot(r.path, device.rootPath, device.homeRoot) : r.path, r.path]));
   // Kept under the device's own root, so requests made later reach the console with its paths
   const roms = device.homeRoot ? scanned.map((r) => ({ ...r, path: reroot(r.path, device.rootPath, device.homeRoot!) })) : scanned;
@@ -319,7 +386,7 @@ async function storeInventory(device: AgentDevice, scanned: { path: string; hash
   await prisma.$transaction([
     prisma.deviceRom.deleteMany({ where: { deviceId: device.id } }),
     prisma.deviceRom.createMany({ data: rows, skipDuplicates: true }),
-    prisma.device.update({ where: { id: device.id }, data: { inventoryAt: new Date(), ...(allowPull === '0' || allowPull === '1' ? { allowPull: allowPull === '1' } : {}) } }),
+    prisma.device.update({ where: { id: device.id }, data: { inventoryAt: new Date(), inventoryHash: hash, ...(allowPull === '0' || allowPull === '1' ? { allowPull: allowPull === '1' } : {}) } }),
   ]);
   return probe.map((p) => sent.get(p) ?? p);
 }
@@ -439,8 +506,12 @@ agentRouter.post('/sync', express.text({ limit: '16mb', type: '*/*' }), async (r
     else if (kind === 'core' && p && h) cores.set(p, h);
   }
   await storeCoreVersions(device, cores);
-  // An unreadable body (a client that sent no content type) must not wipe the device's list
-  const probe = typeof req.body === 'string' && req.body.length ? await storeInventory(device, roms, req.header('x-allow-pull')) : [];
+  // An unreadable body (a client that sent no content type) must not wipe the device's list. The same list as last
+  // time is not stored again (devices sync every few seconds while files change), but at least every half hour, so
+  // roms the catalogue learnt since get identified
+  const invHash = crypto.createHash('sha1').update(JSON.stringify([device.rootPath, device.homeRoot ?? '', req.header('x-allow-pull') ?? '', roms])).digest('hex');
+  const fresh = device.inventoryHash === invHash && !!device.inventoryAt && Date.now() - device.inventoryAt.getTime() < INVENTORY_REFRESH_MS;
+  const probe = typeof req.body === 'string' && req.body.length && !fresh ? await storeInventory(device, roms, req.header('x-allow-pull'), invHash) : [];
   await storeSshOffer(device, req);
   // "X-Wifi-Bands: 2.4 | dual | none": what its WiFi chip can do, so it is only given networks it can see
   await storeWifiBands(device, req.header('x-wifi-bands'));
@@ -457,6 +528,10 @@ agentRouter.post('/sync', express.text({ limit: '16mb', type: '*/*' }), async (r
   const coreEmus = (await prisma.emulator.findMany({ where: { core: { not: null } } })) as Emulator[];
   const out: string[] = [];
   const cardFiles = new Set<string>();
+  // Games by name and by content for every rom at once (a query per rom took most of a sync)
+  const lookups = savedGames.size > 0 || present.size > 0;
+  const byName = lookups ? await nameIndex(roms.map((r) => romName(r.path))) : new Map<string, { id: number; gameId: number; systemId: number }[]>();
+  const byHash = lookups ? await hashIndex(roms.flatMap((r) => r.hashes)) : { parts: new Map(), hacks: new Map() };
   // Resume states another console made, copied here before they stopped travelling: put aside, so this console
   // opens its games with their synced save instead of another console's memory
   const foreignResume = new Set(
@@ -482,9 +557,8 @@ agentRouter.post('/sync', express.text({ limit: '16mb', type: '*/*' }), async (r
     const systemId = systemIds.get(ctx.slug);
     // Cheap exact lookups (name, then content hash); the scanned-file fallback of identifyRom is too slow for thousands of roms
     const needGame = hasLocal || savedGames.size > 0;
-    const known = needGame
-      ? ((await prisma.rom.findFirst({ where: { name: ctx.baseName, game: { systemId } }, select: { gameId: true } })) ?? (await gameByHash(hashes, systemId)))
-      : null;
+    const named = needGame ? (byName.get(ctx.baseName) ?? []).find((r) => !systemId || r.systemId === systemId) : undefined;
+    const known = needGame ? (named ? { gameId: named.gameId } : gameByHashIn(byHash, hashes, systemId)) : null;
     if (!hasLocal && !savedNames.has(ctx.baseName) && !(known && savedGames.has(known.gameId))) continue;
     const gameId = known?.gameId ?? (hasLocal ? ((await identifyRom(ctx.baseName, systemId))?.gameId ?? null) : null);
     // Saves uploaded before the rom could be identified get their game now
@@ -625,7 +699,10 @@ agentRouter.post('/probe', express.raw({ limit: '64mb', type: '*/*' }), async (r
   if (!sent || !Number.isSafeInteger(size) || size <= 0) throw badRequest('Path and size needed');
   const file = device.homeRoot ? reroot(sent, device.rootPath, device.homeRoot) : sent;
   const body = Buffer.isBuffer(req.body) ? req.body : Buffer.alloc(0);
-  res.type('text/plain').send((await probeRound(device, file, size, req.header('x-ranges') ?? '', body)) + '\n');
+  const answer = await probeRound(device, file, size, req.header('x-ranges') ?? '', body);
+  // What the header told identifies the rom at the next sync: its inventory is stored again then
+  await prisma.device.update({ where: { id: device.id }, data: { inventoryHash: null } });
+  res.type('text/plain').send(answer + '\n');
 });
 
 // Last lines of the client's log, kept for troubleshooting from the web app
@@ -660,6 +737,7 @@ function readRef(ref: string, deviceId: number): { p: string; e: string | null }
 /**
  * Roms the device should have: "rom<TAB>destination<TAB>size<TAB>ref" per file (size 0 = unknown,
  * for files inside archives). The client downloads the ones it lacks with GET /agent/rom?f=ref.
+ * Files its last inventory already lists are left out: the client no longer checks them one by one.
  */
 agentRouter.get('/roms', async (req, res) => {
   const device = await deviceFromToken(req);
@@ -669,7 +747,7 @@ agentRouter.get('/roms', async (req, res) => {
   const skipped = { files: 0, bytes: 0 };
   const out: string[] = [];
   for (const f of plan.files) {
-    if (f.excluded) continue;
+    if (f.excluded || f.onDevice) continue;
     if (!f.present && budget !== null) {
       if (f.size > budget) {
         skipped.files++;
@@ -689,7 +767,12 @@ agentRouter.get('/rom', async (req, res) => {
   const device = await deviceFromToken(req);
   const ref = readRef(String(req.query.f ?? ''), device.id);
   res.type('application/octet-stream');
-  if (ref.e) extractEntryStream(ref.p, ref.e).on('error', () => res.destroy()).pipe(res);
+  if (ref.e) {
+    // A device that hangs up stops the extraction too
+    const s = extractEntryStream(ref.p, ref.e).on('error', () => res.destroy());
+    res.on('close', () => s.destroy());
+    s.pipe(res);
+  }
   else res.sendFile(ref.p);
 });
 
@@ -780,7 +863,8 @@ agentRouter.post('/pull/:id', async (req, res) => {
   const owner = await prisma.user.findUniqueOrThrow({ where: { id: device.userId }, select: { id: true, username: true } });
   const name = path.posix.basename(pull.path);
   // Container readers need the right extension on the temporary file
-  const tmp = path.join(os.tmpdir(), `pull-${pull.id}-${Date.now()}${path.extname(name).toLowerCase()}`);
+  // On the data disk, next to the library (the container's own disk is small and slow)
+  const tmp = path.join(env.tmpDir, `pull-${pull.id}-${Date.now()}${path.extname(name).toLowerCase()}`);
   const expected = Number(req.header('content-length') ?? NaN);
   await prisma.devicePull.update({ where: { id: pull.id }, data: { status: 'sending' } });
   const live = { received: 0, size: Number.isFinite(expected) ? expected : 0, startedAt: Date.now() };

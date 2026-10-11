@@ -257,6 +257,7 @@ model Rom {
   @@unique([datSourceId, name])
   @@index([raHash])
   @@index([gameId])
+  @@index([name])
 }
 
 model RomPart {
@@ -532,6 +533,8 @@ model Device {
   // Set from the web app; the client syncs at its next poll and clears it
   wantSyncAt      DateTime?
   inventoryAt     DateTime?
+  /// sha1 of the last inventory the device sent: an unchanged one is not stored again
+  inventoryHash   String?   @db.VarChar(40)
   // Where the client script lives on the device, so the server can run it over SSH when the device is quiet
   clientPath      String?               @db.VarChar(512)
   // The SSH address was typed in the web app: the one the console reports about itself does not replace it

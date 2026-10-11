@@ -2151,7 +2151,8 @@ test('sync client: device inventory, fetching missing roms, sync on request, dir
   assert.deepEqual(sys.systems.map((x: any) => [x.slug, x.copied, x.fresh]), [['nes', false, true]]);
   assert.equal((await agent('/roms')).trim(), '');
   await api('PUT', `/devices/${id}/system-filter`, { newAuto: false, excluded: [], known: ['nes'] });
-  assert.notEqual((await agent('/roms')).trim(), '', 'once ticked it is copied');
+  // (the device already has it, so /roms leaves it out: the list counts it again)
+  assert.equal((await api('GET', `/devices/${id}/lists-progress`)).json.find((l: any) => l.id === sent.json.listId).total, 1, 'once ticked it is copied');
   await api('PUT', `/devices/${id}/system-filter`, { newAuto: true, excluded: [], known: ['nes'] });
 
   // Files without a hash a database knows (big ones go unhashed, .chd never hashes like the dump) still count by name
@@ -3252,6 +3253,19 @@ test('sync client: one rom download at a time, and it can be stopped', async () 
   assert.match((await run('roms')).stdout, /roms: 1 downloaded/);
   assert.ok(Date.now() - t0 >= 2000, 'it waited for the running one');
   assert.ok(!fs.existsSync(path.join(state, 'roms-stopped')), 'asked on screen: no longer stopped');
+  // A download cut halfway goes on where it stopped: the bytes already here are kept (a marked byte proves it)
+  const rom = fs.readdirSync(path.join(root, 'roms/nes')).map((f) => path.join(root, 'roms/nes', f))[0];
+  const whole = fs.readFileSync(rom);
+  const half = Buffer.from(whole.subarray(0, Math.floor(whole.length / 2)));
+  half[0] ^= 0xff;
+  fs.rmSync(rom);
+  fs.writeFileSync(`${rom}.part`, half);
+  await run('sync');
+  assert.match((await run('roms')).stdout, /roms: 1 downloaded/);
+  const resumed = fs.readFileSync(rom);
+  assert.equal(resumed.length, whole.length);
+  assert.equal(resumed[0], half[0], 'resumed, not started again');
+  assert.ok(resumed.subarray(1).equals(whole.subarray(1)));
   // Stopping a running download: it ends at the next file
   const holder2 = spawn('sleep', ['2']);
   fs.mkdirSync(path.join(lockDir, 'roms-lock'));

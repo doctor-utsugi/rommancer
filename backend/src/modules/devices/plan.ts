@@ -20,6 +20,8 @@ export interface PlanFile {
   gameId: number | null;
   title: string;
   present: boolean;
+  /** This very file is on the device (present may also mean another version of its game) */
+  onDevice: boolean;
   excluded: boolean;
 }
 
@@ -66,9 +68,10 @@ export async function devicePlan(device: Device & { firmware: Firmware }, root =
         const size = f.archiveEntry
           ? Number(romOf.get(it.romId ?? -1)?.parts.reduce((n, p) => n + Number(p.size), 0) ?? 0)
           : ((await fs.promises.stat(f.absPath).catch(() => null))?.size ?? 0);
-        const present = havePaths.has(pathKey(path.posix.join(homeRoot.replace(/\/+$/, ''), rel))) || (gameId !== null && haveGames.has(gameId));
+        const onDevice = havePaths.has(pathKey(path.posix.join(homeRoot.replace(/\/+$/, ''), rel)));
+        const present = onDevice || (gameId !== null && haveGames.has(gameId));
         const excluded = !copiesSystem(filter, it.systemSlug) || (gameId !== null && excludedGames.has(gameId));
-        files.push({ dest, size, absPath: f.absPath, archiveEntry: f.archiveEntry ?? null, system: it.systemSlug, gameId, title: it.title, present, excluded });
+        files.push({ dest, size, absPath: f.absPath, archiveEntry: f.archiveEntry ?? null, system: it.systemSlug, gameId, title: it.title, present, onDevice, excluded });
       }
     }
   }

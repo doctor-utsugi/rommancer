@@ -22,7 +22,7 @@
 #                                   Menu++...) mounted on this computer; the link lives on the card itself,
 #                                   so any computer with this script can sync it. Without a command: sync.
 set -u
-CLIENT_VERSION=20261031
+CLIENT_VERSION=20261032
 # A clock before this date is surely wrong (no battery-backed clock); kept apart from the version, which may run ahead
 CLOCK_MIN=20261001
 # Onion keeps curl (with TLS) and friends outside the default PATH
@@ -748,11 +748,25 @@ ssh_offer() {
 }
 
 # Cheap change detector: sizes and mtimes of the save files
+# (one stat for many files and one awk for the save rule: it runs every few seconds, a fork per file kept a weak
+# handheld busy and slowed its downloads)
 fingerprint() {
   [ -n "${SAVE_DIRS:-}" ] || return 0
   printf '%s\n' "$SAVE_DIRS" | while IFS= read -r d; do
-    find "$d" -type f 2>/dev/null | while IFS= read -r f; do is_save "$f" && stat -c '%n %s %Y' "$f" 2>/dev/null; done
-  done | cksum
+    find "$d" -type f -exec stat -c "%s %Y$TAB%n" {} + 2>/dev/null ||
+      find "$d" -type f 2>/dev/null | while IFS= read -r f; do stat -c "%s %Y$TAB%n" "$f" 2>/dev/null; done
+  done | awk -F"$TAB" -v exts="$EXTS" '
+    BEGIN { ne = split(exts, ex, " ") }
+    {
+      n = tolower($2); keep = 0
+      for (i = 1; i <= ne && !keep; i++) {
+        e = ex[i]; l = length(n); m = length(e)
+        if (m && l >= m && substr(n, l - m + 1) == e) keep = 1
+        else if (m && l > m && substr(n, l - m, m) == e && substr(n, l) ~ /[0-9]/) keep = 1
+        else if (m && l >= m + 5 && substr(n, l - m - 4) == e ".auto") keep = 1
+      }
+      if (keep) print
+    }' | cksum
 }
 
 # Self-update from the server: files whose sha1 differs from the server's copy are replaced.
@@ -985,6 +999,76 @@ free_bytes() {
   echo $(( $(df -k "$d" 2>/dev/null | awk 'NR == 2 { print $4 }') * 1024 ))
 }
 
+# curl's config syntax: a value between quotes, with its backslashes and quotes escaped
+curl_quote() { printf '"%s"' "$(printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g')"; }
+
+# The missing roms of the plan with a single curl: one connection for all of them (a new connection, TLS handshake
+# and certificate bundle per rom cost more than a small rom's transfer). A partial file goes on where it stopped
+# (plain files; entries of archives, of unknown size, start again), and a transfer is only dropped when it stalls
+# (under 1 KB/s for a minute), never for taking long. Sets got, fail, have and stopped for cmd_roms
+roms_fetch() {
+  : > "$WORK/romget"; : > "$WORK/romcfg"
+  free=""
+  while IFS="$TAB" read -r kind dest size ref; do
+    [ "$kind" = rom ] || continue
+    if [ -f "$dest" ] && { [ "$size" = 0 ] || [ "$(stat -c %s "$dest" 2>/dev/null)" = "$size" ]; }; then have=$((have + 1)); continue; fi
+    part="$dest.part"; ps=0
+    if [ -f "$part" ]; then
+      ps="$(stat -c %s "$part" 2>/dev/null || echo 0)"
+      if [ "$size" = 0 ] || [ "$ps" -gt "$size" ]; then rm -f "$part"; ps=0; fi
+    fi
+    # Already whole (stopped right before it was renamed)
+    if [ "$size" -gt 0 ] && [ "$ps" = "$size" ]; then mv "$part" "$dest" && { got=$((got + 1)); printf '%s\t%s\n' "$(date +%s)" "$dest" >> "$STATE/received-roms"; }; continue; fi
+    # The card's free space, read once and counted down
+    [ -n "$free" ] || free="$(free_bytes "$(dirname "$dest")")"
+    if [ "$size" -gt 0 ] && [ "$free" -lt $((size - ps + 52428800)) ]; then
+      log "roms: not enough space for $(basename "$dest")"; fail=$((fail + 1)); break
+    fi
+    free=$((free - size + ps))
+    printf '%s\t%s\n' "$dest" "$size" >> "$WORK/romget"
+    { printf 'url = %s\n' "$(curl_quote "$SERVER/api/v1/agent/rom?f=$ref")"; printf 'output = %s\n' "$(curl_quote "$part")"; } >> "$WORK/romcfg"
+  done < "$WORK/romplan"
+  n="$(grep -c . "$WORK/romget")"
+  [ "$n" -gt 0 ] || return 0
+  {
+    printf 'header = %s\n' "$(curl_quote "X-Device-Token: $TOKEN")"
+    [ -n "$SD" ] && printf 'header = %s\n' "$(curl_quote "X-Device-Root-B64: $(b64 "$SD")")"
+    [ -f "$DIR/cacert.pem" ] && printf 'cacert = %s\n' "$(curl_quote "$DIR/cacert.pem")"
+  } > "$WORK/romcfg.head"
+  # Each finished transfer prints its line: how far the run is, and whether each file arrived whole
+  curl -K "$WORK/romcfg.head" -K "$WORK/romcfg" -f -s -S --globoff --create-dirs -C - --connect-timeout 10 --speed-limit 1024 --speed-time 60 \
+    -w '%{http_code}\n' > "$WORK/romdone" 2>> "$LOG" &
+  cpid=$!; echo "$cpid" > "$WORK/roms-lock/curl"
+  while kill -0 "$cpid" 2>/dev/null; do
+    d="$(grep -c . "$WORK/romdone" 2>/dev/null)"; cur=$(( ${d:-0} + 1 )); [ "$cur" -gt "$n" ] && cur="$n"
+    IFS="$TAB" read -r dest size <<EOR
+$(sed -n "${cur}p" "$WORK/romget")
+EOR
+    printf 'roms-download\t%s\t%s\t%s\t%s\t%s\n' "$((have + got + cur))" "$total" "$size" "$dest.part" "$(basename "$dest")" > "$WORK/progress.tmp" && mv "$WORK/progress.tmp" "$WORK/progress"
+    if [ -f "$WORK/roms-stop" ]; then kill "$cpid" 2>/dev/null; stopped=1; fi
+    sleep 1
+  done
+  wait "$cpid" 2>/dev/null
+  rm -f "$WORK/roms-lock/curl"
+  k=0
+  while IFS="$TAB" read -r dest size; do
+    k=$((k + 1))
+    code="$(sed -n "${k}p" "$WORK/romdone")"
+    ps="$(stat -c %s "$dest.part" 2>/dev/null || echo -1)"
+    # Whole: its size, or (unknown size) a transfer that ended with the server's OK; one cut by a stop printed nothing
+    if { [ "$size" -gt 0 ] && [ "$ps" = "$size" ]; } || { [ "$size" = 0 ] && [ "$code" = 200 ] && [ "$ps" -ge 0 ]; }; then
+      mv "$dest.part" "$dest" && got=$((got + 1))
+      # For the "new" collection: what arrived, and when
+      printf '%s\t%s\n' "$(date +%s)" "$dest" >> "$STATE/received-roms"
+    elif [ "$stopped" = 0 ]; then
+      fail=$((fail + 1))
+      # An entry of an archive cut halfway cannot go on: start again next time
+      [ "$size" = 0 ] && rm -f "$dest.part"
+    fi
+  done < "$WORK/romget"
+  return 0
+}
+
 # A rom download is under way (a lock whose process died does not count)
 roms_running() { [ -f "$WORK/roms-lock/pid" ] && kill -0 "$(cat "$WORK/roms-lock/pid")" 2>/dev/null; }
 
@@ -1007,6 +1091,7 @@ cmd_roms() {
   progress roms-plan 0 0
   http GET "$SERVER/api/v1/agent/roms" - "$WORK/romplan" || { log "roms: server unreachable"; rm -rf "$WORK/roms-lock"; return 1; }
   total="$(grep -c . "$WORK/romplan")"; i=0; got=0; fail=0; have=0; stopped=0
+  if command -v curl >/dev/null 2>&1; then roms_fetch; else
   while IFS="$TAB" read -r kind dest size ref; do
     [ "$kind" = rom ] || continue
     [ -f "$WORK/roms-stop" ] && { stopped=1; break; }
@@ -1028,6 +1113,7 @@ cmd_roms() {
       fail=$((fail + 1))
     fi
   done < "$WORK/romplan"
+  fi
   rm -rf "$WORK/roms-lock"
   if [ "$stopped" = 1 ]; then
     rm -f "$WORK/roms-stop"
@@ -1048,6 +1134,7 @@ cmd_roms_stop() {
   touch "$STATE/roms-stopped"
   roms_running || { echo "roms: nothing to stop"; return 0; }
   touch "$WORK/roms-stop"
+  [ -f "$WORK/roms-lock/curl" ] && kill "$(cat "$WORK/roms-lock/curl")" 2>/dev/null
   n=0
   while roms_running && [ "$n" -lt 30 ]; do
     for c in /proc/[0-9]*/cmdline; do
@@ -1115,7 +1202,8 @@ cmd_game_start() {
 }
 
 # "Sync now" on the console's screen: saves, settings, then the lists' roms with their progress
-cmd_all() { cmd_sync; cmd_config; cmd_prune; cmd_roms; cmd_collections > /dev/null 2>&1; return 0; }
+# (a sync that could not reach the server ends it: each step would wait for the network again)
+cmd_all() { cmd_sync || return 0; cmd_config; cmd_prune; cmd_roms; cmd_collections > /dev/null 2>&1; return 0; }
 
 # A copy for the server is under way (a lock whose process died does not count)
 pulls_running() { [ -f "$WORK/pull-lock/pid" ] && kill -0 "$(cat "$WORK/pull-lock/pid")" 2>/dev/null; }
@@ -1155,7 +1243,8 @@ cmd_pulls() {
       # A stalled transfer (under 1 KB/s for a minute) is dropped and sent again later
       # --globoff: rom names often carry [brackets] that curl would read as a pattern
       # The progress bar (-#) goes to a file the app's screens read for the file's share
-      set -- -f -S -# --globoff --connect-timeout 5 --max-time 7200 --speed-limit 1024 --speed-time 60 -X POST -H "X-Device-Token: $TOKEN" -T "$p"
+      # No time limit (a big rom over a slow WiFi takes hours), only a stall ends it; no "Expect: 100-continue" wait
+      set -- -f -S -# --globoff --connect-timeout 5 --speed-limit 1024 --speed-time 120 -X POST -H "X-Device-Token: $TOKEN" -H "Expect:" -T "$p"
       [ -f "$DIR/cacert.pem" ] && set -- "$@" --cacert "$DIR/cacert.pem"
       curl "$@" "$SERVER/api/v1/agent/pull/$id" > "$WORK/pull-result" 2> "$WORK/pull-curl"
     else

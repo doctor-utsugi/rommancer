@@ -21,6 +21,14 @@ class Api(private val server: String, private val token: String? = null) {
         return conn
     }
 
+    /**
+     * Lets the connection go back to the pool (disconnect() closed it, and every rom then paid a new connection and
+     * TLS handshake): bodies are read whole and closed; one read halfway is closed by its stream
+     */
+    private fun keep(conn: HttpURLConnection) {
+        runCatching { conn.errorStream?.close() }
+    }
+
     private fun check(conn: HttpURLConnection) {
         val code = conn.responseCode
         if (code !in 200..299) {
@@ -38,9 +46,9 @@ class Api(private val server: String, private val token: String? = null) {
                 conn.outputStream.use { it.write(body) }
             }
             check(conn)
-            return conn.inputStream.bufferedReader().readText()
+            return conn.inputStream.bufferedReader().use { it.readText() }
         } finally {
-            conn.disconnect()
+            keep(conn)
         }
     }
 
@@ -74,7 +82,7 @@ class Api(private val server: String, private val token: String? = null) {
                 tmp.delete()
             }
         } finally {
-            conn.disconnect()
+            keep(conn)
         }
     }
 
@@ -86,7 +94,7 @@ class Api(private val server: String, private val token: String? = null) {
             if (conn.responseCode == 204) return null
             return conn.inputStream.use { it.readBytes() }
         } finally {
-            conn.disconnect()
+            keep(conn)
         }
     }
 
@@ -111,9 +119,9 @@ class Api(private val server: String, private val token: String? = null) {
                 }
             }
             check(conn)
-            return conn.inputStream.bufferedReader().readText()
+            return conn.inputStream.bufferedReader().use { it.readText() }
         } finally {
-            conn.disconnect()
+            keep(conn)
         }
     }
 
