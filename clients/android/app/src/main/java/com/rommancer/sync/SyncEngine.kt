@@ -406,13 +406,14 @@ class SyncEngine(private val context: Context, private val store: Store, private
     }
 
     /** "Sync now": saves, the roms the server asked for, then the lists' roms when automatic roms is on */
-    fun all(): String {
+    /** ROMS: the lists' roms too (only when asked for on screen; background passes never download roms) */
+    fun all(roms: Boolean = false): String {
         val r = sync()
         val sent = runCatching { pulls() }.getOrDefault("")
         val pruned = runCatching { prune() }.getOrDefault("")
-        val roms = if (store.autoRoms && !store.romsStopped) roms() else ""
+        val romsDone = if (roms) roms() else ""
         runCatching { ConfigEngine(context, store).run() }
-        return listOf("sync: $r", sent, pruned, roms).filter { it.isNotBlank() }.joinToString(" · ")
+        return listOf("sync: $r", sent, pruned, romsDone).filter { it.isNotBlank() }.joinToString(" · ")
     }
 
     /** Folders the save watcher observes (every subfolder of the save roots) and the save extensions */

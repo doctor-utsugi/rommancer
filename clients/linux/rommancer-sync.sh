@@ -22,7 +22,7 @@
 #                                   Menu++...) mounted on this computer; the link lives on the card itself,
 #                                   so any computer with this script can sync it. Without a command: sync.
 set -u
-CLIENT_VERSION=20261028
+CLIENT_VERSION=20261030
 # A clock before this date is surely wrong (no battery-backed clock); kept apart from the version, which may run ahead
 CLOCK_MIN=20261001
 # Onion keeps curl (with TLS) and friends outside the default PATH
@@ -828,8 +828,6 @@ cmd_daemon() {
       cmd_sync && { last="$(fingerprint)"; since=0; }
       [ "$full_pass" = 1 ] && cmd_config > /dev/null 2>&1
       [ "$full_pass" = 1 ] && cmd_prune > /dev/null 2>&1
-      # Roms go in the background: a long download must not hold up the saves (one at a time, see cmd_roms)
-      [ "$full_pass" = 1 ] && [ "$AUTO_ROMS" = 1 ] && ! roms_running && (nohup sh "$DIR/$(basename "$0")" roms-bg > /dev/null 2>&1 &)
       cmd_collections > /dev/null 2>&1
     fi
     sleep "$WATCH_SECONDS"; since=$((since + WATCH_SECONDS))
@@ -1116,7 +1114,8 @@ cmd_game_start() {
   return 0
 }
 
-cmd_all() { cmd_sync; cmd_config; cmd_prune; [ "$AUTO_ROMS" = 1 ] && cmd_roms; cmd_collections > /dev/null 2>&1; return 0; }
+# "Sync now" on the console's screen: saves, settings, then the lists' roms with their progress
+cmd_all() { cmd_sync; cmd_config; cmd_prune; cmd_roms; cmd_collections > /dev/null 2>&1; return 0; }
 
 # A copy for the server is under way (a lock whose process died does not count)
 pulls_running() { [ -f "$WORK/pull-lock/pid" ] && kill -0 "$(cat "$WORK/pull-lock/pid")" 2>/dev/null; }
@@ -1377,9 +1376,10 @@ cmd_setup() {
   [ -n "$TOKEN" ] && roms_running && with_progress "$(t roms)" cmd_roms
   while :; do
     if [ -n "$TOKEN" ]; then
-      cmd_conflicts > "$WORK/conflicts" 2>/dev/null || : > "$WORK/conflicts"
-      nconf="$(grep -c '^conflict' "$WORK/conflicts")"
-      if [ "$AUTO_ROMS" = 1 ]; then auto="$(t yes)"; else auto="$(t no)"; fi
+      # The menu never waits for the network: the count is the last one fetched (a fetch runs meanwhile for the next
+      # time the menu shows; the conflicts screen fetches its own)
+      if [ -f "$WORK/conflicts" ]; then nconf="$(grep -c '^conflict' "$WORK/conflicts")"; else nconf="..."; fi
+      ( HTTP_MAX=10 cmd_conflicts > "$WORK/conflicts.new" 2>/dev/null && mv "$WORK/conflicts.new" "$WORK/conflicts" ) &
       if [ "$ALLOW_PULL" = 1 ]; then pull="$(t yes)"; else pull="$(t no)"; fi
       if [ "$ALLOW_SSH" = 1 ]; then ssh="$(t yes)"; else ssh="$(t no)"; fi
       setup_prune
@@ -1388,20 +1388,19 @@ cmd_setup() {
       # While roms download, the roms item stops them instead
       rs="$(roms_status)"; romsitem="$(t roms)"
       [ -n "$rs" ] && romsitem="$(t romswatch "$(printf '%s' "$rs" | awk -F"$TAB" '$2 { printf "(%s/%s)", $1, $2 }')")"
-      menu "Rommancer Sync" "$(t connected). $(updated_line)" "$(t sync)" "$romsitem" "$(t autoroms "$auto")" "$(t allowpull "$pull")" "$(t allowssh "$ssh")" "$(t prune "$prune")" "$(t pruneclean "$cleanable")" "$(t conflicts "$nconf")" "$(t status)" "$(t unlink)" "$(t quit)"; rc=$?
+      menu "Rommancer Sync" "$(t connected). $(updated_line)" "$(t sync)" "$romsitem" "$(t allowpull "$pull")" "$(t allowssh "$ssh")" "$(t prune "$prune")" "$(t pruneclean "$cleanable")" "$(t conflicts "$nconf")" "$(t status)" "$(t unlink)" "$(t quit)"; rc=$?
       case $rc in
-        # On screen with its progress until done; B stops the roms (a download the daemon started is shown too)
+        # On screen with its progress until done; B stops the roms
         0) with_progress "$(t sync)" cmd_all ;;
         1) with_progress "$(t roms)" cmd_roms ;;
-        2) if [ "$AUTO_ROMS" = 1 ]; then AUTO_ROMS=0; else AUTO_ROMS=1; fi; set_setting AUTO_ROMS "$AUTO_ROMS" ;;
-        3) if [ "$ALLOW_PULL" = 1 ]; then ALLOW_PULL=0; else ALLOW_PULL=1; fi; set_setting ALLOW_PULL "$ALLOW_PULL" ;;
-        4) if [ "$ALLOW_SSH" = 1 ]; then ALLOW_SSH=0; else ALLOW_SSH=1; fi; set_setting ALLOW_SSH "$ALLOW_SSH" ;;
-        5) if [ "$PRUNE_ROMS" = 1 ]; then v=0; else v=1; fi
+        2) if [ "$ALLOW_PULL" = 1 ]; then ALLOW_PULL=0; else ALLOW_PULL=1; fi; set_setting ALLOW_PULL "$ALLOW_PULL" ;;
+        3) if [ "$ALLOW_SSH" = 1 ]; then ALLOW_SSH=0; else ALLOW_SSH=1; fi; set_setting ALLOW_SSH "$ALLOW_SSH" ;;
+        4) if [ "$PRUNE_ROMS" = 1 ]; then v=0; else v=1; fi
            panel "Rommancer Sync" "$(t syncing)"; sh "$DIR/$(basename "$0")" prune set "$v" > /dev/null 2>&1; panel_close; PRUNE_ROMS="$v" ;;
-        6) with_progress "$(t pruneclean "$cleanable")" sh "$DIR/$(basename "$0")" prune clean ;;
-        7) setup_conflicts ;;
-        8) panel "$(t status)" "$(version_line). $(tail -n 4 "$LOG" 2>/dev/null | cut -c21- | tr '\n' ' ')" wait ;;
-        9) keep="$SERVER"; cmd_unlink > /dev/null; TOKEN=""; USER_NAME=""; SERVER="$keep" ;;
+        5) with_progress "$(t pruneclean "$cleanable")" sh "$DIR/$(basename "$0")" prune clean ;;
+        6) panel "Rommancer Sync" "$(t p_connecting)"; cmd_conflicts > "$WORK/conflicts" 2>/dev/null || : > "$WORK/conflicts"; panel_close; setup_conflicts ;;
+        7) panel "$(t status)" "$(version_line). $(tail -n 4 "$LOG" 2>/dev/null | cut -c21- | tr '\n' ' ')" wait ;;
+        8) keep="$SERVER"; cmd_unlink > /dev/null; TOKEN=""; USER_NAME=""; SERVER="$keep" ;;
         *) return 0 ;;
       esac
     else
@@ -1454,7 +1453,9 @@ case "${1:-}" in
   update) cmd_update ;;
   roms) VERBOSE=1 cmd_roms; cmd_collections > /dev/null 2>&1 ;;
   roms-stop) cmd_roms_stop ;;
-  roms-bg) cmd_roms > /dev/null 2>&1; cmd_collections > /dev/null 2>&1 ;;
+  # What the server runs over SSH and the daemon's full pass: everything but the lists' roms, which only download
+  # when asked for on the console's screen
+  background) cmd_sync; cmd_config; cmd_prune; cmd_collections > /dev/null 2>&1 ;;
   roms-status) roms_status ;;
   collections) cmd_collections ;;
   config) VERBOSE=1 cmd_config ;;
@@ -1475,7 +1476,8 @@ case "${1:-}" in
   # "prune confirm" (a held deletion of more than half of the roms), "prune clean" (their saves), "prune" (state)
   prune)
     case "${2:-}" in
-      set) prune_set "${3:-0}"; rm -f "$STATE/prune-ask"; touch "$STATE/prune-intro"; VERBOSE=1 cmd_sync > /dev/null 2>&1; echo ok ;;
+      # The server hears it at this sync, or at the daemon's when one is running (never waited for: the menus stay quick)
+      set) prune_set "${3:-0}"; rm -f "$STATE/prune-ask"; touch "$STATE/prune-intro"; cmd_sync > /dev/null 2>&1; echo ok ;;
       confirm)
         [ -f "$STATE/prune-hold" ] || exit 0
         http POST "$SERVER/api/v1/agent/prune/confirm" - - "X-Count: $(cut -f1 "$STATE/prune-hold")" > /dev/null || exit 1

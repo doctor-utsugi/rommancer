@@ -374,9 +374,8 @@ private fun Linked(store: Store, onUnlinked: () -> Unit) {
                 MenuItem(stringResource(R.string.update_app, u.name)) { run(titleUpdate) { Updater.install(context, store); "" } }
             }
             // Asked on screen: the roms download again even after a stop
-            MenuItem(stringResource(R.string.sync_now), firstItem) { store.romsStopped = false; run(titleSync) { it.all() } }
-            MenuItem(titleRoms) { store.romsStopped = false; run(titleRoms) { it.roms() } }
-            MenuItem(stringResource(R.string.auto_roms, if (store.autoRoms) yes else no)) { store.autoRoms = !store.autoRoms; settingsTick++ }
+            MenuItem(stringResource(R.string.sync_now), firstItem) { run(titleSync) { it.all(roms = true) } }
+            MenuItem(titleRoms) { run(titleRoms) { it.roms() } }
             MenuItem(stringResource(R.string.watch, if (store.watch) yes else no)) {
                 store.watch = !store.watch
                 if (store.watch) WatchService.start(context) else WatchService.stop(context)

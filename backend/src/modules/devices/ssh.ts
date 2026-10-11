@@ -140,7 +140,7 @@ const running = new Set<number>();
 /** Last attempt per device, reached or not, so an unreachable console is not knocked on every minute */
 const lastTry = new Map<number, number>();
 
-/** Runs the console's client over SSH ("all": saves, requested roms, list roms) and records the outcome */
+/** Runs the console's client over SSH (saves, settings, requested roms; list roms only download when asked on the console) */
 export async function syncOverSsh(deviceId: number) {
   if (running.has(deviceId)) return { skipped: true as const };
   running.add(deviceId);
@@ -149,7 +149,7 @@ export async function syncOverSsh(deviceId: number) {
     const device = await prisma.device.findUniqueOrThrow({ where: { id: deviceId } });
     if (!device.clientPath) throw new Error('The client is not installed on this device');
     try {
-      const r = await sshExec(device, `sh ${quote(device.clientPath)} all; sh ${quote(device.clientPath)} pulls`);
+      const r = await sshExec(device, `{ sh ${quote(device.clientPath)} background || sh ${quote(device.clientPath)} sync; }; sh ${quote(device.clientPath)} pulls`);
       // The client does not poll in this run: what the web app asked for has just been done
       await prisma.device.update({ where: { id: deviceId }, data: { sshAt: new Date(), sshError: r.code === 0 ? null : `exit ${r.code}`, ...(r.code === 0 ? { wantSyncAt: null } : {}) } });
       return { code: r.code, output: r.output };

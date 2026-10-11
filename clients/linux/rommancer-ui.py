@@ -888,7 +888,6 @@ class App:
             if self.linked():
                 info = [T["connected"].format(server=self.cfg.get("SERVER", "")), T["as"].format(user=self.cfg.get("USER", "?"))]
                 cfg = self.settings()
-                auto = T["yes"] if cfg.get("AUTO_ROMS", "1") == "1" else T["no"]
                 pull = T["yes"] if cfg.get("ALLOW_PULL", "1") == "1" else T["no"]
                 ssh = T["yes"] if cfg.get("ALLOW_SSH", "1") == "1" else T["no"]
                 self.prune_prompts()
@@ -898,9 +897,9 @@ class App:
                 n = "…" if self.conflict_count is None else self.conflict_count
                 running = self.roms_status()
                 roms_label = T["roms_watch"].format(n=f"({running[0]}/{running[1]})" if running and running[1] else "") if running else T["sync_roms"]
-                items = [T["sync_now"], roms_label, T["auto_roms"].format(v=auto), T["allow_pull"].format(v=pull), T["allow_ssh"].format(v=ssh), T["prune"].format(v=prune), T["prune_clean"].format(n=self.cleanable), T["conflicts"].format(n=n), T["status"], T["logout"], T["quit"]]
-                choice = self.menu(T["title"], items, info, refresh=lambda: T["conflicts"].format(n="…" if self.conflict_count is None else self.conflict_count), refresh_index=7)
-                actions = [self.sync_now, self.sync_roms, self.toggle_auto_roms, self.toggle_allow_pull, self.toggle_allow_ssh, self.toggle_prune, self.prune_clean, self.resolve_conflicts, self.status, self.logout]
+                items = [T["sync_now"], roms_label, T["allow_pull"].format(v=pull), T["allow_ssh"].format(v=ssh), T["prune"].format(v=prune), T["prune_clean"].format(n=self.cleanable), T["conflicts"].format(n=n), T["status"], T["logout"], T["quit"]]
+                choice = self.menu(T["title"], items, info, refresh=lambda: T["conflicts"].format(n="…" if self.conflict_count is None else self.conflict_count), refresh_index=6)
+                actions = [self.sync_now, self.sync_roms, self.toggle_allow_pull, self.toggle_allow_ssh, self.toggle_prune, self.prune_clean, self.resolve_conflicts, self.status, self.logout]
             else:
                 choice = self.menu(T["title"], [f"{T['server']}: {self.server}", T["login"], T["signup"], T["quit"]])
                 actions = [self.edit_server, self.login, self.signup]
