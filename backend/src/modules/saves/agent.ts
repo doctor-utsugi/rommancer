@@ -192,6 +192,37 @@ async function storeSshOffer(device: AgentDevice, req: Request) {
 /** A rom file's name as databases write it: the file name without its extension */
 const romName = (p: string) => path.posix.basename(p).replace(/\.[^.]+$/, '');
 
+/** Fan translations and hacks: "[T+Spa]", "[T-En by ...]", "(Hack)", "(English v1.04)" */
+const FAN_WORK = /\[T[+-]|\bhack\b|\((english|spanish|french|german|italian|portuguese) v[\d.]+\)/i;
+
+/** A title compared loosely: no regions or tags, no articles, only letters and digits */
+export function normTitle(name: string) {
+  return name
+    .replace(/\([^)]*\)|\[[^\]]*\]/g, ' ')
+    .toLowerCase()
+    .replace(/&/g, ' and ')
+    .replace(/,\s*(the|a|an)\b/g, ' ')
+    .replace(/^\s*(the|a|an)\s+/, '')
+    .normalize('NFD')
+    .replace(/[^a-z0-9]/g, '');
+}
+
+/** Every game of a system by its loose title and by its roms' loose names; kept ten minutes */
+const titleCache = new Map<string, { at: number; index: Map<string, Set<number>> }>();
+async function titleIndex(slug: string) {
+  const hit = titleCache.get(slug);
+  if (hit && Date.now() - hit.at < 10 * 60_000) return hit.index;
+  const games = await prisma.game.findMany({ where: { system: { slug } }, select: { id: true, title: true, roms: { select: { name: true } } } });
+  const index = new Map<string, Set<number>>();
+  const add = (key: string, id: number) => key && index.set(key, (index.get(key) ?? new Set()).add(id));
+  for (const g of games) {
+    add(normTitle(g.title), g.id);
+    for (const r of g.roms) add(normTitle(r.name), g.id);
+  }
+  titleCache.set(slug, { at: Date.now(), index });
+  return index;
+}
+
 async function storeInventory(device: AgentDevice, scanned: { path: string; hashes: string[]; size?: number }[], allowPull: string | undefined) {
   // Kept under the device's own root, so requests made later reach the console with its paths
   const roms = device.homeRoot ? scanned.map((r) => ({ ...r, path: reroot(r.path, device.rootPath, device.homeRoot!) })) : scanned;
@@ -227,9 +258,23 @@ async function storeInventory(device: AgentDevice, scanned: { path: string; hash
     if (sys) return all.find((c) => c.system === sys);
     return new Set(all.map((c) => c.gameId)).size === 1 ? all[0] : undefined;
   };
+  // Names from other sets ("The Legend of Zelda - ...", "Kirby - Mass Attack", "Sonic CD (USA)" for Redump's
+  // "Sonic CD (USA) (RE125)"): the title without regions or tags, within the folder's system, when it means one game.
+  // Translations and hacks are other games and stay unidentified
+  const folderOf = (p: string) => (p.startsWith(base) ? p.slice(base.length).split('/')[0] : '');
+  const titleSystems = [...new Set(roms.filter((r) => !r.hashes.some((h) => known.has(h))).map((r) => systemsOf.get(r.path) ?? byFolder.get(folderOf(r.path))).filter((x): x is string => !!x))];
+  const titles = new Map<string, Map<string, Set<number>>>();
+  for (const slug of titleSystems) titles.set(slug, await titleIndex(slug));
+  const titleHit = (r: (typeof roms)[number], folder: string) => {
+    const sys = systemsOf.get(r.path) ?? byFolder.get(folder);
+    const name = romName(r.path);
+    if (!sys || FAN_WORK.test(name)) return undefined;
+    const games = titles.get(sys)?.get(normTitle(name));
+    return games?.size === 1 ? { romId: null, gameId: [...games][0] } : undefined;
+  };
   const rows = roms.map((r) => {
     const folder = r.path.startsWith(base) ? r.path.slice(base.length).split('/')[0] : '';
-    const hit = r.hashes.map((h) => known.get(h)).find(Boolean) ?? nameHit(r, folder);
+    const hit = r.hashes.map((h) => known.get(h)).find(Boolean) ?? nameHit(r, folder) ?? titleHit(r, folder);
     return {
       deviceId: device.id,
       pathHash: crypto.createHash('sha1').update(r.path).digest('hex'),

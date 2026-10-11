@@ -2131,10 +2131,13 @@ test('sync client: device inventory, fetching missing roms, sync on request, dir
   // Files without a hash a database knows (big ones go unhashed, .chd never hashes like the dump) still count by name
   const token = claim.json.token as string;
   const named = `${root}/roms/nes/${SMB3}.chd`;
-  await fetch(`${base}/api/v1/agent/sync`, { method: 'POST', headers: { 'X-Device-Token': token, 'Content-Type': 'text/plain' }, body: `rom\t${named}\t\t\t700000000\nrom\t${root}/roms/nes/Nobody Knows This (World).nes\t\t\t1\n` });
+  await fetch(`${base}/api/v1/agent/sync`, { method: 'POST', headers: { 'X-Device-Token': token, 'Content-Type': 'text/plain' }, body: `rom\t${named}\t\t\t700000000\nrom\t${root}/roms/nes/Nobody Knows This (World).nes\t\t\t1\nrom\t${root}/roms/nes/The Super Mario Bros 3 (Spain).nes\t\t\t1\nrom\t${root}/roms/nes/Super Mario Bros 3 (Spain) [T+Spa].nes\t\t\t1\n` });
   inv = (await api('GET', `/devices/${id}/inventory`)).json;
   assert.equal(inv.items.find((i: any) => i.path === named)?.gameId, ctx.smb3GameId, 'identified by its name');
   assert.equal(inv.items.find((i: any) => i.name === 'Nobody Knows This (World).nes')?.gameId, null);
+  // Another set's way of naming it: the same game by its title; a fan translation is another game
+  assert.equal(inv.items.find((i: any) => i.name === 'The Super Mario Bros 3 (Spain).nes')?.gameId, ctx.smb3GameId, 'identified by its title');
+  assert.equal(inv.items.find((i: any) => i.name === 'Super Mario Bros 3 (Spain) [T+Spa].nes')?.gameId, null);
 });
 
 test('device config: your settings reach Knulli and Onion through the shell client; copies, edits and restores', async () => {
