@@ -63,4 +63,8 @@
     <string name="received_channel">Saves received</string>
     <string name="received_one">Save received: %1$s</string>
     <string name="received_many">%1$d saves received: %2$s and more</string>
+    <string name="dolphin_grant">GameCube saves (Dolphin): allow access</string>
+    <string name="dolphin_linked">GameCube saves (Dolphin): connected</string>
+    <string name="dolphin_done">Dolphin shared: GameCube saves sync from now on.</string>
+    <string name="dolphin_wrong">That is not Dolphin\'s folder. Open the menu (☰) in the picker, choose “Dolphin Emulator” and tap “Use this folder”.</string>
 </resources>

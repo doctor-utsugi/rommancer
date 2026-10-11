@@ -65,6 +65,18 @@ class Api(private val server: String, private val token: String? = null) {
         }
     }
 
+    /** A GET whose body is binary; null when the server answers 204 (nothing to send) */
+    fun bytes(path: String, headers: Map<String, String>): ByteArray? {
+        val conn = open(path, "GET", headers)
+        try {
+            check(conn)
+            if (conn.responseCode == 204) return null
+            return conn.inputStream.use { it.readBytes() }
+        } finally {
+            conn.disconnect()
+        }
+    }
+
     /** Streams a file as the request body (roms can be large) */
     fun uploadFile(path: String, file: File, headers: Map<String, String> = emptyMap()): String {
         val conn = open(path, "POST", headers)

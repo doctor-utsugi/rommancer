@@ -2171,11 +2171,12 @@ test('device config: your settings reach Knulli and Onion through the shell clie
   assert.match(text, /^global\.retroachievements\.username=raplayer$/m);
   assert.match(text, /^global\.retroachievements\.password=ra-secret-pass$/m);
   assert.match(text, /^global\.retroachievements\.token=RATOKEN123$/m);
-  assert.match(text, /^wifi\.ssid=Casa$/m);
-  assert.equal(text.split('\n').find((l) => l.startsWith('wifi.key=')), 'wifi.key=casa\\;password\\$1', 'batocera.conf escapes ; and $');
-  assert.match(text, /^wifi2\.ssid=Piso 5G$/m);
-  assert.match(text, /^wifi3\.ssid=Old network$/m);
-  assert.match(text, /^wifi3\.key=old\\#key$/m);
+  // The console's own network keeps its slot (never reshuffled); ours take the free ones
+  assert.match(text, /^wifi\.ssid=Old network$/m);
+  assert.match(text, /^wifi\.key=old\\#key$/m);
+  assert.match(text, /^wifi2\.ssid=Casa$/m);
+  assert.equal(text.split('\n').find((l) => l.startsWith('wifi2.key=')), 'wifi2.key=casa\\;password\\$1', 'batocera.conf escapes ; and $');
+  assert.match(text, /^wifi3\.ssid=Piso 5G$/m);
   assert.match(text, /^wifi\.hidden\.ssid=Oculta$/m);
   assert.match(text, /^audio\.volume=80$/m, 'other settings stay');
   assert.match(text, /^#wifi\.ssid=example$/m, 'comments stay');
@@ -2193,7 +2194,8 @@ test('device config: your settings reach Knulli and Onion through the shell clie
   await run('knulli', ['config']);
   text = fs.readFileSync(conf, 'utf8');
   assert.doesNotMatch(text, /Piso 5G/);
-  assert.match(text, /^wifi2\.ssid=Old network$/m);
+  assert.match(text, /^wifi\.ssid=Old network$/m);
+  assert.match(text, /^wifi2\.ssid=Casa$/m);
   const versions = (await api('GET', `/devices/${kId}/config`)).json.versions.length;
   await run('knulli', ['config']);
   assert.equal((await api('GET', `/devices/${kId}/config`)).json.versions.length, versions, 'no copy when nothing changes');
@@ -2837,4 +2839,116 @@ test('memory cards: PS1 saves sync entry by entry, several per game, only into a
   assert.equal(again.result.pushed, 0);
   assert.match(await a.sync(), /0 up, 1 down, 0 errors/);
   assert.deepEqual(names(a.card), [NQ, S01, S02, 'BASCUS-94163CQ-S03'].sort());
+});
+
+test('memory cards: GameCube saves sync one by one between Dolphin GCI folders and card images, by region', async () => {
+  const { formatGcCard, readGcCard, readGci, writeGcCard } = await import('../src/modules/saves/gccard.js');
+  const client = path.join(ROOT, 'clients/linux/rommancer-sync.sh');
+  const dir = path.join(DATA, 'gccards');
+  fs.rmSync(dir, { recursive: true, force: true });
+  const BLOCK = 0x2000;
+  const gci = (game: string, file: string, blocks: number, seed: number) => {
+    const d = Buffer.alloc(0x40, 0xff);
+    d.write(game, 0, 'latin1');
+    d.write('01', 4, 'latin1');
+    d[7] = 0;
+    d.fill(0, 8, 0x28);
+    d.write(file, 8, 'latin1');
+    d.writeUInt32BE(1000 + seed, 0x28);
+    d.writeUInt16BE(blocks, 0x38);
+    d.writeUInt32BE(0, 0x3c);
+    const data = Buffer.alloc(blocks * BLOCK, seed);
+    data.fill(0, 0, 0x40);
+    data.write(`Game ${game}`, 0, 'latin1');
+    return Buffer.concat([d, data]);
+  };
+  let clock = Math.floor(Date.now() / 1000) + 10;
+  const put = (f: string, buf: Buffer) => {
+    fs.mkdirSync(path.dirname(f), { recursive: true });
+    fs.writeFileSync(f, buf);
+    clock += 2;
+    fs.utimesSync(f, clock, clock);
+  };
+  const bin = path.join(dir, 'bin');
+  fs.mkdirSync(bin, { recursive: true });
+  fs.writeFileSync(path.join(bin, 'ps'), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
+  const device = async (name: string) => {
+    const root = path.join(dir, name);
+    const state = path.join(dir, `${name}-state`);
+    fs.mkdirSync(path.join(root, 'roms/gamecube'), { recursive: true });
+    fs.mkdirSync(path.join(root, 'saves'), { recursive: true });
+    const r = await api('POST', '/link/claim', { name, firmware: 'knulli', root });
+    assert.equal(r.status, 201, JSON.stringify(r.json));
+    fs.mkdirSync(state, { recursive: true });
+    fs.writeFileSync(path.join(state, 'config'), `SERVER=${base}\nTOKEN=${r.json.token}\nUSER=admin\n`);
+    const sync = async () =>
+      (
+        await execFileP('sh', [client, 'sync'], {
+          env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, ROMMANCER_STATE: state, ROMMANCER_ROOT: root, ROMMANCER_FIRMWARE: 'knulli', VERBOSE: '1' },
+        })
+      ).stdout;
+    const usa = path.join(root, 'saves/dolphin-emu/GC/USA/Card A');
+    return { id: r.json.deviceId as number, root, sync, usa, raw: path.join(root, 'saves/dolphin-emu/GC/MemoryCardA.USA.raw') };
+  };
+  const names = (folder: string) => (fs.existsSync(folder) ? fs.readdirSync(folder).filter((f) => f.endsWith('.gci')).sort() : []);
+
+  // Console A plays in GCI folder mode: two saves of one game, a ghost of another
+  const a = await device('gc-a');
+  put(path.join(a.usa, '01-GZLE-gczelda.gci'), gci('GZLE', 'gczelda', 2, 1));
+  put(path.join(a.usa, '01-GZLE-gczelda2.gci'), gci('GZLE', 'gczelda2', 1, 2));
+  put(path.join(a.usa, '8P-GFZE-f_zero.dat.gci'), gci('GFZE', 'f_zero.dat', 4, 3));
+  assert.match(await a.sync(), /3 up, 0 down, 0 errors/);
+  const entries = (await api('GET', '/saves?kind=ENTRY')).json.filter((s: any) => /^\w\w-G/.test(s.baseName));
+  assert.deepEqual(entries.map((s: any) => s.baseName).sort(), ['01-GFZE-f_zero.dat', '01-GZLE-gczelda', '01-GZLE-gczelda2']);
+  assert.match(await a.sync(), /0 up, 0 down, 0 errors/);
+
+  // Console B, GCI folder too, with a save of its own: it goes up first; files for A's saves are made once the
+  // server has read every file of the folder (a file not read yet may hold any of them)
+  const b = await device('gc-b');
+  put(path.join(b.usa, '01-GMSE-mario.gci'), gci('GMSE', 'mario', 3, 9));
+  assert.match(await b.sync(), /1 up, 0 down, 0 errors/);
+  assert.match(await b.sync(), /0 up, 3 down, 0 errors/);
+  assert.deepEqual(names(b.usa), ['01-GFZE-f_zero.dat.gci', '01-GMSE-mario.gci', '01-GZLE-gczelda.gci', '01-GZLE-gczelda2.gci']);
+  assert.equal(readGci(fs.readFileSync(path.join(b.usa, '01-GZLE-gczelda.gci'))).sha1, readGci(gci('GZLE', 'gczelda', 2, 1)).sha1);
+  assert.match(await b.sync(), /0 up, 0 down, 0 errors/);
+  assert.match(await a.sync(), /0 up, 1 down, 0 errors/);
+  assert.deepEqual(names(a.usa), ['01-GMSE-mario.gci', '01-GZLE-gczelda.gci', '01-GZLE-gczelda2.gci', '8P-GFZE-f_zero.dat.gci'], 'files keep the name they had');
+
+  // Console C keeps a card image (USA) holding a European save: it goes up, the American saves go in, and the
+  // European one reaches no American folder
+  const c = await device('gc-c');
+  put(c.raw, writeGcCard(formatGcCard(4, 42n), [readGci(gci('GZLP', 'gczelda', 2, 7))]).card);
+  assert.match(await c.sync(), /1 up, 1 down, 0 errors/);
+  let img = readGcCard(fs.readFileSync(c.raw));
+  assert.deepEqual(img.problems, []);
+  assert.deepEqual(img.entries.map((e) => e.name).sort(), ['01-GFZE-f_zero.dat', '01-GMSE-mario', '01-GZLE-gczelda', '01-GZLE-gczelda2', '01-GZLP-gczelda']);
+  assert.match(await c.sync(), /0 up, 0 down, 0 errors/);
+  assert.match(await a.sync(), /0 up, 0 down, 0 errors/);
+
+  // A deletes a save in Dolphin (it renames the file): it stays deleted there
+  fs.renameSync(path.join(a.usa, '01-GZLE-gczelda2.gci'), path.join(a.usa, '01-GZLE-gczelda2.gci.deleted'));
+  assert.match(await a.sync(), /0 up, 0 down, 0 errors/);
+  assert.match(await a.sync(), /0 up, 0 down, 0 errors/);
+  assert.ok(!names(a.usa).includes('01-GZLE-gczelda2.gci'));
+  // until it changes elsewhere
+  put(path.join(b.usa, '01-GZLE-gczelda2.gci'), gci('GZLE', 'gczelda2', 1, 22));
+  assert.match(await b.sync(), /1 up, 0 down, 0 errors/);
+  assert.match(await a.sync(), /0 up, 1 down, 0 errors/);
+  assert.equal(readGci(fs.readFileSync(path.join(a.usa, '01-GZLE-gczelda2.gci'))).sha1, readGci(gci('GZLE', 'gczelda2', 1, 22)).sha1);
+
+  // A save made on C into its image (PSO, signed with that card's serial) reaches A as a file, the same save
+  put(c.raw, writeGcCard(fs.readFileSync(c.raw), [readGci(gci('GPOE', 'PSO_SYSTEM', 2, 5))]).card);
+  assert.match(await c.sync(), /1 up, \d down, 0 errors/);
+  assert.match(await a.sync(), /0 up, 1 down, 0 errors/);
+  assert.equal(readGci(fs.readFileSync(path.join(a.usa, '01-GPOE-PSO_SYSTEM.gci'))).sha1, readGci(gci('GPOE', 'PSO_SYSTEM', 2, 5)).sha1);
+  img = readGcCard(fs.readFileSync(c.raw));
+  assert.equal(img.entries.find((e) => e.name === '01-GZLE-gczelda2')?.sha1, readGci(gci('GZLE', 'gczelda2', 1, 22)).sha1);
+
+  // A folder found empty (a new card, a reinstall) gets every save back
+  fs.rmSync(b.usa, { recursive: true });
+  fs.mkdirSync(b.usa, { recursive: true });
+  assert.match(await b.sync(), /0 up, 5 down, 0 errors/);
+  assert.equal(names(b.usa).length, 5);
+  const conflicts = (await api('GET', '/saves/conflicts')).json.filter((x: any) => x.save.kind === 'ENTRY');
+  assert.equal(conflicts.length, 0);
 });

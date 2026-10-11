@@ -22,7 +22,7 @@
 #                                   Menu++...) mounted on this computer; the link lives on the card itself,
 #                                   so any computer with this script can sync it. Without a command: sync.
 set -u
-CLIENT_VERSION=20261016
+CLIENT_VERSION=20261017
 # A clock before this date is surely wrong (no battery-backed clock); kept apart from the version, which may run ahead
 CLOCK_MIN=20261001
 # Onion keeps curl (with TLS) and friends outside the default PATH
@@ -380,7 +380,7 @@ thumb_get() {
 # because emulators keep the card in memory and write it back whole
 emu_running() {
   # Every process (busybox ps lists them all and has no -e)
-  { ps -e -o args= 2>/dev/null || ps 2>/dev/null; } | grep -q '[r]etroarch\|[m]inarch\|[d]uckstation\|[e]mulatorlauncher\|[p]csx\|[s]wanstation\|[e]psxe\|[r]etrorun'
+  { ps -e -o args= 2>/dev/null || ps 2>/dev/null; } | grep -q '[r]etroarch\|[d]olphin-emu\|[m]inarch\|[d]uckstation\|[e]mulatorlauncher\|[p]csx\|[s]wanstation\|[e]psxe\|[r]etrorun'
 }
 
 # A memory card with the server's newer saves put in ("cget"): swapped in only if the file is still the one
@@ -419,10 +419,15 @@ notify_received() {
   if lang_es; then
     if [ "$n" -eq 1 ]; then msg="Partida recibida: $first"; else msg="$n partidas recibidas: $first y más"; fi
   elif [ "$n" -eq 1 ]; then msg="Save received: $first"; else msg="$n saves received: $first and more"; fi
+  notify "$msg"
+}
+
+# A popup on the console: EmulationStation's on Knulli/Batocera, the desktop's on PCs
+notify() {
   [ -n "${FW:-}" ] || detect
   case "$FW" in
-    knulli|batocera) printf 'Rommancer · %s' "$msg" > "$WORK/notify" && curl -fsS -m 3 -X POST -H 'Content-Type: text/plain' --data-binary "@$WORK/notify" "${ROMMANCER_ES_NOTIFY:-http://127.0.0.1:1234/notify}" >/dev/null 2>&1 ;;
-    retroarch-desktop) command -v notify-send >/dev/null 2>&1 && notify-send -a Rommancer -i media-floppy Rommancer "$msg" 2>/dev/null ;;
+    knulli|batocera) printf 'Rommancer · %s' "$1" > "$WORK/notify" && curl -fsS -m 3 -X POST -H 'Content-Type: text/plain' --data-binary "@$WORK/notify" "${ROMMANCER_ES_NOTIFY:-http://127.0.0.1:1234/notify}" >/dev/null 2>&1 ;;
+    retroarch-desktop) command -v notify-send >/dev/null 2>&1 && notify-send -a Rommancer -i media-floppy Rommancer "$1" 2>/dev/null ;;
   esac
   return 0
 }
@@ -430,8 +435,12 @@ notify_received() {
 # "version<TAB>date" of the first sync this version made (clock set by then), for the Status screens
 VERSION_FILE="$STATE/version"
 mark_version() {
-  [ "$(cut -f1 "$VERSION_FILE" 2>/dev/null)" = "$CLIENT_VERSION" ] && return 0
+  was="$(cut -f1 "$VERSION_FILE" 2>/dev/null)"
+  [ "$was" = "$CLIENT_VERSION" ] && return 0
   printf '%s\t%s\n' "$CLIENT_VERSION" "$(date '+%Y-%m-%d %H:%M')" > "$VERSION_FILE" 2>/dev/null
+  # Said on screen when it updated itself (not on a first install, the setup already shows it)
+  [ -n "$was" ] && [ -z "$SD" ] && [ -z "${ROMMANCER_NO_NOTIFY:-}" ] && ! playing || return 0
+  if lang_es; then notify "Actualizado a la versión $CLIENT_VERSION"; else notify "Updated to version $CLIENT_VERSION"; fi
 }
 version_line() {
   since="$(cut -f2 "$VERSION_FILE" 2>/dev/null)"

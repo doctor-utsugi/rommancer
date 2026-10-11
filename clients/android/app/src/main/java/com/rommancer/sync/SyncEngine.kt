@@ -21,6 +21,7 @@ class SyncEngine(private val context: Context, private val store: Store, private
     }
 
     private val root: File = Environment.getExternalStorageDirectory()
+    private val dolphin = Dolphin(context, store)
     private val cacheFile = File(context.filesDir, "hashes.tsv")
     private val cache = HashMap<String, Triple<Long, Long, String>>()
 
@@ -68,9 +69,20 @@ class SyncEngine(private val context: Context, private val store: Store, private
                 request.append("rom\t").append(rom.path).append('\t').append(hashes.getOrElse(0) { "" }).append('\t').append(hashes.getOrElse(1) { "" }).append('\t').append(rom.length()).append('\n')
             }
         }
+        val listed = HashSet<String>()
         saveDirs.forEach { dir ->
             dir.walkTopDown().filter { it.isFile && !it.name.startsWith(".") && isSave(it.name, exts) }.forEach { save ->
-                request.append("file\t").append(save.path).append('\t').append(sha1(save, 0)).append('\n')
+                if (listed.add(save.path)) request.append("file\t").append(save.path).append('\t').append(sha1(save, 0)).append('\n')
+            }
+        }
+        // Dolphin's GameCube saves: one .gci per save, in its own folder (shared with us) or an old shared-storage
+        // one. Only to servers that know them (they list .gci among the save extensions)
+        if (".gci" in exts) {
+            runCatching { dolphin.saves() }.getOrDefault(emptyList()).forEach { save ->
+                runCatching { sha1Of(save) }.onSuccess { request.append("file\t").append(save.path).append('\t').append(it).append('\n') }
+            }
+            Dolphin.legacySaves(root).forEach { save ->
+                if (listed.add(save.path)) request.append("file\t").append(save.path).append('\t').append(sha1(save, 0)).append('\n')
             }
         }
         saveCache()
@@ -95,10 +107,17 @@ class SyncEngine(private val context: Context, private val store: Store, private
                             "X-Rom-B64" to Api.b64(f[2]), "X-Path-B64" to Api.b64(f[1]),
                             "X-Rom-Sha1" to (romHashes[f[2]] ?: ""), "X-Save-Exact" to (f.getOrNull(3) ?: "0"),
                         )
-                        val reply = api.text("/agent/upload", "POST", File(f[1]).readBytes(), headers)
+                        val reply = api.text("/agent/upload", "POST", readSave(f[1]), headers)
                         up++
-                        // A new savestate: the server asks for its screenshot
-                        reply.lines().map { it.split('\t') }.filter { it.size >= 3 && it[0] == "tput" }.forEach { runCatching { thumbPut(api, it[1], it[2]) } }
+                        for (r in reply.lines().map { it.split('\t') }) when {
+                            // A new savestate: the server asks for its screenshot
+                            r.size >= 3 && r[0] == "tput" -> runCatching { thumbPut(api, r[1], r[2]) }
+                            // A memory card file it read now holds newer saves of other devices
+                            r.size >= 3 && r[0] == "cget" -> if (runCatching { cardGet(api, r[1], r[2], r.getOrElse(3) { "-" }) }.getOrDefault(false)) {
+                                down++
+                                received += File(r[1]).nameWithoutExtension
+                            }
+                        }
                     }
                     "get" -> {
                         api.download("/agent/file?v=${f[2]}", mapOf("X-Rom-B64" to Api.b64(f[3]), "X-Path-B64" to Api.b64(f[1])), File(f[1]))
@@ -108,6 +127,10 @@ class SyncEngine(private val context: Context, private val store: Store, private
                     // Savestate screenshots: ours when the server lacks it, the server's beside a state it sent
                     "tput" -> thumbPut(api, f[1], f[2])
                     "tget" -> api.download("/agent/thumb?v=${f[2]}", emptyMap(), File(f[1]))
+                    "cget" -> if (cardGet(api, f[1], f[2], f.getOrElse(3) { "-" })) {
+                        down++
+                        received += File(f[1]).nameWithoutExtension
+                    }
                 }
             } catch (e: Exception) {
                 errors++
@@ -118,6 +141,43 @@ class SyncEngine(private val context: Context, private val store: Store, private
             store.lastResult = "${java.text.DateFormat.getDateTimeInstance().format(java.util.Date())}: $it"
             store.addLog("sync: $it")
         }
+    }
+
+    private fun readSave(path: String): ByteArray = if (Dolphin.isVirtual(path)) dolphin.read(path) else File(path).readBytes()
+
+    /**
+     * A memory card file with the server's newer saves ("cget"), written only if it is still the one the server
+     * read (EXPECT, "-" for none). Only Dolphin's .gci files, one save each: Android cannot tell whether an
+     * emulator holds a whole card (PS1, Dolphin's .raw images), and Dolphin only writes back the saves a game changed.
+     */
+    private fun cardGet(api: Api, path: String, expect: String, rom: String): Boolean {
+        if (!path.lowercase().endsWith(".gci")) return false
+        val data = api.bytes("/agent/card?expect=$expect", mapOf("X-Path-B64" to Api.b64(path), "X-Rom-B64" to Api.b64(rom)))
+        if (data == null || data.isEmpty()) return false
+        val now = try {
+            sha1Of(readSave(path))
+        } catch (_: java.io.FileNotFoundException) {
+            "-"
+        }
+        if (now != expect) return false
+        if (Dolphin.isVirtual(path)) dolphin.write(path, data) else {
+            val file = File(path)
+            file.parentFile?.mkdirs()
+            val tmp = File("$path.rommancer-tmp")
+            tmp.writeBytes(data)
+            if (!tmp.renameTo(file)) { tmp.copyTo(file, overwrite = true); tmp.delete() }
+        }
+        // Told at once: a game saved on it before the next sync is then this device's newer save
+        runCatching { api.text("/agent/card/ack?sha=${sha1Of(data)}", "POST", ByteArray(0), mapOf("X-Path-B64" to Api.b64(path))) }
+        return true
+    }
+
+    private fun sha1Of(data: ByteArray): String = MessageDigest.getInstance("SHA-1").digest(data).joinToString("") { "%02x".format(it) }
+
+    /** A Dolphin save's hash, from the cache while its size and time are unchanged */
+    private fun sha1Of(save: Dolphin.Save): String {
+        cache[save.path]?.let { (size, mtime, hash) -> if (size == save.size && mtime == save.modified) return hash }
+        return sha1Of(dolphin.read(save.path)).also { cache[save.path] = Triple(save.size, save.modified, it) }
     }
 
     private fun thumbPut(api: Api, path: String, version: String) {

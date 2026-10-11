@@ -275,6 +275,26 @@ private fun Linked(store: Store, onUnlinked: () -> Unit) {
         screen = Screen.Message(if (r.resultCode == android.app.Activity.RESULT_OK) wifiDone else wifiCancelled)
     }
 
+    // Dolphin's folder, shared once through the system picker (it opens there); a sync follows at once
+    val dolphinDone = stringResource(R.string.dolphin_done)
+    val dolphinWrong = stringResource(R.string.dolphin_wrong)
+    val pickDolphin = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
+        if (uri == null) return@rememberLauncherForActivityResult
+        if (uri.authority != Dolphin.AUTHORITY) {
+            screen = Screen.Message(dolphinWrong)
+            return@rememberLauncherForActivityResult
+        }
+        Dolphin(context, store).link(uri)
+        settingsTick++
+        screen = Screen.Working(dolphinDone)
+        scope.launch {
+            val text = withContext(Dispatchers.IO) {
+                runCatching { "$dolphinDone\n" + SyncEngine(context, store) { progress = it }.sync() }.getOrElse { it.message ?: "error" }
+            }
+            screen = Screen.Message(text)
+        }
+    }
+
     // Shizuku starting, stopping or granting its permission redraws its menu entry
     DisposableEffect(Unit) {
         val granted = rikka.shizuku.Shizuku.OnRequestPermissionResultListener { _, _ -> settingsTick++ }
@@ -348,6 +368,10 @@ private fun Linked(store: Store, onUnlinked: () -> Unit) {
                         }
                     }
                 }
+            }
+            if (Dolphin.installed(context)) {
+                val dolphinLinked = remember(settingsTick) { Dolphin(context, store).linked }
+                MenuItem(stringResource(if (dolphinLinked) R.string.dolphin_linked else R.string.dolphin_grant)) { pickDolphin.launch(Dolphin.initialUri) }
             }
             val shizuku = remember(settingsTick) { Privileged.state() }
             val titleConfig = stringResource(R.string.applying_config)

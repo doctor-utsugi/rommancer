@@ -109,7 +109,7 @@ export interface EmulatorSeed {
   slug: string;
   name: string;
   core?: string;
-  saveFormat?: 'raw' | 'ps1card' | 'ps1gme' | 'ps1vmp';
+  saveFormat?: 'raw' | 'ps1card' | 'ps1gme' | 'ps1vmp' | 'gcraw' | 'gci';
   saveExt: string;
   stateExt?: string;
 }
@@ -166,6 +166,10 @@ export const emulators: EmulatorSeed[] = [
   { slug: 'gba-cart', name: 'GBA cartridge (flashcart)', saveExt: '.sav' },
   { slug: 'snes9x', name: 'Snes9x (standalone)', saveExt: '.srm', stateExt: '.000' },
   { slug: 'duckstation', name: 'DuckStation', saveFormat: 'ps1card', saveExt: '.mcd', stateExt: '.sav' },
+  // Dolphin's GameCube memory cards, standalone or as the RetroArch core: one .gci per save in a "GCI folder"
+  // (GC/<USA|EUR|JAP>/Card A, the default) or a card image (GC/MemoryCardA.USA.raw)
+  { slug: 'dolphin-gci', name: 'Dolphin (GCI folder)', saveFormat: 'gci', saveExt: '.gci' },
+  { slug: 'dolphin-raw', name: 'Dolphin (memory card image)', saveFormat: 'gcraw', saveExt: '.raw' },
   { slug: 'epsxe', name: 'ePSXe', saveFormat: 'ps1card', saveExt: '.mcr' },
   { slug: 'dexdrive', name: 'DexDrive', saveFormat: 'ps1gme', saveExt: '.gme' },
   { slug: 'ps3-psp-vmp', name: 'PSP/PS3 Virtual Memory Card', saveFormat: 'ps1vmp', saveExt: '.vmp' },

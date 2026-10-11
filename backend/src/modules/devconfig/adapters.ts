@@ -103,20 +103,29 @@ const batocera = (confs: string[], backup: string[]): Adapter => ({
     }
     if (want.wifi.length || want.managed.length) {
       const ours = want.wifi.filter((w) => !w.hidden);
-      // Networks set up on the device itself keep a slot, so it never loses its way back
-      const own: DesiredSettings['wifi'] = [];
-      for (const slot of ['wifi', 'wifi2', 'wifi3']) {
-        const ssid = keyOf(text, `${slot}.ssid`);
-        const ss = ssid ? batoUnescape(ssid) : null;
-        if (!ss || want.managed.includes(ss) || ours.some((w) => w.ssid === ss) || own.some((w) => w.ssid === ss)) continue;
-        own.push({ ssid: ss, password: batoUnescape(keyOf(text, `${slot}.key`) ?? ''), hidden: false });
-      }
-      const room = ours.length ? Math.max(1, 3 - own.length) : 0;
-      const named = [...ours.slice(0, room), ...own].slice(0, 3);
-      const out = ours.slice(room);
-      if (out.length) notes.push(note('wifiFull', out.map((w) => w.ssid).join(', ')));
-      ['wifi', 'wifi2', 'wifi3'].forEach((slot, i) => {
-        const w = named[i];
+      // A network keeps the slot it is in, so a working setup is never reshuffled: ours get their password
+      // updated there, those set up on the device stay (its way back), ours missing take the free slots
+      const slots = ['wifi', 'wifi2', 'wifi3'];
+      const placed: (DesiredSettings['wifi'][number] | null)[] = slots.map((slot) => {
+        const raw = keyOf(text, `${slot}.ssid`);
+        const ss = raw ? batoUnescape(raw) : null;
+        if (!ss) return null;
+        const mine = ours.find((w) => w.ssid === ss);
+        if (mine) return mine;
+        if (want.managed.includes(ss)) return null;
+        return { ssid: ss, password: batoUnescape(keyOf(text, `${slot}.key`) ?? ''), hidden: false };
+      });
+      // The same network twice keeps its first slot
+      placed.forEach((w, i) => {
+        if (w && placed.findIndex((o) => o?.ssid === w.ssid) < i) placed[i] = null;
+      });
+      const missing = ours.filter((w) => !placed.some((o) => o?.ssid === w.ssid));
+      // With every slot taken by the device's own networks, the last one makes room for ours
+      if (missing.length && !placed.includes(null) && !placed.some((o) => o && ours.includes(o))) placed[slots.length - 1] = null;
+      for (let i = 0; i < placed.length && missing.length; i++) if (!placed[i]) placed[i] = missing.shift()!;
+      if (missing.length) notes.push(note('wifiFull', missing.map((w) => w.ssid).join(', ')));
+      slots.forEach((slot, i) => {
+        const w = placed[i];
         set[`${slot}.ssid`] = w ? batoEscape(w.ssid) : null;
         set[`${slot}.key`] = w ? batoEscape(w.password ?? '') : null;
       });
@@ -126,7 +135,7 @@ const batocera = (confs: string[], backup: string[]): Adapter => ({
         set['wifi.hidden.ssid'] = hidden ? batoEscape(hidden.ssid) : null;
         set['wifi.hidden.key'] = hidden ? batoEscape(hidden.password ?? '') : null;
       }
-      if (named.length || hidden) set['wifi.enabled'] = '1';
+      if (placed.some(Boolean) || hidden) set['wifi.enabled'] = '1';
     }
     if (Object.keys(set).length) {
       const next = setKeys(text, set);

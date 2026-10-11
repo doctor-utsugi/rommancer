@@ -175,6 +175,46 @@ the entries, never the card file as a whole.
 - **Whole cards from before.** PS1 cards stored whole as one save are split into entries when the server starts
   and kept, marked superseded, out of the lists. A card uploaded in the web app is split the same way.
 
+### Memory cards (GameCube)
+
+GameCube saves use the same machinery, through a codec per kind of card file (`cardcodec.ts`): a PS1 card, a
+GameCube card image, or a single `.gci` file, which is a card holding one entry. The user has one card per family
+(`ps1`, `gc`), so a save moves between every kind of card of its family.
+
+- **Entries.** Keyed as Dolphin names its files: maker, game code and the file name inside the card
+  (`01-GALE-SuperSmashBros0110290334`); one game often writes several (F-Zero GX's ghosts, PSO's characters). The
+  game comes from the game code matched against the Redump serial (`DL-DOL-GALE-USA`). Entries are stored as
+  canonical `.gci`: no block position, no copy counter, and the card serial PSO and F-Zero GX sign their system
+  file with (and its checksum) blanked, so the same save reads the same from any card. Dolphin signs those again
+  when it loads a `.gci`; written into a card image they are signed for that card. They download as `.gci`.
+- **Card images** (`gccard.ts`): Dolphin's `GC/MemoryCardA.<USA|EUR|JAP>.raw`, read and written as
+  `GCMemcard.cpp` does (header, two directory and two allocation table copies picked by update counter, checksums).
+  The updated tables go into the copies not in use, so the previous ones stay whole; a card with a damaged copy is
+  read but never written. An image is shared by every game of its region and gets that region's saves (by the game
+  code's last letter); Rommancer never makes one, since only Dolphin knows the serial it formats it with. Checked
+  against Dolphin's own code: same formatted card byte for byte, cards it validates, same signatures.
+- **GCI folders** (Dolphin's default since 2017): `GC/<region>/Card A/*.gci`, or `GC/<region>/*.gci` when the folder
+  is set in `Dolphin.ini` (ROCKNIX). Each file is a card file of its own. Saves of the folder's region it lacks get a
+  file named as Dolphin would; those wait until every file already in the folder has been read, since one not read
+  yet may hold any save. A save deleted in Dolphin (it renames the file to `.gci.deleted`) stays out until it
+  changes elsewhere; a folder found empty that held saves (a new card, a reinstall) gets them all back. Dolphin reads
+  the folder when a game starts and rewrites only the saves that game changed, so files are written only while no
+  Dolphin runs (`dolphin-emu` in the process list), like PS1 cards.
+- **Where they are.** Batocera and Knulli (standalone Dolphin, SM8250 on Knulli): `/userdata/saves/dolphin-emu/GC`;
+  the RetroArch core: `/userdata/saves/gamecube/User/GC`; ROCKNIX: `/storage/roms/bios/GC` (a card image unless the
+  GCI folder is chosen in ES). Both sit inside the folders clients already scan; the server asks for `.gci` and
+  `.raw` files where the device's layout has GameCube. Desktop Dolphin (`~/.local/share/dolphin-emu/GC`) is not
+  scanned yet.
+- **Android** (app 0.8.0). Dolphin keeps its user folder in `Android/data`, out of other apps' reach, but shares it
+  through its documents provider (`org.dolphinemu.dolphinemu.user`, document ids `root/<path>`). The menu entry
+  *GameCube saves (Dolphin)* opens the system folder picker (Dolphin is in its side menu); the granted tree is kept
+  for good. Its `.gci` files go to the server as `/dolphin-saf/<path in Dolphin's folder>`, a path outside the device
+  root that names the GCI folder like any other. The app writes only `.gci` files ("cget": a temporary file beside it,
+  then the old one replaced), never card images: Android cannot tell whether Dolphin is running, and Dolphin only
+  writes back the saves a game changed, so a save written while it runs is simply sent again later. Old builds that
+  kept the folder in shared storage (`dolphin-emu`, `mmjr-revamp`, `dolphin-mmjr`) are read as plain files. The app
+  lists Dolphin's saves only when the server's `exts` include `.gci`, so an older server never sees them.
+
 ## Credits
 
 The spinning save point of the setup screen is pre-rendered by `tools/render_savepoint.py` from

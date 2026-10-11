@@ -27,7 +27,7 @@ import { serverKey } from '../devices/ssh.js';
 import { devicePlan } from '../devices/plan.js';
 import { Prisma } from '@prisma/client';
 import { storeWifiBands } from '../devconfig/service.js';
-import { cardAction, commitOffer, deviceCard, findDeviceCard, gameForSerial, hasWantedSaves, isCardEmulator, namedCard, observeCard, prepareCard, recordOffer } from './cards.js';
+import { cardAction, commitOffer, deviceCard, findDeviceCard, gameForSerial, gcCardFile, gciFolderState, hasWantedSaves, isCardEmulator, namedCard, observeCard, prepareCard, recordOffer } from './cards.js';
 
 export const agentRouter = Router();
 
@@ -264,6 +264,35 @@ const relToRoot = (device: AgentDevice, abs: string) => {
   const root = trimRoot(device.rootPath);
   return abs.startsWith(root + '/') ? abs.slice(root.length + 1) : abs;
 };
+const absOf = (device: AgentDevice, rel: string) => (rel.startsWith('/') ? rel : path.posix.join(trimRoot(device.rootPath), rel));
+
+/**
+ * Lines for the GameCube saves in Dolphin's GCI folders: each .gci is a card file holding one save ("put" when it
+ * changed, "cget" when the server has a newer one), plus a "cget" for every save of the folder's region it lacks.
+ */
+async function gciLines(device: AgentDevice, present: Map<string, string>) {
+  const emu = await prisma.emulator.findUnique({ where: { slug: 'dolphin-gci' } });
+  if (!emu) return [];
+  const out: string[] = [];
+  const folders = new Set<string>();
+  for (const [p, h] of present) {
+    const gc = gcCardFile(p);
+    if (gc?.kind !== 'gci') continue;
+    folders.add(gc.folder);
+    const line = await cardLine(device, p, emu, { shared: false, gameId: null }, h, '-');
+    if (line) out.push(line);
+  }
+  // Folders known from earlier syncs count even when found empty
+  for (const c of await prisma.deviceCard.findMany({ where: { deviceId: device.id, emulatorId: emu.id }, select: { path: true } })) folders.add(path.posix.dirname(absOf(device, c.path)));
+  for (const folder of folders) {
+    const { absent, made } = await gciFolderState(device, emu, folder, (p) => relToRoot(device, p), present);
+    for (const c of [...absent, ...made]) {
+      const dc = await findDeviceCard(device.id, c.path);
+      if (dc && (await prepareCard(device, dc, emu, null))) out.push(`cget\t${absOf(device, dc.path)}\t-\t-`);
+    }
+  }
+  return out;
+}
 
 /** Emulator of a card file found by its name (pcsx-card2.mcd), or any PS1 one */
 async function namedCardEmulator(slug: string) {
@@ -388,6 +417,7 @@ agentRouter.post('/sync', express.text({ limit: '16mb', type: '*/*' }), async (r
     const line = await cardLine(device, p, emu, { shared: named.shared, gameId: named.serial ? await gameForSerial(named.serial) : null }, h, '-');
     if (line) out.push(line);
   }
+  out.push(...(await gciLines(device, present)));
   await prisma.device.update({ where: { id: device.id }, data: { lastSyncAt: new Date() } });
   res.type('text/plain').send(out.join('\n') + (out.length ? '\n' : ''));
 });
@@ -606,6 +636,8 @@ agentRouter.get('/roots', async (req, res) => {
     if (emu) [emu.saveExt, emu.stateExt].forEach((e) => e && exts.add(e.toLowerCase()));
     // Memory cards every game shares (pcsx-card2.mcd) or kept under a serial sit in the same folders
     if (emu && isCardEmulator(emu)) ['.mcd', '.mcr'].forEach((e) => exts.add(e));
+    // Dolphin's GameCube cards: a .gci per save, or a card image (MemoryCardA.USA.raw)
+    if (slug === 'gc') ['.gci', '.raw'].forEach((e) => exts.add(e));
   }
   lines.push(`exts\t${[...exts].join(' ')}`);
   res.type('text/plain').send(lines.join('\n') + '\n');
@@ -671,6 +703,13 @@ agentRouter.post('/upload', express.raw({ limit: '128mb', type: '*/*' }), async 
   const buf = Buffer.isBuffer(req.body) ? req.body : Buffer.alloc(0);
   if (!buf.length) throw badRequest('Empty file');
   const romPath = b64(req.header('x-rom-b64'));
+  // One GameCube save of a GCI folder
+  if (gcCardFile(filePath)?.kind === 'gci') {
+    const emu = await prisma.emulator.findUniqueOrThrow({ where: { slug: 'dolphin-gci' } });
+    const dc = await deviceCard(device, relToRoot(device, filePath), emu, { shared: false, gameId: null });
+    res.type('text/plain').send(await cardUpload(device, dc, emu, filePath, buf, '-'));
+    return;
+  }
   // A card file named for no rom (shared, or kept under a serial)
   const named = namedCard(path.posix.basename(filePath));
   if (named && (!romPath || romPath === '-')) {

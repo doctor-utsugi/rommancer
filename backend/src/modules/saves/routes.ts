@@ -14,7 +14,7 @@ import { layoutOf } from '../devices/sink.js';
 import { raDefaults } from '../../seed/data.js';
 import { convertSave, type SaveFormat } from './convert.js';
 import { identifyRom, parseSaveFile, readThumb, readVersion, removeVersion, storeThumb, storeVersion } from './service.js';
-import { mainCard, readSnapshot, splitWholeCard } from './cards.js';
+import { cardFamily, mainCard, readSnapshot, splitWholeCard } from './cards.js';
 import './sync.js';
 
 export const savesRouter = Router();
@@ -138,8 +138,9 @@ savesRouter.get('/', async (req, res) => {
   res.json(await withCoreWarnings(u.id, saves));
 });
 
-/** A save's file name: memory card entries download as single saves (.mcs) */
-const fileExt = (s: { kind: string; emulator: Emulator }, emu: Emulator = s.emulator) => (s.kind === 'ENTRY' ? '.mcs' : s.kind === 'SAVE' ? emu.saveExt : (emu.stateExt ?? '.state'));
+/** A save's file name: memory card entries download as single saves (.mcs for PS1, .gci for GameCube) */
+const fileExt = (s: { kind: string; emulator: Emulator }, emu: Emulator = s.emulator) =>
+  s.kind === 'ENTRY' ? (cardFamily(s.emulator) === 'gc' ? '.gci' : '.mcs') : s.kind === 'SAVE' ? emu.saveExt : (emu.stateExt ?? '.state');
 
 // ---------- memory card files on the user's devices ----------
 

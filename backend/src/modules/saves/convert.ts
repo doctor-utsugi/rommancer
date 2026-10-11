@@ -7,7 +7,8 @@
 import crypto from 'node:crypto';
 import { HttpError } from '../../lib/http.js';
 
-export type SaveFormat = 'raw' | 'ps1card' | 'ps1gme' | 'ps1vmp';
+/** gcraw: a GameCube card image (Dolphin .raw); gci: one GameCube save per file (Dolphin's GCI folders) */
+export type SaveFormat = 'raw' | 'ps1card' | 'ps1gme' | 'ps1vmp' | 'gcraw' | 'gci';
 
 const PS1_SIZE = 0x20000;
 const GME_HEADER = 3904;
@@ -100,6 +101,11 @@ const isPs1 = (f: SaveFormat) => f.startsWith('ps1');
 
 /** Convierte un save entre formatos. targetSize permite recortar/rellenar SRAM (raw). */
 export function convertSave(buf: Buffer, from: SaveFormat, to: SaveFormat, targetSize?: number): Buffer {
+  // GameCube cards go entry by entry (cards.ts), never converted whole
+  if (from.startsWith('gc') || to.startsWith('gc')) {
+    if (from !== to) throw new HttpError(400, `Incompatible formats ${from} -> ${to}`);
+    return buf;
+  }
   if (isPs1(from) !== isPs1(to)) throw new HttpError(400, `Incompatible formats ${from} -> ${to}`);
   if (isPs1(from)) {
     const raw = ps1ToRaw(buf, from);

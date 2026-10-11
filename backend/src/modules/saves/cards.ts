@@ -18,12 +18,12 @@ import path from 'node:path';
 import { Prisma, type Device, type DeviceCard, type Emulator, type Save } from '@prisma/client';
 import { env } from '../../config/env.js';
 import { prisma } from '../../lib/prisma.js';
-import { convertSave, ps1ToRaw, type SaveFormat } from './convert.js';
-import { formatPs1Card, readMcs, readPs1Card, writePs1Card, type Ps1Card, type Ps1Entry } from './ps1card.js';
+import { codecFor, type CardEntry, type ReadCard } from './cardcodec.js';
+import { gcRegion } from './gccard.js';
 import { setBase, sha1 } from './core.js';
 import { readVersion, storeVersion } from './service.js';
 
-export const cardFamily = (emu: Pick<Emulator, 'saveFormat'>) => (emu.saveFormat.startsWith('ps1') ? 'ps1' : null);
+export const cardFamily = (emu: Pick<Emulator, 'saveFormat'>) => codecFor(emu)?.family ?? null;
 export const isCardEmulator = (emu: Pick<Emulator, 'saveFormat'>) => cardFamily(emu) !== null;
 
 /** Card files every game shares, by name, and the emulator that writes them */
@@ -36,9 +36,13 @@ const SHARED_CARDS: [RegExp, string][] = [
 /** Per-game cards named after the disc's serial (PCSX-ReARMed "serial", SwanStation and DuckStation "PerGame") */
 const SERIAL_CARD = /^([A-Z]{4}-\d{5})_[1-8]\.mcd$/i;
 
+/** Dolphin's GameCube card images, one per slot and region (MemoryCardA.USA.raw, MemoryCardA.USA.251.raw) */
+const GC_IMAGE = /^MemoryCard[AB]\.(USA|EUR|JAP)(?:\.\d+)?\.raw$/i;
+
 /** A card file found by its name alone (not named after a rom): shared, or kept for the game of a serial */
 export function namedCard(fileName: string): { shared: boolean; serial: string | null; emulator: string } | null {
   for (const [re, emulator] of SHARED_CARDS) if (re.test(fileName)) return { shared: true, serial: null, emulator };
+  if (GC_IMAGE.test(fileName)) return { shared: true, serial: null, emulator: 'dolphin-raw' };
   const m = SERIAL_CARD.exec(fileName);
   return m ? { shared: false, serial: m[1].toUpperCase(), emulator: 'ra-pcsx-rearmed' } : null;
 }
@@ -65,11 +69,17 @@ export async function mainCard(userId: number, family: string) {
   return prisma.memoryCard.upsert({ where: { userId_family_name: { userId, family, name: 'Main' } }, create: { userId, family, name: 'Main' }, update: {} });
 }
 
-/** The game an entry belongs to, by the product code in its name; the card's own game when the code finds none */
-export async function gameForEntry(code: string | null, fallback: number | null) {
+/**
+ * The game an entry belongs to, by the code in its name (PS1 product code, GameCube game code, matched against the
+ * discs' serials: "SLUS-00067", "DL-DOL-GALE-USA"); the card's own game when the code finds none
+ */
+export async function gameForEntry(code: string | null, fallback: number | null, family: string = 'ps1') {
   if (!code) return { gameId: fallback, romId: null };
   const roms = await prisma.rom.findMany({
-    where: { game: { system: { slug: 'psx' } }, OR: [{ serial: code }, { serial: { startsWith: `${code}-` } }] },
+    where:
+      family === 'gc'
+        ? { game: { system: { slug: 'gc' } }, serial: { startsWith: `DL-DOL-${code}-` } }
+        : { game: { system: { slug: 'psx' } }, OR: [{ serial: code }, { serial: { startsWith: `${code}-` } }] },
     select: { id: true, gameId: true },
     take: 20,
   });
@@ -152,8 +162,10 @@ export async function forgetDeviceCard(dc: DeviceCard) {
   return prisma.deviceCard.update({ where: { id: dc.id }, data: { lastSha1: null, offerSha1: null, offer: Prisma.DbNull } });
 }
 
-function parseCard(buf: Buffer, emu: Emulator): Ps1Card {
-  return readPs1Card(ps1ToRaw(buf, emu.saveFormat as SaveFormat));
+function parseCard(buf: Buffer, emu: Emulator): ReadCard {
+  const codec = codecFor(emu);
+  if (!codec) throw new Error(`${emu.slug} keeps no memory card`);
+  return codec.read(buf);
 }
 
 /**
@@ -179,7 +191,7 @@ export async function observeCard(device: Device, dc: DeviceCard, emu: Emulator,
   const result = { uploaded: 0, conflicts: 0, removed: 0, problems: [] as string[] };
   const deviceSha1 = sha1(buf);
   await snapshot(dc, device.userId, buf, 'seen');
-  let card: Ps1Card;
+  let card: ReadCard;
   try {
     card = parseCard(buf, emu);
   } catch (e) {
@@ -197,8 +209,8 @@ export async function observeCard(device: Device, dc: DeviceCard, emu: Emulator,
   for (const e of card.entries) {
     const save = byName.get(e.name);
     if (!save) {
-      const ident = await gameForEntry(e.productCode, dc.gameId);
-      const r = await storeVersion({ userId: device.userId, emulatorId: emu.id, kind: 'ENTRY', slot: dc.cardId, baseName: e.name }, e.mcs, new Date(), {
+      const ident = await gameForEntry(e.code, dc.gameId, cardFamily(emu) ?? 'ps1');
+      const r = await storeVersion({ userId: device.userId, emulatorId: emu.id, kind: 'ENTRY', slot: dc.cardId, baseName: e.name }, e.data, new Date(), {
         sourceDeviceId: device.id,
         gameId: ident.gameId,
         romId: ident.romId,
@@ -227,7 +239,7 @@ export async function observeCard(device: Device, dc: DeviceCard, emu: Emulator,
     }
     const serverChanged = !base || save.currentVersionId !== base.versionId;
     if (!serverChanged || !save.currentVersionId) {
-      const r = await storeVersion(keyOf(save), e.mcs, new Date(), { sourceDeviceId: device.id, label: e.title });
+      const r = await storeVersion(keyOf(save), e.data, new Date(), { sourceDeviceId: device.id, label: e.title });
       await setCardBase(dc, device.id, save.id, r.version.id, e.sha1);
       result.uploaded++;
       continue;
@@ -238,7 +250,7 @@ export async function observeCard(device: Device, dc: DeviceCard, emu: Emulator,
       continue;
     }
     // Both sides changed: both versions are kept, the card keeps its own until the user picks one
-    const r = await storeVersion(keyOf(save), e.mcs, new Date(), { sourceDeviceId: device.id, note: 'conflict', makeCurrent: false, force: true });
+    const r = await storeVersion(keyOf(save), e.data, new Date(), { sourceDeviceId: device.id, note: 'conflict', makeCurrent: false, force: true });
     await prisma.saveConflict.create({ data: { saveId: save.id, deviceId: device.id, deviceVersionId: r.version.id, serverVersionId: save.currentVersionId } });
     await setCardBase(dc, device.id, save.id, base?.versionId ?? null, e.sha1);
     result.conflicts++;
@@ -267,19 +279,95 @@ export async function observeCard(device: Device, dc: DeviceCard, emu: Emulator,
   return result;
 }
 
-/** Saves of the user's card that belong in a card file: its game's, or (shared cards) those of games without a card of their own on the device */
+/**
+ * A GameCube card file by its path: a Dolphin card image, or one save of a GCI folder (GC/<region>/Card A, the
+ * default; GC/<region> when the folder is set in Dolphin.ini, as ROCKNIX does). Region as Dolphin's folders name it.
+ */
+export function gcCardFile(p: string): { kind: 'raw' | 'gci'; region: 'USA' | 'EUR' | 'JAP'; folder: string } | null {
+  const parts = p.split('/');
+  const name = parts[parts.length - 1] ?? '';
+  const folder = parts.slice(0, -1).join('/');
+  const img = GC_IMAGE.exec(name);
+  if (img) return { kind: 'raw', region: img[1].toUpperCase() as 'USA' | 'EUR' | 'JAP', folder };
+  if (!/\.gci$/i.test(name) || !parts.includes('GC')) return null;
+  let at = parts.length - 2;
+  if (/^Card [AB]$/i.test(parts[at] ?? '')) at--;
+  const reg = (parts[at] ?? '').toUpperCase();
+  if (!['USA', 'EUR', 'JAP', 'JPN'].includes(reg)) return null;
+  return { kind: 'gci', region: reg === 'JPN' ? 'JAP' : (reg as 'USA' | 'EUR' | 'JAP'), folder };
+}
+
+/** The region a GameCube entry belongs to, by the game code in its name ("01-GALE-…"); null for any */
+export const gcEntryRegion = (name: string) => gcRegion(name.split('-')[1] ?? '');
+
+/**
+ * Saves of the user's card that belong in a card file: its game's, or (shared cards) those of games without a card
+ * of their own on the device. A GameCube image takes its region's; a .gci file holds the one save it was made for.
+ */
 async function wantedSaves(dc: DeviceCard) {
   const tracked = (await prisma.cardEntryBase.findMany({ where: { deviceCardId: dc.id }, select: { saveId: true } })).map((b) => b.saveId);
+  const emu = await prisma.emulator.findUnique({ where: { id: dc.emulatorId } });
   let scope: Prisma.SaveWhereInput | null = null;
-  if (dc.shared) {
-    const own = await prisma.deviceCard.findMany({ where: { deviceId: dc.deviceId, shared: false, gameId: { not: null } }, select: { gameId: true } });
+  if (emu?.saveFormat === 'gci') scope = null;
+  else if (dc.shared) {
+    // PS1 per-game cards keep their game's saves out of shared ones (GameCube has none)
+    const own = await prisma.deviceCard.findMany({ where: { deviceId: dc.deviceId, shared: false, gameId: { not: null }, emulator: { saveFormat: { startsWith: 'ps1' } } }, select: { gameId: true } });
     const games = [...new Set(own.map((c) => c.gameId!))];
     scope = games.length ? { OR: [{ gameId: null }, { gameId: { notIn: games } }] } : {};
   } else if (dc.gameId) scope = { gameId: dc.gameId };
-  return prisma.save.findMany({
-    where: { cardId: dc.cardId, kind: 'ENTRY', currentVersionId: { not: null }, OR: [{ id: { in: tracked } }, ...(scope ? [scope] : [])] },
+  // An empty scope (every save) would be dropped from an OR by Prisma: it then stands alone
+  const which: Prisma.SaveWhereInput = scope && !Object.keys(scope).length ? {} : { OR: [{ id: { in: tracked } }, ...(scope ? [scope] : [])] };
+  const saves = await prisma.save.findMany({
+    where: { cardId: dc.cardId, kind: 'ENTRY', currentVersionId: { not: null }, ...which },
     orderBy: { updatedAt: 'desc' },
   });
+  const region = emu?.saveFormat === 'gcraw' ? gcCardFile(dc.path)?.region : null;
+  return region ? saves.filter((s) => tracked.includes(s.id) || (gcEntryRegion(s.baseName) ?? region) === region) : saves;
+}
+
+/** A .gci file name for an entry, as Dolphin names them, with what FAT and exFAT refuse replaced */
+export const gciFileName = (entryName: string) => `${entryName.replace(/["*:<>?|\\/\x00-\x1f]/g, '_')}.gci`;
+
+/**
+ * The .gci files of a device's GCI folders. A file the device took out (Dolphin renames it to .gci.deleted) stays
+ * out until its save changes elsewhere; a folder found empty that held saves is new (a reinstall, another card)
+ * and gets them all back. Saves of the folder's region it lacks get a file of their own: NEW lists those to make.
+ */
+export async function gciFolderState(device: Device, emu: Emulator, folder: string, relOf: (abs: string) => string, present: Map<string, string>) {
+  const inFolder = [...present.keys()].filter((p) => path.posix.dirname(p) === folder && gcCardFile(p)?.kind === 'gci');
+  const rel = relOf(folder);
+  const cards = await prisma.deviceCard.findMany({ where: { deviceId: device.id, emulatorId: emu.id, path: { startsWith: `${rel}/` } }, include: { bases: true } });
+  const mine = cards.filter((c) => path.posix.dirname(c.path) === rel);
+  const wiped = !inFolder.length && mine.some((c) => c.lastSha1);
+  for (const c of mine) {
+    if (inFolder.some((p) => relOf(p) === c.path)) continue;
+    if (wiped) await prisma.cardEntryBase.updateMany({ where: { deviceCardId: c.id }, data: { versionId: null, entrySha1: null } });
+    else if (c.lastSha1) await prisma.cardEntryBase.updateMany({ where: { deviceCardId: c.id }, data: { entrySha1: null } });
+    if (c.lastSha1 || c.offerSha1) await prisma.deviceCard.update({ where: { id: c.id }, data: { lastSha1: null, offerSha1: null, offer: Prisma.DbNull } });
+  }
+  const absent = mine.filter((c) => !inFolder.some((p) => relOf(p) === c.path));
+  // Files not read yet may hold any save: new files wait until they are
+  const unread = inFolder.some((p) => mine.find((c) => c.path === relOf(p))?.lastSha1 !== present.get(p));
+  if (unread) return { absent, made: [] as DeviceCard[] };
+  const region = gcCardFile(`${folder}/x.gci`)?.region;
+  const card = await mainCard(device.userId, 'gc');
+  const held = new Set(mine.flatMap((c) => c.bases.map((b) => b.saveId)));
+  const missing = (await prisma.save.findMany({ where: { cardId: card.id, kind: 'ENTRY', currentVersionId: { not: null } } })).filter(
+    (s) => !held.has(s.id) && (gcEntryRegion(s.baseName) ?? region) === region,
+  );
+  const taken = new Set([...inFolder.map(relOf), ...cards.map((c) => c.path)]);
+  const made: DeviceCard[] = [];
+  for (const s of missing) {
+    let file = `${rel}/${gciFileName(s.baseName)}`;
+    for (let n = 0; taken.has(file) && n < 10; n++) file = file.replace(/0*\.gci$/, (m) => `0${m}`);
+    if (taken.has(file)) continue;
+    taken.add(file);
+    const dc = await prisma.deviceCard.create({ data: { deviceId: device.id, path: file, emulatorId: emu.id, shared: false, gameId: s.gameId, cardId: card.id } });
+    // Made for this save: the file holds it once written
+    await prisma.cardEntryBase.create({ data: { deviceCardId: dc.id, saveId: s.id, versionId: null, entrySha1: null } });
+    made.push(dc);
+  }
+  return { absent, made };
 }
 
 /** Saves of the user's card waiting to reach a per-game card file the device does not have yet */
@@ -300,20 +388,19 @@ export async function prepareCard(device: Device, dc: DeviceCard, emu: Emulator,
   // Cheap check first: every save already where it should be
   const pending = saves.filter((s) => !open.has(s.id) && bases.get(s.id)?.versionId !== s.currentVersionId);
   if (!pending.length) return null;
-  let raw: Buffer;
-  if (deviceSha1) {
-    const img = await imageOf(dc, deviceSha1);
-    if (!img) return null;
-    try {
-      raw = ps1ToRaw(img, emu.saveFormat as SaveFormat);
-    } catch {
-      return null;
-    }
-  } else raw = formatPs1Card();
-  const card = readPs1Card(raw);
+  const codec = codecFor(emu);
+  if (!codec) return null;
+  const raw = deviceSha1 ? await imageOf(dc, deviceSha1) : codec.blank();
+  if (!raw) return null;
+  let card: ReadCard;
+  try {
+    card = codec.read(raw);
+  } catch {
+    return null;
+  }
   if (card.problems.length) return null;
   const present = new Map(card.entries.map((e) => [e.name, e]));
-  const put: { save: Save; entry: Ps1Entry }[] = [];
+  const put: { save: Save; entry: CardEntry }[] = [];
   for (const s of pending) {
     const b = bases.get(s.id);
     const p = present.get(s.baseName);
@@ -328,13 +415,13 @@ export async function prepareCard(device: Device, dc: DeviceCard, emu: Emulator,
       continue;
     }
     try {
-      put.push({ save: s, entry: readMcs(await readVersion(v.id)) });
+      put.push({ save: s, entry: codec.entry(await readVersion(v.id)) });
     } catch {
       /* a version that is not an entry is left out */
     }
   }
   if (!put.length) return null;
-  const { card: out, skipped } = writePs1Card(raw, put.map((p) => p.entry));
+  const { file, skipped } = codec.write(raw, put.map((p) => p.entry));
   const sent = put.filter((p) => !skipped.includes(p.entry.name));
   const warning = skipped.length
     ? `Card full, not written: ${put
@@ -344,9 +431,8 @@ export async function prepareCard(device: Device, dc: DeviceCard, emu: Emulator,
     : null;
   if (warning !== dc.warning) await prisma.deviceCard.update({ where: { id: dc.id }, data: { warning } });
   if (!sent.length) return null;
-  const file = convertSave(out, 'ps1card', emu.saveFormat as SaveFormat);
   const offer: OfferEntry[] = sent.map((p) => ({ saveId: p.save.id, versionId: p.save.currentVersionId!, name: p.entry.name, entrySha1: p.entry.sha1 }));
-  return { file, sha1: sha1(file), offer, freeBlocks: readPs1Card(out).freeBlocks };
+  return { file, sha1: sha1(file), offer, freeBlocks: codec.read(file).freeBlocks };
 }
 
 /** Keeps what was sent: it counts as synced when the device is next seen with it */
@@ -380,7 +466,7 @@ export async function cardAction(device: Device, dc: DeviceCard, emu: Emulator, 
  */
 export async function splitWholeCard(s: Save & { emulator: Emulator }, replace = false) {
   if (s.kind !== 'SAVE' || (s.supersededAt && !replace) || !s.currentVersionId || !isCardEmulator(s.emulator)) return 0;
-  let entries: Ps1Entry[];
+  let entries: CardEntry[];
   try {
     entries = parseCard(await readVersion(s.currentVersionId), s.emulator).entries;
   } catch {
@@ -388,14 +474,14 @@ export async function splitWholeCard(s: Save & { emulator: Emulator }, replace =
   }
   // An empty card (or a file that only looks like one) stays as it was
   if (!entries.length) return 0;
-  const card = await mainCard(s.userId, 'ps1');
+  const card = await mainCard(s.userId, cardFamily(s.emulator)!);
   const version = await prisma.saveVersion.findUnique({ where: { id: s.currentVersionId }, select: { sourceDeviceId: true, fileMtime: true } });
   let n = 0;
   for (const e of entries) {
     const existing = await prisma.save.findFirst({ where: { cardId: card.id, baseName: e.name } });
     if (existing && !replace) continue;
-    const ident = await gameForEntry(e.productCode, s.gameId);
-    await storeVersion(existing ? keyOf(existing) : { userId: s.userId, emulatorId: s.emulatorId, kind: 'ENTRY', slot: card.id, baseName: e.name }, e.mcs, version?.fileMtime ?? new Date(), {
+    const ident = await gameForEntry(e.code, s.gameId, card.family);
+    await storeVersion(existing ? keyOf(existing) : { userId: s.userId, emulatorId: s.emulatorId, kind: 'ENTRY', slot: card.id, baseName: e.name }, e.data, version?.fileMtime ?? new Date(), {
       sourceDeviceId: version?.sourceDeviceId ?? undefined,
       gameId: ident.gameId,
       romId: ident.romId,

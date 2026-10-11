@@ -33,6 +33,11 @@ class Store(context: Context) {
         get() = prefs.getBoolean("watch", true)
         set(v) = prefs.edit().putBoolean("watch", v).apply()
 
+    /** Dolphin's user folder, shared through the system folder picker (a document tree URI) */
+    var dolphinTree: String?
+        get() = prefs.getString("dolphinTree", null)
+        set(v) = prefs.edit().putString("dolphinTree", v).apply()
+
     /** Last events, newest last, for the Status screen */
     val log: List<String> get() = (prefs.getString("log", "") ?: "").lines().filter { it.isNotBlank() }
 

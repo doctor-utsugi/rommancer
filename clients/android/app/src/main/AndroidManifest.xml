@@ -14,6 +14,11 @@
     <!-- Self-update: the downloaded APK goes to the system installer -->
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
 
+    <!-- Dolphin shares its user folder (GameCube saves) through this documents provider -->
+    <queries>
+        <provider android:authorities="org.dolphinemu.dolphinemu.user" />
+    </queries>
+
     <application
         android:allowBackup="false"
         android:usesCleartextTraffic="true"

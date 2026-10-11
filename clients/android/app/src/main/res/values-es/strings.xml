@@ -63,4 +63,8 @@
     <string name="received_channel">Partidas recibidas</string>
     <string name="received_one">Partida recibida: %1$s</string>
     <string name="received_many">%1$d partidas recibidas: %2$s y más</string>
+    <string name="dolphin_grant">Partidas de GameCube (Dolphin): dar acceso</string>
+    <string name="dolphin_linked">Partidas de GameCube (Dolphin): conectado</string>
+    <string name="dolphin_done">Dolphin conectado: las partidas de GameCube se sincronizan desde ahora.</string>
+    <string name="dolphin_wrong">Esa no es la carpeta de Dolphin. En el selector abre el menú (☰), elige «Dolphin Emulator» y pulsa «Usar esta carpeta».</string>
 </resources>
