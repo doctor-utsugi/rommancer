@@ -164,7 +164,7 @@ export function DevicePage() {
           onClose={() => setCopying(false)}
           onCopy={(systems, unidentified) => {
             setCopying(false)
-            void pull({ systems, unidentified })
+            void pull({ systems, unidentifiedSystems: unidentified })
           }}
         />
       )}
@@ -506,39 +506,62 @@ function DiskBar({ free, total, add }: { free: number; total: number; add: numbe
   )
 }
 
+const toggled = (set: Set<string>, key: string, on: boolean) => {
+  const next = new Set(set)
+  if (on) next.add(key)
+  else next.delete(key)
+  return next
+}
+
+/** One platform in the copy window: its files and size */
+function GroupRow({ g, checked, onChange }: { g: { name: string; files: number; bytes: number }; checked: boolean; onChange: (on: boolean) => void }) {
+  const { t } = useTranslation()
+  return (
+    <label className="flex items-center gap-2 text-sm">
+      <Checkbox checked={checked} onCheckedChange={(c) => onChange(!!c)} />
+      <span className="flex-1 truncate">{g.name}</span>
+      <span className="shrink-0 text-xs text-muted-foreground">{t('more.hero.files', { count: g.files })}</span>
+      <span className="w-20 shrink-0 text-right text-xs tabular-nums text-muted-foreground">{formatBytes(g.bytes)}</span>
+    </label>
+  )
+}
+
 /**
  * What to copy from the console: one line per system with new games (all ticked), plus the unidentified files
  * (not ticked). Below, every destination folder of the server with its disk and what the selection would bring
  * to it, by the same rules the copy follows; nothing is copied while something would not fit anywhere.
  */
-function CopyDialog({ deviceId, items, admin, onClose, onCopy }: { deviceId: string; items: InventoryItem[]; admin: boolean; onClose: () => void; onCopy: (systems: string[], unidentified: boolean) => void }) {
+function CopyDialog({ deviceId, items, admin, onClose, onCopy }: { deviceId: string; items: InventoryItem[]; admin: boolean; onClose: () => void; onCopy: (systems: string[], unidentified: string[]) => void }) {
   const { t } = useTranslation()
-  const groups = useMemo(() => {
+  // Per system: the identified games the collection lacks, and apart the files no database knows ("" = no system)
+  const groupsOf = (identified: boolean) => {
     const by = new Map<string, { slug: string; name: string; files: number; bytes: number }>()
     for (const i of items) {
-      if (!i.gameId || i.onServer || i.pullPending || !i.system) continue
-      const g = by.get(i.system) ?? { slug: i.system, name: i.systemName ?? i.system, files: 0, bytes: 0 }
+      if (i.onServer || i.pullPending || !!i.gameId !== identified || (identified && !i.system)) continue
+      const slug = i.system ?? ''
+      const g = by.get(slug) ?? { slug, name: i.systemName ?? (i.system || t('more.copyPick.noSystem')), files: 0, bytes: 0 }
       g.files++
       g.bytes += i.size
-      by.set(i.system, g)
+      by.set(slug, g)
     }
     return [...by.values()].sort((a, b) => a.name.localeCompare(b.name))
-  }, [items])
-  const rest = useMemo(() => items.filter((i) => !i.gameId && !i.onServer && !i.pullPending), [items])
-  const restBytes = rest.reduce((n, i) => n + i.size, 0)
+  }
+  const groups = useMemo(() => groupsOf(true), [items])
+  const rest = useMemo(() => groupsOf(false), [items])
   const [picked, setPicked] = useState(() => new Set(groups.map((g) => g.slug)))
-  const [withRest, setWithRest] = useState(false)
-  const chosen = groups.filter((g) => picked.has(g.slug))
-  const files = chosen.reduce((n, g) => n + g.files, 0) + (withRest ? rest.length : 0)
-  const bytes = chosen.reduce((n, g) => n + g.bytes, 0) + (withRest ? restBytes : 0)
+  const [pickedRest, setPickedRest] = useState(() => new Set<string>())
+  const chosen = [...groups.filter((g) => picked.has(g.slug)), ...rest.filter((g) => pickedRest.has(g.slug))]
+  const files = chosen.reduce((n, g) => n + g.files, 0)
+  const bytes = chosen.reduce((n, g) => n + g.bytes, 0)
   const systems = [...picked].sort()
+  const unidentified = [...pickedRest].sort()
   const preview = useQuery({
-    queryKey: ['pull-preview', deviceId, systems.join(','), withRest],
-    queryFn: () => post<Placement>(`/devices/${deviceId}/pull-preview`, { systems, unidentified: withRest }),
+    queryKey: ['pull-preview', deviceId, systems.join(','), unidentified.join(',')],
+    queryFn: () => post<Placement>(`/devices/${deviceId}/pull-preview`, { systems, unidentifiedSystems: unidentified }),
     placeholderData: (prev) => prev,
   })
   const p = preview.data
-  const blocked = !p || preview.isFetching || p.unplaced.files > 0 || p.noTarget.files > 0
+  const blocked = !p || preview.isPlaceholderData || p.unplaced.files > 0 || p.noTarget.files > 0
   const all = groups.length > 0 && picked.size === groups.length
   return (
     <Dialog open onOpenChange={(o) => !o && onClose()}>
@@ -551,30 +574,20 @@ function CopyDialog({ deviceId, items, admin, onClose, onCopy }: { deviceId: str
           <Checkbox checked={all} onCheckedChange={(c) => setPicked(new Set(c ? groups.map((g) => g.slug) : []))} />
           {t('more.copyPick.all')}
         </label>
-        <div className="max-h-64 space-y-1 overflow-y-auto">
+        <div className="max-h-72 space-y-1 overflow-y-auto">
           {groups.map((g) => (
-            <label key={g.slug} className="flex items-center gap-2 text-sm">
-              <Checkbox
-                checked={picked.has(g.slug)}
-                onCheckedChange={(c) => {
-                  const next = new Set(picked)
-                  if (c) next.add(g.slug)
-                  else next.delete(g.slug)
-                  setPicked(next)
-                }}
-              />
-              <span className="flex-1 truncate">{g.name}</span>
-              <span className="shrink-0 text-xs text-muted-foreground">{t('more.hero.files', { count: g.files })}</span>
-              <span className="w-20 shrink-0 text-right text-xs tabular-nums text-muted-foreground">{formatBytes(g.bytes)}</span>
-            </label>
+            <GroupRow key={g.slug} g={g} checked={picked.has(g.slug)} onChange={(c) => setPicked(toggled(picked, g.slug, c))} />
           ))}
           {rest.length > 0 && (
-            <label className="flex items-center gap-2 border-t pt-2 text-sm">
-              <Checkbox checked={withRest} onCheckedChange={(c) => setWithRest(!!c)} />
-              <span className="flex-1 truncate">{t('more.copyPick.unidentified')}</span>
-              <span className="shrink-0 text-xs text-muted-foreground">{t('more.hero.files', { count: rest.length })}</span>
-              <span className="w-20 shrink-0 text-right text-xs tabular-nums text-muted-foreground">{formatBytes(restBytes)}</span>
-            </label>
+            <>
+              <label className="flex items-center gap-2 border-t pt-2 text-sm font-medium">
+                <Checkbox checked={pickedRest.size === rest.length} onCheckedChange={(c) => setPickedRest(new Set(c ? rest.map((g) => g.slug) : []))} />
+                {t('more.copyPick.unidentified')}
+              </label>
+              {rest.map((g) => (
+                <GroupRow key={`u-${g.slug}`} g={g} checked={pickedRest.has(g.slug)} onChange={(c) => setPickedRest(toggled(pickedRest, g.slug, c))} />
+              ))}
+            </>
           )}
         </div>
         <div className="space-y-3 rounded-md border p-3">
@@ -618,7 +631,7 @@ function CopyDialog({ deviceId, items, admin, onClose, onCopy }: { deviceId: str
           {p && p.noTarget.files > 0 && <p className="text-xs text-destructive">{t('more.copyPick.noTarget', { count: p.noTarget.files, size: formatBytes(p.noTarget.bytes) })}</p>}
         </div>
         <DialogFooter>
-          <Button onClick={() => onCopy(systems, withRest)} disabled={!files || blocked}>
+          <Button onClick={() => onCopy(systems, unidentified)} disabled={!files || blocked}>
             <Download className="size-4" />
             {t('more.copyPick.go', { count: files, size: formatBytes(bytes) })}
           </Button>

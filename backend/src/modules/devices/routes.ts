@@ -292,8 +292,10 @@ const pullBody = z.object({
   paths: z.array(z.string().max(1024)).max(5000).optional(),
   system: z.string().max(32).optional(),
   identified: z.boolean().optional(),
-  // The copy window's choice: identified games of these systems, plus the unidentified files when asked
+  // The copy window's choice: identified games of these systems, and unidentified files of these other ones
+  // ("" for files in no system's folder); unidentified: all unidentified files
   systems: z.array(z.string().max(32)).max(500).optional(),
+  unidentifiedSystems: z.array(z.string().max(32)).max(500).optional(),
   unidentified: z.boolean().optional(),
 });
 
@@ -307,7 +309,8 @@ async function pullRows(d: Device, body: z.infer<typeof pullBody>) {
   const slugOf = new Map(games.map((g) => [g.id, g.system.slug]));
   const withSystem = rows.map((r) => ({ ...r, system: r.systemSlug ?? (r.gameId ? slugOf.get(r.gameId) : undefined) ?? null }));
   const systems = body.systems ? new Set(body.systems) : null;
-  const chosen = systems ? withSystem.filter((r) => (r.gameId ? systems.has(r.system ?? '') : !!body.unidentified)) : withSystem;
+  const unidentified = new Set(body.unidentifiedSystems ?? []);
+  const chosen = systems ? withSystem.filter((r) => (r.gameId ? systems.has(r.system ?? '') : !!body.unidentified || unidentified.has(r.system ?? ''))) : withSystem;
   const ownedRoms = await ownedRomIds({ romIds: [...new Set(chosen.flatMap((r) => (r.romId ? [r.romId] : [])))], include: 'any' });
   const ownedGames = await ownedGameIds();
   const pending = new Set((await prisma.devicePull.findMany({ where: { deviceId: d.id, status: { in: QUEUED_PULL } }, select: { path: true } })).map((p) => p.path));
