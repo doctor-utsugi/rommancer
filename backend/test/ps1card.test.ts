@@ -85,3 +85,19 @@ test('a damaged card is read where it can be but never written', () => {
   assert.throws(() => writePs1Card(broken, [mcs('BASLUS-00001X', 1, 5)]), CardError);
   assert.throws(() => readPs1Card(Buffer.alloc(100)), CardError);
 });
+
+test('a newer version that does not fit leaves the one the card has', () => {
+  const { card } = writePs1Card(formatPs1Card(), [mcs('BASLUS-0000AAAA', 12, 1), mcs('BASLUS-0000XXXX', 1, 2)]);
+  const xNew = mcs('BASLUS-0000XXXX', 1, 9);
+  // The new save takes the free room; the newer X still fits in its own block
+  const r = writePs1Card(card, [mcs('BASLUS-0000YYYY', 2, 3), xNew]);
+  const read = readPs1Card(r.card);
+  assert.deepEqual(read.entries.map((e) => e.name).sort(), ['BASLUS-0000AAAA', 'BASLUS-0000XXXX', 'BASLUS-0000YYYY']);
+  assert.deepEqual(r.skipped, []);
+  assert.equal(read.entries.find((e) => e.name === 'BASLUS-0000XXXX')!.sha1, xNew.sha1);
+  // A grown version that does not fit: the old one stays
+  const before = readPs1Card(r.card).entries.find((e) => e.name === 'BASLUS-0000XXXX')!.sha1;
+  const big = writePs1Card(r.card, [mcs('BASLUS-0000XXXX', 3, 4)]);
+  assert.deepEqual(big.skipped, ['BASLUS-0000XXXX']);
+  assert.equal(readPs1Card(big.card).entries.find((e) => e.name === 'BASLUS-0000XXXX')!.sha1, before);
+});

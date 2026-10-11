@@ -207,4 +207,6 @@ export async function resolveConflict(conflictId: number, keep: 'device' | 'serv
     await setBase(c.saveId, c.deviceId, null, base?.deviceSha1 ?? '');
   }
   await prisma.saveConflict.update({ where: { id: c.id }, data: { resolvedAt: new Date(), resolution: keep } });
+  // Memory card entries keep their bases per card file
+  if (c.save.kind === 'ENTRY') await (await import('./cards.js')).settleEntryConflict(c.saveId, c.deviceId, keep === 'device' ? c.deviceVersionId : null);
 }

@@ -303,12 +303,18 @@ impl<'a> Engine<'a> {
         let tmp = target.with_file_name(format!("{}.rommancer-card", target.file_name().and_then(|n| n.to_str()).unwrap_or("card")));
         self.api.download(&format!("/agent/card?expect={expect}"), &[("X-Path-B64", b64(path))], &tmp, &mut |_| {}, self.cancelled)?;
         let size = fs::metadata(&tmp).map(|m| m.len()).unwrap_or(0);
+        // The file itself, not the hash cache: a card keeps its size and may keep its second
+        self.cache.remove(&wire(target));
         let now = if target.is_file() { self.sha1(target, 0)? } else { "-".into() };
         if size == 0 || now != expect {
             let _ = fs::remove_file(&tmp);
             return Ok(false);
         }
         fs::rename(&tmp, target)?;
+        self.cache.remove(&wire(target));
+        // Tell the server at once that the card it sent is in place
+        let sent = self.sha1(target, 0)?;
+        let _ = self.api.post_text(&format!("/agent/card/ack?sha={sent}"), Vec::new(), &[("X-Path-B64", b64(path))]);
         Ok(true)
     }
 

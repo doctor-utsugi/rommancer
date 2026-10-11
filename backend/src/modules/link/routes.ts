@@ -146,7 +146,7 @@ linkPublicRouter.post('/enroll', express.urlencoded({ extended: false, limit: '6
 });
 
 // Self-update: devices compare these hashes with their copies and fetch what changed
-const CLIENT_FILES = ['rommancer-sync.sh', 'rommancer-ui.py', 'savepoint.png', 'cacert.pem', 'CREDITS.txt'];
+const CLIENT_FILES = ['rommancer-sync.sh', 'rommancer-ui.py', 'savepoint.png', 'cacert.pem', 'CREDITS.txt', 'icon.png', 'rommancer-art.png'];
 
 linkPublicRouter.get('/client/manifest', (_req, res) => {
   const lines = CLIENT_FILES.filter((f) => fs.existsSync(path.join(CLIENT_DIR, f))).map((f) => `file\t${f}\t${crypto.createHash('sha1').update(fs.readFileSync(path.join(CLIENT_DIR, f))).digest('hex')}`);
@@ -252,6 +252,7 @@ function packageFiles(flavor: (typeof FLAVORS)[number], server: string, enrollTo
   if (flavor === 'arkos') {
     return [
       ...common('rommancer'),
+      { name: 'rommancer/rommancer-art.png', content: fs.readFileSync(path.join(CLIENT_DIR, 'rommancer-art.png')) },
       { name: 'tools/Rommancer Sync.sh', content: '#!/bin/bash\ncd /roms/rommancer 2>/dev/null || cd /roms2/rommancer || exit 1\nprintf "\\033c" > /dev/tty1\n{ [ ! -f enroll.txt ] || sudo -n sh rommancer-sync.sh enroll; } && sudo -n sh rommancer-sync.sh install && sudo -n sh rommancer-sync.sh sync && sudo -n systemctl restart rommancer-sync.service\nsleep 5\n', mode: 0o755 },
     ];
   }
@@ -264,6 +265,7 @@ function packageFiles(flavor: (typeof FLAVORS)[number], server: string, enrollTo
   return [
     ...common('system/rommancer'),
     { name: 'system/rommancer/rommancer-ui.py', content: fs.readFileSync(path.join(CLIENT_DIR, 'rommancer-ui.py')), mode: 0o755 },
+    { name: 'system/rommancer/rommancer-art.png', content: fs.readFileSync(path.join(CLIENT_DIR, 'rommancer-art.png')) },
     { name: 'system/rommancer/savepoint.png', content: fs.readFileSync(path.join(CLIENT_DIR, 'savepoint.png')) },
     { name: 'system/rommancer/CREDITS.txt', content: fs.readFileSync(path.join(CLIENT_DIR, 'CREDITS.txt')) },
     // The port opens the gamepad setup screen; with the package's token it links by itself first

@@ -115,6 +115,12 @@ export async function syncDeviceSaves(deviceId: number, direction: 'pull' | 'pus
             // Memory cards: shared ones and those named after a serial, by name; per-game ones after their rom
             const named = namedCard(e.name);
             const parsed = parseDeviceSave(e.name, emu, layout.savesLayout);
+            // In a folder shared by several systems, a per-game card is only one when its rom is of this system
+            const foreign =
+              !named && parsed?.kind === 'SAVE' && isCardEmulator(emu) && layout.savesLayout === 'flat'
+                ? await identifyRom(parsed.baseName).then((ident) => !!ident && ident.systemId !== systemId)
+                : false;
+            if (foreign) continue;
             if (named || (parsed?.kind === 'SAVE' && isCardEmulator(emu))) {
               visited.add(full);
               const gameId = named ? (named.serial ? await gameForSerial(named.serial) : null) : ((await identifyRom(parsed!.baseName, systemId))?.gameId ?? null);

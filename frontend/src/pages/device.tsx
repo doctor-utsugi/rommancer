@@ -131,7 +131,7 @@ export function DevicePage() {
       </PageHeader>
       <p className="text-sm text-muted-foreground">
         {d.console?.name} · {d.firmware?.name} · {t('more.device.games', { count: items.length })} · {t('more.devices.lastSeen')}: {formatDate(d.lastSeenAt)}
-        {d.clientVersion && ` · ${t('more.device.client')} ${d.clientVersion}`}
+        {d.clientVersion && ` · ${t('more.device.client')} ${d.clientVersion}${d.clientUpdatedAt ? ` (${t('more.device.clientSince', { date: formatDate(d.clientUpdatedAt) })})` : ''}`}
         {d.offline && ` · ${t('more.offline.help')}`}
         {inventory.data?.inventoryAt && ` · ${t('more.device.inventoryAt')}: ${formatDate(inventory.data.inventoryAt)}`}
       </p>

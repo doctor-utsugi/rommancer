@@ -52,7 +52,13 @@ interface OfferEntry {
   entrySha1: string;
 }
 
-const offerOf = (dc: DeviceCard) => (Array.isArray(dc.offer) ? (dc.offer as unknown as OfferEntry[]) : []);
+/** The entries of the last card sent, leaving out saves deleted since */
+async function offerOf(dc: DeviceCard) {
+  const offer = Array.isArray(dc.offer) ? (dc.offer as unknown as OfferEntry[]) : [];
+  if (!offer.length) return offer;
+  const alive = new Set((await prisma.save.findMany({ where: { id: { in: offer.map((o) => o.saveId) } }, select: { id: true } })).map((s) => s.id));
+  return offer.filter((o) => alive.has(o.saveId));
+}
 
 /** The user's card a device's card files mount until another is chosen */
 export async function mainCard(userId: number, family: string) {
@@ -136,7 +142,7 @@ const keyOf = (s: Save) => ({ userId: s.userId, emulatorId: s.emulatorId, kind: 
 
 /** Entries sent with the card the device now holds: synced */
 export async function commitOffer(dc: DeviceCard, deviceId: number) {
-  for (const o of offerOf(dc)) await setCardBase(dc, deviceId, o.saveId, o.versionId, o.entrySha1);
+  for (const o of await offerOf(dc)) await setCardBase(dc, deviceId, o.saveId, o.versionId, o.entrySha1);
   return prisma.deviceCard.update({ where: { id: dc.id }, data: { lastSha1: dc.offerSha1, offerSha1: null, offer: Prisma.DbNull } });
 }
 
@@ -148,6 +154,24 @@ export async function forgetDeviceCard(dc: DeviceCard) {
 
 function parseCard(buf: Buffer, emu: Emulator): Ps1Card {
   return readPs1Card(ps1ToRaw(buf, emu.saveFormat as SaveFormat));
+}
+
+/**
+ * The base of an entry this card file has never been synced with: the version of the save the card holds (a
+ * console behind), or, for an entry taken out of a whole card saved before cards were read entry by entry, the
+ * version split from it when this device was in step with that card (so what changed since is the device's).
+ */
+async function firstBase(device: Device, dc: DeviceCard, save: Save, entrySha1: string) {
+  const versions = await prisma.saveVersion.findMany({ where: { saveId: save.id }, select: { id: true, sha1: true, note: true }, orderBy: { id: 'asc' } });
+  const held = versions.find((v) => v.sha1 === entrySha1);
+  if (held) return { deviceCardId: dc.id, saveId: save.id, versionId: held.id, entrySha1, syncedAt: new Date() };
+  const split = versions.find((v) => v.note?.startsWith('from '));
+  if (!split) return undefined;
+  const whole = await prisma.save.findFirst({ where: { userId: save.userId, kind: 'SAVE', supersededAt: { not: null }, baseName: split.note!.slice(5) } });
+  const was = whole ? await prisma.saveDeviceState.findUnique({ where: { saveId_deviceId: { saveId: whole.id, deviceId: device.id } } }) : null;
+  if (!whole || !was || was.versionId !== whole.currentVersionId) return undefined;
+  const splitSha = (await prisma.saveVersion.findUnique({ where: { id: split.id }, select: { sha1: true } }))!.sha1;
+  return { deviceCardId: dc.id, saveId: save.id, versionId: split.id, entrySha1: splitSha, syncedAt: new Date() };
 }
 
 /** Reads a card file the device sent: every entry is uploaded, adopted or kept as a conflict, as any save */
@@ -165,7 +189,7 @@ export async function observeCard(device: Device, dc: DeviceCard, emu: Emulator,
     return result;
   }
   const present = new Map(card.entries.map((e) => [e.name, e]));
-  for (const o of offerOf(dc)) if (present.get(o.name)?.sha1 === o.entrySha1) await setCardBase(dc, device.id, o.saveId, o.versionId, o.entrySha1);
+  for (const o of await offerOf(dc)) if (present.get(o.name)?.sha1 === o.entrySha1) await setCardBase(dc, device.id, o.saveId, o.versionId, o.entrySha1);
   const bases = new Map((await prisma.cardEntryBase.findMany({ where: { deviceCardId: dc.id } })).map((b) => [b.saveId, b]));
   const saves = await prisma.save.findMany({ where: { cardId: dc.cardId, baseName: { in: [...present.keys()] } } });
   const byName = new Map(saves.map((s) => [s.baseName, s]));
@@ -186,8 +210,21 @@ export async function observeCard(device: Device, dc: DeviceCard, emu: Emulator,
       continue;
     }
     if (open.has(save.id)) continue;
-    const base = bases.get(save.id);
+    let base = bases.get(save.id);
+    if (!base) {
+      base = await firstBase(device, dc, save, e.sha1);
+      if (base) await setCardBase(dc, device.id, save.id, base.versionId, base.entrySha1);
+    }
     if (base && base.entrySha1 === e.sha1) continue;
+    // An older version back on the card (an emulator wrote out the card it had in memory) is not a new save:
+    // it becomes the base so the current one is sent again
+    if (base?.versionId) {
+      const older = await prisma.saveVersion.findFirst({ where: { saveId: save.id, sha1: e.sha1, id: { lt: base.versionId } }, orderBy: { id: 'desc' }, select: { id: true } });
+      if (older) {
+        await setCardBase(dc, device.id, save.id, older.id, e.sha1);
+        continue;
+      }
+    }
     const serverChanged = !base || save.currentVersionId !== base.versionId;
     if (!serverChanged || !save.currentVersionId) {
       const r = await storeVersion(keyOf(save), e.mcs, new Date(), { sourceDeviceId: device.id, label: e.title });
@@ -380,4 +417,16 @@ export async function migrateWholeCards() {
     orderBy: { updatedAt: 'desc' },
   });
   for (const s of old) await splitWholeCard(s);
+}
+
+/**
+ * A conflict on an entry was settled: the card files of that device holding it take the chosen version as their
+ * base (the device's when kept) and are read again, since entries changed while the conflict was open were skipped.
+ */
+export async function settleEntryConflict(saveId: number, deviceId: number, keptDeviceVersion: number | null) {
+  const cards = await prisma.cardEntryBase.findMany({ where: { saveId, deviceCard: { deviceId } } });
+  for (const b of cards) {
+    if (keptDeviceVersion) await prisma.cardEntryBase.update({ where: { deviceCardId_saveId: { deviceCardId: b.deviceCardId, saveId } }, data: { versionId: keptDeviceVersion } });
+    await prisma.deviceCard.update({ where: { id: b.deviceCardId }, data: { lastSha1: null } });
+  }
 }

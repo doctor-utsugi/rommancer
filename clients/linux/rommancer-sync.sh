@@ -22,7 +22,7 @@
 #                                   Menu++...) mounted on this computer; the link lives on the card itself,
 #                                   so any computer with this script can sync it. Without a command: sync.
 set -u
-CLIENT_VERSION=20261015
+CLIENT_VERSION=20261016
 # A clock before this date is surely wrong (no battery-backed clock); kept apart from the version, which may run ahead
 CLOCK_MIN=20261001
 # Onion keeps curl (with TLS) and friends outside the default PATH
@@ -398,6 +398,8 @@ card_get() {
     rm -f "$cp_.rommancer-tmp"; log "card: $(basename "$cp_") changed meanwhile, later"; return 1
   fi
   mv "$cp_.rommancer-tmp" "$cp_"
+  # Tell the server at once: a game saved on this card before the next sync is then this console's newer save
+  http_once POST "$SERVER/api/v1/agent/card/ack?sha=$(sha1 "$cp_")" - - "X-Path-B64: $(b64 "$cp_")" >/dev/null 2>&1 || log "card: $(basename "$cp_") written, server not told yet"
 }
 
 # The system's language, as Knulli/Batocera, Onion or the desktop say it
@@ -425,6 +427,18 @@ notify_received() {
   return 0
 }
 
+# "version<TAB>date" of the first sync this version made (clock set by then), for the Status screens
+VERSION_FILE="$STATE/version"
+mark_version() {
+  [ "$(cut -f1 "$VERSION_FILE" 2>/dev/null)" = "$CLIENT_VERSION" ] && return 0
+  printf '%s\t%s\n' "$CLIENT_VERSION" "$(date '+%Y-%m-%d %H:%M')" > "$VERSION_FILE" 2>/dev/null
+}
+version_line() {
+  since="$(cut -f2 "$VERSION_FILE" 2>/dev/null)"
+  if lang_es; then printf 'Version %s%s' "$CLIENT_VERSION" "${since:+, instalada el $since}"
+  else printf 'Version %s%s' "$CLIENT_VERSION" "${since:+, installed $since}"; fi
+}
+
 cmd_sync() {
   need_link
   # A sync asked for on screen goes first: background passes step aside while it waits
@@ -444,6 +458,7 @@ cmd_sync() {
   fi
   rm -f "$STATE/.write-test"
   fix_clock
+  mark_version
   build_request "$req" || { log "server unreachable"; drop_lock; return 1; }
   progress server 0 0
   # Free and total bytes of the roms' storage: the server copies list roms only while a reserve is kept
@@ -600,6 +615,8 @@ cmd_update() {
     # Only what this device uses: the script always, the setup app's files where the app is installed
     case "$name" in
       rommancer-sync.sh|cacert.pem) ;;
+      # The app's icon (Onion) and its picture in EmulationStation, where they already are
+      icon.png|rommancer-art.png) [ -f "$target" ] || [ -f "$DIR/rommancer-ui.py" ] || continue ;;
       *) [ -f "$DIR/rommancer-ui.py" ] || continue ;;
     esac
     [ -f "$target" ] && [ "$(sha1 "$target")" = "$hash" ] && continue
@@ -650,6 +667,22 @@ cmd_daemon() {
   done
 }
 
+# The launcher's picture in EmulationStation: an entry in the folder's gamelist.xml, added once (an entry the
+# user already has is left alone). Knulli/Batocera reload their lists; ArkOS shows it after a restart
+es_picture() {
+  folder="$1"; launcher="$2"
+  [ -f "$folder/$launcher" ] && [ -f "$DIR/rommancer-art.png" ] || return 0
+  mkdir -p "$folder/images"
+  cmp -s "$DIR/rommancer-art.png" "$folder/images/rommancer-sync.png" || cp "$DIR/rommancer-art.png" "$folder/images/rommancer-sync.png"
+  list="$folder/gamelist.xml"
+  grep -qF "<path>./$launcher</path>" "$list" 2>/dev/null && return 0
+  [ -s "$list" ] && grep -q '</gameList>' "$list" || printf '<?xml version="1.0"?>\n<gameList>\n</gameList>\n' > "$list"
+  entry="\t<game>\n\t\t<path>./$launcher</path>\n\t\t<name>Rommancer Sync</name>\n\t\t<desc>Sync saves, savestates and roms with your Rommancer server.</desc>\n\t\t<image>./images/rommancer-sync.png</image>\n\t</game>"
+  awk -v e="$entry" '/<\/gameList>/ && !done { gsub(/\\t/, "\t", e); gsub(/\\n/, "\n", e); print e; done = 1 } { print }' "$list" > "$WORK/gamelist.xml" && cat "$WORK/gamelist.xml" > "$list"
+  case "$FW" in knulli|batocera) curl -fsS -m 3 http://127.0.0.1:1234/reloadgames >/dev/null 2>&1 ;; esac
+  log "picture added to $list"
+}
+
 # Boot and game-end hooks where the firmware offers them
 cmd_install() {
   detect
@@ -671,6 +704,7 @@ cmd_install() {
       if [ "$FW" = knulli ] && [ -f "/userdata/roms/ports/Rommancer Sync.sh" ]; then
         mkdir -p /userdata/roms/tools && mv "/userdata/roms/ports/Rommancer Sync.sh" /userdata/roms/tools/ && log "launcher moved to Tools"
       fi
+      for f in /userdata/roms/tools /userdata/roms/ports; do es_picture "$f" "Rommancer Sync.sh"; done
       say "Installed: sync at boot ($boot), save fetched before each game and uploaded after it" ;;
     onion)
       boot=/mnt/SDCARD/.tmp_update/startup/rommancer-sync.sh
@@ -697,6 +731,7 @@ cmd_install() {
         cmp -s "$WORK/hook.sh" "$d/rommancer-sync.sh" || cat "$WORK/hook.sh" > "$d/rommancer-sync.sh"
         chmod +x "$d/rommancer-sync.sh"; chown ark:ark "$d" "$d/rommancer-sync.sh" 2>/dev/null
       done
+      for f in /roms/tools /roms2/tools; do es_picture "$f" "Rommancer Sync.sh"; chown -R ark:ark "$f/images" "$f/gamelist.xml" 2>/dev/null; done
       say "Installed: daemon at boot (rommancer-sync.service), save fetched before each game and uploaded after it" ;;
     nextui)
       # Hooks live per platform; the folder is created at every boot
@@ -994,7 +1029,7 @@ cmd_setup() {
         3) if [ "$ALLOW_PULL" = 1 ]; then ALLOW_PULL=0; else ALLOW_PULL=1; fi; set_setting ALLOW_PULL "$ALLOW_PULL" ;;
         4) if [ "$ALLOW_SSH" = 1 ]; then ALLOW_SSH=0; else ALLOW_SSH=1; fi; set_setting ALLOW_SSH "$ALLOW_SSH" ;;
         5) setup_conflicts ;;
-        6) panel "$(t status)" "$(tail -n 4 "$LOG" 2>/dev/null | cut -c21- | tr '\n' ' ')" wait ;;
+        6) panel "$(t status)" "$(version_line). $(tail -n 4 "$LOG" 2>/dev/null | cut -c21- | tr '\n' ' ')" wait ;;
         7) keep="$SERVER"; cmd_unlink > /dev/null; TOKEN=""; USER_NAME=""; SERVER="$keep" ;;
         *) return 0 ;;
       esac
@@ -1022,6 +1057,7 @@ cmd_setup() {
 }
 
 cmd_status() {
+  version_line; echo
   if [ -n "$TOKEN" ]; then echo "Linked to $SERVER"; else echo "Not linked"; fi
   if [ -f "$STATE/pid" ] && kill -0 "$(cat "$STATE/pid")" 2>/dev/null; then echo "Daemon running (pid $(cat "$STATE/pid"))"; else echo "Daemon stopped"; fi
   tail -n 5 "$LOG" 2>/dev/null

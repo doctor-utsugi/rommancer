@@ -197,33 +197,40 @@ export function readMcs(mcs: Buffer): Ps1Entry {
 
 /**
  * The card with entries put in (replacing those of the same name) and others taken out. Blocks of entries
- * not named stay exactly where they were. Returns the names that did not fit, which are left out.
+ * not named stay exactly where they were. An entry that does not fit is left out and the version the card
+ * already had of it stays; the names left out are returned.
  */
 export function writePs1Card(card: Buffer, put: Ps1Entry[], remove: string[] = []): { card: Buffer; skipped: string[] } {
   const current = readPs1Card(card);
   if (current.problems.length) throw new CardError(`Card not safe to write: ${current.problems.join(', ')}`);
   const out = Buffer.from(card);
-  const drop = new Set([...remove, ...put.map((e) => e.name)]);
-  for (let b = 0; b < BLOCKS; b++) {
-    const at = dirOffset(b);
-    const state = out.readUInt32LE(at);
-    if (state !== FIRST || !drop.has(readName(out, at))) continue;
-    let cur = b;
-    for (let n = 0; n < BLOCKS && cur !== NONE && cur < BLOCKS; n++) {
-      const next = out.readUInt16LE(dirOffset(cur) + 8);
-      freeFrame().copy(out, dirOffset(cur));
-      cur = next;
+  const isFree = (b: number) => out[dirOffset(b)] === FREE || (out[dirOffset(b)] >= 0xa1 && out[dirOffset(b)] <= 0xa3);
+  /** The blocks of the entry called NAME, first one first */
+  const chainOf = (name: string) => {
+    for (let b = 0; b < BLOCKS; b++) {
+      const at = dirOffset(b);
+      if (out.readUInt32LE(at) !== FIRST || readName(out, at) !== name) continue;
+      const chain: number[] = [];
+      for (let cur = b; cur !== NONE && cur < BLOCKS && chain.length < BLOCKS; cur = out.readUInt16LE(dirOffset(cur) + 8)) chain.push(cur);
+      return chain;
     }
-  }
-  const freeList = () => Array.from({ length: BLOCKS }, (_, b) => b).filter((b) => out[dirOffset(b)] === FREE || (out[dirOffset(b)] >= 0xa1 && out[dirOffset(b)] <= 0xa3));
+    return [];
+  };
+  const release = (chain: number[]) => chain.forEach((b) => freeFrame().copy(out, dirOffset(b)));
+  for (const name of remove) release(chainOf(name));
   const skipped: string[] = [];
   for (const e of put) {
-    const free = freeList();
-    if (free.length < e.blocks) {
+    const old = chainOf(e.name);
+    const free = Array.from({ length: BLOCKS }, (_, b) => b).filter(isFree);
+    // Its own blocks count as room; when even so it does not fit, the card keeps the version it has
+    if (free.length + old.length < e.blocks) {
       skipped.push(e.name);
       continue;
     }
-    const use = free.slice(0, e.blocks);
+    release(old);
+    const use = Array.from({ length: BLOCKS }, (_, b) => b)
+      .filter(isFree)
+      .slice(0, e.blocks);
     use.forEach((blk, i) => {
       const last = i === use.length - 1;
       const state = i === 0 ? FIRST : last ? LAST : MIDDLE;
@@ -231,10 +238,12 @@ export function writePs1Card(card: Buffer, put: Ps1Entry[], remove: string[] = [
       e.mcs.copy(out, blockOffset(blk), FRAME + i * BLOCK, FRAME + (i + 1) * BLOCK);
     });
   }
-  // Whatever went in must read back the same before the card leaves the server
+  // Whatever went in must read back the same, and every other entry must still be there unchanged
   const check = readPs1Card(out);
   if (check.problems.length) throw new CardError(`Card came out broken: ${check.problems.join(', ')}`);
   const got = new Map(check.entries.map((e) => [e.name, e.sha1]));
   for (const e of put) if (!skipped.includes(e.name) && got.get(e.name) !== e.sha1) throw new CardError(`Entry ${e.name} did not read back`);
+  const written = new Set([...remove, ...put.filter((e) => !skipped.includes(e.name)).map((e) => e.name)]);
+  for (const e of current.entries) if (!written.has(e.name) && got.get(e.name) !== e.sha1) throw new CardError(`Entry ${e.name} changed`);
   return { card: out, skipped };
 }

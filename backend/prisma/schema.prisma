@@ -524,6 +524,8 @@ model Device {
   // Tail of the client's log and its version, sent after each sync (remote troubleshooting)
   lastLog         String?               @db.Text
   clientVersion   String?               @db.VarChar(32)
+  // When the server first heard from the client in its current version (its install or update)
+  clientUpdatedAt DateTime?
   romLists        DeviceList[]
   // The device lets the server fetch roms from it (client setting, reported on every sync)
   allowPull       Boolean               @default(true)

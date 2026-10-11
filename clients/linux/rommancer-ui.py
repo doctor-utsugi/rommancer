@@ -58,6 +58,8 @@ TEXTS = {
         "menu_keys": "A elegir   B atrás",
         "press": "Pulsa A para continuar",
         "nolog": "Todavía no hay registro",
+        "version": "Versión {v}",
+        "installed": "instalada el {d}",
         "p_connecting": "Conectando con el servidor",
         "p_waiting": "Esperando a la sincronización en curso",
         "p_roms": "Comprobando roms",
@@ -108,6 +110,8 @@ TEXTS = {
         "menu_keys": "A choose   B back",
         "press": "Press A to continue",
         "nolog": "No log yet",
+        "version": "Version {v}",
+        "installed": "installed {d}",
         "p_connecting": "Contacting the server",
         "p_waiting": "Waiting for the running sync",
         "p_roms": "Checking roms",
@@ -701,7 +705,24 @@ class App:
                 lines = f.read().splitlines()[-6:]
         except OSError:
             lines = [T["nolog"]]
-        self.menu(T["status"], ["OK"], info=lines)
+        self.menu(T["status"], ["OK"], info=[self.version_line()] + lines)
+
+    def version_line(self):
+        """The client's version and when this console first synced with it"""
+        try:
+            with open(os.path.join(HERE, "rommancer-sync.sh"), encoding="utf-8") as f:
+                v = next((l.split("=", 1)[1].strip() for l in f if l.startswith("CLIENT_VERSION=")), "?")
+        except OSError:
+            v = "?"
+        line = T["version"].format(v=v)
+        try:
+            with open(os.path.join(self.state, "version"), encoding="utf-8") as f:
+                mark = f.read().strip().split("\t")
+            if len(mark) == 2 and mark[0] == v:
+                line += ", " + T["installed"].format(d=mark[1])
+        except OSError:
+            pass
+        return line
 
     def logout(self):
         subprocess.run(["sh", SCRIPT, "unlink"], capture_output=True, timeout=30)

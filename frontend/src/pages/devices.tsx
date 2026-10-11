@@ -109,7 +109,7 @@ export function DevicesPage() {
                 {d.connType === 'AGENT' && (
                   <p className="text-xs text-muted-foreground">
                     {t('more.device.games', { count: d._count?.inventory ?? 0 })}
-                    {d.clientVersion && ` · ${t('more.device.client')} ${d.clientVersion}`}
+                    {d.clientVersion && ` · ${t('more.device.client')} ${d.clientVersion}${d.clientUpdatedAt ? ` (${t('more.device.clientSince', { date: formatDate(d.clientUpdatedAt) })})` : ''}`}
                   </p>
                 )}
                 <p className="text-xs text-muted-foreground">

@@ -2758,11 +2758,11 @@ test('memory cards: PS1 saves sync entry by entry, several per game, only into a
   assert.match(await b.sync(), /1 up, 2 down, 0 errors/);
   assert.deepEqual(names(b.card), [S01, S02]);
   assert.deepEqual(names(b.shared), [NQ, HB]);
-  // Synced once the console is seen holding what it was sent
+  // Synced as soon as the console says it swapped the card in
   const dcB = await prisma.deviceCard.findFirstOrThrow({ where: { deviceId: b.id, path: 'saves/psx/Card Quest (USA).srm' } });
-  assert.ok(dcB.offerSha1);
+  assert.equal(dcB.offerSha1, null, 'acknowledged by the client right after the swap');
+  assert.equal(dcB.lastSha1, crypto.createHash('sha1').update(fs.readFileSync(b.card)).digest('hex'));
   assert.match(await b.sync(), /0 up, 0 down, 0 errors/);
-  assert.equal((await prisma.deviceCard.findUniqueOrThrow({ where: { id: dcB.id } })).offerSha1, null);
   assert.match(await a.sync(), /0 up, 0 down, 0 errors/);
 
   // A saves again; B is playing: its card is not touched until the emulator is gone

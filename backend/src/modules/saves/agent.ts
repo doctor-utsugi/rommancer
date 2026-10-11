@@ -27,7 +27,7 @@ import { serverKey } from '../devices/ssh.js';
 import { devicePlan } from '../devices/plan.js';
 import { Prisma } from '@prisma/client';
 import { storeWifiBands } from '../devconfig/service.js';
-import { cardAction, deviceCard, findDeviceCard, gameForSerial, hasWantedSaves, isCardEmulator, namedCard, observeCard, prepareCard, recordOffer } from './cards.js';
+import { cardAction, commitOffer, deviceCard, findDeviceCard, gameForSerial, hasWantedSaves, isCardEmulator, namedCard, observeCard, prepareCard, recordOffer } from './cards.js';
 
 export const agentRouter = Router();
 
@@ -270,6 +270,17 @@ async function namedCardEmulator(slug: string) {
   return (await prisma.emulator.findUnique({ where: { slug } })) ?? (await prisma.emulator.findFirstOrThrow({ where: { saveFormat: 'ps1card' }, orderBy: { id: 'asc' } }));
 }
 
+/** Shared cards in the first slot: an emulator using one has no per-game cards (second slots sit beside them) */
+const FIRST_SLOT_SHARED = /^(pcsx-card1\.mcd|duckstation_shared_card_1\.mcd|shared_card_1\.mcd|mednafen_psx_libretro_shared\.0\.mcr)$/i;
+
+/** Per-game cards are made for a device unless the only cards it has shown are shared first-slot ones */
+async function usesGameCards(deviceId: number) {
+  const seen = { snapshots: { some: { kind: 'seen' } } };
+  const shared = await prisma.deviceCard.findMany({ where: { deviceId, shared: true, ...seen }, select: { path: true } });
+  if (!shared.some((c) => FIRST_SLOT_SHARED.test(c.path.split('/').pop() ?? ''))) return true;
+  return (await prisma.deviceCard.count({ where: { deviceId, shared: false, ...seen } })) > 0;
+}
+
 /**
  * The line for a memory card file: "put<TAB>path<TAB>rom" to read it, "cget<TAB>path<TAB>sha1|-<TAB>rom" when the
  * server has entries for it (the client swaps the file only while it is still that sha1 and no emulator runs).
@@ -277,7 +288,7 @@ async function namedCardEmulator(slug: string) {
  */
 async function cardLine(device: AgentDevice, absPath: string, emu: Emulator, scope: { shared: boolean; gameId: number | null }, deviceSha1: string | null, rom: string, start = false) {
   const rel = relToRoot(device, absPath);
-  if (!(await findDeviceCard(device.id, rel)) && !deviceSha1 && !(scope.gameId && !scope.shared && (await hasWantedSaves(device.userId, scope.gameId)))) return null;
+  if (!(await findDeviceCard(device.id, rel)) && !deviceSha1 && !(scope.gameId && !scope.shared && (await hasWantedSaves(device.userId, scope.gameId)) && (await usesGameCards(device.id)))) return null;
   const dc = await deviceCard(device, rel, emu, scope);
   const action = await cardAction(device, dc, emu, deviceSha1);
   // Game start only takes: a changed card goes up when the game ends
@@ -385,7 +396,10 @@ agentRouter.post('/sync', express.text({ limit: '16mb', type: '*/*' }), async (r
 agentRouter.post('/log', express.text({ limit: '64kb', type: '*/*' }), async (req, res) => {
   const device = await deviceFromToken(req);
   const text = String(req.body ?? '').slice(-16_000);
-  await prisma.device.update({ where: { id: device.id }, data: { lastLog: text, clientVersion: (req.header('x-client-version') ?? '').slice(0, 32) || null } });
+  const version = (req.header('x-client-version') ?? '').slice(0, 32) || null;
+  // A new version: the client was just installed or updated itself
+  const changed = version !== null && version !== device.clientVersion;
+  await prisma.device.update({ where: { id: device.id }, data: { lastLog: text, clientVersion: version, ...(changed ? { clientUpdatedAt: new Date() } : {}) } });
   res.status(204).end();
 });
 
@@ -714,6 +728,19 @@ agentRouter.get('/card', async (req, res) => {
   await recordOffer(device, dc, prepared);
   res.setHeader('X-Card-Sha1', prepared.sha1);
   res.type('application/octet-stream').send(prepared.file);
+});
+
+/**
+ * The device swapped in the card it was sent (its sha1): the entries in it are synced from now on, so a game
+ * saved on it before the next sync is the device's newer save, not a conflict.
+ */
+agentRouter.post('/card/ack', async (req, res) => {
+  const device = await deviceFromToken(req);
+  const dc = await findDeviceCard(device.id, relToRoot(device, b64(req.header('x-path-b64'))));
+  if (!dc) throw new HttpError(404, 'Unknown card');
+  const sent = dc.offerSha1 !== null && String(req.query.sha ?? '') === dc.offerSha1;
+  if (sent) await commitOffer(dc, device.id);
+  res.type('text/plain').send(sent ? 'synced\n' : 'unknown\n');
 });
 
 async function stateVersion(device: AgentDevice, id: number) {
