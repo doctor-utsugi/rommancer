@@ -457,6 +457,16 @@ agentRouter.post('/sync', express.text({ limit: '16mb', type: '*/*' }), async (r
   const coreEmus = (await prisma.emulator.findMany({ where: { core: { not: null } } })) as Emulator[];
   const out: string[] = [];
   const cardFiles = new Set<string>();
+  // Resume states another console made, copied here before they stopped travelling: put aside, so this console
+  // opens its games with their synced save instead of another console's memory
+  const foreignResume = new Set(
+    (
+      await prisma.saveVersion.findMany({
+        where: { sourceDeviceId: { not: device.id }, save: { userId: device.userId, kind: 'STATE', slot: -1 } },
+        select: { sha1: true },
+      })
+    ).map((v) => v.sha1),
+  );
   for (const { path: rom, hashes } of roms) {
     const ctx = await romContext(device, rom).catch(() => null);
     if (!ctx) continue;
@@ -483,7 +493,11 @@ agentRouter.post('/sync', express.text({ limit: '16mb', type: '*/*' }), async (r
     const exactOnly = emus.length > 1;
     for (const f of candidates) {
       // The resume state is where this console left the game: it never travels (see RESUME)
-      if (isResume(f)) continue;
+      if (isResume(f)) {
+        const sha = present.get(f.path);
+        if (sha && foreignResume.has(sha) && !out.includes(`aside\t${f.path}`)) out.push(`aside\t${f.path}`);
+        continue;
+      }
       if (f.kind === 'SAVE' && isCardEmulator(f.emu)) {
         cardFiles.add(f.path);
         const line = await cardLine(device, f.path, f.emu, { shared: false, gameId }, present.get(f.path) ?? null, rom);
