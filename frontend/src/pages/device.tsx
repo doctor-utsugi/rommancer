@@ -513,15 +513,16 @@ const toggled = (set: Set<string>, key: string, on: boolean) => {
   return next
 }
 
-/** One platform in the copy window: its files and size */
-function GroupRow({ g, checked, onChange }: { g: { name: string; files: number; bytes: number }; checked: boolean; onChange: (on: boolean) => void }) {
+/** One cell of the copy window: a platform's new or unidentified files, ticked to copy them */
+function PickCell({ g, checked, onChange }: { g?: { files: number; bytes: number }; checked: boolean; onChange: (on: boolean) => void }) {
   const { t } = useTranslation()
+  if (!g) return <span className="text-xs text-muted-foreground">—</span>
   return (
-    <label className="flex items-center gap-2 text-sm">
+    <label className="flex items-center gap-1.5 whitespace-nowrap">
       <Checkbox checked={checked} onCheckedChange={(c) => onChange(!!c)} />
-      <span className="flex-1 truncate">{g.name}</span>
-      <span className="shrink-0 text-xs text-muted-foreground">{t('more.hero.files', { count: g.files })}</span>
-      <span className="w-20 shrink-0 text-right text-xs tabular-nums text-muted-foreground">{formatBytes(g.bytes)}</span>
+      <span className="text-xs tabular-nums">
+        {t('more.hero.files', { count: g.files })} <span className="text-muted-foreground">· {formatBytes(g.bytes)}</span>
+      </span>
     </label>
   )
 }
@@ -548,6 +549,14 @@ function CopyDialog({ deviceId, items, admin, onClose, onCopy }: { deviceId: str
   }
   const groups = useMemo(() => groupsOf(true), [items])
   const rest = useMemo(() => groupsOf(false), [items])
+  // One line per platform: its new games and its unidentified files side by side
+  const platforms = useMemo(() => {
+    const by = new Map<string, { slug: string; name: string }>()
+    for (const g of [...groups, ...rest]) if (!by.has(g.slug)) by.set(g.slug, { slug: g.slug, name: g.name })
+    return [...by.values()].sort((a, b) => (a.slug === '' ? 1 : b.slug === '' ? -1 : a.name.localeCompare(b.name)))
+  }, [groups, rest])
+  const newOf = new Map(groups.map((g) => [g.slug, g]))
+  const restOf = new Map(rest.map((g) => [g.slug, g]))
   const [picked, setPicked] = useState(() => new Set(groups.map((g) => g.slug)))
   const [pickedRest, setPickedRest] = useState(() => new Set<string>())
   const chosen = [...groups.filter((g) => picked.has(g.slug)), ...rest.filter((g) => pickedRest.has(g.slug))]
@@ -570,25 +579,39 @@ function CopyDialog({ deviceId, items, admin, onClose, onCopy }: { deviceId: str
           <DialogTitle>{t('more.copyPick.title')}</DialogTitle>
         </DialogHeader>
         <p className="text-sm text-muted-foreground">{t('more.copyPick.help')}</p>
-        <label className="flex items-center gap-2 border-b pb-2 text-sm font-medium">
-          <Checkbox checked={all} onCheckedChange={(c) => setPicked(new Set(c ? groups.map((g) => g.slug) : []))} />
-          {t('more.copyPick.all')}
-        </label>
-        <div className="max-h-72 space-y-1 overflow-y-auto">
-          {groups.map((g) => (
-            <GroupRow key={g.slug} g={g} checked={picked.has(g.slug)} onChange={(c) => setPicked(toggled(picked, g.slug, c))} />
-          ))}
-          {rest.length > 0 && (
-            <>
-              <label className="flex items-center gap-2 border-t pt-2 text-sm font-medium">
-                <Checkbox checked={pickedRest.size === rest.length} onCheckedChange={(c) => setPickedRest(new Set(c ? rest.map((g) => g.slug) : []))} />
-                {t('more.copyPick.unidentified')}
-              </label>
-              {rest.map((g) => (
-                <GroupRow key={`u-${g.slug}`} g={g} checked={pickedRest.has(g.slug)} onChange={(c) => setPickedRest(toggled(pickedRest, g.slug, c))} />
+        <div className="max-h-80 overflow-y-auto">
+          <table className="w-full text-sm">
+            <thead className="sticky top-0 bg-background text-xs text-muted-foreground">
+              <tr className="border-b">
+                <th className="py-1.5 text-left font-medium">{t('more.copyPick.platform')}</th>
+                <th className="py-1.5 text-left font-medium">
+                  <label className="flex items-center gap-1.5">
+                    <Checkbox checked={all} disabled={!groups.length} onCheckedChange={(c) => setPicked(new Set(c ? groups.map((g) => g.slug) : []))} />
+                    {t('more.copyPick.newCol')}
+                  </label>
+                </th>
+                <th className="py-1.5 text-left font-medium">
+                  <label className="flex items-center gap-1.5">
+                    <Checkbox checked={rest.length > 0 && pickedRest.size === rest.length} disabled={!rest.length} onCheckedChange={(c) => setPickedRest(new Set(c ? rest.map((g) => g.slug) : []))} />
+                    {t('more.copyPick.unidentified')}
+                  </label>
+                </th>
+              </tr>
+            </thead>
+            <tbody>
+              {platforms.map((pl) => (
+                <tr key={pl.slug} className="border-b last:border-0">
+                  <td className="py-1.5 pr-2">{pl.name}</td>
+                  <td className="py-1.5 pr-2">
+                    <PickCell g={newOf.get(pl.slug)} checked={picked.has(pl.slug)} onChange={(c) => setPicked(toggled(picked, pl.slug, c))} />
+                  </td>
+                  <td className="py-1.5">
+                    <PickCell g={restOf.get(pl.slug)} checked={pickedRest.has(pl.slug)} onChange={(c) => setPickedRest(toggled(pickedRest, pl.slug, c))} />
+                  </td>
+                </tr>
               ))}
-            </>
-          )}
+            </tbody>
+          </table>
         </div>
         <div className="space-y-3 rounded-md border p-3">
           <div className="flex flex-wrap items-baseline justify-between gap-2">
