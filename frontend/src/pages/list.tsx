@@ -6,6 +6,7 @@ import { ArrowDown, ArrowUp, Check, ImageOff, Star, Trash2, Trophy, X } from 'lu
 import { toast } from 'sonner'
 import { authUrl, del, get, post, put } from '@/lib/api'
 import { useAuth } from '@/lib/auth'
+import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
@@ -27,6 +28,7 @@ export function ListPage() {
   const { data: list, refetch } = useQuery({ queryKey: ['list', String(id)], queryFn: () => get(`/lists/${id}`) })
   const [dialog, setDialog] = useState<DialogKind>(null)
   const [jobId, setJobId] = useState<number | null>(null)
+  const [q, setQ] = useState('')
   const job = useJob(jobId, [['list', String(id)]])
   const [dragging, setDragging] = useState(false)
   const [incoming, setIncoming] = useState<File[]>([])
@@ -192,6 +194,7 @@ export function ListPage() {
           />
         </div>
       )}
+      {list.items.length > 0 && <Input className="mb-3 w-72" value={q} placeholder={t('common.search')} onChange={(e) => setQ(e.target.value)} />}
       {!list.items.length ? (
         <Empty />
       ) : (
@@ -207,7 +210,10 @@ export function ListPage() {
             </TableRow>
           </TableHeader>
           <TableBody>
-            {list.items.map((i: any, idx: number) => (
+            {list.items.map((i: any, idx: number) => {
+              const needle = q.trim().toLowerCase()
+              if (needle && !`${i.gameTitle ?? ''} ${i.title ?? ''} ${i.system?.name ?? ''} ${i.note ?? ''}`.toLowerCase().includes(needle)) return null
+              return (
               <TableRow key={i.id}>
                 <TableCell>
                   <div className="flex h-12 w-9 items-center justify-center overflow-hidden rounded bg-muted">
@@ -250,12 +256,17 @@ export function ListPage() {
                 <TableCell>
                   {list.canEdit && (
                     <div className="flex gap-1">
-                      <Button variant="ghost" size="icon-sm" onClick={() => void move(idx, -1)} title={t('lists.moveUp')}>
-                        <ArrowUp className="size-4" />
-                      </Button>
-                      <Button variant="ghost" size="icon-sm" onClick={() => void move(idx, 1)} title={t('lists.moveDown')}>
-                        <ArrowDown className="size-4" />
-                      </Button>
+                      {/* Moving among search results would put entries next to hidden ones */}
+                      {!q.trim() && (
+                        <>
+                          <Button variant="ghost" size="icon-sm" onClick={() => void move(idx, -1)} title={t('lists.moveUp')}>
+                            <ArrowUp className="size-4" />
+                          </Button>
+                          <Button variant="ghost" size="icon-sm" onClick={() => void move(idx, 1)} title={t('lists.moveDown')}>
+                            <ArrowDown className="size-4" />
+                          </Button>
+                        </>
+                      )}
                       <Button variant="ghost" size="icon-sm" onClick={() => void run(() => del(`/lists/${list.id}/items/${i.id}`))} title={t('common.remove')}>
                         <Trash2 className="size-4" />
                       </Button>
@@ -263,7 +274,8 @@ export function ListPage() {
                   )}
                 </TableCell>
               </TableRow>
-            ))}
+              )
+            })}
           </TableBody>
         </Table>
       )}

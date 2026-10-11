@@ -11,6 +11,7 @@ import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '
 import { Input } from '@/components/ui/input'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { Checkbox } from '@/components/ui/checkbox'
 import { Empty, Field, NativeSelect, PageHeader, errMsg, formatBytes, formatDate } from '@/components/common'
 
 const family = (f: string) => (f.startsWith('ps1') ? 'ps1' : f)
@@ -33,12 +34,21 @@ export function SavesPage() {
   })
   const pick = (v: 'games' | 'list') => {
     setView(v)
-    try {
-      localStorage.setItem('saves-view', v)
-    } catch {
-      /* private mode */
-    }
+    remember('saves-view', v)
   }
+  const [onlyPlayed, setOnlyPlayed] = useState(() => {
+    try {
+      return localStorage.getItem('saves-only-played') !== '0'
+    } catch {
+      return true
+    }
+  })
+  // A save never changed after it was created (one version: identical files make no new one) is a game only started
+  const [q, setQ] = useState('')
+  const needle = q.trim().toLowerCase()
+  const found = needle ? data?.filter((s) => `${s.game?.title ?? ''} ${s.baseName} ${s.game?.system.name ?? ''}`.toLowerCase().includes(needle)) : data
+  const shown = onlyPlayed ? found?.filter((s) => s.versions.length > 1) : found
+  const hidden = (found?.length ?? 0) - (shown?.length ?? 0)
   return (
     <div>
       <PageHeader title={t('saves.title')}>
@@ -53,7 +63,8 @@ export function SavesPage() {
           <TabsTrigger value="shared">{t('more.saves.shared')}</TabsTrigger>
         </TabsList>
         <TabsContent value="mine" className="space-y-3">
-          <div className="flex gap-1">
+          <div className="flex flex-wrap items-center gap-1">
+            <Input className="mr-2 w-64" value={q} placeholder={t('more.saves.search')} onChange={(e) => setQ(e.target.value)} />
             <Button size="sm" variant={view === 'games' ? 'default' : 'outline'} onClick={() => pick('games')}>
               <Rows3 className="size-4" />
               {t('more.saves.byGame')}
@@ -62,8 +73,19 @@ export function SavesPage() {
               <LayoutList className="size-4" />
               {t('more.saves.asList')}
             </Button>
+            <label className="ml-3 flex items-center gap-2 text-sm" title={t('more.saves.onlyPlayedHelp')}>
+              <Checkbox
+                checked={onlyPlayed}
+                onCheckedChange={(c) => {
+                  setOnlyPlayed(!!c)
+                  remember('saves-only-played', c ? '1' : '0')
+                }}
+              />
+              {t('more.saves.onlyPlayed')}
+              {onlyPlayed && hidden > 0 && <span className="text-xs text-muted-foreground">({t('more.saves.hiddenUnplayed', { count: hidden })})</span>}
+            </label>
           </div>
-          {view === 'games' ? <SavesByGame saves={data} onOpen={setOpen} /> : <MySaves saves={data} onOpen={setOpen} />}
+          {view === 'games' ? <SavesByGame saves={shown} onOpen={setOpen} /> : <MySaves saves={shown} onOpen={setOpen} />}
         </TabsContent>
         <TabsContent value="shared">
           <SharedSaves />
@@ -73,6 +95,14 @@ export function SavesPage() {
       {uploading && <UploadDialog onClose={() => setUploading(false)} />}
     </div>
   )
+}
+
+function remember(key: string, value: string) {
+  try {
+    localStorage.setItem(key, value)
+  } catch {
+    /* private mode */
+  }
 }
 
 const slotLabel = (slot: number) => (slot === -1 ? 'auto' : `#${slot}`)

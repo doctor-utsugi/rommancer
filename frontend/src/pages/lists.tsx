@@ -24,7 +24,10 @@ export function ListsPage() {
   const [scope, setScope] = useState('mine')
   const [creating, setCreating] = useState(false)
   const fileRef = useRef<HTMLInputElement>(null)
-  const { data } = useQuery({ queryKey: ['lists', scope], queryFn: () => get<any[]>(`/lists?scope=${scope}`) })
+  const { data: all } = useQuery({ queryKey: ['lists', scope], queryFn: () => get<any[]>(`/lists?scope=${scope}`) })
+  const [q, setQ] = useState('')
+  const needle = q.trim().toLowerCase()
+  const data = needle ? all?.filter((l) => `${l.kind === 'favorites' ? t('more.fav.listName') : l.name} ${l.description ?? ''}`.toLowerCase().includes(needle)) : all
 
   const importFile = async (f: File) => {
     try {
@@ -49,13 +52,16 @@ export function ListsPage() {
           {t('lists.new')}
         </Button>
       </PageHeader>
-      <Tabs value={scope} onValueChange={(v) => setScope(String(v))} className="mb-4">
-        <TabsList>
-          <TabsTrigger value="mine">{t('lists.mine')}</TabsTrigger>
-          <TabsTrigger value="shared">{t('lists.shared')}</TabsTrigger>
-          <TabsTrigger value="public">{t('lists.public')}</TabsTrigger>
-        </TabsList>
-      </Tabs>
+      <div className="mb-4 flex flex-wrap items-center gap-3">
+        <Tabs value={scope} onValueChange={(v) => setScope(String(v))}>
+          <TabsList>
+            <TabsTrigger value="mine">{t('lists.mine')}</TabsTrigger>
+            <TabsTrigger value="shared">{t('lists.shared')}</TabsTrigger>
+            <TabsTrigger value="public">{t('lists.public')}</TabsTrigger>
+          </TabsList>
+        </Tabs>
+        <Input className="w-64" value={q} placeholder={t('common.search')} onChange={(e) => setQ(e.target.value)} />
+      </div>
       {!data?.length ? (
         <Empty />
       ) : (
