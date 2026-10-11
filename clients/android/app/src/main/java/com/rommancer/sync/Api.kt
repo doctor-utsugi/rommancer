@@ -91,12 +91,25 @@ class Api(private val server: String, private val token: String? = null) {
     }
 
     /** Streams a file as the request body (roms can be large) */
-    fun uploadFile(path: String, file: File, headers: Map<String, String> = emptyMap()): String {
+    /** SENT hears the bytes written so far */
+    fun uploadFile(path: String, file: File, headers: Map<String, String> = emptyMap(), sent: (Long) -> Unit = {}): String {
         val conn = open(path, "POST", headers)
         try {
             conn.doOutput = true
             conn.setFixedLengthStreamingMode(file.length())
-            file.inputStream().use { input -> conn.outputStream.use { input.copyTo(it, 1 shl 16) } }
+            file.inputStream().use { input ->
+                conn.outputStream.use { out ->
+                    val buf = ByteArray(1 shl 16)
+                    var total = 0L
+                    while (true) {
+                        val n = input.read(buf)
+                        if (n < 0) break
+                        out.write(buf, 0, n)
+                        total += n
+                        sent(total)
+                    }
+                }
+            }
             check(conn)
             return conn.inputStream.bufferedReader().readText()
         } finally {

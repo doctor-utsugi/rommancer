@@ -365,6 +365,13 @@ private fun Linked(store: Store, onUnlinked: () -> Unit) {
     when (val s = screen) {
         Screen.Menu -> {
             Text(stringResource(R.string.connected, store.server, store.user ?: "?"), color = Dim)
+            // The server is fetching roms from this device: shown with its progress while it lasts
+            val pull by produceState(SyncEngine.PULL_LIVE) { while (true) { value = SyncEngine.PULL_LIVE; delay(500) } }
+            pull?.let { p ->
+                Text("${stringResource(R.string.p_pulls)}  ${p.done}/${p.total}", fontSize = 18.sp)
+                LinearProgressIndicator(progress = { p.share }, modifier = Modifier.fillMaxWidth().height(10.dp))
+                Text("${(p.share * 100).toInt()}%  ·  ${p.detail}  ${(p.fileShare * 100).toInt()}%", color = Dim)
+            }
             settingsTick // read so the toggles redraw after a change
             val n = conflicts?.size?.toString() ?: "…"
             val titleSync = stringResource(R.string.syncing)
@@ -432,7 +439,8 @@ private fun Linked(store: Store, onUnlinked: () -> Unit) {
         is Screen.Working -> {
             // A download the background started shows its own progress (this pass waits for it)
             val live by produceState(SyncEngine.LIVE) { while (true) { value = SyncEngine.LIVE; delay(500) } }
-            val progress = if (progress.phase.startsWith("roms") || progress.phase == "connecting") live ?: progress else progress
+            val pullLive by produceState(SyncEngine.PULL_LIVE) { while (true) { value = SyncEngine.PULL_LIVE; delay(500) } }
+            val progress = if (progress.phase.startsWith("roms") || progress.phase == "connecting") live ?: progress else if (progress.phase == "pulls") pullLive ?: progress else progress
             Text(s.title, fontSize = 22.sp)
             val label = when (progress.phase) {
                 "roms" -> stringResource(R.string.p_roms)

@@ -22,7 +22,7 @@
 #                                   Menu++...) mounted on this computer; the link lives on the card itself,
 #                                   so any computer with this script can sync it. Without a command: sync.
 set -u
-CLIENT_VERSION=20261030
+CLIENT_VERSION=20261031
 # A clock before this date is surely wrong (no battery-backed clock); kept apart from the version, which may run ahead
 CLOCK_MIN=20261001
 # Onion keeps curl (with TLS) and friends outside the default PATH
@@ -1142,7 +1142,9 @@ cmd_pulls() {
   total="$(grep -c '^pull' "$WORK/pulls")"; i=0; sent=0
   while IFS="$TAB" read -r kind id p; do
     [ "$kind" = pull ] || continue
-    i=$((i + 1)); progress pulls "$i" "$total"
+    i=$((i + 1))
+    # "done<TAB>total<TAB>size<TAB>name" for the app's screens, apart from the sync's progress
+    printf '%s\t%s\t%s\t%s\n' "$i" "$total" "$(stat -c %s "$p" 2>/dev/null || echo 0)" "$(basename "$p")" > "$WORK/pull-progress.tmp" && mv "$WORK/pull-progress.tmp" "$WORK/pull-progress"
     # Never compete with a game for the network and the card: wait until it ends
     while playing; do sleep 20; done
     if [ ! -f "$p" ]; then
@@ -1152,13 +1154,15 @@ cmd_pulls() {
     if command -v curl >/dev/null 2>&1; then
       # A stalled transfer (under 1 KB/s for a minute) is dropped and sent again later
       # --globoff: rom names often carry [brackets] that curl would read as a pattern
-      set -- -fsS --globoff --connect-timeout 5 --max-time 7200 --speed-limit 1024 --speed-time 60 -X POST -H "X-Device-Token: $TOKEN" -T "$p"
+      # The progress bar (-#) goes to a file the app's screens read for the file's share
+      set -- -f -S -# --globoff --connect-timeout 5 --max-time 7200 --speed-limit 1024 --speed-time 60 -X POST -H "X-Device-Token: $TOKEN" -T "$p"
       [ -f "$DIR/cacert.pem" ] && set -- "$@" --cacert "$DIR/cacert.pem"
-      curl "$@" "$SERVER/api/v1/agent/pull/$id" > "$WORK/pull-result" 2>/dev/null
+      curl "$@" "$SERVER/api/v1/agent/pull/$id" > "$WORK/pull-result" 2> "$WORK/pull-curl"
     else
       wget -q -T 60 -O "$WORK/pull-result" --header="X-Device-Token: $TOKEN" --post-file="$p" "$SERVER/api/v1/agent/pull/$id"
     fi && { sent=$((sent + 1)); log "sent $(basename "$p"): $(head -n 1 "$WORK/pull-result")"; }
   done < "$WORK/pulls"
+  rm -f "$WORK/pull-progress" "$WORK/pull-curl"
   log "pulls: $sent of $total sent"
   [ -n "${VERBOSE:-}" ] && printf 'sent to server: %s of %s\n' "$sent" "$total"
   rm -rf "$WORK/pull-lock"
@@ -1218,7 +1222,7 @@ t() {
       pruneintro) echo "Rommancer puede borrar de esta consola las roms que no esten en ninguna de sus listas (las que el servidor no tenga se suben antes). Los saves se quedan. Se puede cambiar luego aqui o en la web. Activarlo?" ;;
       pruneask) echo "Se ha activado desde el servidor el borrado de roms que no estan en ninguna lista. Se borraran $2 roms ($3). Mantener esta opcion?" ;;
       prunehold) echo "Se van a borrar $2 de las $3 roms de esta consola (mas de la mitad) por no estar en ninguna lista. Puede que una lista se haya vaciado. Borrarlas?" ;;
-      romswatch) echo "Ver descarga de roms $2" ;; stophint) echo "(B para parar)" ;;
+      romswatch) echo "Ver descarga de roms $2" ;; stophint) echo "(B para parar)" ;; backhint) echo "(B para volver al menu; el envio sigue)" ;; pullswatch) echo "Ver envio de juegos al servidor" ;;
       pruneon) echo "Si, borrarlas" ;; pruneoff) echo "No, desactivarlo" ;; prunelater) echo "Ahora no" ;; cleaned) echo "Saves borrados: $2" ;; *) echo "$1" ;;
     esac
   else
@@ -1241,7 +1245,7 @@ t() {
       pruneintro) echo "Rommancer can delete from this console the roms that are in none of its lists (the ones the server lacks are uploaded first). Saves stay. You can change it later here or on the web. Turn it on?" ;;
       pruneask) echo "Deleting roms that are not in any list was turned on from the server. $2 roms ($3) will be deleted. Keep this option?" ;;
       prunehold) echo "$2 of the $3 roms on this console (more than half) would be deleted for being in no list. A list may have been emptied. Delete them?" ;;
-      romswatch) echo "Watch rom download $2" ;; stophint) echo "(B to stop)" ;;
+      romswatch) echo "Watch rom download $2" ;; stophint) echo "(B to stop)" ;; backhint) echo "(B for the menu; the copy goes on)" ;; pullswatch) echo "Watch games being sent to the server" ;;
       pruneon) echo "Yes, delete them" ;; pruneoff) echo "No, turn it off" ;; prunelater) echo "Not now" ;; cleaned) echo "Saves deleted: $2" ;; *) echo "$1" ;;
     esac
   fi
@@ -1266,7 +1270,7 @@ key_watch() {
   [ -r /dev/input/event0 ] || return 0
   while :; do
     set -- $(dd if=/dev/input/event0 bs=16 count=1 2>/dev/null | od -An -tu2)
-    [ "${5:-}" = 1 ] && [ "${6:-}" = 29 ] && [ "${7:-}" = 1 ] && sh "$DIR/$(basename "$0")" roms-stop > /dev/null 2>&1
+    [ "${5:-}" = 1 ] && [ "${6:-}" = 29 ] && [ "${7:-}" = 1 ] && touch "$WORK/key-b"
   done
 }
 key_watch_end() {
@@ -1280,9 +1284,11 @@ with_progress() {
   roms_running || rm -f "$WORK/progress"
   ( VERBOSE=1; "$@" > "$WORK/run-out" 2>&1 ) &
   job=$!
-  key_watch & kw=$!
+  rm -f "$WORK/key-b"; key_watch & kw=$!
   shown=""
   while kill -0 "$job" 2>/dev/null; do
+    # B stops a rom download
+    [ -f "$WORK/key-b" ] && { rm -f "$WORK/key-b"; (sh "$DIR/$(basename "$0")" roms-stop > /dev/null 2>&1 &); }
     line="$(cat "$WORK/progress" 2>/dev/null)"
     phase="$(printf '%s' "$line" | cut -f1)"; done_n="$(printf '%s' "$line" | cut -f2)"; total="$(printf '%s' "$line" | cut -f3)"
     text="$(t "p_$phase")"
@@ -1332,6 +1338,37 @@ setup_prune() {
   [ -f "$SETTINGS" ] && . "$SETTINGS"
 }
 
+# What the server is fetching from this console, while it lasts: count, file and a bar (B goes back to the menu, the
+# copy goes on)
+pulls_line() {
+  IFS="$TAB" read -r pd pt ps pn < "$WORK/pull-progress" 2>/dev/null || return 1
+  [ "${pt:-0}" -gt 0 ] 2>/dev/null || return 1
+  pct=$(( (pd - 1) * 100 / pt ))
+  bar="["; k=0; while [ "$k" -lt 10 ]; do if [ "$k" -lt $((pct / 10)) ]; then bar="$bar#"; else bar="$bar-"; fi; k=$((k + 1)); done; bar="$bar]"
+  # The file's share: the last figure of curl's progress bar
+  fp="$(tr '\r' '\n' < "$WORK/pull-curl" 2>/dev/null | grep -o '[0-9.]*%' | tail -n 1)"
+  printf '%s %s/%s %s %s (%s KB%s)' "$(t p_pulls)" "$pd" "$pt" "$bar" "$(printf '%s' "$pn" | cut -c1-30)" "$(( ${ps:-0} / 1024 ))" "${fp:+, $fp}"
+}
+# "done<TAB>total<TAB>name<TAB>file percent" of the copy the server asked for, nothing when none runs
+pulls_status() {
+  pulls_running || return 0
+  IFS="$TAB" read -r pd pt ps pn < "$WORK/pull-progress" 2>/dev/null || return 0
+  fp="$(tr '\r' '\n' < "$WORK/pull-curl" 2>/dev/null | grep -o '[0-9.]*%' | tail -n 1)"
+  printf '%s\t%s\t%s\t%s\n' "$pd" "$pt" "$pn" "${fp%%%}"
+}
+watch_pulls() {
+  pulls_running || return 0
+  rm -f "$WORK/key-b"; key_watch & kw=$!
+  shown=""
+  while pulls_running && [ ! -f "$WORK/key-b" ]; do
+    text="$(pulls_line) $(t backhint)"
+    [ "$text" != "$shown" ] && { panel "Rommancer Sync" "$text"; shown="$text"; }
+    sleep 2
+  done
+  key_watch_end "$kw"; rm -f "$WORK/key-b"
+  panel_close
+}
+
 setup_after_link() {
   panel "Rommancer Sync" "$(t syncing)"
   VERBOSE=1 cmd_sync > "$WORK/first-sync" 2>&1
@@ -1372,8 +1409,8 @@ cmd_setup() {
   # An installer package links by itself with its token
   if [ -z "$TOKEN" ] && [ -f "$DIR/enroll.txt" ] && cmd_enroll > /dev/null 2>&1; then setup_after_link; fi
   [ -n "$SERVER" ] || SERVER="https://"
-  # Opened while the daemon downloads the lists' roms: their progress first
-  [ -n "$TOKEN" ] && roms_running && with_progress "$(t roms)" cmd_roms
+  # Opened while the server fetches roms from this console: that copy's progress first
+  [ -n "$TOKEN" ] && watch_pulls
   while :; do
     if [ -n "$TOKEN" ]; then
       # The menu never waits for the network: the count is the last one fetched (a fetch runs meanwhile for the next
@@ -1388,7 +1425,10 @@ cmd_setup() {
       # While roms download, the roms item stops them instead
       rs="$(roms_status)"; romsitem="$(t roms)"
       [ -n "$rs" ] && romsitem="$(t romswatch "$(printf '%s' "$rs" | awk -F"$TAB" '$2 { printf "(%s/%s)", $1, $2 }')")"
-      menu "Rommancer Sync" "$(t connected). $(updated_line)" "$(t sync)" "$romsitem" "$(t allowpull "$pull")" "$(t allowssh "$ssh")" "$(t prune "$prune")" "$(t pruneclean "$cleanable")" "$(t conflicts "$nconf")" "$(t status)" "$(t unlink)" "$(t quit)"; rc=$?
+      # A copy the server asked for shows in the menu's text while it lasts
+      # and as an item to watch it
+      pl=""; set --; pulls_running && { pl=" $(pulls_line)"; set -- "$(t pullswatch)"; }
+      menu "Rommancer Sync" "$(t connected). $(updated_line).$pl" "$(t sync)" "$romsitem" "$(t allowpull "$pull")" "$(t allowssh "$ssh")" "$(t prune "$prune")" "$(t pruneclean "$cleanable")" "$(t conflicts "$nconf")" "$(t status)" "$(t unlink)" "$@" "$(t quit)"; rc=$?
       case $rc in
         # On screen with its progress until done; B stops the roms
         0) with_progress "$(t sync)" cmd_all ;;
@@ -1401,6 +1441,8 @@ cmd_setup() {
         6) panel "Rommancer Sync" "$(t p_connecting)"; cmd_conflicts > "$WORK/conflicts" 2>/dev/null || : > "$WORK/conflicts"; panel_close; setup_conflicts ;;
         7) panel "$(t status)" "$(version_line). $(tail -n 4 "$LOG" 2>/dev/null | cut -c21- | tr '\n' ' ')" wait ;;
         8) keep="$SERVER"; cmd_unlink > /dev/null; TOKEN=""; USER_NAME=""; SERVER="$keep" ;;
+        # The copy's item when it showed, Quit otherwise
+        9) [ "$#" -gt 0 ] || return 0; watch_pulls ;;
         *) return 0 ;;
       esac
     else
@@ -1457,6 +1499,7 @@ case "${1:-}" in
   # when asked for on the console's screen
   background) cmd_sync; cmd_config; cmd_prune; cmd_collections > /dev/null 2>&1 ;;
   roms-status) roms_status ;;
+  pulls-status) pulls_status ;;
   collections) cmd_collections ;;
   config) VERBOSE=1 cmd_config ;;
   # What "Sync now" does on screen: saves, then the lists' roms when AUTO_ROMS is on

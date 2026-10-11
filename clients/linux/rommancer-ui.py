@@ -97,6 +97,8 @@ TEXTS = {
         "prune_later": "Ahora no",
         "p_prune": "Borrando roms fuera de listas",
         "roms_watch": "Ver descarga de roms {n}",
+        "pulls_watch": "Ver envio de juegos al servidor {n}",
+        "back_keys": "B volver al menu (el envio sigue)",
         "stop_keys": "B parar la descarga de roms",
         "stopping": "Parando la descarga...",
     },
@@ -168,6 +170,8 @@ TEXTS = {
         "prune_later": "Not now",
         "p_prune": "Deleting roms not in lists",
         "roms_watch": "Watch rom download {n}",
+        "pulls_watch": "Watch games being sent to the server {n}",
+        "back_keys": "B back to the menu (the copy goes on)",
         "stop_keys": "B stop the rom download",
         "stopping": "Stopping the download...",
     },
@@ -817,6 +821,48 @@ class App:
         parts = out.rstrip("\n").split("\t") + ["", ""]
         return parts[0], parts[1]
 
+    def pulls_status(self):
+        """(done, total, name, file share) of the copy the server asked for, None when there is none"""
+        try:
+            out = subprocess.run(["sh", SCRIPT, "pulls-status"], capture_output=True, text=True, timeout=10).stdout
+        except subprocess.TimeoutExpired:
+            return None
+        parts = out.rstrip("\n").split("\t")
+        if len(parts) < 4:
+            return None
+        try:
+            return int(parts[0]), int(parts[1]), parts[2], float(parts[3] or 0) / 100
+        except ValueError:
+            return None
+
+    def watch_pulls(self):
+        """The copy the server asked for, on screen until it ends; B goes back to the menu and the copy goes on"""
+        s = self.screen
+        st = self.pulls_status()
+        checked = pygame.time.get_ticks()
+        while st:
+            done, total, name, file_share = st
+            share = ((done - 1) + file_share) / total if total else 0
+            s.frame(T["title"], T["back_keys"])
+            s.sprite()
+            x, width, y = s.left(), s.column(), int(s.h * 0.3)
+            s.text(T["p_pulls"], (x, y), s.font)
+            s.text(f"{done}/{total}", (x, y + s.font.get_linesize() * 1.5), s.small, DIM)
+            bar = pygame.Rect(x, y + int(s.font.get_linesize() * 2.6), width - 20, 14)
+            pygame.draw.rect(s.surf, (40, 44, 60), bar, border_radius=7)
+            fill = bar.copy()
+            fill.w = max(14, int(bar.w * min(share, 1)))
+            pygame.draw.rect(s.surf, ACCENT, fill, border_radius=7)
+            s.text(f"{int(100 * share)}%", (bar.right - 50, bar.bottom + 6), s.small, DIM)
+            s.text(f"{name[:42]}  {int(file_share * 100)}%", (x, bar.bottom + 6), s.small, DIM)
+            s.flip()
+            for event in pygame.event.get():
+                if "b" in self.pad.actions(event):
+                    return
+            self.clock.tick(SPRITE_FPS)
+            if pygame.time.get_ticks() - checked > 1000:
+                st, checked = self.pulls_status(), pygame.time.get_ticks()
+
     def toggle_prune(self):
         self.prune_set(self.settings().get("PRUNE_ROMS", "0") != "1")
 
@@ -884,6 +930,9 @@ class App:
         # Opened while the daemon downloads the lists' roms: their progress first (B stops them)
         if self.linked() and self.roms_status():
             self.sync_roms()
+        # Opened while the server fetches roms from this console: that copy's progress first
+        if self.linked():
+            self.watch_pulls()
         while True:
             if self.linked():
                 info = [T["connected"].format(server=self.cfg.get("SERVER", "")), T["as"].format(user=self.cfg.get("USER", "?"))]
@@ -898,8 +947,12 @@ class App:
                 running = self.roms_status()
                 roms_label = T["roms_watch"].format(n=f"({running[0]}/{running[1]})" if running and running[1] else "") if running else T["sync_roms"]
                 items = [T["sync_now"], roms_label, T["allow_pull"].format(v=pull), T["allow_ssh"].format(v=ssh), T["prune"].format(v=prune), T["prune_clean"].format(n=self.cleanable), T["conflicts"].format(n=n), T["status"], T["logout"], T["quit"]]
+                # A copy the server asked for: an item to watch it while it lasts
+                pulling = self.pulls_status()
+                if pulling:
+                    items.insert(-1, T["pulls_watch"].format(n=f"({pulling[0]}/{pulling[1]})"))
                 choice = self.menu(T["title"], items, info, refresh=lambda: T["conflicts"].format(n="…" if self.conflict_count is None else self.conflict_count), refresh_index=6)
-                actions = [self.sync_now, self.sync_roms, self.toggle_allow_pull, self.toggle_allow_ssh, self.toggle_prune, self.prune_clean, self.resolve_conflicts, self.status, self.logout]
+                actions = [self.sync_now, self.sync_roms, self.toggle_allow_pull, self.toggle_allow_ssh, self.toggle_prune, self.prune_clean, self.resolve_conflicts, self.status, self.logout] + ([self.watch_pulls] if pulling else [])
             else:
                 choice = self.menu(T["title"], [f"{T['server']}: {self.server}", T["login"], T["signup"], T["quit"]])
                 actions = [self.edit_server, self.login, self.signup]

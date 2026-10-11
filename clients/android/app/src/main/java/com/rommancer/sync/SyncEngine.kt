@@ -11,7 +11,7 @@ class SyncEngine(private val context: Context, private val store: Store, private
 
     /** Phase, count and the current file's share, for the progress screen */
     data class Progress(val phase: String, val done: Int = 0, val total: Int = 0, val detail: String = "", val fileShare: Float = 0f) {
-        val share: Float get() = if (total == 0) 0f else ((if (phase == "roms-download") done - 1 + fileShare else done.toFloat()) / total).coerceIn(0f, 1f)
+        val share: Float get() = if (total == 0) 0f else ((if (phase == "roms-download" || phase == "pulls") done - 1 + fileShare else done.toFloat()) / total).coerceIn(0f, 1f)
     }
 
     data class Conflict(val id: Int, val game: String, val kind: String, val mine: String, val theirs: String, val device: String)
@@ -376,7 +376,7 @@ class SyncEngine(private val context: Context, private val store: Store, private
         if (!store.allowPull) return ""
         // One copy at a time; a transfer cut halfway stays open on the server and is sent again next time
         if (!PULLING.compareAndSet(false, true)) return ""
-        try { return pullsOnce() } finally { PULLING.set(false) }
+        try { return pullsOnce() } finally { PULLING.set(false); PULL_LIVE = null }
     }
 
     private fun pullsOnce(): String {
@@ -384,11 +384,14 @@ class SyncEngine(private val context: Context, private val store: Store, private
         val wanted = api.text("/agent/pulls").lines().mapNotNull { l -> l.split('\t').takeIf { it.size >= 3 && it[0] == "pull" } }
         var sent = 0
         for ((i, p) in wanted.withIndex()) {
-            onProgress(Progress("pulls", i + 1, wanted.size, File(p[2]).name))
             val file = File(p[2])
+            val step = Progress("pulls", i + 1, wanted.size, file.name)
+            PULL_LIVE = step
+            onProgress(step)
             // Gone from the device: the server closes the request instead of asking again
             if (!file.exists()) { runCatching { api.text("/agent/pull/${p[1]}", "POST", ByteArray(0), mapOf("X-Missing" to "1")) }; continue }
-            runCatching { api.uploadFile("/agent/pull/${p[1]}", file) }.onSuccess { sent++ }
+            val size = file.length().coerceAtLeast(1)
+            runCatching { api.uploadFile("/agent/pull/${p[1]}", file) { n -> PULL_LIVE = step.copy(fileShare = n.toFloat() / size) } }.onSuccess { sent++ }
         }
         return if (wanted.isEmpty()) "" else "sent to server: $sent of ${wanted.size}".also { store.addLog(it) }
     }
@@ -489,6 +492,10 @@ class SyncEngine(private val context: Context, private val store: Store, private
 
         /** The rom download under way, whoever started it; null when there is none */
         @Volatile var LIVE: Progress? = null
+            private set
+
+        /** The copy the server asked for, whoever started it; null when there is none */
+        @Volatile var PULL_LIVE: Progress? = null
             private set
 
         /** Stops the rom download under way (the transfer is cut); background passes skip roms until asked on screen */
