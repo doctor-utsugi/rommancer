@@ -132,6 +132,13 @@ class SyncEngine(private val context: Context, private val store: Store, private
                     // Savestate screenshots: ours when the server lacks it, the server's beside a state it sent
                     "tput" -> thumbPut(api, f[1], f[2])
                     "tget" -> api.download("/agent/thumb?v=${f[2]}", emptyMap(), File(f[1]))
+                    // A newer save is arriving: the game's resume state (its old memory, its old save inside) goes
+                    // with the copies, so the next start opens the game with the save that arrived
+                    "aside" -> File(f[1]).takeIf { it.isFile }?.let { state ->
+                        backup(state.name, state.readBytes())
+                        state.delete()
+                        store.addLog("resume state put aside: ${state.name}")
+                    }
                     "cget" -> if (cardGet(api, f[1], f[2], f.getOrElse(3) { "-" })) {
                         down++
                         received += File(f[1]).nameWithoutExtension

@@ -1829,6 +1829,19 @@ test('sync client: roms of assigned lists, save before a game, conflicts resolve
   const backups = path.join(dir, 'roms-b-state', 'backups');
   assert.deepEqual(fs.readdirSync(backups).map((f) => fs.readFileSync(path.join(backups, f), 'utf8')), ['B-AGAIN-LONGER']);
 
+  // The resume state stays on its console; a newer save arriving puts it aside, so the game starts with that save
+  const resumeB = saveB.replace(/\.srm$/, '.state.auto');
+  fs.writeFileSync(resumeB, 'B-RESUME');
+  await b.run('sync');
+  assert.equal(await prisma.save.count({ where: { baseName: romA.replace(/\.nes$/, ''), kind: 'STATE', slot: -1 } }), 0, 'never sent to the server');
+  fs.writeFileSync(saveA, 'A-THIRD');
+  await a.run('sync');
+  await b.run('sync');
+  assert.equal(fs.readFileSync(saveB, 'utf8'), 'A-THIRD');
+  assert.ok(!fs.existsSync(resumeB), 'resume state put aside');
+  const kept = fs.readdirSync(backups).map((f) => fs.readFileSync(path.join(backups, f), 'utf8'));
+  assert.ok(kept.includes('B-RESUME') && kept.includes('A-AGAIN'), JSON.stringify(kept));
+
   // EmulationStation collections on Knulli: the game whose save is synced, and the rom Rommancer copied
   const sysroot = path.join(dir, 'b-sys');
   const collections = (lang: string) =>
@@ -2414,11 +2427,14 @@ test('NextUI and ArkOS: minarch save and state names, a NextUI save reaching an 
   assert.ok(manifest.includes('/mnt/SDCARD/.userdata/shared/GBA-gpsp/Minarch Quest (USA).gba.st9'), 'the auto-resume state');
   assert.ok(!manifest.some((p) => p.endsWith('.st8') || p.endsWith('.st')));
   const save = manifest[0];
-  const state = '/mnt/SDCARD/.userdata/shared/GBA-gpsp/Minarch Quest (USA).gba.st9';
+  const state = '/mnt/SDCARD/.userdata/shared/GBA-gpsp/Minarch Quest (USA).gba.st0';
+  const resume = '/mnt/SDCARD/.userdata/shared/GBA-gpsp/Minarch Quest (USA).gba.st9';
   const sav = Buffer.alloc(0x8000, 7);
-  const plan = await (await next('/sync', { method: 'POST', body: `rom\t${rom}\t${'e'.repeat(40)}\nfile\t${save}\t${crypto.createHash('sha1').update(sav).digest('hex')}\nfile\t${state}\t${'f'.repeat(40)}\n` })).text();
+  const plan = await (await next('/sync', { method: 'POST', body: `rom\t${rom}\t${'e'.repeat(40)}\nfile\t${save}\t${crypto.createHash('sha1').update(sav).digest('hex')}\nfile\t${state}\t${'f'.repeat(40)}\nfile\t${resume}\t${'a'.repeat(40)}\n` })).text();
   assert.match(plan, new RegExp(`^put\t${save.replace(/[().]/g, '\\$&')}\t`, 'm'));
   assert.match(plan, new RegExp(`^put\t${state.replace(/[().]/g, '\\$&')}\t`, 'm'));
+  assert.ok(!plan.includes('.st9'), 'the auto-resume state stays on its console');
+  assert.equal((await (await next('/upload', { method: 'POST', body: Buffer.from('resume'), headers: { 'X-Rom-B64': b64(rom), 'X-Path-B64': b64(resume) } })).text()).trim(), 'unchanged');
   const replies: string[] = [];
   for (const [p, body] of [[save, sav], [state, Buffer.from('state')]] as const) {
     const up = await next('/upload', { method: 'POST', body, headers: { 'X-Rom-B64': b64(rom), 'X-Path-B64': b64(p) } });
@@ -2427,10 +2443,10 @@ test('NextUI and ArkOS: minarch save and state names, a NextUI save reaching an 
   }
   assert.equal(replies[0], 'uploaded\n', 'a save has no screenshot');
   // minarch keeps each slot's screenshot (PNG data in a .bmp) under .minui/<tag>, named after the rom file
-  assert.match(replies[1], /^tput\t\/mnt\/SDCARD\/\.userdata\/shared\/\.minui\/GBA\/Minarch Quest \(USA\)\.gba\.9\.bmp\t\d+$/m);
+  assert.match(replies[1], /^tput\t\/mnt\/SDCARD\/\.userdata\/shared\/\.minui\/GBA\/Minarch Quest \(USA\)\.gba\.0\.bmp\t\d+$/m);
   const { prisma } = await import('../src/lib/prisma.js');
   const stored = await prisma.save.findMany({ where: { baseName: 'Minarch Quest (USA)' }, include: { emulator: true } });
-  assert.deepEqual(stored.map((s) => `${s.emulator.slug} ${s.kind} ${s.slot}`).sort(), ['minui-gpsp SAVE 0', 'minui-gpsp STATE -1']);
+  assert.deepEqual(stored.map((s) => `${s.emulator.slug} ${s.kind} ${s.slot}`).sort(), ['minui-gpsp SAVE 0', 'minui-gpsp STATE 0']);
 
   // ArkOS keeps RetroArch's .srm next to the rom: the NextUI save is offered there, the state is not (other emulator)
   const ark = await claim('rg353', 'arkos', '/roms');

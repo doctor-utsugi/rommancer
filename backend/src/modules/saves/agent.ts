@@ -125,6 +125,23 @@ async function romContext(device: AgentDevice, romPath: string) {
 
 type RomCtx = Awaited<ReturnType<typeof romContext>>;
 
+/**
+ * RESUME: the state an emulator writes by itself when a game is closed or the console switched off (RetroArch's
+ * .state.auto, MinUI's slot 9), loaded again by itself at the next start (Onion resumes the last game at boot).
+ * It holds the game's whole memory, its save included: loaded on another console, or after a newer save arrived,
+ * it brings back old progress that the game then writes over the save. So it stays on its console.
+ */
+const isResume = (f: { kind: string; slot: number }) => f.kind === 'STATE' && f.slot === -1;
+
+/**
+ * A newer save is about to replace this console's: its resume state for that game is put aside first
+ * ("aside<TAB>path", kept with the client's copies), so the next start boots the game with the save that arrived.
+ */
+function asideLines(f: { kind: string; path: string; emu?: Emulator }, files: { kind: string; slot: number; path: string; emu?: Emulator }[], present: Map<string, string>) {
+  if (f.kind !== 'SAVE') return [];
+  return files.filter((x) => isResume(x) && x.emu === f.emu && present.has(x.path)).map((x) => `aside\t${x.path}`);
+}
+
 function candidatePaths(ctx: RomCtx, emu: Emulator = ctx.emu) {
   ctx = { ...ctx, emu };
   // "beside": flashcarts keep each save next to its rom, in whatever folder the rom is
@@ -464,6 +481,8 @@ agentRouter.post('/sync', express.text({ limit: '16mb', type: '*/*' }), async (r
     // Several cores with their own file for this game on this device: each keeps its own save
     const exactOnly = emus.length > 1;
     for (const f of candidates) {
+      // The resume state is where this console left the game: it never travels (see RESUME)
+      if (isResume(f)) continue;
       if (f.kind === 'SAVE' && isCardEmulator(f.emu)) {
         cardFiles.add(f.path);
         const line = await cardLine(device, f.path, f.emu, { shared: false, gameId }, present.get(f.path) ?? null, rom);
@@ -473,7 +492,7 @@ agentRouter.post('/sync', express.text({ limit: '16mb', type: '*/*' }), async (r
       const save = await findLogicalSave(device.userId, f.emu, f.kind, f.slot, ctx.baseName, gameId, exactOnly);
       const deviceSha1 = present.get(f.path);
       const d = await decide(save, device, f.emu, deviceSha1 ? { sha1: deviceSha1 } : null);
-      if (d.action === 'download') out.push(`get\t${f.path}\t${d.versionId}\t${rom}`);
+      if (d.action === 'download') out.push(...asideLines(f, candidates, present), `get\t${f.path}\t${d.versionId}\t${rom}`);
       else if (d.action === 'upload' || d.action === 'conflict') out.push(`put\t${f.path}\t${rom}${exactOnly ? '\t1' : ''}`);
       else if (d.action === 'adopt' && save) await setBase(save.id, device.id, save.currentVersionId, deviceSha1!);
       if (f.kind !== 'STATE') continue;
@@ -791,7 +810,9 @@ agentRouter.post('/start', express.text({ limit: '1mb', type: '*/*' }), async (r
   }
   const ident = await identifyRom(ctx.baseName, (await prisma.system.findUnique({ where: { slug: ctx.slug } }))?.id);
   const out: string[] = [];
-  for (const f of candidatePaths(ctx)) {
+  const files = candidatePaths(ctx);
+  for (const f of files) {
+    if (isResume(f)) continue;
     if (f.kind === 'SAVE' && isCardEmulator(ctx.emu)) {
       const line = await cardLine(device, f.path, ctx.emu, { shared: false, gameId: ident?.gameId ?? null }, present.get(f.path) ?? null, '', true);
       if (line) out.push(line);
@@ -800,7 +821,7 @@ agentRouter.post('/start', express.text({ limit: '1mb', type: '*/*' }), async (r
     const save = await findLogicalSave(device.userId, ctx.emu, f.kind, f.slot, ctx.baseName, ident?.gameId ?? null);
     const deviceSha1 = present.get(f.path);
     const d = await decide(save, device, ctx.emu, deviceSha1 ? { sha1: deviceSha1 } : null);
-    if (d.action === 'download') out.push(`get\t${f.path}\t${d.versionId}`);
+    if (d.action === 'download') out.push(...asideLines(f, files, present), `get\t${f.path}\t${d.versionId}`);
     // En conflicto tambien se sube: el servidor guarda ambas versiones y avisa
     else if (d.action === 'upload' || d.action === 'conflict') out.push(`put\t${f.path}`);
     else if (d.action === 'adopt' && save) await setBase(save.id, device.id, save.currentVersionId, deviceSha1!);
@@ -849,6 +870,11 @@ agentRouter.post('/upload', express.raw({ limit: '128mb', type: '*/*' }), async 
   const emu = await emulatorForPath(ctx, filePath);
   const parsed = candidatePaths(ctx, emu).find((f) => f.path === filePath) ?? parseSaveFile(path.posix.basename(filePath), emu);
   if (!parsed) throw badRequest('Not a save file for this emulator');
+  // Clients before 20261022 still send resume states: kept off the server, they never reach another console
+  if (isResume(parsed)) {
+    res.type('text/plain').send('unchanged\n');
+    return;
+  }
   const systemId = (await prisma.system.findUnique({ where: { slug: ctx.slug } }))?.id;
   const byHash = await gameByHash((req.header('x-rom-sha1') ?? '').split(',').map((h) => h.trim()), systemId);
   if (parsed.kind === 'SAVE' && isCardEmulator(emu)) {

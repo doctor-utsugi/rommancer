@@ -22,7 +22,7 @@
 #                                   Menu++...) mounted on this computer; the link lives on the card itself,
 #                                   so any computer with this script can sync it. Without a command: sync.
 set -u
-CLIENT_VERSION=20261021
+CLIENT_VERSION=20261022
 # A clock before this date is surely wrong (no battery-backed clock); kept apart from the version, which may run ahead
 CLOCK_MIN=20261001
 # Onion keeps curl (with TLS) and friends outside the default PATH
@@ -452,15 +452,29 @@ emu_running() {
 # saves, where an emulator could load it): the last copies the server's setting says, at most 256 MB of them
 replace_save() {
   if [ -f "$2" ] && ! cmp -s "$1" "$2"; then
-    bd="$STATE/backups"; mkdir -p "$bd"
-    cp "$2" "$bd/$(date +%Y%m%d-%H%M%S)-$(basename "$2")" 2>/dev/null || log "backup of $(basename "$2") failed"
-    keep="$(cat "$STATE/backups-keep" 2>/dev/null)"; case "$keep" in ''|*[!0-9]*) keep=20 ;; esac
-    ls -1t "$bd" | while IFS= read -r old; do
-      keep=$((keep - 1)); sz="$(stat -c %s "$bd/$old" 2>/dev/null || echo 0)"; used=$((${used:-0} + sz))
-      [ "$keep" -lt 0 ] || [ "$used" -gt 268435456 ] && rm -f "$bd/$old"
-    done
+    mkdir -p "$STATE/backups"
+    cp "$2" "$STATE/backups/$(date +%Y%m%d-%H%M%S)-$(basename "$2")" 2>/dev/null || log "backup of $(basename "$2") failed"
+    trim_backups
   fi
   mv "$1" "$2"
+}
+# The last copies the server's setting says, at most 256 MB of them
+trim_backups() {
+  bd="$STATE/backups"
+  keep="$(cat "$STATE/backups-keep" 2>/dev/null)"; case "$keep" in ''|*[!0-9]*) keep=20 ;; esac
+  ls -1t "$bd" | while IFS= read -r old; do
+    keep=$((keep - 1)); sz="$(stat -c %s "$bd/$old" 2>/dev/null || echo 0)"; used=$((${used:-0} + sz))
+    [ "$keep" -lt 0 ] || [ "$used" -gt 268435456 ] && rm -f "$bd/$old"
+  done
+}
+# A newer save is arriving: the game's resume state (its old memory, its old save inside) goes with the copies,
+# so the next start, or Onion's resume at boot, opens the game with the save that arrived
+set_aside() {
+  [ -f "$1" ] || return 0
+  mkdir -p "$STATE/backups"
+  mv "$1" "$STATE/backups/$(date +%Y%m%d-%H%M%S)-$(basename "$1")" 2>/dev/null || cp "$1" "$STATE/backups/$(date +%Y%m%d-%H%M%S)-$(basename "$1")" && rm -f "$1"
+  log "resume state put aside: $(basename "$1")"
+  trim_backups
 }
 
 card_get() {
@@ -586,6 +600,7 @@ cmd_sync() {
         else rm -f "$p.rommancer-tmp"; errs=$((errs + 1)); fi ;;
       tput) thumb_put "$p" "$a" ;;
       tget) thumb_get "$p" "$a" ;;
+      aside) set_aside "$p" ;;
       cget) if card_get "$p" "$a" "$b"; then downs=$((downs + 1)); rn="$(basename "$p")"; printf '%s\n' "${rn%.*}" >> "$WORK/received"; fi ;;
     esac
   done < "$plan"
@@ -963,6 +978,7 @@ cmd_game_start() {
   http POST "$SERVER/api/v1/agent/start" "$WORK/gs-present" "$WORK/gs-plan" "$rh" || return 0
   while IFS="$TAB" read -r action p v; do
     [ "$action" = tget ] && { thumb_get "$p" "$v"; continue; }
+    [ "$action" = aside ] && { set_aside "$p"; continue; }
     [ "$action" = cget ] && { card_get "$p" "$v" "$rom" start && log "game-start: card $(basename "$p")"; continue; }
     [ "$action" = get ] || continue
     mkdir -p "$(dirname "$p")"
