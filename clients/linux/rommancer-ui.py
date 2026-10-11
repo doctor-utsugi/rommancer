@@ -330,7 +330,11 @@ class Screen:
 
     def frame(self, title, footer=""):
         self.surf.fill(BG)
-        self.text(title, (self.w // 2, int(self.h * 0.04)), self.big, ACCENT, center=True)
+        r = self.text(title, (self.w // 2, int(self.h * 0.04)), self.big, ACCENT, center=True)
+        # The app's own screens say which version this is, small beside the name
+        if title == T["title"]:
+            v = self.client_version()
+            self.text(f"v{v}", (r.right + int(self.w * 0.01), r.bottom - self.small.get_height()), self.small, DIM)
         if footer:
             self.text(footer, (self.w // 2, self.h - int(self.h * 0.07)), self.small, DIM, center=True)
 
@@ -707,13 +711,17 @@ class App:
             lines = [T["nolog"]]
         self.menu(T["status"], ["OK"], info=[self.version_line()] + lines)
 
-    def version_line(self):
-        """The client's version and when this console first synced with it"""
+    def client_version(self):
+        """CLIENT_VERSION of the sync script beside this app"""
         try:
             with open(os.path.join(HERE, "rommancer-sync.sh"), encoding="utf-8") as f:
-                v = next((l.split("=", 1)[1].strip() for l in f if l.startswith("CLIENT_VERSION=")), "?")
+                return next((l.split("=", 1)[1].strip() for l in f if l.startswith("CLIENT_VERSION=")), "?")
         except OSError:
-            v = "?"
+            return "?"
+
+    def version_line(self):
+        """The client's version and when this console first synced with it"""
+        v = self.client_version()
         line = T["version"].format(v=v)
         try:
             with open(os.path.join(self.state, "version"), encoding="utf-8") as f:

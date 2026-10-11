@@ -125,7 +125,12 @@ private fun App(resumes: Int) {
     // Two columns like the handheld setup app: content on the left, the spinning save point on the right
     Row(Modifier.fillMaxSize().padding(horizontal = 24.dp, vertical = 12.dp)) {
         Column(Modifier.weight(0.6f).fillMaxHeight().verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-            Text("Rommancer Sync", fontSize = 26.sp, fontWeight = FontWeight.SemiBold, color = Accent)
+            // The installed version, small beside the name
+            val version = remember { runCatching { context.packageManager.getPackageInfo(context.packageName, 0).versionName }.getOrNull().orEmpty() }
+            Row(verticalAlignment = Alignment.Bottom) {
+                Text("Rommancer Sync", fontSize = 26.sp, fontWeight = FontWeight.SemiBold, color = Accent)
+                if (version.isNotEmpty()) Text("  v$version", fontSize = 14.sp, color = Dim, modifier = Modifier.padding(bottom = 4.dp))
+            }
             when {
                 !canRead -> StoragePermission()
                 linked -> Linked(store) { linked = false }
