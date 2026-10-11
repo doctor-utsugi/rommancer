@@ -89,16 +89,28 @@ export function coreVersionOf(device: Device, emu: Emulator): string | null {
  * compatible de otro emulador (asi un save de SNES de Snes9x sirve en cualquier dispositivo).
  * Los savestates solo valen para el mismo emulador.
  */
-export async function findLogicalSave(userId: number, emu: Emulator, kind: SaveKind, slot: number, baseName: string, gameId: number | null, exactOnly = false) {
+/**
+ * DEVICE_ID: the device the file is on. A save found by its game, not by its name, is not this file's when the
+ * device also has the rom of that name (two versions of a game on one console, "(USA)" and "(Europe)": each keeps
+ * its own save, or one sync would write each over the other).
+ */
+export async function findLogicalSave(userId: number, emu: Emulator, kind: SaveKind, slot: number, baseName: string, gameId: number | null, exactOnly = false, deviceId?: number) {
+  const byName = await prisma.save.findFirst({ where: { userId, emulatorId: emu.id, kind, slot, baseName, supersededAt: null }, include: { emulator: true } });
+  if (byName) return byName;
+  const mine = async <T extends { baseName: string } | null>(s: T) => (s && deviceId && s.baseName !== baseName && (await deviceHasRomNamed(deviceId, s.baseName)) ? null : s);
   // Same rom name first; otherwise the most recently updated save of the same game
-  const exact =
-    (await prisma.save.findFirst({ where: { userId, emulatorId: emu.id, kind, slot, baseName, supersededAt: null }, include: { emulator: true } })) ??
-    (gameId ? await prisma.save.findFirst({ where: { userId, emulatorId: emu.id, kind, slot, gameId, supersededAt: null }, include: { emulator: true }, orderBy: { updatedAt: 'desc' } }) : null);
+  const exact = gameId ? await mine(await prisma.save.findFirst({ where: { userId, emulatorId: emu.id, kind, slot, gameId, supersededAt: null }, include: { emulator: true }, orderBy: { updatedAt: 'desc' } })) : null;
   // exactOnly: the device keeps one file per emulator for this game, so they must not be merged
   if (exact || kind === 'STATE' || exactOnly) return exact;
   // Unidentified roms (homebrew, odd names) still share by file name
   const others = await prisma.save.findMany({ where: { userId, kind, slot, supersededAt: null, ...(gameId ? { gameId } : { baseName }) }, include: { emulator: true }, orderBy: { updatedAt: 'desc' } });
-  return others.find((s) => family(s.emulator.saveFormat) === family(emu.saveFormat)) ?? null;
+  return mine(others.find((s) => family(s.emulator.saveFormat) === family(emu.saveFormat)) ?? null);
+}
+
+/** Whether the device's last inventory has a rom whose file name (without extension) is NAME */
+async function deviceHasRomNamed(deviceId: number, name: string) {
+  const rows = await prisma.deviceRom.findMany({ where: { deviceId, path: { contains: name } }, select: { path: true } });
+  return rows.some((r) => path.posix.basename(r.path).replace(/\.[^.]+$/, '') === name);
 }
 
 /** Contenido del save convertido al formato que espera el emulador del dispositivo. */
@@ -164,7 +176,7 @@ export async function receiveFromDevice(
 ) {
   const systemId = systemSlug ? (await prisma.system.findUnique({ where: { slug: systemSlug } }))?.id : undefined;
   const ident = known ?? (await identifyRom(baseName, systemId));
-  const save = await findLogicalSave(device.userId, emu, kind, slot, baseName, ident?.gameId ?? null, exactOnly);
+  const save = await findLogicalSave(device.userId, emu, kind, slot, baseName, ident?.gameId ?? null, exactOnly, device.id);
   const deviceSha1 = sha1(buf);
   const d = await decide(save, device, emu, { sha1: deviceSha1 });
   // Se guarda en el formato del save logico (si es de otro emulador compatible se convierte)

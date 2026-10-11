@@ -504,7 +504,7 @@ agentRouter.post('/sync', express.text({ limit: '16mb', type: '*/*' }), async (r
         if (line) out.push(line);
         continue;
       }
-      const save = await findLogicalSave(device.userId, f.emu, f.kind, f.slot, ctx.baseName, gameId, exactOnly);
+      const save = await findLogicalSave(device.userId, f.emu, f.kind, f.slot, ctx.baseName, gameId, exactOnly, device.id);
       const deviceSha1 = present.get(f.path);
       const d = await decide(save, device, f.emu, deviceSha1 ? { sha1: deviceSha1 } : null);
       if (d.action === 'download') out.push(...asideLines(f, candidates, present), `get\t${f.path}\t${d.versionId}\t${rom}`);
@@ -908,7 +908,7 @@ agentRouter.post('/start', express.text({ limit: '1mb', type: '*/*' }), async (r
       if (line) out.push(line);
       continue;
     }
-    const save = await findLogicalSave(device.userId, ctx.emu, f.kind, f.slot, ctx.baseName, ident?.gameId ?? null);
+    const save = await findLogicalSave(device.userId, ctx.emu, f.kind, f.slot, ctx.baseName, ident?.gameId ?? null, false, device.id);
     const deviceSha1 = present.get(f.path);
     const d = await decide(save, device, ctx.emu, deviceSha1 ? { sha1: deviceSha1 } : null);
     if (d.action === 'download') out.push(...asideLines(f, files, present), `get\t${f.path}\t${d.versionId}`);
