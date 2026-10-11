@@ -65,7 +65,7 @@ export async function storeVersion(
   key: SaveKey,
   buf: Buffer,
   fileMtime: Date,
-  opts: { sourceDeviceId?: number; note?: string; gameId?: number | null; romId?: number | null; force?: boolean; makeCurrent?: boolean; coreVersion?: string | null } = {},
+  opts: { sourceDeviceId?: number; note?: string; gameId?: number | null; romId?: number | null; force?: boolean; makeCurrent?: boolean; coreVersion?: string | null; cardId?: number; label?: string | null } = {},
 ) {
   const sha1 = crypto.createHash('sha1').update(buf).digest('hex');
   let save = await prisma.save.findUnique({
@@ -75,10 +75,11 @@ export async function storeVersion(
   if (!save) {
     const ident = opts.gameId !== undefined ? { gameId: opts.gameId ?? null, romId: opts.romId ?? null } : await identifyRom(key.baseName);
     save = await prisma.save.create({
-      data: { ...key, gameId: ident?.gameId ?? null, romId: ident?.romId ?? null },
+      data: { ...key, gameId: ident?.gameId ?? null, romId: ident?.romId ?? null, cardId: opts.cardId ?? null, label: opts.label?.slice(0, 128) || null },
       include: { versions: { orderBy: { fileMtime: 'desc' } } },
     });
   }
+  if (opts.label && opts.label !== save.label) await prisma.save.update({ where: { id: save.id }, data: { label: opts.label.slice(0, 128) } });
   const existing = save.versions.find((v) => v.sha1 === sha1);
   if (existing && !opts.force) {
     if (opts.makeCurrent !== false && save.currentVersionId !== existing.id) await prisma.save.update({ where: { id: save.id }, data: { currentVersionId: existing.id } });

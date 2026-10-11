@@ -127,6 +127,7 @@ export const emulators: EmulatorSeed[] = [
   { slug: 'ra-gpgx', name: 'RetroArch Genesis Plus GX', core: 'Genesis Plus GX', saveExt: '.srm', stateExt: '.state' },
   { slug: 'ra-pcsx-rearmed', name: 'RetroArch PCSX-ReARMed', core: 'PCSX-ReARMed', saveFormat: 'ps1card', saveExt: '.srm', stateExt: '.state' },
   { slug: 'ra-swanstation', name: 'RetroArch SwanStation', core: 'SwanStation', saveFormat: 'ps1card', saveExt: '.srm', stateExt: '.state' },
+  { slug: 'ra-beetle-psx', name: 'RetroArch Beetle PSX', core: 'Beetle PSX', saveFormat: 'ps1card', saveExt: '.srm', stateExt: '.state' },
   { slug: 'ra-fbneo', name: 'RetroArch FinalBurn Neo', core: 'FinalBurn Neo', saveExt: '.fs', stateExt: '.state' },
   { slug: 'ra-handy', name: 'RetroArch Handy', core: 'Handy', saveExt: '.srm', stateExt: '.state' },
   { slug: 'ra-prosystem', name: 'RetroArch ProSystem', core: 'ProSystem', saveExt: '.srm', stateExt: '.state' },

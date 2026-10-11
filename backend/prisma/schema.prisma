@@ -62,6 +62,8 @@ enum ConnType {
 enum SaveKind {
   SAVE
   STATE
+  // One save inside a memory card (a PS1 directory entry), synced on its own whatever card holds it
+  ENTRY
 }
 
 enum JobStatus {
@@ -110,6 +112,7 @@ model User {
   devices       Device[]
   deviceLinks   DeviceLink[]
   saves         Save[]
+  memoryCards   MemoryCard[]
   jobs          Job[]
   refreshTokens RefreshToken[]
   invitations   Invitation[]     @relation("invitationCreator")
@@ -568,6 +571,7 @@ model Device {
   saveVersions    SaveVersion[]
   saveStates      SaveDeviceState[]
   conflicts       SaveConflict[]
+  deviceCards     DeviceCard[]
 }
 
 model Emulator {
@@ -581,6 +585,7 @@ model Emulator {
   saveExt    String  @db.VarChar(16)
   stateExt   String? @db.VarChar(16)
   saves      Save[]
+  cards      DeviceCard[]
 }
 
 model Save {
@@ -591,19 +596,103 @@ model Save {
   emulatorId       Int
   kind             SaveKind
   slot             Int               @default(0)
-  // Nombre base del fichero (sin extension) tal y como se encontro
+  // Nombre base del fichero (sin extension) tal y como se encontro; ENTRY: the entry's name in the card's directory
   baseName         String            @db.VarChar(255)
+  // ENTRY: the user's memory card it belongs to (slot holds the same id, so the key above stays unique per card)
+  cardId           Int?
+  // ENTRY: the title the game wrote for the memory card screen
+  label            String?           @db.VarChar(128)
+  // A whole PS1 card kept as one save before cards were read entry by entry: its entries were taken out
+  supersededAt     DateTime?
   currentVersionId Int?
   updatedAt        DateTime          @updatedAt
   user             User              @relation(fields: [userId], references: [id], onDelete: Cascade)
   game             Game?             @relation(fields: [gameId], references: [id], onDelete: SetNull)
   rom              Rom?              @relation(fields: [romId], references: [id], onDelete: SetNull)
   emulator         Emulator          @relation(fields: [emulatorId], references: [id])
+  card             MemoryCard?       @relation(fields: [cardId], references: [id], onDelete: Cascade)
   versions         SaveVersion[]
   deviceStates     SaveDeviceState[]
   conflicts        SaveConflict[]
+  cardBases        CardEntryBase[]
 
   @@unique([userId, emulatorId, kind, slot, baseName])
+  @@unique([cardId, baseName])
+}
+
+// A user's memory card: a set of entries (saves) of one card family that consoles mount
+model MemoryCard {
+  id          Int          @id @default(autoincrement())
+  userId      Int
+  // ps1
+  family      String       @db.VarChar(16)
+  name        String       @db.VarChar(64)
+  createdAt   DateTime     @default(now())
+  user        User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  saves       Save[]
+  deviceCards DeviceCard[]
+
+  @@unique([userId, family, name])
+}
+
+// A memory card file on a device: the server reads its entries and writes entries into it, never replacing it whole
+model DeviceCard {
+  id         Int             @id @default(autoincrement())
+  deviceId   Int
+  // Relative to the device's root
+  path       String          @db.VarChar(512)
+  emulatorId Int
+  // A card every game shares (pcsx-card2.mcd); otherwise the emulator keeps it for one game (RetroArch's <rom>.srm)
+  shared     Boolean         @default(false)
+  // The game of a per-game card, when known
+  gameId     Int?
+  // The user's memory card mounted in it
+  cardId     Int
+  // The card as last read from the device
+  lastSha1   String?         @db.Char(40)
+  // The card last sent to the device and the entry versions in it: they count as synced only once the device is seen with it
+  offerSha1  String?         @db.Char(40)
+  offer      Json?
+  freeBlocks Int?
+  // Why entries could not be written (card full, damaged card)
+  warning    String?         @db.VarChar(512)
+  updatedAt  DateTime        @updatedAt
+  device     Device          @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+  card       MemoryCard      @relation(fields: [cardId], references: [id], onDelete: Cascade)
+  emulator   Emulator        @relation(fields: [emulatorId], references: [id])
+  bases      CardEntryBase[]
+  snapshots  CardSnapshot[]
+
+  @@unique([deviceId, path])
+}
+
+// Per card file and entry: the version last synced and the entry's sha1 there
+model CardEntryBase {
+  deviceCardId Int
+  saveId       Int
+  versionId    Int?
+  // null: the device took the entry out of this card; it goes back only when the save changes
+  entrySha1    String?    @db.Char(40)
+  syncedAt     DateTime   @default(now())
+  deviceCard   DeviceCard @relation(fields: [deviceCardId], references: [id], onDelete: Cascade)
+  save         Save       @relation(fields: [saveId], references: [id], onDelete: Cascade)
+
+  @@id([deviceCardId, saveId])
+}
+
+// Whole images of a device's card, as read (seen) and as sent (sent), to put a card back as it was
+model CardSnapshot {
+  id           Int        @id @default(autoincrement())
+  deviceCardId Int
+  sha1         String     @db.Char(40)
+  path         String     @db.VarChar(512)
+  size         Int
+  // seen | sent
+  kind         String     @db.VarChar(8)
+  createdAt    DateTime   @default(now())
+  deviceCard   DeviceCard @relation(fields: [deviceCardId], references: [id], onDelete: Cascade)
+
+  @@index([deviceCardId])
 }
 
 model SaveVersion {

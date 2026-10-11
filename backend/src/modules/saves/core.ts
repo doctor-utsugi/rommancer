@@ -92,12 +92,12 @@ export function coreVersionOf(device: Device, emu: Emulator): string | null {
 export async function findLogicalSave(userId: number, emu: Emulator, kind: SaveKind, slot: number, baseName: string, gameId: number | null, exactOnly = false) {
   // Same rom name first; otherwise the most recently updated save of the same game
   const exact =
-    (await prisma.save.findFirst({ where: { userId, emulatorId: emu.id, kind, slot, baseName }, include: { emulator: true } })) ??
-    (gameId ? await prisma.save.findFirst({ where: { userId, emulatorId: emu.id, kind, slot, gameId }, include: { emulator: true }, orderBy: { updatedAt: 'desc' } }) : null);
+    (await prisma.save.findFirst({ where: { userId, emulatorId: emu.id, kind, slot, baseName, supersededAt: null }, include: { emulator: true } })) ??
+    (gameId ? await prisma.save.findFirst({ where: { userId, emulatorId: emu.id, kind, slot, gameId, supersededAt: null }, include: { emulator: true }, orderBy: { updatedAt: 'desc' } }) : null);
   // exactOnly: the device keeps one file per emulator for this game, so they must not be merged
   if (exact || kind === 'STATE' || exactOnly) return exact;
   // Unidentified roms (homebrew, odd names) still share by file name
-  const others = await prisma.save.findMany({ where: { userId, kind, slot, ...(gameId ? { gameId } : { baseName }) }, include: { emulator: true }, orderBy: { updatedAt: 'desc' } });
+  const others = await prisma.save.findMany({ where: { userId, kind, slot, supersededAt: null, ...(gameId ? { gameId } : { baseName }) }, include: { emulator: true }, orderBy: { updatedAt: 'desc' } });
   return others.find((s) => family(s.emulator.saveFormat) === family(emu.saveFormat)) ?? null;
 }
 

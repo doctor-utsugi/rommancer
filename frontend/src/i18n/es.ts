@@ -215,7 +215,7 @@ export const es = {
     title: 'Saves y savestates',
     upload: 'Subir save',
     emulator: 'Emulador',
-    kind: { SAVE: 'Save', STATE: 'Savestate' },
+    kind: { SAVE: 'Save', STATE: 'Savestate', ENTRY: 'Tarjeta' },
     slot: 'Ranura',
     versions: 'Versiones',
     current: 'Actual',

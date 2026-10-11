@@ -22,7 +22,7 @@
 #                                   Menu++...) mounted on this computer; the link lives on the card itself,
 #                                   so any computer with this script can sync it. Without a command: sync.
 set -u
-CLIENT_VERSION=20261014
+CLIENT_VERSION=20261015
 # A clock before this date is surely wrong (no battery-backed clock); kept apart from the version, which may run ahead
 CLOCK_MIN=20261001
 # Onion keeps curl (with TLS) and friends outside the default PATH
@@ -254,9 +254,13 @@ urlenc() {
 
 need_link() { [ -n "$TOKEN" ] || { say "Not linked. Run: $0 link http://server:port"; exit 2; }; }
 
-# Hash with cache keyed by size and mtime; SKIP > 0 hashes without that many leading bytes (rom headers)
+# Hash with cache keyed by size and mtime; SKIP > 0 hashes without that many leading bytes (rom headers).
+# Saves (SKIP "save") add the inode: a file swapped in with mv (a memory card the server sent) keeps its size
+# and may keep the second of the one it replaced
 cached_sha1() {
-  f="$1"; skip="${2:-0}"; meta="$(stat -c '%s %Y' "$f" 2>/dev/null)" || return 1
+  f="$1"; skip="${2:-0}"; fmt='%s %Y'
+  [ "$skip" = save ] && { skip=0; fmt='%s %Y %i'; }
+  meta="$(stat -c "$fmt" "$f" 2>/dev/null)" || return 1
   key="$f"; [ "$skip" -gt 0 ] && key="$f#$skip"
   hit="$(grep -F "$key$TAB$meta$TAB" "$CACHE" 2>/dev/null | head -n 1 | cut -f3)"
   if [ -n "$hit" ]; then printf '%s' "$hit"; return 0; fi
@@ -325,7 +329,7 @@ build_request() {
     i=$((i + 1)); [ $((i % 10)) -eq 0 ] && progress saves "$i" "$total"
     case "$f" in */.*|*"$TAB"*) continue ;; esac
     is_save "$f" || continue
-    s="$(cached_sha1 "$f")" && printf 'file\t%s\t%s\n' "$f" "$s" >> "$out"
+    s="$(cached_sha1 "$f" save)" && printf 'file\t%s\t%s\n' "$f" "$s" >> "$out"
   done < "$WORK/saves"
   core_lines >> "$out" 2>/dev/null
   save_cache
@@ -370,6 +374,30 @@ thumb_put() {
 thumb_get() {
   mkdir -p "$(dirname "$1")"
   http GET "$SERVER/api/v1/agent/thumb?v=$2" - "$1.rommancer-tmp" && mv "$1.rommancer-tmp" "$1" || rm -f "$1.rommancer-tmp"
+}
+
+# An emulator process is up (whatever the game events said): memory cards are only swapped while none runs,
+# because emulators keep the card in memory and write it back whole
+emu_running() {
+  # Every process (busybox ps lists them all and has no -e)
+  { ps -e -o args= 2>/dev/null || ps 2>/dev/null; } | grep -q '[r]etroarch\|[m]inarch\|[d]uckstation\|[e]mulatorlauncher\|[p]csx\|[s]wanstation\|[e]psxe\|[r]etrorun'
+}
+
+# A memory card with the server's newer saves put in ("cget"): swapped in only if the file is still the one
+# the server read (EXPECT, "-" for none) and no emulator runs; otherwise the next sync tries again.
+# START: right before a game launches, when its emulator has not loaded the card yet
+card_get() {
+  cp_="$1"; ce_="$2"; cr_="$3"; cw_="${4:-}"
+  if [ -z "$SD" ] && [ "$cw_" != start ] && emu_running; then log "card: an emulator is running, $(basename "$cp_") later"; return 1; fi
+  mkdir -p "$(dirname "$cp_")"
+  rm -f "$cp_.rommancer-tmp"
+  http_once GET "$SERVER/api/v1/agent/card?expect=$ce_" - "$cp_.rommancer-tmp" "X-Path-B64: $(b64 "$cp_")" "X-Rom-B64: $(b64 "$cr_")" || { rm -f "$cp_.rommancer-tmp"; return 1; }
+  [ -s "$cp_.rommancer-tmp" ] || { rm -f "$cp_.rommancer-tmp"; return 1; }
+  cn_=-; [ -f "$cp_" ] && cn_="$(sha1 "$cp_")"
+  if [ "$cn_" != "$ce_" ] || { [ -z "$SD" ] && [ "$cw_" != start ] && emu_running; }; then
+    rm -f "$cp_.rommancer-tmp"; log "card: $(basename "$cp_") changed meanwhile, later"; return 1
+  fi
+  mv "$cp_.rommancer-tmp" "$cp_"
 }
 
 # The system's language, as Knulli/Batocera, Onion or the desktop say it
@@ -430,8 +458,13 @@ cmd_sync() {
         rh="$(grep -F "rom$TAB$a$TAB" "$req" | head -n 1 | cut -f3,4 | tr '\t' ',')"
         if http POST "$SERVER/api/v1/agent/upload" "$p" "$WORK/uploaded" "X-Rom-B64: $(b64 "$a")" "X-Path-B64: $(b64 "$p")" "X-Rom-Sha1: $rh" "X-Save-Exact: ${b:-0}"; then
           ups=$((ups + 1))
-          # A new savestate: the server asks for its screenshot
-          while IFS="$TAB" read -r tk tp tv; do [ "$tk" = tput ] && thumb_put "$tp" "$tv"; done < "$WORK/uploaded"
+          # A new savestate: the server asks for its screenshot; a memory card may come back with the server's saves in it
+          while IFS="$TAB" read -r tk tp tv tr; do
+            case "$tk" in
+              tput) thumb_put "$tp" "$tv" ;;
+              cget) card_get "$tp" "$tv" "$tr" && { downs=$((downs + 1)); rn="$(basename "$tp")"; printf '%s\n' "${rn%.*}" >> "$WORK/received"; } ;;
+            esac
+          done < "$WORK/uploaded"
         else errs=$((errs + 1)); fi ;;
       get)
         mkdir -p "$(dirname "$p")"
@@ -441,6 +474,7 @@ cmd_sync() {
         else rm -f "$p.rommancer-tmp"; errs=$((errs + 1)); fi ;;
       tput) thumb_put "$p" "$a" ;;
       tget) thumb_get "$p" "$a" ;;
+      cget) if card_get "$p" "$a" "$b"; then downs=$((downs + 1)); rn="$(basename "$p")"; printf '%s\n' "${rn%.*}" >> "$WORK/received"; fi ;;
     esac
   done < "$plan"
   progress finished "$ups" "$downs"
@@ -735,6 +769,7 @@ cmd_game_start() {
   http POST "$SERVER/api/v1/agent/start" "$WORK/gs-present" "$WORK/gs-plan" "$rh" || return 0
   while IFS="$TAB" read -r action p v; do
     [ "$action" = tget ] && { thumb_get "$p" "$v"; continue; }
+    [ "$action" = cget ] && { card_get "$p" "$v" "$rom" start && log "game-start: card $(basename "$p")"; continue; }
     [ "$action" = get ] || continue
     mkdir -p "$(dirname "$p")"
     http GET "$SERVER/api/v1/agent/file?v=$v" - "$p.rommancer-tmp" "$rh" "X-Path-B64: $(b64 "$p")" && mv "$p.rommancer-tmp" "$p" && log "game-start: got $(basename "$p")"

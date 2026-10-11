@@ -46,8 +46,9 @@ export function SavesPage() {
   // A save never changed after it was created (one version: identical files make no new one) is a game only started
   const [q, setQ] = useState('')
   const needle = q.trim().toLowerCase()
-  const found = needle ? data?.filter((s) => `${s.game?.title ?? ''} ${s.baseName} ${s.game?.system.name ?? ''}`.toLowerCase().includes(needle)) : data
-  const shown = onlyPlayed ? found?.filter((s) => s.versions.length > 1) : found
+  const found = needle ? data?.filter((s) => `${s.game?.title ?? ''} ${s.baseName} ${s.label ?? ''} ${s.game?.system.name ?? ''}`.toLowerCase().includes(needle)) : data
+  // A memory card save is only written when the player saves: one version already counts
+  const shown = onlyPlayed ? found?.filter((s) => s.kind === 'ENTRY' || s.versions.length > 1) : found
   const hidden = (found?.length ?? 0) - (shown?.length ?? 0)
   return (
     <div>
@@ -61,6 +62,7 @@ export function SavesPage() {
         <TabsList>
           <TabsTrigger value="mine">{t('more.saves.mine')}</TabsTrigger>
           <TabsTrigger value="shared">{t('more.saves.shared')}</TabsTrigger>
+          <TabsTrigger value="cards">{t('more.saves.cards')}</TabsTrigger>
         </TabsList>
         <TabsContent value="mine" className="space-y-3">
           <div className="flex flex-wrap items-center gap-1">
@@ -89,6 +91,9 @@ export function SavesPage() {
         </TabsContent>
         <TabsContent value="shared">
           <SharedSaves />
+        </TabsContent>
+        <TabsContent value="cards">
+          <MemoryCards />
         </TabsContent>
       </Tabs>
       {open && <VersionsDialog saveId={open} onClose={() => setOpen(null)} />}
@@ -220,6 +225,7 @@ function SavesByGame({ saves, onOpen }: { saves: any[] | undefined; onOpen(id: n
                         <div className="flex flex-wrap items-center gap-1">
                           <Badge variant={s.kind === 'SAVE' ? 'default' : 'secondary'}>{t(`saves.kind.${s.kind}`)}</Badge>
                           {s.kind === 'STATE' && <span className="text-xs text-muted-foreground">{slotLabel(s.slot)}</span>}
+                          {s.kind === 'ENTRY' && <span className="text-xs text-muted-foreground">{s.label ?? s.baseName}</span>}
                           <span className="font-medium">{formatDate(cur?.fileMtime)}</span>
                           <span className="text-xs text-muted-foreground">· {cur?.sourceDevice?.name ?? t('saves.web')}</span>
                           {s.versions.some((v: any) => v.sharedAt) && (
@@ -285,6 +291,7 @@ export function MySaves({ saves, onOpen }: { saves: any[] | undefined; onOpen(id
                       <span className="text-muted-foreground">{t('saves.unidentified')}</span>
                     )}
                     <p className="truncate text-xs text-muted-foreground">
+                      {s.label && `${s.label} · `}
                       {s.baseName}
                       {s.game && ` · ${s.game.system.name}`}
                     </p>
@@ -392,14 +399,17 @@ export function VersionsDialog({ saveId, onClose }: { saveId: number; onClose():
               </div>
             </Field>
           )}
-          <Field label={t('saves.baseName')}>
-            <div className="flex gap-2">
-              <Input className="w-72" value={baseName ?? s.baseName} onChange={(e) => setBaseName(e.target.value)} />
-              <Button variant="outline" size="sm" disabled={baseName == null || baseName === s.baseName} onClick={() => void act(() => patch(`/saves/${s.id}`, { baseName }))}>
-                {t('common.save')}
-              </Button>
-            </div>
-          </Field>
+          {/* A memory card save is known by its name in the card's directory: it is not renamed */}
+          {s.kind !== 'ENTRY' && (
+            <Field label={t('saves.baseName')}>
+              <div className="flex gap-2">
+                <Input className="w-72" value={baseName ?? s.baseName} onChange={(e) => setBaseName(e.target.value)} />
+                <Button variant="outline" size="sm" disabled={baseName == null || baseName === s.baseName} onClick={() => void act(() => patch(`/saves/${s.id}`, { baseName }))}>
+                  {t('common.save')}
+                </Button>
+              </div>
+            </Field>
+          )}
         </div>
         <SaveConsoles devices={s.devices} />
         <CoreWarning warnings={s.coreWarnings} version={s.versions.find((v: any) => v.id === s.currentVersionId)?.coreVersion} />
@@ -688,6 +698,72 @@ function UploadDialog({ onClose }: { onClose(): void }) {
         </DialogFooter>
       </DialogContent>
     </Dialog>
+  )
+}
+
+/** Memory card files on the user's consoles: what they hold, why something was not written, and their past images */
+function MemoryCards() {
+  const { t } = useTranslation()
+  const { data } = useQuery({ queryKey: ['memory-cards'], queryFn: () => get<any[]>('/saves/cards') })
+  if (!data?.length) return <Empty>{t('more.saves.noCards')}</Empty>
+  return (
+    <div className="space-y-2">
+      <p className="text-sm text-muted-foreground">{t('more.saves.cardsHelp')}</p>
+      <Table>
+        <TableHeader>
+          <TableRow>
+            <TableHead>{t('more.saves.consoles')}</TableHead>
+            <TableHead>{t('more.saves.cardFile')}</TableHead>
+            <TableHead>{t('saves.game')}</TableHead>
+            <TableHead>{t('more.saves.cardEntries')}</TableHead>
+            <TableHead>{t('more.saves.cardFree')}</TableHead>
+            <TableHead>{t('more.saves.cardImages')}</TableHead>
+          </TableRow>
+        </TableHeader>
+        <TableBody>
+          {data.map((c) => (
+            <TableRow key={c.id}>
+              <TableCell>{c.device.name}</TableCell>
+              <TableCell className="max-w-xs">
+                <p className="truncate font-mono text-xs" title={c.path}>
+                  {c.path.split('/').pop()}
+                </p>
+                {c.warning && (
+                  <p className="flex items-center gap-1 text-xs text-amber-600">
+                    <TriangleAlert className="size-3 shrink-0" />
+                    {c.warning}
+                  </p>
+                )}
+                {c.offerSha1 && <p className="text-xs text-muted-foreground">{t('more.saves.cardWaiting')}</p>}
+              </TableCell>
+              <TableCell>
+                {c.shared ? (
+                  <Badge variant="outline">{t('more.saves.cardShared')}</Badge>
+                ) : c.game ? (
+                  <Link className="hover:underline" to={`/games/${c.game.id}`}>
+                    {c.game.title}
+                  </Link>
+                ) : (
+                  <span className="text-muted-foreground">{t('saves.unidentified')}</span>
+                )}
+              </TableCell>
+              <TableCell>{c.entries}</TableCell>
+              <TableCell>{c.freeBlocks ?? '-'}</TableCell>
+              <TableCell>
+                <div className="flex flex-col gap-0.5 text-xs">
+                  {c.snapshots.slice(0, 3).map((sn: any) => (
+                    <a key={sn.id} className="flex items-center gap-1 text-primary hover:underline" href={authUrl(`/saves/cards/${c.id}/snapshots/${sn.id}`)}>
+                      <Download className="size-3" />
+                      {formatDate(sn.createdAt)} · {t(`more.saves.cardImage.${sn.kind}`)}
+                    </a>
+                  ))}
+                </div>
+              </TableCell>
+            </TableRow>
+          ))}
+        </TableBody>
+      </Table>
+    </div>
   )
 }
 

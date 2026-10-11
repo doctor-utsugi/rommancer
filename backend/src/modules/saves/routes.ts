@@ -14,6 +14,7 @@ import { layoutOf } from '../devices/sink.js';
 import { raDefaults } from '../../seed/data.js';
 import { convertSave, type SaveFormat } from './convert.js';
 import { identifyRom, parseSaveFile, readThumb, readVersion, removeVersion, storeThumb, storeVersion } from './service.js';
+import { mainCard, readSnapshot, splitWholeCard } from './cards.js';
 import './sync.js';
 
 export const savesRouter = Router();
@@ -123,9 +124,10 @@ async function withCoreWarnings<T extends WithVersions>(userId: number, saves: T
 
 savesRouter.get('/', async (req, res) => {
   const u = me(req);
-  const q = z.object({ gameId: z.coerce.number().int().optional(), kind: z.enum(['SAVE', 'STATE']).optional() }).parse(req.query);
+  const q = z.object({ gameId: z.coerce.number().int().optional(), kind: z.enum(['SAVE', 'STATE', 'ENTRY']).optional() }).parse(req.query);
   const saves = await prisma.save.findMany({
-    where: { userId: u.id, ...(q.gameId ? { gameId: q.gameId } : {}), ...(q.kind ? { kind: q.kind } : {}) },
+    // Whole PS1 cards from before cards were read entry by entry are left out: their entries are listed
+    where: { userId: u.id, supersededAt: null, ...(q.gameId ? { gameId: q.gameId } : {}), ...(q.kind ? { kind: q.kind } : {}) },
     orderBy: { updatedAt: 'desc' },
     include: {
       emulator: true,
@@ -136,6 +138,39 @@ savesRouter.get('/', async (req, res) => {
   res.json(await withCoreWarnings(u.id, saves));
 });
 
+/** A save's file name: memory card entries download as single saves (.mcs) */
+const fileExt = (s: { kind: string; emulator: Emulator }, emu: Emulator = s.emulator) => (s.kind === 'ENTRY' ? '.mcs' : s.kind === 'SAVE' ? emu.saveExt : (emu.stateExt ?? '.state'));
+
+// ---------- memory card files on the user's devices ----------
+
+savesRouter.get('/cards', async (req, res) => {
+  const u = me(req);
+  const cards = await prisma.deviceCard.findMany({
+    where: { device: { userId: u.id } },
+    include: {
+      device: { select: { id: true, name: true } },
+      card: { select: { id: true, name: true, family: true } },
+      emulator: { select: { id: true, name: true } },
+      snapshots: { select: { id: true, sha1: true, size: true, kind: true, createdAt: true }, orderBy: { id: 'desc' } },
+      _count: { select: { bases: { where: { entrySha1: { not: null } } } } },
+    },
+    orderBy: [{ deviceId: 'asc' }, { path: 'asc' }],
+  });
+  const games = await prisma.game.findMany({ where: { id: { in: cards.map((c) => c.gameId).filter((g): g is number => g !== null) } }, select: { id: true, title: true } });
+  const title = new Map(games.map((g) => [g.id, g.title]));
+  res.json(cards.map(({ offer: _o, _count, ...c }) => ({ ...c, entries: _count.bases, game: c.gameId ? { id: c.gameId, title: title.get(c.gameId) ?? null } : null })));
+});
+
+// A whole image of a device's card as it was read or sent, to put the card back by hand
+savesRouter.get('/cards/:id/snapshots/:snapshotId', async (req, res) => {
+  const u = me(req);
+  const dc = await prisma.deviceCard.findUniqueOrThrow({ where: { id: intParam(req) }, include: { device: true } });
+  if (dc.device.userId !== u.id) throw forbidden();
+  const snap = await prisma.cardSnapshot.findFirstOrThrow({ where: { id: intParam(req, 'snapshotId'), deviceCardId: dc.id } });
+  res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(path.posix.basename(dc.path))}"`);
+  res.type('application/octet-stream').send(await readSnapshot(snap.path));
+});
+
 // ---------- saves shared by any user of the server ----------
 
 const sharedInclude = {
@@ -144,6 +179,7 @@ const sharedInclude = {
       emulator: true,
       user: { select: { id: true, username: true } },
       game: { select: { id: true, title: true, system: { select: { slug: true, name: true } } } },
+      card: { select: { family: true } },
     },
   },
 } as const;
@@ -176,7 +212,7 @@ savesRouter.get('/shared', async (req, res) => {
       ...v,
       hasThumb: !!thumbPath,
       mine: save.userId === u.id,
-      save: { id: save.id, kind: save.kind, slot: save.slot, baseName: save.baseName, emulator: save.emulator, game: save.game, user: save.user },
+      save: { id: save.id, kind: save.kind, slot: save.slot, baseName: save.baseName, label: save.label, emulator: save.emulator, game: save.game, user: save.user },
       coreWarnings: save.kind === 'STATE' ? check(save.emulator, v.coreVersion) : [],
     })),
   );
@@ -191,7 +227,7 @@ savesRouter.get('/shared/:id/thumb', async (req, res) => {
 
 savesRouter.get('/shared/:id/download', async (req, res) => {
   const v = await sharedVersion(intParam(req));
-  const ext = v.save.kind === 'SAVE' ? v.save.emulator.saveExt : (v.save.emulator.stateExt ?? '.state');
+  const ext = fileExt(v.save);
   res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(v.save.baseName + ext)}"`);
   res.type('application/octet-stream').send(await readVersion(v.id));
 });
@@ -207,7 +243,14 @@ savesRouter.post('/shared/:id/import', async (req, res) => {
   const src = v.save;
   let buf = await readVersion(v.id);
   let key = { userId: u.id, emulatorId: src.emulatorId, kind: src.kind, slot: src.kind === 'SAVE' ? 0 : (slot ?? src.slot), baseName: src.baseName };
-  if (src.gameId) {
+  let cardId: number | undefined;
+  if (src.kind === 'ENTRY') {
+    // A memory card entry goes into the user's own card, as a new version of the entry of that name if there is one
+    const card = await mainCard(u.id, src.card?.family ?? 'ps1');
+    const mine = await prisma.save.findFirst({ where: { cardId: card.id, baseName: src.baseName } });
+    key = mine ? { userId: u.id, emulatorId: mine.emulatorId, kind: 'ENTRY', slot: mine.slot, baseName: mine.baseName } : { ...key, slot: card.id };
+    cardId = card.id;
+  } else if (src.gameId) {
     const family = (f: string) => (f.startsWith('ps1') ? 'ps1' : f);
     // States only work in their own emulator; a game's save goes into the one the user already has, converted
     const mine = await prisma.save.findMany({
@@ -224,6 +267,8 @@ savesRouter.post('/shared/:id/import', async (req, res) => {
   const r = await storeVersion(key, buf, new Date(), {
     gameId: src.gameId,
     romId: src.romId,
+    cardId,
+    label: src.label,
     note: `shared by ${src.user.username}`.slice(0, 255),
     coreVersion: v.coreVersion,
     force: true,
@@ -292,7 +337,9 @@ savesRouter.post('/upload', upload.single('file'), async (req, res) => {
     }
     const buf = await fs.promises.readFile(req.file.path);
     const r = await storeVersion({ userId: u.id, emulatorId: emu.id, ...parsed }, buf, body.mtime ? new Date(body.mtime) : new Date(), { gameId, romId, note: 'upload' });
-    res.status(r.created ? 201 : 200).json({ saveId: r.save.id, versionId: r.version.id, created: r.created });
+    // A PS1 memory card: its saves join the user's card one by one, the file stays as uploaded
+    const entries = await splitWholeCard({ ...(await prisma.save.findUniqueOrThrow({ where: { id: r.save.id } })), emulator: emu }, true);
+    res.status(r.created ? 201 : 200).json({ saveId: r.save.id, versionId: r.version.id, created: r.created, entries });
   } finally {
     await fs.promises.rm(req.file.path, { force: true });
   }
@@ -304,8 +351,8 @@ savesRouter.get('/:id/versions/:versionId/download', async (req, res) => {
   const v = await prisma.saveVersion.findFirstOrThrow({ where: { id: intParam(req, 'versionId'), saveId: s.id } });
   const toEmu = typeof req.query.emulator === 'string' ? await prisma.emulator.findUniqueOrThrow({ where: { slug: req.query.emulator } }) : s.emulator;
   let buf = await readVersion(v.id);
-  if (toEmu.saveFormat !== s.emulator.saveFormat) buf = convertSave(buf, s.emulator.saveFormat as SaveFormat, toEmu.saveFormat as SaveFormat);
-  const ext = s.kind === 'SAVE' ? toEmu.saveExt : (toEmu.stateExt ?? '.state');
+  if (s.kind === 'SAVE' && toEmu.saveFormat !== s.emulator.saveFormat) buf = convertSave(buf, s.emulator.saveFormat as SaveFormat, toEmu.saveFormat as SaveFormat);
+  const ext = fileExt(s, toEmu);
   res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(s.baseName + ext)}"`);
   res.type('application/octet-stream').send(buf);
 });

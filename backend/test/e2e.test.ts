@@ -2666,3 +2666,175 @@ test('shared savestates: screenshots travel with the state, the core version is 
   assert.deepEqual(out.notes, []);
   assert.equal(adapterFor('knulli')!.stateThumbs, undefined, 'Batocera and Knulli turn it on themselves');
 });
+
+test('memory cards: PS1 saves sync entry by entry, several per game, only into a card no emulator holds', async () => {
+  const { prisma } = await import('../src/lib/prisma.js');
+  const { formatPs1Card, readMcs, readPs1Card, writePs1Card } = await import('../src/modules/saves/ps1card.js');
+  const client = path.join(ROOT, 'clients/linux/rommancer-sync.sh');
+  const dir = path.join(DATA, 'memcards');
+  fs.rmSync(dir, { recursive: true, force: true });
+  // Two games by serial: the card's own and another one whose save sits in that card too
+  fs.writeFileSync(
+    path.join(DATA, 'dats', 'psx-cards.dat'),
+    `<?xml version="1.0"?><datafile><header><name>Sony - PlayStation</name><version>cards</version></header>
+    <game name="Card Quest (USA)"><description>Card Quest (USA)</description><serial>SCUS-94163</serial>
+    <rom name="Card Quest (USA).cue" size="80" crc="11111111" sha1="1111111111111111111111111111111111111111"/></game>
+    <game name="Night Quest (USA)"><description>Night Quest (USA)</description><serial>SLUS-00067</serial>
+    <rom name="Night Quest (USA).cue" size="80" crc="22222222" sha1="2222222222222222222222222222222222222222"/></game></datafile>`,
+  );
+  await waitJob((await api('POST', '/admin/dats/import-file', { file: 'psx-cards.dat' })).json.id);
+  const games = await prisma.game.findMany({ where: { title: { in: ['Card Quest', 'Night Quest'] }, system: { slug: 'psx' } }, select: { id: true, title: true } });
+  const gameId = (t: string) => games.find((g) => g.title === t)?.id;
+  assert.ok(gameId('Card Quest') && gameId('Night Quest'), JSON.stringify(games));
+
+  const entry = (name: string, seed: number, title: string) => {
+    const buf = Buffer.alloc(128 + 0x2000, seed);
+    buf.fill(0, 0, 128);
+    buf.writeUInt32LE(0x51, 0);
+    buf.writeUInt32LE(0x2000, 4);
+    buf.writeUInt16LE(0xffff, 8);
+    buf.write(name, 0x0a, 'latin1');
+    buf.fill(0, 128, 128 + 0x44);
+    buf.write('SC', 128, 'latin1');
+    buf[131] = 1;
+    buf.write(title, 132, 'latin1');
+    return readMcs(buf);
+  };
+  const S01 = 'BASCUS-94163CQ-S01';
+  const S02 = 'BASCUS-94163CQ-S02';
+  const NQ = 'BASLUS-00067NQ';
+  const HB = 'BASLUS-11111HB';
+  // Each write a second apart, as an emulator saving: the client caches hashes by size and second
+  let clock = Math.floor(Date.now() / 1000) + 10;
+  const put = (f: string, buf: Buffer) => {
+    fs.writeFileSync(f, buf);
+    clock += 2;
+    fs.utimesSync(f, clock, clock);
+  };
+  const names = (f: string) => readPs1Card(fs.readFileSync(f)).entries.map((e) => e.name).sort();
+  const shaOf = (f: string, n: string) => readPs1Card(fs.readFileSync(f)).entries.find((e) => e.name === n)?.sha1;
+
+  // "ps" is faked: an emulator runs while the file it names holds "retroarch"
+  const bin = path.join(dir, 'bin');
+  fs.mkdirSync(bin, { recursive: true });
+  const psOut = path.join(dir, 'ps.txt');
+  fs.writeFileSync(path.join(bin, 'ps'), `#!/bin/sh\ncat "${psOut}" 2>/dev/null\nexit 0\n`, { mode: 0o755 });
+  fs.writeFileSync(psOut, '');
+  const device = async (name: string) => {
+    const root = path.join(dir, name);
+    const state = path.join(dir, `${name}-state`);
+    fs.mkdirSync(path.join(root, 'roms/psx'), { recursive: true });
+    fs.mkdirSync(path.join(root, 'saves/psx'), { recursive: true });
+    fs.writeFileSync(path.join(root, 'roms/psx', 'Card Quest (USA).cue'), `FILE "${name}.bin" BINARY\n`);
+    const r = await api('POST', '/link/claim', { name, firmware: 'knulli', root });
+    assert.equal(r.status, 201, JSON.stringify(r.json));
+    fs.mkdirSync(state, { recursive: true });
+    fs.writeFileSync(path.join(state, 'config'), `SERVER=${base}\nTOKEN=${r.json.token}\nUSER=admin\n`);
+    const sync = async () =>
+      (
+        await execFileP('sh', [client, 'sync'], {
+          env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, ROMMANCER_STATE: state, ROMMANCER_ROOT: root, ROMMANCER_FIRMWARE: 'knulli', VERBOSE: '1' },
+        })
+      ).stdout;
+    return { id: r.json.deviceId as number, root, sync, card: path.join(root, 'saves/psx', 'Card Quest (USA).srm'), shared: path.join(root, 'saves/psx', 'pcsx-card2.mcd') };
+  };
+  const a = await device('psx-a');
+  const b = await device('psx-b');
+
+  // Console A's card for the game holds two saves of it and one of another game
+  put(a.card, writePs1Card(formatPs1Card(), [entry(S01, 1, 'CQ ONE'), entry(S02, 2, 'CQ TWO'), entry(NQ, 3, 'NIGHT')]).card);
+  assert.match(await a.sync(), /1 up, 0 down, 0 errors/);
+  const entries = (await api('GET', '/saves?kind=ENTRY')).json;
+  const byName = (n: string) => entries.find((s: any) => s.baseName === n);
+  assert.ok(byName(S01) && byName(S02) && byName(NQ), 'each save of the card is a save of its own');
+  assert.equal(byName(S01).gameId, gameId('Card Quest'));
+  assert.equal(byName(S02).gameId, gameId('Card Quest'));
+  assert.equal(byName(NQ).gameId, gameId('Night Quest'), 'its own game, by the serial in its name');
+  assert.equal(byName(S01).label, 'CQ ONE');
+
+  // Console B has the game but no card: one is made with that game's saves only. Its shared card goes up and
+  // gets the saves of games without a card of their own there
+  put(b.shared, writePs1Card(formatPs1Card(), [entry(HB, 4, 'HOMEBREW')]).card);
+  assert.match(await b.sync(), /1 up, 2 down, 0 errors/);
+  assert.deepEqual(names(b.card), [S01, S02]);
+  assert.deepEqual(names(b.shared), [NQ, HB]);
+  // Synced once the console is seen holding what it was sent
+  const dcB = await prisma.deviceCard.findFirstOrThrow({ where: { deviceId: b.id, path: 'saves/psx/Card Quest (USA).srm' } });
+  assert.ok(dcB.offerSha1);
+  assert.match(await b.sync(), /0 up, 0 down, 0 errors/);
+  assert.equal((await prisma.deviceCard.findUniqueOrThrow({ where: { id: dcB.id } })).offerSha1, null);
+  assert.match(await a.sync(), /0 up, 0 down, 0 errors/);
+
+  // A saves again; B is playing: its card is not touched until the emulator is gone
+  const s01v2 = entry(S01, 11, 'CQ ONE');
+  put(a.card, writePs1Card(fs.readFileSync(a.card), [s01v2]).card);
+  assert.match(await a.sync(), /1 up, 0 down, 0 errors/);
+  const before = fs.readFileSync(b.card);
+  fs.writeFileSync(psOut, '/usr/bin/retroarch -L pcsx_rearmed_libretro.so\n');
+  assert.match(await b.sync(), /0 up, 0 down, 0 errors/);
+  assert.ok(fs.readFileSync(b.card).equals(before));
+  fs.writeFileSync(psOut, '');
+  assert.match(await b.sync(), /0 up, 1 down, 0 errors/);
+  assert.equal(shaOf(b.card, S01), s01v2.sha1);
+
+  // The emulator had the old card in memory and wrote it back with its own new save in another slot: the old
+  // S01 is not taken for a newer save (it is sent again), the new S02 goes up
+  const s02b = entry(S02, 22, 'CQ TWO');
+  put(b.card, writePs1Card(before, [s02b]).card);
+  assert.match(await b.sync(), /1 up, 1 down, 0 errors/);
+  assert.equal(shaOf(b.card, S01), s01v2.sha1);
+  assert.equal(shaOf(b.card, S02), s02b.sha1);
+  const s01 = (await api('GET', '/saves?kind=ENTRY')).json.find((s: any) => s.baseName === S01);
+  assert.equal(s01.versions.find((v: any) => v.id === s01.currentVersionId).sha1, s01v2.sha1, "A's save stays the current one");
+  assert.match(await a.sync(), /0 up, 1 down, 0 errors/);
+  assert.equal(shaOf(a.card, S02), s02b.sha1);
+  assert.deepEqual(names(a.card), [NQ, S01, S02].sort(), 'the other game stays in the card it was in');
+
+  // A save taken out on a console stays out there
+  put(b.card, writePs1Card(fs.readFileSync(b.card), [], [S02]).card);
+  assert.match(await b.sync(), /1 up, 0 down, 0 errors/);
+  assert.match(await b.sync(), /0 up, 0 down, 0 errors/);
+  assert.deepEqual(names(b.card), [S01]);
+  const conflicts = (await api('GET', '/saves/conflicts')).json.filter((c: any) => c.save.kind === 'ENTRY');
+  assert.equal(conflicts.length, 0);
+
+  // The web app lists the card files with their snapshots; a card uploaded by hand joins the user's card too
+  const cards = (await api('GET', '/saves/cards')).json.filter((c: any) => [a.id, b.id].includes(c.device.id));
+  assert.equal(cards.length, 3);
+  assert.ok(cards.every((c: any) => c.snapshots.length > 0));
+  const snap = cards[0].snapshots[0];
+  const img = await fetch(`${base}/api/v1/saves/cards/${cards[0].id}/snapshots/${snap.id}`, { headers: { Authorization: `Bearer ${adminToken}` } });
+  assert.equal(Buffer.from(await img.arrayBuffer()).length, 0x20000);
+  const fd = new FormData();
+  fd.append('file', new Blob([writePs1Card(formatPs1Card(), [entry('BASLUS-22222UP', 5, 'UPLOADED')]).card]), 'Some Disc (USA).srm');
+  fd.append('emulatorId', String((await prisma.emulator.findUniqueOrThrow({ where: { slug: 'ra-pcsx-rearmed' } })).id));
+  const up = await api('POST', '/saves/upload', fd);
+  assert.equal(up.json.entries, 1);
+  const all = (await api('GET', '/saves')).json;
+  assert.ok(all.some((s: any) => s.baseName === 'BASLUS-22222UP' && s.kind === 'ENTRY'));
+  assert.ok(!all.some((s: any) => s.id === up.json.saveId), 'the whole card is kept but not listed');
+
+  // An SD card mounted on the server: its card is read and written by the server itself
+  const sd = path.join(dir, 'sd');
+  fs.mkdirSync(path.join(sd, 'roms/psx'), { recursive: true });
+  fs.mkdirSync(path.join(sd, 'saves/psx'), { recursive: true });
+  fs.writeFileSync(path.join(sd, 'roms/psx', 'Card Quest (USA).cue'), 'FILE "sd.bin" BINARY\n');
+  const sdCard = path.join(sd, 'saves/psx', 'Card Quest (USA).srm');
+  const s03 = entry('BASCUS-94163CQ-S03', 33, 'CQ THREE');
+  fs.writeFileSync(sdCard, writePs1Card(formatPs1Card(), [s03]).card);
+  const consoles = (await api('GET', '/devices/consoles')).json;
+  const knulli = (await api('GET', '/devices/firmwares')).json.find((x: any) => x.slug === 'knulli');
+  const local = await api('POST', '/devices', { name: 'PSX SD', consoleId: consoles[0].id, firmwareId: knulli.id, connType: 'LOCAL', rootPath: sd });
+  assert.equal(local.status, 201, JSON.stringify(local.json));
+  const job = await waitJob((await api('POST', `/saves/sync/${local.json.id}`, { direction: 'both' })).json.id);
+  assert.equal(job.status, 'DONE', JSON.stringify(job));
+  // S03 went up; S01 came in (S02 too: only console B took it out of its own card)
+  assert.deepEqual(names(sdCard), [S01, S02, 'BASCUS-94163CQ-S03']);
+  assert.equal(shaOf(sdCard, 'BASCUS-94163CQ-S03'), s03.sha1);
+  const sdDc = await prisma.deviceCard.findFirstOrThrow({ where: { deviceId: local.json.id } });
+  assert.equal(sdDc.offerSha1, null, 'written and read back by the server: synced at once');
+  const again = await waitJob((await api('POST', `/saves/sync/${local.json.id}`, { direction: 'both' })).json.id);
+  assert.equal(again.result.pushed, 0);
+  assert.match(await a.sync(), /0 up, 1 down, 0 errors/);
+  assert.deepEqual(names(a.card), [NQ, S01, S02, 'BASCUS-94163CQ-S03'].sort());
+});

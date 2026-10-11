@@ -216,7 +216,7 @@ export const en: Dict = {
     title: 'Saves and savestates',
     upload: 'Upload save',
     emulator: 'Emulator',
-    kind: { SAVE: 'Save', STATE: 'Savestate' },
+    kind: { SAVE: 'Save', STATE: 'Savestate', ENTRY: 'Card' },
     slot: 'Slot',
     versions: 'Versions',
     current: 'Current',

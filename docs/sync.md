@@ -139,6 +139,42 @@ in `roms/nds/saves`, layout `rom-saves`); set `ROMMANCER_FIRMWARE`/`ROMMANCER_MO
   for the game, converted to its emulator's format. Whatever they had becomes history. Shared versions are kept
   past the 50-version history limit until their owner stops sharing them.
 
+### Memory cards (PS1)
+
+A memory card is a container: a small filesystem whose entries are the saves of several games. Rommancer syncs
+the entries, never the card file as a whole.
+
+- **Entries.** Each save inside a card is a save of kind `ENTRY` in one of the user's memory cards (`MemoryCard`,
+  "Main" until phase 4 adds more), keyed by its full name in the card's directory (`BASCUS-94163FF7-S01`). One game
+  often writes several entries, so the game is only a label: it comes from the product code in the name matched
+  against the Redump serial (`SCUS-94163`, `SCUS-94163-0`...), or from the card's own game. Entries keep history,
+  conflicts and sharing like any save; they download as `.mcs` single saves.
+- **Card files.** A `DeviceCard` is a card file on a device: a per-game card named after the rom (RetroArch
+  `<rom>.srm`, NextUI `<rom file>.sav`, DuckStation `.mcd`), one named after a serial (`SCUS-94163_1.mcd`), or a card
+  every game shares (`pcsx-card1.mcd`/`pcsx-card2.mcd` from PCSX-ReARMed, on by default since May 2026;
+  `duckstation_shared_card_N.mcd` from SwanStation; DuckStation's `shared_card_N.mcd`; Beetle PSX's
+  `mednafen_psx_libretro_shared.N.mcr`). A per-game card gets the entries of its game; a shared card those of games
+  without a card of their own on that device. Per-game cards the device lacks are made; shared ones are left to the
+  emulator.
+- **Bases per card file.** For every card file and entry the server keeps the version last synced and the entry's
+  sha1 there (`CardEntryBase`), so the same entry in two card files of one console syncs apart. An entry taken out
+  on the device is not put back until it changes somewhere else.
+- **Reading.** The device sends the whole file (`put`); the server takes its entries out (upload, adopt or
+  conflict) and keeps an image of it (`CardSnapshot`, the last 30 read or sent per card file, downloadable from
+  *Saves > Memory cards*).
+- **Writing.** The server builds the card from the image it last read, with newer entries put in and every other
+  entry left in its blocks, and checks it reads back. What does not fit is left out and the card file shows why; a
+  damaged card is never written. The device gets a `cget` line and swaps the file in only if it is still the one
+  the server read and no emulator runs (emulators keep the card in memory and write it back whole). The entries
+  sent count as synced only once the device is seen holding them: an emulator that wrote the old card back leaves
+  the old entry, which is sent again instead of being taken for a newer save.
+- **Clients.** The shell client checks running processes and swaps the file with `mv`; at game start it writes
+  before the emulator loads the card. The desktop app writes SD cards (no emulator runs on them). Servers syncing an
+  SD card or a console over SSH write it themselves, over SSH only when `ps` shows no emulator. The Android app
+  only sends its cards for now: it cannot tell whether an emulator is running.
+- **Whole cards from before.** PS1 cards stored whole as one save are split into entries when the server starts
+  and kept, marked superseded, out of the lists. A card uploaded in the web app is split the same way.
+
 ## Credits
 
 The spinning save point of the setup screen is pre-rendered by `tools/render_savepoint.py` from
@@ -160,6 +196,7 @@ clients need no JSON parser.
 | `POST /agent/sync` | device token | full-device plan (below) |
 | `GET /agent/file`, `POST /agent/upload` | device token | transfer one save |
 | `GET /agent/thumb`, `POST /agent/thumb` | device token | a savestate's screenshot (`?v=versionId`) |
+| `GET /agent/card` | device token | a memory card with the server's entries put in (`?expect=sha1` or `-`) |
 
 `POST /agent/sync` receives one line per rom and per save file:
 
@@ -176,11 +213,17 @@ put<TAB>/path/to/save<TAB>/path/to/rom
 get<TAB>/path/to/save<TAB>versionId<TAB>/path/to/rom
 tget<TAB>/path/to/state.png<TAB>versionId
 tput<TAB>/path/to/state.png<TAB>versionId
+cget<TAB>/path/to/card.srm<TAB>sha1 or -<TAB>/path/to/rom or -
 ```
 
 `tget` follows the `get` of a state whose version has a screenshot; `tput` asks for the screenshot of a state the
 server already has without one. `POST /agent/upload` of a new state answers `uploaded` plus a `tput` line. Clients
 that do not know these lines skip them.
+
+`cget` asks the client to fetch `GET /agent/card?expect=<sha1>` (header `X-Path-B64`) and to replace the card file
+only if its sha1 is still `expect` (`-`: no file) and no emulator runs; the server answers 409 when the card it read
+is no longer the device's and 204 when nothing has to change. Card files named for no rom are uploaded with rom
+`-`. The upload of a card answers a `cget` line at once when the server has entries for it.
 
 ## Decisions
 

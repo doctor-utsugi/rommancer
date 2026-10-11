@@ -243,7 +243,7 @@ impl<'a> Engine<'a> {
         // Free and total bytes of the card: the server copies list roms only while a reserve is kept
         let space = crate::card::space_of(Path::new(&self.root)).map(|(f, t)| format!("{f} {t}")).unwrap_or_default();
         let plan = pairs(&self.api.post_text("/agent/sync", request.into_bytes(), &[("X-Allow-Pull", "1".into()), ("X-Space", space)])?);
-        let steps: Vec<_> = plan.into_iter().filter(|s| s.len() >= 3 && ["put", "get", "tput", "tget"].contains(&s[0].as_str())).collect();
+        let steps: Vec<_> = plan.into_iter().filter(|s| s.len() >= 3 && ["put", "get", "tput", "tget", "cget"].contains(&s[0].as_str())).collect();
         for (n, s) in steps.iter().enumerate() {
             self.check()?;
             self.progress("transfer", n as u64 + 1, steps.len() as u64);
@@ -258,11 +258,27 @@ impl<'a> Engine<'a> {
                     ];
                     self.api.post_text("/agent/upload", body, &headers).map(|reply| {
                         out.up += 1;
-                        // A new savestate: the server asks for its screenshot
-                        for t in pairs(&reply).into_iter().filter(|t| t.len() >= 3 && t[0] == "tput") {
-                            let _ = self.thumb_put(&t[1], &t[2]);
+                        // A new savestate: the server asks for its screenshot; a memory card may come back with the server's saves in it
+                        for t in pairs(&reply).into_iter().filter(|t| t.len() >= 3) {
+                            match t[0].as_str() {
+                                "tput" => {
+                                    let _ = self.thumb_put(&t[1], &t[2]);
+                                }
+                                "cget" => {
+                                    if let Ok(true) = self.card_get(&t[1], &t[2]) {
+                                        out.down += 1;
+                                    }
+                                }
+                                _ => {}
+                            }
                         }
                     })
+                }),
+                // cget <file> <sha1|-> <rom>: a memory card with the server's newer saves put in
+                "cget" => self.card_get(&s[1], &s[2]).map(|got| {
+                    if got {
+                        out.down += 1;
+                    }
                 }),
                 // Savestate screenshots: ours when the server lacks it, the server's beside a state it sent
                 "tput" => self.thumb_put(&s[1], &s[2]),
@@ -278,6 +294,22 @@ impl<'a> Engine<'a> {
             }
         }
         Ok(())
+    }
+
+    /// Swaps in a memory card the server built from the file it last read, only if the file is still that one
+    /// (EXPECT, "-" for none). An SD card in a computer has no emulator running on it.
+    fn card_get(&mut self, path: &str, expect: &str) -> Result<bool> {
+        let target = Path::new(path);
+        let tmp = target.with_file_name(format!("{}.rommancer-card", target.file_name().and_then(|n| n.to_str()).unwrap_or("card")));
+        self.api.download(&format!("/agent/card?expect={expect}"), &[("X-Path-B64", b64(path))], &tmp, &mut |_| {}, self.cancelled)?;
+        let size = fs::metadata(&tmp).map(|m| m.len()).unwrap_or(0);
+        let now = if target.is_file() { self.sha1(target, 0)? } else { "-".into() };
+        if size == 0 || now != expect {
+            let _ = fs::remove_file(&tmp);
+            return Ok(false);
+        }
+        fs::rename(&tmp, target)?;
+        Ok(true)
     }
 
     fn thumb_put(&self, path: &str, version: &str) -> Result<()> {

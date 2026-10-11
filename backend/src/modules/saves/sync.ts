@@ -6,7 +6,64 @@ import { layoutOf, openSink, type Sink } from '../devices/sink.js';
 import { parseDeviceSave, readThumb, storeThumb, THUMB_MAX } from './service.js';
 import { contentFor, decide, deviceFileName, deviceThumbPath, findLogicalSave, receiveFromDevice, saveDirs, setBase, sha1 } from './core.js';
 import { identifyRom } from './service.js';
-import type { Emulator } from '@prisma/client';
+import type { Device, Emulator } from '@prisma/client';
+import { sshExec } from '../devices/ssh.js';
+import { commitOffer, deviceCard, forgetDeviceCard, gameForSerial, isCardEmulator, namedCard, observeCard, prepareCard, recordOffer } from './cards.js';
+
+/** Emulators that load a memory card into memory and write it back whole */
+const EMULATOR_PROCESS = /retroarch|minarch|duckstation|emulatorlauncher|pcsx|swanstation|epsxe|retrorun/;
+
+/** Memory cards are written only while no emulator runs on the device (an SD card in the server never has one) */
+function cardWriteGuard(device: Device) {
+  let answer: Promise<boolean> | null = null;
+  return () =>
+    (answer ??=
+      device.connType === 'LOCAL'
+        ? Promise.resolve(true)
+        : sshExec(device, 'ps 2>/dev/null || ps -ef', 20_000)
+            .then((r) => r.code === 0 && !r.output.split('\n').some((l) => EMULATOR_PROCESS.test(l)))
+            .catch(() => false));
+}
+
+type CardWriteGuard = ReturnType<typeof cardWriteGuard>;
+
+/**
+ * A memory card file on a device reached by SD or SSH: read when it changed, then the server's newer entries
+ * written into it (atomically, only if it is still the file just read and no emulator runs).
+ */
+async function syncCardFile(sink: Sink, device: Device, rel: string, emu: Emulator, scope: { shared: boolean; gameId: number | null }, canWrite: CardWriteGuard, ctx?: JobContext) {
+  let dc = await deviceCard(device, rel, emu, scope);
+  const exists = await sink.stat(rel);
+  const read = async () => (exists ? sha1(await sink.getBuffer(rel)) : null);
+  let deviceSha1: string | null = null;
+  let pulled = false;
+  if (exists) {
+    const buf = await sink.getBuffer(rel);
+    deviceSha1 = sha1(buf);
+    if (dc.offerSha1 === deviceSha1) dc = await commitOffer(dc, device.id);
+    if (deviceSha1 !== dc.lastSha1) {
+      const r = await observeCard(device, dc, emu, buf);
+      dc = (await prisma.deviceCard.findUniqueOrThrow({ where: { id: dc.id } }))!;
+      pulled = r.uploaded > 0;
+      if (r.conflicts) ctx?.log(`Conflict in card ${rel}`);
+    }
+  } else {
+    if (scope.shared) return { pulled, pushed: false };
+    if (dc.lastSha1 || dc.offerSha1) dc = await forgetDeviceCard(dc);
+  }
+  const prepared = await prepareCard(device, dc, emu, deviceSha1);
+  if (!prepared) return { pulled, pushed: false };
+  if (!(await canWrite())) {
+    ctx?.log(`Card ${rel} not written: an emulator is running`);
+    return { pulled, pushed: false };
+  }
+  if ((await read()) !== deviceSha1) return { pulled, pushed: false };
+  dc = await recordOffer(device, dc, prepared);
+  await sink.replaceBuffer(prepared.file, rel);
+  if (sha1(await sink.getBuffer(rel)) === prepared.sha1) await commitOffer(dc, device.id);
+  ctx?.log(`Card written ${rel}`);
+  return { pulled, pushed: true };
+}
 
 /** A savestate's screenshot on the device, kept with VERSIONID (a new version, or the current one still without one) */
 async function takeThumb(sink: Sink, statePath: string, emu: Emulator, savesLayout: string, versionId: number | null) {
@@ -42,6 +99,7 @@ export async function syncDeviceSaves(deviceId: number, direction: 'pull' | 'pus
   const emulators = new Map((await prisma.emulator.findMany()).map((e) => [e.slug, e]));
   const sink = await openSink(device);
   const stats = { pulled: 0, pushed: 0, unchanged: 0, conflicts: 0, unknown: 0 };
+  const canWrite = cardWriteGuard(device);
   try {
     const visited = new Set<string>();
     if (direction !== 'push') {
@@ -54,7 +112,19 @@ export async function syncDeviceSaves(deviceId: number, direction: 'pull' | 'pus
           for (const e of await sink.list(dir)) {
             const full = path.posix.join(dir, e.name);
             if (e.isDir || visited.has(full)) continue;
+            // Memory cards: shared ones and those named after a serial, by name; per-game ones after their rom
+            const named = namedCard(e.name);
             const parsed = parseDeviceSave(e.name, emu, layout.savesLayout);
+            if (named || (parsed?.kind === 'SAVE' && isCardEmulator(emu))) {
+              visited.add(full);
+              const gameId = named ? (named.serial ? await gameForSerial(named.serial) : null) : ((await identifyRom(parsed!.baseName, systemId))?.gameId ?? null);
+              const cardEmu = named ? (emulators.get(named.emulator) ?? emu) : emu;
+              const r = await syncCardFile(sink, device, full, cardEmu, { shared: named?.shared ?? false, gameId }, canWrite, ctx);
+              if (r.pulled) stats.pulled++;
+              if (r.pushed) stats.pushed++;
+              if (!r.pulled && !r.pushed) stats.unchanged++;
+              continue;
+            }
             if (!parsed) continue;
             // En carpetas compartidas por varios sistemas se decide por la rom
             if (layout.savesLayout === 'flat') {
@@ -84,13 +154,32 @@ export async function syncDeviceSaves(deviceId: number, direction: 'pull' | 'pus
     }
 
     if (direction !== 'pull') {
-      const saves = await prisma.save.findMany({ where: { userId: device.userId, currentVersionId: { not: null }, gameId: { not: null } }, include: { game: { include: { system: true } }, rom: true } });
+      const saves = await prisma.save.findMany({
+        where: { userId: device.userId, currentVersionId: { not: null }, gameId: { not: null }, supersededAt: null },
+        include: { game: { include: { system: true } }, rom: true },
+      });
       const romCache = new Map<string, string[]>();
       const done = new Set<string>();
       for (const s of saves) {
         const slug = s.game!.system.slug;
         const target = emulators.get(layout.systemMap[slug]?.emulator ?? '');
         if (!target) continue;
+        // Memory card entries go into the game's card file
+        if (s.kind === 'ENTRY' || (s.kind === 'SAVE' && isCardEmulator(target))) {
+          if (s.kind !== 'ENTRY' || !isCardEmulator(target)) continue;
+          const dirs = saveDirs(layout, slug, target);
+          const minui = layout.savesLayout === 'minui';
+          const base = await deviceRomBase(sink, dirs.roms, s.rom?.name ?? null, s.game!.title, romCache, minui);
+          if (base === null) continue;
+          const dest = path.posix.join(dirs.saves, deviceFileName(base, target, 'SAVE', 0, minui));
+          if (done.has(dest) || visited.has(dest)) continue;
+          done.add(dest);
+          // Only for a rom the device holds
+          if (!(romCache.get(dirs.roms) ?? []).some((f) => (minui ? f : f.replace(/\.[^.]+$/, '')) === base)) continue;
+          const r = await syncCardFile(sink, device, dest, target, { shared: false, gameId: s.gameId }, canWrite, ctx);
+          if (r.pushed) stats.pushed++;
+          continue;
+        }
         const logical = await findLogicalSave(device.userId, target, s.kind, s.slot, s.baseName, s.gameId);
         if (!logical || done.has(`${logical.id}`)) continue;
         done.add(`${logical.id}`);

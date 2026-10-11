@@ -27,6 +27,7 @@ import { serverKey } from '../devices/ssh.js';
 import { devicePlan } from '../devices/plan.js';
 import { Prisma } from '@prisma/client';
 import { storeWifiBands } from '../devconfig/service.js';
+import { cardAction, deviceCard, findDeviceCard, gameForSerial, hasWantedSaves, isCardEmulator, namedCard, observeCard, prepareCard, recordOffer } from './cards.js';
 
 export const agentRouter = Router();
 
@@ -258,6 +259,33 @@ async function emulatorForPath(ctx: RomCtx, filePath: string): Promise<Emulator>
   return (await prisma.emulator.findFirst({ where: { core } })) ?? ctx.emu;
 }
 
+/** A path on the device relative to its root, as card files are kept */
+const relToRoot = (device: AgentDevice, abs: string) => {
+  const root = trimRoot(device.rootPath);
+  return abs.startsWith(root + '/') ? abs.slice(root.length + 1) : abs;
+};
+
+/** Emulator of a card file found by its name (pcsx-card2.mcd), or any PS1 one */
+async function namedCardEmulator(slug: string) {
+  return (await prisma.emulator.findUnique({ where: { slug } })) ?? (await prisma.emulator.findFirstOrThrow({ where: { saveFormat: 'ps1card' }, orderBy: { id: 'asc' } }));
+}
+
+/**
+ * The line for a memory card file: "put<TAB>path<TAB>rom" to read it, "cget<TAB>path<TAB>sha1|-<TAB>rom" when the
+ * server has entries for it (the client swaps the file only while it is still that sha1 and no emulator runs).
+ * Per-game cards the device lacks are made when the user has saves of that game.
+ */
+async function cardLine(device: AgentDevice, absPath: string, emu: Emulator, scope: { shared: boolean; gameId: number | null }, deviceSha1: string | null, rom: string, start = false) {
+  const rel = relToRoot(device, absPath);
+  if (!(await findDeviceCard(device.id, rel)) && !deviceSha1 && !(scope.gameId && !scope.shared && (await hasWantedSaves(device.userId, scope.gameId)))) return null;
+  const dc = await deviceCard(device, rel, emu, scope);
+  const action = await cardAction(device, dc, emu, deviceSha1);
+  // Game start only takes: a changed card goes up when the game ends
+  if (action === 'put') return start ? null : `put\t${absPath}\t${rom}`;
+  if (action === 'cget') return `cget\t${absPath}\t${deviceSha1 ?? '-'}${start ? '' : `\t${rom}`}`;
+  return null;
+}
+
 /**
  * Whole-device sync for the standalone clients. Body lines: "rom<TAB>path" for every rom on the
  * device and "file<TAB>path<TAB>sha1" for every save file found. Reply: "get<TAB>save<TAB>version<TAB>rom"
@@ -293,6 +321,7 @@ agentRouter.post('/sync', express.text({ limit: '16mb', type: '*/*' }), async (r
   await registerUnknownCores(layoutOf(device), device.rootPath.replace(/\/+$/, ''), present.keys());
   const coreEmus = (await prisma.emulator.findMany({ where: { core: { not: null } } })) as Emulator[];
   const out: string[] = [];
+  const cardFiles = new Set<string>();
   for (const { path: rom, hashes } of roms) {
     const ctx = await romContext(device, rom).catch(() => null);
     if (!ctx) continue;
@@ -318,6 +347,12 @@ agentRouter.post('/sync', express.text({ limit: '16mb', type: '*/*' }), async (r
     // Several cores with their own file for this game on this device: each keeps its own save
     const exactOnly = emus.length > 1;
     for (const f of candidates) {
+      if (f.kind === 'SAVE' && isCardEmulator(f.emu)) {
+        cardFiles.add(f.path);
+        const line = await cardLine(device, f.path, f.emu, { shared: false, gameId }, present.get(f.path) ?? null, rom);
+        if (line) out.push(line);
+        continue;
+      }
       const save = await findLogicalSave(device.userId, f.emu, f.kind, f.slot, ctx.baseName, gameId, exactOnly);
       const deviceSha1 = present.get(f.path);
       const d = await decide(save, device, f.emu, deviceSha1 ? { sha1: deviceSha1 } : null);
@@ -333,6 +368,14 @@ agentRouter.post('/sync', express.text({ limit: '16mb', type: '*/*' }), async (r
             : null;
       if (thumb) out.push(thumb);
     }
+  }
+  // Card files named for no rom: shared by every game (pcsx-card2.mcd) or kept under a disc's serial
+  for (const [p, h] of present) {
+    const named = cardFiles.has(p) ? null : namedCard(path.posix.basename(p));
+    if (!named) continue;
+    const emu = await namedCardEmulator(named.emulator);
+    const line = await cardLine(device, p, emu, { shared: named.shared, gameId: named.serial ? await gameForSerial(named.serial) : null }, h, '-');
+    if (line) out.push(line);
   }
   await prisma.device.update({ where: { id: device.id }, data: { lastSyncAt: new Date() } });
   res.type('text/plain').send(out.join('\n') + (out.length ? '\n' : ''));
@@ -547,6 +590,8 @@ agentRouter.get('/roots', async (req, res) => {
     if (!emuSlug) continue;
     const emu = await prisma.emulator.findUnique({ where: { slug: emuSlug } });
     if (emu) [emu.saveExt, emu.stateExt].forEach((e) => e && exts.add(e.toLowerCase()));
+    // Memory cards every game shares (pcsx-card2.mcd) or kept under a serial sit in the same folders
+    if (emu && isCardEmulator(emu)) ['.mcd', '.mcr'].forEach((e) => exts.add(e));
   }
   lines.push(`exts\t${[...exts].join(' ')}`);
   res.type('text/plain').send(lines.join('\n') + '\n');
@@ -574,6 +619,11 @@ agentRouter.post('/start', express.text({ limit: '1mb', type: '*/*' }), async (r
   const ident = await identifyRom(ctx.baseName, (await prisma.system.findUnique({ where: { slug: ctx.slug } }))?.id);
   const out: string[] = [];
   for (const f of candidatePaths(ctx)) {
+    if (f.kind === 'SAVE' && isCardEmulator(ctx.emu)) {
+      const line = await cardLine(device, f.path, ctx.emu, { shared: false, gameId: ident?.gameId ?? null }, present.get(f.path) ?? null, '', true);
+      if (line) out.push(line);
+      continue;
+    }
     const save = await findLogicalSave(device.userId, ctx.emu, f.kind, f.slot, ctx.baseName, ident?.gameId ?? null);
     const deviceSha1 = present.get(f.path);
     const d = await decide(save, device, ctx.emu, deviceSha1 ? { sha1: deviceSha1 } : null);
@@ -603,20 +653,67 @@ agentRouter.get('/file', async (req, res) => {
 // Fin de juego: subida de un fichero de save o savestate tal cual esta en el dispositivo
 agentRouter.post('/upload', express.raw({ limit: '128mb', type: '*/*' }), async (req, res) => {
   const device = await deviceFromToken(req);
-  const ctx = await romContext(device, b64(req.header('x-rom-b64')));
   const filePath = b64(req.header('x-path-b64'));
+  const buf = Buffer.isBuffer(req.body) ? req.body : Buffer.alloc(0);
+  if (!buf.length) throw badRequest('Empty file');
+  const romPath = b64(req.header('x-rom-b64'));
+  // A card file named for no rom (shared, or kept under a serial)
+  const named = namedCard(path.posix.basename(filePath));
+  if (named && (!romPath || romPath === '-')) {
+    const emu = await namedCardEmulator(named.emulator);
+    const dc = await deviceCard(device, relToRoot(device, filePath), emu, { shared: named.shared, gameId: named.serial ? await gameForSerial(named.serial) : null });
+    res.type('text/plain').send(await cardUpload(device, dc, emu, filePath, buf, '-'));
+    return;
+  }
+  const ctx = await romContext(device, romPath);
   const emu = await emulatorForPath(ctx, filePath);
   const parsed = candidatePaths(ctx, emu).find((f) => f.path === filePath) ?? parseSaveFile(path.posix.basename(filePath), emu);
   if (!parsed) throw badRequest('Not a save file for this emulator');
-  const buf = Buffer.isBuffer(req.body) ? req.body : Buffer.alloc(0);
-  if (!buf.length) throw badRequest('Empty file');
   const systemId = (await prisma.system.findUnique({ where: { slug: ctx.slug } }))?.id;
   const byHash = await gameByHash((req.header('x-rom-sha1') ?? '').split(',').map((h) => h.trim()), systemId);
+  if (parsed.kind === 'SAVE' && isCardEmulator(emu)) {
+    const gameId = byHash?.gameId ?? (await identifyRom(ctx.baseName, systemId))?.gameId ?? null;
+    const dc = await deviceCard(device, relToRoot(device, filePath), emu, { shared: false, gameId });
+    res.type('text/plain').send(await cardUpload(device, dc, emu, filePath, buf, romPath));
+    return;
+  }
   const r = await receiveFromDevice(device, ctx.slug, emu, parsed.kind, parsed.slot, ctx.baseName, buf, byHash, req.header('x-save-exact') === '1');
   await prisma.device.update({ where: { id: device.id }, data: { lastSyncAt: new Date() } });
   // A new savestate: the client sends the emulator's screenshot of it next
   const thumb = parsed.kind === 'STATE' && r.versionId ? deviceThumbPath(filePath, emu, ctx.layout.savesLayout) : null;
   res.type('text/plain').send(`${r.action}\n${thumb ? `tput\t${thumb}\t${r.versionId}\n` : ''}`);
+});
+
+/** Reads a card file the device sent; the reply asks for the card back at once when the server has entries for it */
+async function cardUpload(device: AgentDevice, dc: Awaited<ReturnType<typeof deviceCard>>, emu: Emulator, filePath: string, buf: Buffer, rom: string) {
+  const r = await observeCard(device, dc, emu, buf);
+  await prisma.device.update({ where: { id: device.id }, data: { lastSyncAt: new Date() } });
+  const fresh = (await findDeviceCard(device.id, dc.path))!;
+  const back = await prepareCard(device, fresh, emu, sha1(buf));
+  return `${r.conflicts ? 'conflict' : r.uploaded ? 'uploaded' : 'unchanged'}\n${back ? `cget\t${filePath}\t${sha1(buf)}\t${rom}\n` : ''}`;
+}
+
+/**
+ * A card file with the server's newer entries put in, built from the file the server last read from the device
+ * ("expect": its sha1, "-" when the device has none). 409 when the device's file is no longer that one,
+ * 204 when nothing has to change. The entries count as synced once the device is seen with this card.
+ */
+agentRouter.get('/card', async (req, res) => {
+  const device = await deviceFromToken(req);
+  const dc = await findDeviceCard(device.id, relToRoot(device, b64(req.header('x-path-b64'))));
+  if (!dc) throw new HttpError(404, 'Unknown card');
+  const expect = String(req.query.expect ?? '-');
+  const deviceSha1 = SHA1.test(expect) ? expect : null;
+  if (deviceSha1 !== dc.lastSha1) throw new HttpError(409, 'The card changed since it was read');
+  const emu = await prisma.emulator.findUniqueOrThrow({ where: { id: dc.emulatorId } });
+  const prepared = await prepareCard(device, dc, emu, deviceSha1);
+  if (!prepared) {
+    res.status(204).end();
+    return;
+  }
+  await recordOffer(device, dc, prepared);
+  res.setHeader('X-Card-Sha1', prepared.sha1);
+  res.type('application/octet-stream').send(prepared.file);
 });
 
 async function stateVersion(device: AgentDevice, id: number) {

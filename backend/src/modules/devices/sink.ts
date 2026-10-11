@@ -21,6 +21,8 @@ export interface Sink {
   putStream(stream: Readable, rel: string): Promise<void>;
   putBuffer(buf: Buffer, rel: string, mtime?: Date): Promise<void>;
   getBuffer(rel: string): Promise<Buffer>;
+  /** Writes a temporary file beside REL and renames it over REL: readers never see half a file */
+  replaceBuffer(buf: Buffer, rel: string): Promise<void>;
   list(relDir: string): Promise<SinkEntry[]>;
   close(): Promise<void>;
 }
@@ -54,6 +56,11 @@ class LocalSink implements Sink {
   }
   async getBuffer(rel: string) {
     return fs.promises.readFile(this.abs(rel));
+  }
+  async replaceBuffer(buf: Buffer, rel: string) {
+    await this.mkdirp(path.dirname(rel));
+    await fs.promises.writeFile(this.abs(`${rel}.rommancer-tmp`), buf);
+    await fs.promises.rename(this.abs(`${rel}.rommancer-tmp`), this.abs(rel));
   }
   async list(relDir: string) {
     const dir = this.abs(relDir);
@@ -109,6 +116,18 @@ class SftpSink implements Sink {
   }
   async getBuffer(rel: string) {
     return (await this.client.get(this.abs(rel))) as Buffer;
+  }
+  async replaceBuffer(buf: Buffer, rel: string) {
+    await this.mkdirp(path.posix.dirname(rel));
+    const tmp = this.abs(`${rel}.rommancer-tmp`);
+    await this.client.put(buf, tmp);
+    // POSIX rename replaces the file in one step; servers without the extension need the old one gone first
+    try {
+      await this.client.posixRename(tmp, this.abs(rel));
+    } catch {
+      await this.client.delete(this.abs(rel), true);
+      await this.client.rename(tmp, this.abs(rel));
+    }
   }
   async list(relDir: string) {
     try {

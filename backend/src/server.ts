@@ -8,12 +8,15 @@ import { startLocalDeviceWatcher } from './modules/saves/sync.js';
 import { startSshSweep } from './modules/devices/ssh.js';
 import { startHealthWatch } from './modules/storage/health.js';
 import { startExternalSyncCron } from './modules/sync/service.js';
+import { migrateWholeCards } from './modules/saves/cards.js';
 
 for (const d of [env.dataDir, env.mediaDir, env.savesDir, env.uploadsDir, env.datsDir, env.tmpDir, env.patchesDir]) fs.mkdirSync(d, { recursive: true });
 
 await seed();
 // Lists hold roms now: game and work items saved before are turned into their best rom
 console.log('list items', await convertLegacyItems());
+// PS1 cards kept whole as one save: their entries become saves of their own
+await migrateWholeCards().catch((e) => console.error('memory cards', e));
 await startJobRunner();
 startExternalSyncCron();
 startLocalDeviceWatcher();
