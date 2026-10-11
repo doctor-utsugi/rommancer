@@ -82,4 +82,6 @@
     <string name="prune_delete">Yes, delete them</string>
     <string name="prune_later">Not now</string>
     <string name="p_prune">Deleting roms not in lists</string>
+    <string name="roms_stop">Stop the rom download</string>
+    <string name="stopping">Stopping…</string>
 </resources>

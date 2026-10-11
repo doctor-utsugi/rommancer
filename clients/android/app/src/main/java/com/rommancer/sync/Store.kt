@@ -28,6 +28,11 @@ class Store(context: Context) {
         get() = prefs.getBoolean("autoRoms", true)
         set(v) = prefs.edit().putBoolean("autoRoms", v).apply()
 
+    /** A rom download was stopped on screen: background passes leave the roms alone until one is asked for there */
+    var romsStopped: Boolean
+        get() = prefs.getBoolean("romsStopped", false)
+        set(v) = prefs.edit().putBoolean("romsStopped", v).apply()
+
     /** Let the server fetch roms it lacks from this device */
     var allowPull: Boolean
         get() = prefs.getBoolean("allowPull", true)

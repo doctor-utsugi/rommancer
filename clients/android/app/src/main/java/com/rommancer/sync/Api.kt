@@ -50,13 +50,24 @@ class Api(private val server: String, private val token: String? = null) {
     }
 
     /** BEFORE runs once the new file is whole beside the target, before it takes its place */
-    fun download(path: String, headers: Map<String, String>, target: File, before: ((File) -> Unit)? = null) {
+    /** CANCELLED is asked between blocks: a transfer stopped on screen ends there (the partial file is dropped) */
+    fun download(path: String, headers: Map<String, String>, target: File, cancelled: () -> Boolean = { false }, before: ((File) -> Unit)? = null) {
         val conn = open(path, "GET", headers)
         try {
             check(conn)
             target.parentFile?.mkdirs()
             val tmp = File(target.path + ".rommancer-tmp")
-            conn.inputStream.use { input -> tmp.outputStream().use { input.copyTo(it) } }
+            conn.inputStream.use { input ->
+                tmp.outputStream().use { out ->
+                    val buf = ByteArray(64 * 1024)
+                    while (true) {
+                        if (cancelled()) { out.close(); tmp.delete(); error("stopped") }
+                        val n = input.read(buf)
+                        if (n < 0) break
+                        out.write(buf, 0, n)
+                    }
+                }
+            }
             before?.invoke(tmp)
             if (!tmp.renameTo(target)) {
                 tmp.copyTo(target, overwrite = true)

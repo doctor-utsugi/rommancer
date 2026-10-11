@@ -8,7 +8,7 @@
 import { after, before, test } from 'node:test';
 import assert from 'node:assert/strict';
 import os from 'node:os';
-import { execFile, execSync } from 'node:child_process';
+import { execFile, execSync, spawn } from 'node:child_process';
 import { promisify } from 'node:util';
 
 const execFileP = promisify(execFile);
@@ -3221,4 +3221,41 @@ test('two versions of one game on a console keep a save each (one sync never wri
   const saves = await prisma.save.findMany({ where: { baseName: { in: [usa, europe] }, kind: 'SAVE' }, include: { versions: true } });
   const sha = (b: Buffer) => crypto.createHash('sha1').update(b).digest('hex');
   assert.ok(saves.find((s) => s.baseName === europe)?.versions.some((v) => v.sha1 === sha(euSave)), 'the European version has a save of its own');
+});
+
+test('sync client: one rom download at a time, and it can be stopped', async () => {
+  const client = path.join(ROOT, 'clients/linux/rommancer-sync.sh');
+  const dir = path.join(DATA, 'sync-roms-stop');
+  fs.rmSync(dir, { recursive: true, force: true });
+  const root = path.join(dir, 'console');
+  fs.mkdirSync(path.join(root, 'roms/nes'), { recursive: true });
+  const claim = await api('POST', '/link/claim', { name: 'roms-stop', firmware: 'knulli', root });
+  const id = claim.json.deviceId as number;
+  const state = path.join(dir, 'state');
+  const work = path.join(dir, 'work');
+  fs.mkdirSync(state, { recursive: true });
+  fs.writeFileSync(path.join(state, 'config'), `SERVER=${base}\nTOKEN=${claim.json.token}\n`);
+  const env = { ...process.env, ROMMANCER_STATE: state, TMPDIR: work };
+  fs.mkdirSync(work, { recursive: true });
+  const run = (...args: string[]) => execFileP('sh', [client, ...args], { env });
+  await run('sync');
+  assert.equal((await api('POST', `/devices/${id}/send`, { gameIds: [ctx.smb3GameId] })).status, 201);
+  assert.match((await run('roms-stop')).stdout, /nothing to stop/);
+  assert.ok(fs.existsSync(path.join(state, 'roms-stopped')), 'background passes leave the roms alone');
+  // Another download under way (a live process holds the lock): one asked on screen waits for it
+  const lockDir = fs.readdirSync(work).map((d) => path.join(work, d)).find((d) => fs.statSync(d).isDirectory())!;
+  const holder = spawn('sleep', ['3']);
+  fs.mkdirSync(path.join(lockDir, 'roms-lock'));
+  fs.writeFileSync(path.join(lockDir, 'roms-lock/pid'), `${holder.pid}\n`);
+  assert.equal((await run('roms-status')).stdout, '\t\t\n', 'the menus see it running');
+  const t0 = Date.now();
+  assert.match((await run('roms')).stdout, /roms: 1 downloaded/);
+  assert.ok(Date.now() - t0 >= 2000, 'it waited for the running one');
+  assert.ok(!fs.existsSync(path.join(state, 'roms-stopped')), 'asked on screen: no longer stopped');
+  // Stopping a running download: it ends at the next file
+  const holder2 = spawn('sleep', ['2']);
+  fs.mkdirSync(path.join(lockDir, 'roms-lock'));
+  fs.writeFileSync(path.join(lockDir, 'roms-lock/pid'), `${holder2.pid}\n`);
+  assert.match((await run('roms-stop')).stdout, /roms: stopped/);
+  assert.equal((await run('roms-status')).stdout, '');
 });

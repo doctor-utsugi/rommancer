@@ -13,8 +13,8 @@ android {
         minSdk = 26
         targetSdk = 35
         // Bumped on every release: the app offers to update itself when the server has a higher one
-        versionCode = 13
-        versionName = "0.9.0"
+        versionCode = 14
+        versionName = "0.9.1"
     }
 
     buildTypes {

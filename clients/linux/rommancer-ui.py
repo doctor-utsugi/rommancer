@@ -96,6 +96,9 @@ TEXTS = {
         "prune_delete": "Sí, borrarlas",
         "prune_later": "Ahora no",
         "p_prune": "Borrando roms fuera de listas",
+        "roms_stop": "Parar descarga de roms {n}",
+        "stop_keys": "B parar la descarga de roms",
+        "stopping": "Parando la descarga...",
     },
     "en": {
         "title": "Rommancer Sync",
@@ -164,6 +167,9 @@ TEXTS = {
         "prune_delete": "Yes, delete them",
         "prune_later": "Not now",
         "p_prune": "Deleting roms not in lists",
+        "roms_stop": "Stop rom download {n}",
+        "stop_keys": "B stop the rom download",
+        "stopping": "Stopping the download...",
     },
 }
 
@@ -687,6 +693,7 @@ class App:
             pass
         proc = subprocess.Popen(["sh", SCRIPT, command, *args], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
         s = self.screen
+        stopping = False
         while proc.poll() is None:
             phase, done, total, parts = "connecting", 0, 0, []
             try:
@@ -705,7 +712,9 @@ class App:
                 detail = f"{parts[5][:42]}  {int(file_share * 100)}%"
             elif len(parts) >= 6:
                 detail = parts[5] if len(parts[5]) <= 34 else parts[5][:33] + "…"
-            s.frame(T["title"])
+            # Roms downloading: B stops them (the transfer under way is cut)
+            downloading = phase in ("roms-plan", "roms-download")
+            s.frame(T["title"], T["stopping"] if stopping else T["stop_keys"] if downloading else "")
             s.sprite()
             x, width, y = s.left(), s.column(), int(s.h * 0.3)
             s.text(title, (x, y), s.font)
@@ -730,8 +739,10 @@ class App:
             if detail:
                 s.text(detail, (x, bar.bottom + 6), s.small, DIM)
             s.flip()
-            for _ in pygame.event.get():
-                pass
+            for event in pygame.event.get():
+                if downloading and not stopping and "b" in self.pad.actions(event):
+                    stopping = True
+                    subprocess.Popen(["sh", SCRIPT, "roms-stop"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             self.clock.tick(SPRITE_FPS)
         out = (proc.stdout.read() if proc.stdout else "").strip()
         self.message(" · ".join(out.splitlines()[-2:]) if out else T["error"].format(msg="sync"))
@@ -792,6 +803,22 @@ class App:
                 self.run_with_progress("prune", T["p_prune"], "confirm")
             elif pick == 1:
                 self.prune_set(False)
+
+    def roms_status(self):
+        """(done, total) of a rom download under way (the daemon's), None when there is none"""
+        try:
+            out = subprocess.run(["sh", SCRIPT, "roms-status"], capture_output=True, text=True, timeout=10).stdout
+        except subprocess.TimeoutExpired:
+            return None
+        if not out:
+            return None
+        parts = out.rstrip("\n").split("\t") + ["", ""]
+        return parts[0], parts[1]
+
+    def stop_roms(self):
+        self.message(T["stopping"], wait=False)
+        out = subprocess.run(["sh", SCRIPT, "roms-stop"], capture_output=True, text=True, timeout=60).stdout.strip()
+        self.message(out or T["stopping"])
 
     def toggle_prune(self):
         self.prune_set(self.settings().get("PRUNE_ROMS", "0") != "1")
@@ -869,9 +896,11 @@ class App:
                 prune = T["yes"] if cfg.get("PRUNE_ROMS", "0") == "1" else T["no"]
                 self.cleanable = (self.prune_state().get("cleanable") or ["0"])[0]
                 n = "…" if self.conflict_count is None else self.conflict_count
-                items = [T["sync_now"], T["sync_roms"], T["auto_roms"].format(v=auto), T["allow_pull"].format(v=pull), T["allow_ssh"].format(v=ssh), T["prune"].format(v=prune), T["prune_clean"].format(n=self.cleanable), T["conflicts"].format(n=n), T["status"], T["logout"], T["quit"]]
+                running = self.roms_status()
+                roms_label = T["roms_stop"].format(n=f"({running[0]}/{running[1]})" if running and running[1] else "") if running else T["sync_roms"]
+                items = [T["sync_now"], roms_label, T["auto_roms"].format(v=auto), T["allow_pull"].format(v=pull), T["allow_ssh"].format(v=ssh), T["prune"].format(v=prune), T["prune_clean"].format(n=self.cleanable), T["conflicts"].format(n=n), T["status"], T["logout"], T["quit"]]
                 choice = self.menu(T["title"], items, info, refresh=lambda: T["conflicts"].format(n="…" if self.conflict_count is None else self.conflict_count), refresh_index=7)
-                actions = [self.sync_now, self.sync_roms, self.toggle_auto_roms, self.toggle_allow_pull, self.toggle_allow_ssh, self.toggle_prune, self.prune_clean, self.resolve_conflicts, self.status, self.logout]
+                actions = [self.sync_now, self.stop_roms if running else self.sync_roms, self.toggle_auto_roms, self.toggle_allow_pull, self.toggle_allow_ssh, self.toggle_prune, self.prune_clean, self.resolve_conflicts, self.status, self.logout]
             else:
                 choice = self.menu(T["title"], [f"{T['server']}: {self.server}", T["login"], T["signup"], T["quit"]])
                 actions = [self.edit_server, self.login, self.signup]

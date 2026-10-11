@@ -82,4 +82,6 @@
     <string name="prune_delete">Sí, borrarlas</string>
     <string name="prune_later">Ahora no</string>
     <string name="p_prune">Borrando roms fuera de listas</string>
+    <string name="roms_stop">Parar la descarga de roms</string>
+    <string name="stopping">Parando…</string>
 </resources>

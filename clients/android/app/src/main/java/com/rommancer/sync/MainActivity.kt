@@ -367,8 +367,9 @@ private fun Linked(store: Store, onUnlinked: () -> Unit) {
             update?.let { u ->
                 MenuItem(stringResource(R.string.update_app, u.name)) { run(titleUpdate) { Updater.install(context, store); "" } }
             }
-            MenuItem(stringResource(R.string.sync_now), firstItem) { run(titleSync) { it.all() } }
-            MenuItem(titleRoms) { run(titleRoms) { it.roms() } }
+            // Asked on screen: the roms download again even after a stop
+            MenuItem(stringResource(R.string.sync_now), firstItem) { store.romsStopped = false; run(titleSync) { it.all() } }
+            MenuItem(titleRoms) { store.romsStopped = false; run(titleRoms) { it.roms() } }
             MenuItem(stringResource(R.string.auto_roms, if (store.autoRoms) yes else no)) { store.autoRoms = !store.autoRoms; settingsTick++ }
             MenuItem(stringResource(R.string.watch, if (store.watch) yes else no)) {
                 store.watch = !store.watch
@@ -438,6 +439,14 @@ private fun Linked(store: Store, onUnlinked: () -> Unit) {
             Text(if (progress.total > 0) "$label  ${progress.done}/${progress.total}" else label, color = Dim)
             LinearProgressIndicator(progress = { progress.share }, modifier = Modifier.fillMaxWidth().height(10.dp))
             Text("${(progress.share * 100).toInt()}%" + if (progress.detail.isNotBlank()) "  ·  ${progress.detail}  ${(progress.fileShare * 100).toInt()}%" else "", color = Dim)
+            if (progress.phase == "roms-download" || progress.phase == "roms-plan") {
+                var stopping by remember { mutableStateOf(false) }
+                MenuItem(stringResource(if (stopping) R.string.stopping else R.string.roms_stop), firstItem) {
+                    stopping = true
+                    SyncEngine.stopRoms(store)
+                }
+                LaunchedEffect(Unit) { runCatching { firstItem.requestFocus() } }
+            }
         }
         is Screen.Message -> {
             Text(s.text, fontSize = 20.sp)

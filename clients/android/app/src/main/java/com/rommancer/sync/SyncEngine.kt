@@ -317,7 +317,10 @@ class SyncEngine(private val context: Context, private val store: Store, private
     }
 
     /** Roms of the lists assigned to this device that are not here yet; never deletes anything */
-    fun roms(): String = synchronized(LOCK) { romsOnce() }
+    fun roms(): String {
+        STOP_ROMS.set(false)
+        return synchronized(LOCK) { romsOnce() }
+    }
 
     private fun romsOnce(): String {
         val api = Api(store.server, store.token ?: error("Not linked"))
@@ -327,6 +330,7 @@ class SyncEngine(private val context: Context, private val store: Store, private
         var have = 0
         var failed = 0
         for ((i, f) in plan.withIndex()) {
+            if (STOP_ROMS.get()) return "roms: stopped, $got downloaded".also { store.addLog(it) }
             val dest = File(f[1])
             val size = f[2].toLongOrNull() ?: 0L
             if (dest.exists() && (size == 0L || dest.length() == size)) { have++; continue }
@@ -343,7 +347,7 @@ class SyncEngine(private val context: Context, private val store: Store, private
                 }
             }.apply { start() }
             try {
-                api.download("/agent/rom?f=${f[3]}", emptyMap(), part)
+                api.download("/agent/rom?f=${f[3]}", emptyMap(), part, cancelled = { STOP_ROMS.get() })
                 if (size > 0 && part.length() != size) error("size mismatch")
                 part.renameTo(dest)
                 got++
@@ -398,7 +402,7 @@ class SyncEngine(private val context: Context, private val store: Store, private
         val r = sync()
         val sent = runCatching { pulls() }.getOrDefault("")
         val pruned = runCatching { prune() }.getOrDefault("")
-        val roms = if (store.autoRoms) roms() else ""
+        val roms = if (store.autoRoms && !store.romsStopped) roms() else ""
         runCatching { ConfigEngine(context, store).run() }
         return listOf("sync: $r", sent, pruned, roms).filter { it.isNotBlank() }.joinToString(" · ")
     }
@@ -472,6 +476,13 @@ class SyncEngine(private val context: Context, private val store: Store, private
         const val THUMB_MAX = 4L * 1024 * 1024
         private val LOCK = Any()
         private val PULLING = java.util.concurrent.atomic.AtomicBoolean(false)
+        private val STOP_ROMS = java.util.concurrent.atomic.AtomicBoolean(false)
+
+        /** Stops the rom download under way (the transfer is cut); background passes skip roms until asked on screen */
+        fun stopRoms(store: Store) {
+            store.romsStopped = true
+            STOP_ROMS.set(true)
+        }
         private val NOT_ROMS = listOf(".png", ".jpg", ".jpeg", ".mp4", ".xml", ".txt", ".json", ".cfg", ".db", ".ini", ".pdf", ".srm", ".sav", ".mcd", ".mcr", ".dsv", ".cht", ".log", ".sh", ".lpl")
     }
 }
