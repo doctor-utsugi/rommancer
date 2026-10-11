@@ -33,6 +33,31 @@ class Store(context: Context) {
         get() = prefs.getBoolean("allowPull", true)
         set(v) = prefs.edit().putBoolean("allowPull", v).apply()
 
+    /**
+     * Delete roms that are in none of this device's lists. The device owns the setting: PRUNE_SET until the server
+     * hears a change (or an answer to one made in the web app); PRUNE_ASK ("files<TAB>bytes") while such a change
+     * waits for the user; PRUNE_HOLD ("files<TAB>roms") while a deletion of more than half of the roms waits;
+     * PRUNE_INTRO once the choice was offered; PRUNED: the roms deleted, for the clean-up of their saves.
+     */
+    var pruneRoms: Boolean
+        get() = prefs.getBoolean("pruneRoms", false)
+        set(v) = prefs.edit().putBoolean("pruneRoms", v).apply()
+    var pruneSet: Boolean
+        get() = prefs.getBoolean("pruneSet", false)
+        set(v) = prefs.edit().putBoolean("pruneSet", v).apply()
+    var pruneAsk: String?
+        get() = prefs.getString("pruneAsk", null)
+        set(v) = prefs.edit().putString("pruneAsk", v).apply()
+    var pruneHold: String?
+        get() = prefs.getString("pruneHold", null)
+        set(v) = prefs.edit().putString("pruneHold", v).apply()
+    var pruneIntro: Boolean
+        get() = prefs.getBoolean("pruneIntro", false)
+        set(v) = prefs.edit().putBoolean("pruneIntro", v).apply()
+    var pruned: List<String>
+        get() = (prefs.getString("pruned", "") ?: "").lines().filter { it.isNotBlank() }
+        set(v) = prefs.edit().putString("pruned", v.joinToString("\n")).apply()
+
     /** Upload saves as soon as a game writes them (a background service with a notification) */
     var watch: Boolean
         get() = prefs.getBoolean("watch", true)
@@ -53,5 +78,7 @@ class Store(context: Context) {
 
     fun link(token: String, user: String) = prefs.edit().putString("token", token).putString("user", user).apply()
 
-    fun unlink() = prefs.edit().remove("token").remove("user").remove("lastResult").apply()
+    // Another account's lists are not this one's: the deletion of roms in no list starts off and is offered again
+    fun unlink() = prefs.edit().remove("token").remove("user").remove("lastResult")
+        .remove("pruneRoms").remove("pruneSet").remove("pruneAsk").remove("pruneHold").remove("pruneIntro").remove("pruned").apply()
 }

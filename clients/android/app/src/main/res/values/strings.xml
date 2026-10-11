@@ -69,4 +69,17 @@
     <string name="dolphin_done">Dolphin shared: GameCube saves sync from now on.</string>
     <string name="dolphin_wrong">That is not Dolphin\'s folder. Open the menu (☰) in the picker, choose “Dolphin Emulator” and tap “Use this folder”.</string>
     <string name="updated_at">Updated %1$s</string>
+    <string name="prune">Delete roms not in lists: %1$s</string>
+    <string name="prune_clean">Delete saves of deleted roms (%1$d)</string>
+    <string name="prune_cleaned">Saves deleted: %1$d</string>
+    <string name="prune_intro">Rommancer can delete from this device the roms that are in none of its lists. The ones the server lacks are uploaded before they are deleted. Saves stay. You can change it later here or on the web. Turn it on?</string>
+    <string name="prune_ask">Deleting roms that are not in any list was turned on from the server. If you keep it, %1$s roms (%2$s) will be deleted. Do you want to keep this option?</string>
+    <string name="prune_hold">%1$s of the %2$s roms on this device (more than half) would be deleted for being in no list. A list may have been emptied. Delete them?</string>
+    <string name="prune_yes">Yes, turn it on</string>
+    <string name="prune_no">No, leave it off</string>
+    <string name="prune_keep">Yes, keep it</string>
+    <string name="prune_off">No, turn it off</string>
+    <string name="prune_delete">Yes, delete them</string>
+    <string name="prune_later">Not now</string>
+    <string name="p_prune">Deleting roms not in lists</string>
 </resources>

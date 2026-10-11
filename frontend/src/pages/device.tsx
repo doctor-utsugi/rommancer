@@ -285,6 +285,7 @@ export function DevicePage() {
           )}
           <ExcludedSystems deviceId={String(id)} canEdit={can('roms.download')} onChange={() => void qc.invalidateQueries({ queryKey: ['device-lists', id] })} />
           <DeviceSpace deviceId={String(id)} canEdit={can('roms.download')} />
+          {d.connType === 'AGENT' && <DevicePrune deviceId={String(id)} canEdit={can('roms.download')} />}
         </TabsContent>
 
         <TabsContent value="config">
@@ -875,7 +876,7 @@ function ExcludedSystems({ deviceId, canEdit, onChange }: { deviceId: string; ca
               <span className="block text-xs text-muted-foreground">{t('more.excluded.newAutoHelp')}</span>
             </span>
           </label>
-          <DialogFooter>
+          <DialogFooter cancel={false}>
             <Button variant="outline" onClick={() => setOpen(false)}>
               {t('common.cancel')}
             </Button>
@@ -945,6 +946,81 @@ function DeviceSpace({ deviceId, canEdit }: { deviceId: string; canEdit: boolean
           </Button>
         </div>
         {tree && <SpaceTree deviceId={deviceId} plan={p} onClose={() => setTree(false)} />}
+      </CardContent>
+    </Card>
+  )
+}
+
+interface PruneState {
+  on: boolean
+  remote: boolean
+  held: number | null
+  inventoryAt: string | null
+  plan: { del: number; delBytes: number; upload: number; uploadBytes: number; stuck: number; total: number; sample: string[] } | null
+}
+
+/**
+ * Deleting from the console the roms that are in none of its lists. The console has the last word: a change made
+ * here waits until the console's user answers it, and a deletion of more than half of its roms waits for a confirmation.
+ */
+function DevicePrune({ deviceId, canEdit }: { deviceId: string; canEdit: boolean }) {
+  const { t } = useTranslation()
+  const st = useQuery({ queryKey: ['device-prune', deviceId], queryFn: () => get<PruneState>(`/devices/${deviceId}/prune`) })
+  const [busy, setBusy] = useState(false)
+  const p = st.data
+  if (!p) return null
+  const act = async (fn: () => Promise<unknown>) => {
+    setBusy(true)
+    try {
+      await fn()
+      await st.refetch()
+    } catch (e) {
+      toast.error(errMsg(e))
+    } finally {
+      setBusy(false)
+    }
+  }
+  const plan = p.plan
+  return (
+    <Card className="mt-4">
+      <CardHeader>
+        <CardTitle className="text-base">{t('more.prune.title')}</CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-3 text-sm">
+        <label className="flex items-start gap-2">
+          <Checkbox checked={p.on} disabled={!canEdit || busy} onCheckedChange={(c) => void act(() => put(`/devices/${deviceId}/prune`, { on: !!c }))} />
+          <span>
+            {t('more.prune.label')}
+            <span className="block text-xs text-muted-foreground">{t('more.prune.help')}</span>
+          </span>
+        </label>
+        {p.remote && <p className="text-amber-600">{t(p.on ? 'more.prune.remoteOn' : 'more.prune.remoteOff')}</p>}
+        {plan && (
+          <div className="space-y-1">
+            <p>{t(p.on ? 'more.prune.planOn' : 'more.prune.planOff', { count: plan.del + plan.upload, bytes: formatBytes(plan.delBytes + plan.uploadBytes), total: plan.total })}</p>
+            {plan.upload > 0 && <p className="text-xs text-muted-foreground">{t('more.prune.upload', { count: plan.upload, bytes: formatBytes(plan.uploadBytes) })}</p>}
+            {plan.stuck > 0 && <p className="text-xs text-muted-foreground">{t('more.prune.stuck', { count: plan.stuck })}</p>}
+            {plan.sample.length > 0 && (
+              <details className="text-xs text-muted-foreground">
+                <summary className="cursor-pointer">{t('more.prune.which')}</summary>
+                <ul className="mt-1 max-h-48 overflow-y-auto">
+                  {plan.sample.map((n) => (
+                    <li key={n}>{n}</li>
+                  ))}
+                </ul>
+              </details>
+            )}
+          </div>
+        )}
+        {!plan && <p className="text-muted-foreground">{t('more.prune.noInventory')}</p>}
+        {p.held !== null && p.on && (
+          <div className="flex flex-wrap items-center gap-2 rounded-md border border-destructive/40 p-2">
+            <span className="text-destructive">{t('more.prune.held', { count: p.held, total: plan?.total ?? 0 })}</span>
+            <Button size="sm" variant="destructive" disabled={!canEdit || busy} onClick={() => confirm(t('more.prune.heldConfirm', { count: p.held! })) && void act(() => post(`/devices/${deviceId}/prune/confirm`))}>
+              {t('more.prune.heldGo')}
+            </Button>
+          </div>
+        )}
       </CardContent>
     </Card>
   )
@@ -1024,7 +1100,7 @@ function SpaceTree({ deviceId, plan, onClose }: { deviceId: string; plan: Device
             </div>
           ))}
         </div>
-        <DialogFooter>
+        <DialogFooter cancel={false}>
           <Button variant="outline" onClick={onClose}>
             {t('common.cancel')}
           </Button>

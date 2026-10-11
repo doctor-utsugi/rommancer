@@ -69,4 +69,17 @@
     <string name="dolphin_done">Dolphin conectado: las partidas de GameCube se sincronizan desde ahora.</string>
     <string name="dolphin_wrong">Esa no es la carpeta de Dolphin. En el selector abre el menú (☰), elige «Dolphin Emulator» y pulsa «Usar esta carpeta».</string>
     <string name="updated_at">Actualizado el %1$s</string>
+    <string name="prune">Borrar roms fuera de listas: %1$s</string>
+    <string name="prune_clean">Borrar saves de roms borradas (%1$d)</string>
+    <string name="prune_cleaned">Saves borrados: %1$d</string>
+    <string name="prune_intro">Rommancer puede borrar de este dispositivo las roms que no estén en ninguna de sus listas. Las que el servidor no tenga se suben antes de borrarlas. Los saves se quedan. Puedes cambiarlo luego aquí o en la web. ¿Lo activas?</string>
+    <string name="prune_ask">Se ha activado desde el servidor el borrado de roms que no están en ninguna lista. Si lo mantienes se borrarán %1$s roms (%2$s). ¿Quieres mantener esta opción?</string>
+    <string name="prune_hold">Se van a borrar %1$s de las %2$s roms de este dispositivo (más de la mitad) por no estar en ninguna lista. Puede que una lista se haya vaciado. ¿Las borro?</string>
+    <string name="prune_yes">Sí, activarlo</string>
+    <string name="prune_no">No, dejarlo desactivado</string>
+    <string name="prune_keep">Sí, mantenerlo</string>
+    <string name="prune_off">No, desactivarlo</string>
+    <string name="prune_delete">Sí, borrarlas</string>
+    <string name="prune_later">Ahora no</string>
+    <string name="p_prune">Borrando roms fuera de listas</string>
 </resources>

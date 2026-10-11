@@ -3105,3 +3105,89 @@ test('lists: whole systems at once, in the regions asked for', async () => {
   assert.ok(items.every((i) => (i.rom!.regions as string[]).some((r) => r === 'Europe' || r === 'World')));
   assert.equal((await api('POST', `/lists/${list.id}/items/bulk`, { systemIds: [nes], regions: ['Europe'] })).json.added, 0, 'nothing twice');
 });
+
+test('device prune: roms in no list leave the console once the server has them; the console has the last word', async () => {
+  const { prisma } = await import('../src/lib/prisma.js');
+  const client = path.join(ROOT, 'clients/linux/rommancer-sync.sh');
+  const dir = path.join(DATA, 'sync-prune');
+  fs.rmSync(dir, { recursive: true, force: true });
+  const root = path.join(dir, 'console');
+  const nesDir = path.join(root, 'roms/nes');
+  fs.mkdirSync(nesDir, { recursive: true });
+  fs.mkdirSync(path.join(root, 'roms/ports'), { recursive: true });
+  const smb3 = `${SMB3}.nes`;
+  const other = 'Arkanoid (USA).nes';
+  const homebrew = 'Prune Homebrew (World).nes';
+  const track = `${SMB3} (Track 2).bin`;
+  fs.copyFileSync(path.join(ROMS, 'nes', smb3), path.join(nesDir, smb3));
+  fs.copyFileSync(path.join(ROMS, 'nes', other), path.join(nesDir, other));
+  fs.writeFileSync(path.join(nesDir, homebrew), Buffer.concat([Buffer.from('NES\x1a'), crypto.randomBytes(20 * 1024)]));
+  fs.writeFileSync(path.join(nesDir, track), crypto.randomBytes(4096));
+  fs.writeFileSync(path.join(root, 'roms/ports', 'Some Port.zip'), crypto.randomBytes(2048));
+  const claim = await api('POST', '/link/claim', { name: 'prune-console', firmware: 'knulli', root });
+  const id = claim.json.deviceId as number;
+  const state = path.join(dir, 'state');
+  fs.mkdirSync(state, { recursive: true });
+  fs.writeFileSync(path.join(state, 'config'), `SERVER=${base}\nTOKEN=${claim.json.token}\n`);
+  const run = (...args: string[]) => execFileP('sh', [client, ...args], { env: { ...process.env, ROMMANCER_STATE: state } });
+  const there = (n: string) => fs.existsSync(path.join(nesDir, n));
+  const prune = async () => (await api('GET', `/devices/${id}/prune`)).json;
+
+  // Off by default; the web app tells what turning it on would delete (the homebrew, uploaded first)
+  await run('sync');
+  assert.equal((await api('POST', `/devices/${id}/send`, { gameIds: [ctx.smb3GameId] })).status, 201);
+  let st = await prune();
+  assert.equal(st.on, false);
+  assert.deepEqual([st.plan.del, st.plan.upload, st.plan.stuck], [1, 1, 0], JSON.stringify(st.plan));
+  assert.ok(st.plan.sample.includes(other) && st.plan.sample.includes(homebrew) && !st.plan.sample.includes(track), 'a track of a kept game stays');
+  assert.match((await run('prune')).stdout, /^on\t0\n(.|\n)*intro\t0/);
+
+  // Turned on from the web: the console asks its user, and deletes nothing meanwhile
+  await api('PUT', `/devices/${id}/prune`, { on: true });
+  assert.equal((await prune()).remote, true);
+  await run('sync');
+  assert.match((await run('prune')).stdout, /ask\t2\t\d+/);
+  await run('prune', 'run');
+  assert.ok(there(other), 'nothing deleted before the answer');
+  // The user keeps it: the server hears the answer; the owned rom goes, the homebrew is fetched first
+  await run('prune', 'set', '1');
+  st = await prune();
+  assert.deepEqual([st.on, st.remote], [true, false]);
+  assert.match((await run('prune', 'run')).stdout, /deleted: 1 roms/);
+  assert.ok(!there(other) && there(smb3) && there(track) && there(homebrew));
+  assert.ok(fs.existsSync(path.join(root, 'roms/ports', 'Some Port.zip')), 'files of no system are never touched');
+  assert.match((await run('pulls')).stdout, /sent to server: 1 of 1/);
+  await run('sync');
+  assert.match((await run('prune', 'run')).stdout, /deleted: 1 roms/);
+  assert.ok(!there(homebrew), 'deleted once on the server');
+  assert.match((await run('prune')).stdout, /cleanable\t2/);
+  // The clean-up names the saves of the deleted roms (not of a rom whose name another one still has)
+  const token = claim.json.token as string;
+  const saves = await fetch(`${base}/api/v1/agent/prune/saves`, { method: 'POST', headers: { 'X-Device-Token': token, 'Content-Type': 'text/plain' }, body: `${path.join(nesDir, other)}\n${path.join(nesDir, smb3)}\n` }).then((r) => r.text());
+  assert.ok(saves.includes(`saves/nes/Arkanoid (USA).srm`), saves);
+  assert.ok(!saves.includes(SMB3), 'SMB3 is still there');
+
+  // A list emptied by mistake: deleting more than half of the console's roms waits for a confirmation
+  await prisma.deviceList.deleteMany({ where: { deviceId: id } });
+  const smbPath = path.join(nesDir, smb3);
+  const sha = crypto.createHash('sha1').update(fs.readFileSync(smbPath)).digest('hex');
+  const fake = Array.from({ length: 12 }, (_, i) => `rom\t${nesDir}/Copy ${i}.nes\t${sha}\t\t1`).join('\n');
+  await fetch(`${base}/api/v1/agent/sync`, { method: 'POST', headers: { 'X-Device-Token': token, 'Content-Type': 'text/plain', 'X-Prune': '1' }, body: fake + '\n' });
+  const agent = (p: string) => fetch(`${base}/api/v1/agent${p}`, { headers: { 'X-Device-Token': token } }).then((r) => r.text());
+  assert.equal((await agent('/prune')).trim(), 'hold\t12\t12');
+  assert.equal((await prune()).held, 12);
+  assert.equal((await api('POST', `/devices/${id}/prune/confirm`)).status, 200);
+  assert.equal((await agent('/prune')).trim().split('\n').filter((l) => l.startsWith('del\t')).length, 12, 'confirmed: it goes ahead');
+
+  // Turned off from the web: the console applies it at its next sync and tells the server back
+  await api('PUT', `/devices/${id}/prune`, { on: false });
+  await run('sync');
+  assert.match((await run('prune')).stdout, /^on\t0/);
+  await run('sync');
+  st = await prune();
+  assert.deepEqual([st.on, st.remote], [false, false]);
+  // Another account on this console: the setting starts off and is offered again
+  await run('prune', 'set', '1');
+  await run('unlink');
+  assert.match(fs.readFileSync(path.join(state, 'settings'), 'utf8'), /PRUNE_ROMS=0/);
+});

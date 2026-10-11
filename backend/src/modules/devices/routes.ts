@@ -18,6 +18,7 @@ import { ownedGameIds, ownedRomIds } from '../roms/service.js';
 import { installClient, serverKey, syncOverSsh } from './ssh.js';
 import { OPEN_PULL, pullTransfers } from '../saves/agent.js';
 import { devicePlan } from './plan.js';
+import { prunePlan } from './prune.js';
 import { previewPlacement } from '../roms/destination.js';
 
 /** Requests not finished yet, including paused ones (the console is only offered the open ones) */
@@ -571,6 +572,48 @@ devicesRouter.put('/:id/reserve', requirePerm('roms.download'), async (req, res)
   const d = await ownDevice(intParam(req), me(req));
   const { percent } = z.object({ percent: z.number().int().min(0).max(90) }).parse(req.body);
   res.json(await prisma.device.update({ where: { id: d.id }, data: { reservePercent: percent }, select: { id: true, reservePercent: true } }));
+});
+
+/**
+ * Deleting the roms that are in none of the device's lists: the setting, whether the console has still to answer a
+ * change made here, and what it would delete now (files the server has, files it would fetch first, files that
+ * stay because the server cannot get them), with a held deletion waiting for confirmation.
+ */
+devicesRouter.get('/:id/prune', async (req, res) => {
+  const d = await ownDevice(intParam(req), me(req));
+  const plan = d.inventoryAt ? await prunePlan(d) : null;
+  const bytes = (files: { size: number }[]) => files.reduce((n, f) => n + f.size, 0);
+  res.json({
+    on: d.pruneRoms,
+    remote: d.pruneRemote,
+    held: d.pruneHeld,
+    inventoryAt: d.inventoryAt,
+    plan: plan && {
+      del: plan.del.length,
+      delBytes: bytes(plan.del),
+      upload: plan.upload.length,
+      uploadBytes: bytes(plan.upload),
+      stuck: plan.stuck,
+      total: plan.total,
+      sample: [...plan.del, ...plan.upload].slice(0, 200).map((f) => path.posix.basename(f.path)),
+    },
+  });
+});
+
+// Changed here, the console asks its user at its next sync (and its answer is the final value)
+devicesRouter.put('/:id/prune', requirePerm('roms.download'), async (req, res) => {
+  const d = await ownDevice(intParam(req), me(req));
+  const { on } = z.object({ on: z.boolean() }).parse(req.body);
+  if (on !== d.pruneRoms || d.pruneRemote) await prisma.device.update({ where: { id: d.id }, data: { pruneRoms: on, pruneRemote: true, pruneAllow: null, pruneHeld: null } });
+  res.json({ ok: true });
+});
+
+// A held deletion (more than half of the device's roms) goes ahead at the next pass
+devicesRouter.post('/:id/prune/confirm', requirePerm('roms.download'), async (req, res) => {
+  const d = await ownDevice(intParam(req), me(req));
+  if (d.pruneHeld === null) throw badRequest('Nothing held');
+  await prisma.device.update({ where: { id: d.id }, data: { pruneAllow: d.pruneHeld } });
+  res.json({ ok: true });
 });
 
 devicesRouter.get('/:id/lists', async (req, res) => {

@@ -22,7 +22,7 @@
 #                                   Menu++...) mounted on this computer; the link lives on the card itself,
 #                                   so any computer with this script can sync it. Without a command: sync.
 set -u
-CLIENT_VERSION=20261023
+CLIENT_VERSION=20261024
 # A clock before this date is surely wrong (no battery-backed clock); kept apart from the version, which may run ahead
 CLOCK_MIN=20261001
 # Onion keeps curl (with TLS) and friends outside the default PATH
@@ -86,6 +86,9 @@ ALLOW_PULL=1
 # ALLOW_SSH=1 adds the server's key to this console's SSH server, so the server can sync it while the
 # daemon is not running (asleep, not started yet); 0 removes the key
 ALLOW_SSH=1
+# PRUNE_ROMS=1 deletes roms that are in none of the lists the console has (cmd_prune). The console owns it:
+# a change made here or an answer to one made in the web app leaves $STATE/prune-set until the server hears it
+PRUNE_ROMS=0
 [ -f "$SETTINGS" ] && . "$SETTINGS"
 set_setting() { grep -v "^$1=" "$SETTINGS" 2>/dev/null > "$WORK/settings"; echo "$1=$2" >> "$WORK/settings"; mv "$WORK/settings" "$SETTINGS"; }
 # Installer packages bring the server address (and a one-time enrolment token) next to the script
@@ -580,13 +583,16 @@ cmd_sync() {
   progress server 0 0
   # Free and total bytes of the roms' storage: the server copies list roms only while a reserve is kept
   space="$(df -k "$ROMS" 2>/dev/null | awk 'NR == 2 { printf "%.0f %.0f", $4 * 1024, $2 * 1024 }')"
-  http POST "$SERVER/api/v1/agent/sync" "$req" "$plan" "X-Allow-Pull: $ALLOW_PULL" "X-Ssh: $(ssh_offer)" "X-Client-Path-B64: $(b64 "$DIR/$(basename "$0")")" "X-Space: ${space:-}" "X-Wifi-Bands: $(wifi_bands)" "X-Probe: 1" || { log "sync request failed"; sync_failed; drop_lock; return 1; }
+  pset=0; [ -f "$STATE/prune-set" ] && pset=1
+  http POST "$SERVER/api/v1/agent/sync" "$req" "$plan" "X-Prune: $PRUNE_ROMS" "X-Prune-Set: $pset" "X-Allow-Pull: $ALLOW_PULL" "X-Ssh: $(ssh_offer)" "X-Client-Path-B64: $(b64 "$DIR/$(basename "$0")")" "X-Space: ${space:-}" "X-Wifi-Bands: $(wifi_bands)" "X-Probe: 1" || { log "sync request failed"; sync_failed; drop_lock; return 1; }
   # How many copies of overwritten saves to keep
   sed -n "s/^backups$TAB//p" "$plan" > "$WORK/keep" && [ -s "$WORK/keep" ] && mv "$WORK/keep" "$STATE/backups-keep"
-  ups=0; downs=0; errs=0; moved=0; total="$(grep -vc "^probe$TAB\|^backups$TAB" "$plan")"
+  [ "$pset" = 1 ] && rm -f "$STATE/prune-set"
+  prune_answer "$(grep "^prune$TAB" "$plan" | head -n 1)"
+  ups=0; downs=0; errs=0; moved=0; total="$(grep -vc "^probe$TAB\|^backups$TAB\|^prune$TAB" "$plan")"
   : > "$WORK/received"
   while IFS="$TAB" read -r action p a b; do
-    case "$action" in probe|backups) continue ;; esac
+    case "$action" in probe|backups|prune) continue ;; esac
     moved=$((moved + 1)); progress transfer "$moved" "$total"
     case "$action" in
       put)
@@ -815,6 +821,7 @@ cmd_daemon() {
       full_pass=0; [ "$since" -ge "$FULL_SECONDS" ] && full_pass=1
       cmd_sync && { last="$(fingerprint)"; since=0; }
       [ "$full_pass" = 1 ] && cmd_config > /dev/null 2>&1
+      [ "$full_pass" = 1 ] && cmd_prune > /dev/null 2>&1
       [ "$full_pass" = 1 ] && [ "$AUTO_ROMS" = 1 ] && cmd_roms > /dev/null 2>&1
       cmd_collections > /dev/null 2>&1
     fi
@@ -913,6 +920,61 @@ cmd_install() {
 
 # ---------- roms of the lists assigned to this device ----------
 
+# The web app changed the deletion of roms in no list ("prune<TAB>value<TAB>files<TAB>bytes"): turning it off
+# applies at once; turning it on waits in $STATE/prune-ask for the user's answer on screen ("prune set")
+prune_answer() {
+  [ -n "$1" ] || { rm -f "$STATE/prune-ask"; return 0; }
+  v="$(printf '%s' "$1" | cut -f2)"
+  if [ "$v" = 1 ]; then printf '%s\t%s\n' "$(printf '%s' "$1" | cut -f3)" "$(printf '%s' "$1" | cut -f4)" > "$STATE/prune-ask"
+  else prune_set 0; rm -f "$STATE/prune-ask"; fi
+}
+prune_set() { PRUNE_ROMS="$1"; set_setting PRUNE_ROMS "$1"; touch "$STATE/prune-set"; [ "$1" = 1 ] || rm -f "$STATE/prune-hold"; }
+
+# Deletes the roms the server names as in no list of this console (only with PRUNE_ROMS=1, never during a game,
+# only inside the roms folder). A deletion of more than half of the roms waits in $STATE/prune-hold for the user
+# ("prune confirm"). Deleted paths are kept in $STATE/pruned for the saves clean-up ("prune clean").
+cmd_prune() {
+  need_link
+  [ "$PRUNE_ROMS" = 1 ] && [ ! -f "$STATE/prune-ask" ] || return 0
+  playing && return 0
+  if [ -z "${ROMS:-}" ]; then roots="$(http GET "$SERVER/api/v1/agent/roots" - -)" || return 1; ROMS="$(field roms "$roots")"; fi
+  [ -n "$ROMS" ] || return 1
+  http GET "$SERVER/api/v1/agent/prune" - "$WORK/pruneplan" || { log "prune: server unreachable"; return 1; }
+  hold="$(grep "^hold$TAB" "$WORK/pruneplan" | head -n 1)"
+  if [ -n "$hold" ]; then
+    printf '%s\t%s\n' "$(printf '%s' "$hold" | cut -f2)" "$(printf '%s' "$hold" | cut -f3)" > "$STATE/prune-hold"
+    log "prune: $(printf '%s' "$hold" | cut -f2) roms to delete, waiting for confirmation"; return 0
+  fi
+  rm -f "$STATE/prune-hold"
+  n=0
+  while IFS="$TAB" read -r kind p _; do
+    [ "$kind" = del ] || continue
+    case "$p" in "${ROMS%/}"/*/*) ;; *) continue ;; esac
+    [ -f "$p" ] || continue
+    rm -f "$p" && { n=$((n + 1)); printf '%s\n' "$p" >> "$STATE/pruned"; }
+  done < "$WORK/pruneplan"
+  [ "$n" -gt 0 ] && log "prune: $n roms in no list deleted"
+  [ -n "${VERBOSE:-}" ] && printf 'deleted: %s roms in no list\n' "$n"
+  return 0
+}
+
+# Saves and states of the roms deleted for being in no list: removed once a sync went through (they are on the server)
+cmd_prune_clean() {
+  need_link
+  [ -s "$STATE/pruned" ] || { echo "cleaned: 0 files"; return 0; }
+  VERBOSE=1 cmd_sync > "$WORK/clean-sync" 2>&1 || { echo "cleaned: 0 files (no sync)"; return 1; }
+  grep -q ', 0 errors' "$WORK/clean-sync" || { echo "cleaned: 0 files (sync errors)"; return 1; }
+  http POST "$SERVER/api/v1/agent/prune/saves" "$STATE/pruned" "$WORK/prunesaves" || { echo "cleaned: 0 files (no server)"; return 1; }
+  n=0
+  while IFS="$TAB" read -r kind f; do
+    [ "$kind" = file ] && [ -f "$f" ] || continue
+    rm -f "$f" && n=$((n + 1))
+  done < "$WORK/prunesaves"
+  rm -f "$STATE/pruned"
+  log "prune: $n save files of deleted roms removed"
+  echo "cleaned: $n files"
+}
+
 free_bytes() {
   d="$1"; while [ ! -d "$d" ]; do d="$(dirname "$d")"; done
   echo $(( $(df -k "$d" 2>/dev/null | awk 'NR == 2 { print $4 }') * 1024 ))
@@ -997,7 +1059,7 @@ cmd_game_start() {
   return 0
 }
 
-cmd_all() { cmd_sync; cmd_config; [ "$AUTO_ROMS" = 1 ] && cmd_roms; cmd_collections > /dev/null 2>&1; return 0; }
+cmd_all() { cmd_sync; cmd_config; cmd_prune; [ "$AUTO_ROMS" = 1 ] && cmd_roms; cmd_collections > /dev/null 2>&1; return 0; }
 
 # A copy for the server is under way (a lock whose process died does not count)
 pulls_running() { [ -f "$WORK/pull-lock/pid" ] && kill -0 "$(cat "$WORK/pull-lock/pid")" 2>/dev/null; }
@@ -1095,7 +1157,12 @@ t() {
       conflictinfo) echo "$2: esta consola $3, servidor $4 ($5)" ;;
       p_waiting) echo "Esperando a la sincronizacion en curso" ;; p_connecting) echo "Conectando" ;; p_roms) echo "Comprobando roms" ;;
       p_saves) echo "Comprobando saves" ;; p_server) echo "Preguntando al servidor" ;; p_transfer) echo "Transfiriendo saves" ;;
-      p_roms-plan) echo "Preguntando que roms tocan" ;; p_roms-download) echo "Descargando roms" ;; p_*) echo "Trabajando..." ;; *) echo "$1" ;;
+      p_roms-plan) echo "Preguntando que roms tocan" ;; p_roms-download) echo "Descargando roms" ;; p_*) echo "Trabajando..." ;;
+      prune) echo "Borrar roms fuera de listas: $2" ;; pruneclean) echo "Borrar saves de roms borradas ($2)" ;;
+      pruneintro) echo "Rommancer puede borrar de esta consola las roms que no esten en ninguna de sus listas (las que el servidor no tenga se suben antes). Los saves se quedan. Se puede cambiar luego aqui o en la web. Activarlo?" ;;
+      pruneask) echo "Se ha activado desde el servidor el borrado de roms que no estan en ninguna lista. Se borraran $2 roms ($3). Mantener esta opcion?" ;;
+      prunehold) echo "Se van a borrar $2 de las $3 roms de esta consola (mas de la mitad) por no estar en ninguna lista. Puede que una lista se haya vaciado. Borrarlas?" ;;
+      pruneon) echo "Si, borrarlas" ;; pruneoff) echo "No, desactivarlo" ;; prunelater) echo "Ahora no" ;; cleaned) echo "Saves borrados: $2" ;; *) echo "$1" ;;
     esac
   else
     case "$1" in
@@ -1112,7 +1179,12 @@ t() {
       conflictinfo) echo "$2: this console $3, server $4 ($5)" ;;
       p_waiting) echo "Waiting for the running sync" ;; p_connecting) echo "Connecting" ;; p_roms) echo "Checking roms" ;;
       p_saves) echo "Checking saves" ;; p_server) echo "Asking the server" ;; p_transfer) echo "Transferring saves" ;;
-      p_roms-plan) echo "Asking which roms belong here" ;; p_roms-download) echo "Downloading roms" ;; p_*) echo "Working..." ;; *) echo "$1" ;;
+      p_roms-plan) echo "Asking which roms belong here" ;; p_roms-download) echo "Downloading roms" ;; p_*) echo "Working..." ;;
+      prune) echo "Delete roms not in lists: $2" ;; pruneclean) echo "Delete saves of deleted roms ($2)" ;;
+      pruneintro) echo "Rommancer can delete from this console the roms that are in none of its lists (the ones the server lacks are uploaded first). Saves stay. You can change it later here or on the web. Turn it on?" ;;
+      pruneask) echo "Deleting roms that are not in any list was turned on from the server. $2 roms ($3) will be deleted. Keep this option?" ;;
+      prunehold) echo "$2 of the $3 roms on this console (more than half) would be deleted for being in no list. A list may have been emptied. Delete them?" ;;
+      pruneon) echo "Yes, delete them" ;; pruneoff) echo "No, turn it off" ;; prunelater) echo "Not now" ;; cleaned) echo "Saves deleted: $2" ;; *) echo "$1" ;;
     esac
   fi
 }
@@ -1159,6 +1231,32 @@ with_progress() {
   panel "$title" "$(tail -n 1 "$WORK/run-out")" wait
 }
 
+# Human size of a byte count
+human() { awk -v b="${1:-0}" 'BEGIN { split("B KB MB GB TB", u, " "); i = 1; while (b >= 1024 && i < 5) { b /= 1024; i++ } printf (i > 2 ? "%.1f %s" : "%d %s"), b, u[i] }'; }
+
+# What the deletion of roms in no list needs from the user: the choice offered once after linking, a change made
+# in the web app (keep it or turn it off) and a deletion held for being more than half of the roms
+setup_prune() {
+  if [ ! -f "$STATE/prune-intro" ]; then
+    menu "Rommancer Sync" "$(t pruneintro)" "$(t no)" "$(t yes)"; rc=$?
+    [ "$rc" = 1 ] && v=1 || v=0
+    panel "Rommancer Sync" "$(t syncing)"; sh "$DIR/$(basename "$0")" prune set "$v" > /dev/null 2>&1; panel_close
+  fi
+  if [ -f "$STATE/prune-ask" ]; then
+    menu "Rommancer Sync" "$(t pruneask "$(cut -f1 "$STATE/prune-ask")" "$(human "$(cut -f2 "$STATE/prune-ask")")")" "$(t pruneon)" "$(t pruneoff)"; rc=$?
+    case $rc in 0) v=1 ;; 1) v=0 ;; *) v="" ;; esac
+    [ -n "$v" ] && { panel "Rommancer Sync" "$(t syncing)"; sh "$DIR/$(basename "$0")" prune set "$v" > /dev/null 2>&1; panel_close; }
+  fi
+  if [ -f "$STATE/prune-hold" ] && [ "$PRUNE_ROMS" = 1 ]; then
+    menu "Rommancer Sync" "$(t prunehold "$(cut -f1 "$STATE/prune-hold")" "$(cut -f2 "$STATE/prune-hold")")" "$(t pruneon)" "$(t pruneoff)" "$(t prunelater)"; rc=$?
+    case $rc in
+      0) with_progress "$(t sync)" sh "$DIR/$(basename "$0")" prune confirm ;;
+      1) panel "Rommancer Sync" "$(t syncing)"; sh "$DIR/$(basename "$0")" prune set 0 > /dev/null 2>&1; panel_close ;;
+    esac
+  fi
+  [ -f "$SETTINGS" ] && . "$SETTINGS"
+}
+
 setup_after_link() {
   panel "Rommancer Sync" "$(t syncing)"
   VERBOSE=1 cmd_sync > "$WORK/first-sync" 2>&1
@@ -1168,6 +1266,7 @@ setup_after_link() {
   fi
   panel_close
   panel "Rommancer Sync" "$(t finished) $(tail -n 1 "$WORK/first-sync")" wait
+  setup_prune
 }
 
 # Conflicts menu: pick one, then keep this console's save or the server's
@@ -1205,16 +1304,22 @@ cmd_setup() {
       if [ "$AUTO_ROMS" = 1 ]; then auto="$(t yes)"; else auto="$(t no)"; fi
       if [ "$ALLOW_PULL" = 1 ]; then pull="$(t yes)"; else pull="$(t no)"; fi
       if [ "$ALLOW_SSH" = 1 ]; then ssh="$(t yes)"; else ssh="$(t no)"; fi
-      menu "Rommancer Sync" "$(t connected). $(updated_line)" "$(t sync)" "$(t roms)" "$(t autoroms "$auto")" "$(t allowpull "$pull")" "$(t allowssh "$ssh")" "$(t conflicts "$nconf")" "$(t status)" "$(t unlink)" "$(t quit)"; rc=$?
+      setup_prune
+      if [ "$PRUNE_ROMS" = 1 ]; then prune="$(t yes)"; else prune="$(t no)"; fi
+      cleanable="$(cat "$STATE/pruned" 2>/dev/null | grep -c .)"
+      menu "Rommancer Sync" "$(t connected). $(updated_line)" "$(t sync)" "$(t roms)" "$(t autoroms "$auto")" "$(t allowpull "$pull")" "$(t allowssh "$ssh")" "$(t prune "$prune")" "$(t pruneclean "$cleanable")" "$(t conflicts "$nconf")" "$(t status)" "$(t unlink)" "$(t quit)"; rc=$?
       case $rc in
         0) with_progress "$(t sync)" cmd_all ;;
         1) with_progress "$(t roms)" cmd_roms ;;
         2) if [ "$AUTO_ROMS" = 1 ]; then AUTO_ROMS=0; else AUTO_ROMS=1; fi; set_setting AUTO_ROMS "$AUTO_ROMS" ;;
         3) if [ "$ALLOW_PULL" = 1 ]; then ALLOW_PULL=0; else ALLOW_PULL=1; fi; set_setting ALLOW_PULL "$ALLOW_PULL" ;;
         4) if [ "$ALLOW_SSH" = 1 ]; then ALLOW_SSH=0; else ALLOW_SSH=1; fi; set_setting ALLOW_SSH "$ALLOW_SSH" ;;
-        5) setup_conflicts ;;
-        6) panel "$(t status)" "$(version_line). $(tail -n 4 "$LOG" 2>/dev/null | cut -c21- | tr '\n' ' ')" wait ;;
-        7) keep="$SERVER"; cmd_unlink > /dev/null; TOKEN=""; USER_NAME=""; SERVER="$keep" ;;
+        5) if [ "$PRUNE_ROMS" = 1 ]; then v=0; else v=1; fi
+           panel "Rommancer Sync" "$(t syncing)"; sh "$DIR/$(basename "$0")" prune set "$v" > /dev/null 2>&1; panel_close; PRUNE_ROMS="$v" ;;
+        6) with_progress "$(t pruneclean "$cleanable")" sh "$DIR/$(basename "$0")" prune clean ;;
+        7) setup_conflicts ;;
+        8) panel "$(t status)" "$(version_line). $(tail -n 4 "$LOG" 2>/dev/null | cut -c21- | tr '\n' ' ')" wait ;;
+        9) keep="$SERVER"; cmd_unlink > /dev/null; TOKEN=""; USER_NAME=""; SERVER="$keep" ;;
         *) return 0 ;;
       esac
     else
@@ -1250,6 +1355,9 @@ cmd_status() {
 cmd_unlink() {
   [ -f "$STATE/pid" ] && kill "$(cat "$STATE/pid")" 2>/dev/null
   rm -f "$CONF" "$STATE/pid" "$CACHE" "$CACHE_DISK"
+  # Another account's lists are not this one's: the deletion of roms in no list starts off and is offered again
+  set_setting PRUNE_ROMS 0
+  rm -f "$STATE/prune-set" "$STATE/prune-ask" "$STATE/prune-hold" "$STATE/prune-intro" "$STATE/pruned"
   echo "Unlinked"
 }
 
@@ -1278,6 +1386,25 @@ case "${1:-}" in
   conflicts) cmd_conflicts ;;
   resolve) cmd_resolve "${2:-}" "${3:-}" ;;
   set) set_setting "${2:-}" "${3:-}" ;;
+  # Deleting roms in no list: "prune set 0|1" (a change on screen, or the answer to one made in the web app),
+  # "prune confirm" (a held deletion of more than half of the roms), "prune clean" (their saves), "prune" (state)
+  prune)
+    case "${2:-}" in
+      set) prune_set "${3:-0}"; rm -f "$STATE/prune-ask"; touch "$STATE/prune-intro"; VERBOSE=1 cmd_sync > /dev/null 2>&1; echo ok ;;
+      confirm)
+        [ -f "$STATE/prune-hold" ] || exit 0
+        http POST "$SERVER/api/v1/agent/prune/confirm" - - "X-Count: $(cut -f1 "$STATE/prune-hold")" > /dev/null || exit 1
+        rm -f "$STATE/prune-hold"; VERBOSE=1 cmd_prune ;;
+      clean) cmd_prune_clean ;;
+      run) VERBOSE=1 cmd_prune ;;
+      *)
+        # on<TAB>0|1, then ask<TAB>files<TAB>bytes, hold<TAB>files<TAB>roms, intro<TAB>0|1 (the choice was offered), cleanable<TAB>roms
+        printf 'on\t%s\n' "$PRUNE_ROMS"
+        [ -f "$STATE/prune-ask" ] && printf 'ask\t%s\n' "$(cat "$STATE/prune-ask")"
+        [ -f "$STATE/prune-hold" ] && printf 'hold\t%s\n' "$(cat "$STATE/prune-hold")"
+        if [ -f "$STATE/prune-intro" ]; then printf 'intro\t1\n'; else printf 'intro\t0\n'; fi
+        printf 'cleanable\t%s\n' "$(cat "$STATE/pruned" 2>/dev/null | grep -c .)" ;;
+    esac ;;
   pulls) VERBOSE=1; cmd_pulls ;;
   boot)
     # At power-on: start syncing and give the first pass up to BOOT_WAIT seconds, so saves are

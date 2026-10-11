@@ -77,7 +77,7 @@ class WatchService : Service() {
     private fun poll() {
         if (!store.linked) return stopSelf()
         val asked = engine().poll()
-        if ("sync" in asked) runCatching { engine().sync(); if (store.autoRoms) engine().roms() }
+        if ("sync" in asked) runCatching { engine().sync(); engine().prune(); if (store.autoRoms) engine().roms() }
         // Another device sent a save this one should have: saves only
         else if ("saves" in asked) runCatching { engine().sync() }
         // Long copies for the server run apart, so saves keep going up meanwhile

@@ -84,6 +84,18 @@ TEXTS = {
         "conflict_info": "{game}: esta consola guardó el {mine}; el servidor tiene una versión del {theirs} ({dev}).",
         "keep_device": "Quedarme con el de esta consola",
         "keep_server": "Usar el del servidor",
+        "prune": "Borrar roms fuera de listas: {v}",
+        "prune_clean": "Borrar saves de roms borradas ({n})",
+        "prune_intro": "Rommancer puede borrar de esta consola las roms que no estén en ninguna de sus listas. Las que el servidor no tenga se suben antes de borrarlas. Los saves se quedan. Puedes cambiarlo luego aquí o en la web. ¿Lo activas?",
+        "prune_ask": "Se ha activado desde el servidor el borrado de roms que no están en ninguna lista. Si lo mantienes se borrarán {n} roms ({size}). ¿Quieres mantener esta opción?",
+        "prune_hold": "Se van a borrar {n} de las {total} roms de esta consola (más de la mitad) por no estar en ninguna lista. Puede que una lista se haya vaciado. ¿Las borro?",
+        "prune_yes": "Sí, activarlo",
+        "prune_no": "No, dejarlo desactivado",
+        "prune_keep": "Sí, mantenerlo",
+        "prune_off": "No, desactivarlo",
+        "prune_delete": "Sí, borrarlas",
+        "prune_later": "Ahora no",
+        "p_prune": "Borrando roms fuera de listas",
     },
     "en": {
         "title": "Rommancer Sync",
@@ -140,6 +152,18 @@ TEXTS = {
         "conflict_info": "{game}: this console saved on {mine}; the server has a version from {theirs} ({dev}).",
         "keep_device": "Keep this console's save",
         "keep_server": "Use the server's save",
+        "prune": "Delete roms not in lists: {v}",
+        "prune_clean": "Delete saves of deleted roms ({n})",
+        "prune_intro": "Rommancer can delete from this console the roms that are in none of its lists. The ones the server lacks are uploaded before they are deleted. Saves stay. You can change it later here or on the web. Turn it on?",
+        "prune_ask": "Deleting roms that are not in any list was turned on from the server. If you keep it, {n} roms ({size}) will be deleted. Do you want to keep this option?",
+        "prune_hold": "{n} of the {total} roms on this console (more than half) would be deleted for being in no list. A list may have been emptied. Delete them?",
+        "prune_yes": "Yes, turn it on",
+        "prune_no": "No, leave it off",
+        "prune_keep": "Yes, keep it",
+        "prune_off": "No, turn it off",
+        "prune_delete": "Yes, delete them",
+        "prune_later": "Not now",
+        "p_prune": "Deleting roms not in lists",
     },
 }
 
@@ -290,6 +314,15 @@ ACCENT = (110, 170, 255)
 BAD = (255, 120, 120)
 
 
+def human(n):
+    """A byte count for people: 1.2 GB"""
+    for unit in ("B", "KB", "MB", "GB"):
+        if n < 1024 or unit == "GB":
+            return f"{n:.1f} {unit}" if unit in ("MB", "GB") else f"{int(n)} {unit}"
+        n /= 1024
+    return f"{n:.1f} TB"
+
+
 def client_version():
     """CLIENT_VERSION of the sync script beside this app"""
     try:
@@ -424,6 +457,7 @@ class App:
         self.clock = pygame.time.Clock()
         # Conflicts are counted in the background so the menu never waits for the network
         self.conflict_count = None
+        self.cleanable = "0"
         self.refresh_conflicts()
         pygame.key.set_repeat(300, 60)
 
@@ -724,6 +758,47 @@ class App:
     def toggle_allow_ssh(self):
         self.toggle("ALLOW_SSH")
 
+    # ---------- deleting roms that are in no list ----------
+
+    def prune_state(self):
+        """on, ask (files, bytes), hold (files, roms), intro (the choice was offered) and cleanable, from the client"""
+        try:
+            out = subprocess.run(["sh", SCRIPT, "prune"], capture_output=True, text=True, timeout=15).stdout
+        except subprocess.TimeoutExpired:
+            return {}
+        return {p[0]: p[1:] for p in (line.split("\t") for line in out.splitlines()) if p}
+
+    def prune_set(self, on):
+        self.message(T["syncing"], wait=False)
+        subprocess.run(["sh", SCRIPT, "prune", "set", "1" if on else "0"], capture_output=True, timeout=900)
+
+    def prune_prompts(self):
+        """What needs the user: the choice offered once, a change made in the web app, a held deletion"""
+        st = self.prune_state()
+        if st.get("intro") == ["0"]:
+            pick = self.menu(T["title"], [T["prune_no"], T["prune_yes"]], info=[T["prune_intro"]])
+            self.prune_set(pick == 1)
+            st = self.prune_state()
+        if "ask" in st:
+            n, size = (st["ask"] + ["0", "0"])[:2]
+            pick = self.menu(T["title"], [T["prune_keep"], T["prune_off"]], info=[T["prune_ask"].format(n=n, size=human(int(size or 0)))])
+            if pick is not None:
+                self.prune_set(pick == 0)
+            st = self.prune_state()
+        if "hold" in st and st.get("on") == ["1"]:
+            n, total = (st["hold"] + ["0", "0"])[:2]
+            pick = self.menu(T["title"], [T["prune_delete"], T["prune_off"], T["prune_later"]], info=[T["prune_hold"].format(n=n, total=total)])
+            if pick == 0:
+                self.run_with_progress("prune", T["p_prune"], "confirm")
+            elif pick == 1:
+                self.prune_set(False)
+
+    def toggle_prune(self):
+        self.prune_set(self.settings().get("PRUNE_ROMS", "0") != "1")
+
+    def prune_clean(self):
+        self.run_with_progress("prune", T["prune_clean"].format(n=self.cleanable), "clean")
+
     def conflicts(self):
         try:
             out = subprocess.run(["sh", SCRIPT, "conflicts"], capture_output=True, text=True, timeout=15, env={**os.environ, "HTTP_MAX": "5"}).stdout
@@ -789,10 +864,14 @@ class App:
                 auto = T["yes"] if cfg.get("AUTO_ROMS", "1") == "1" else T["no"]
                 pull = T["yes"] if cfg.get("ALLOW_PULL", "1") == "1" else T["no"]
                 ssh = T["yes"] if cfg.get("ALLOW_SSH", "1") == "1" else T["no"]
+                self.prune_prompts()
+                cfg = self.settings()
+                prune = T["yes"] if cfg.get("PRUNE_ROMS", "0") == "1" else T["no"]
+                self.cleanable = (self.prune_state().get("cleanable") or ["0"])[0]
                 n = "…" if self.conflict_count is None else self.conflict_count
-                items = [T["sync_now"], T["sync_roms"], T["auto_roms"].format(v=auto), T["allow_pull"].format(v=pull), T["allow_ssh"].format(v=ssh), T["conflicts"].format(n=n), T["status"], T["logout"], T["quit"]]
-                choice = self.menu(T["title"], items, info, refresh=lambda: T["conflicts"].format(n="…" if self.conflict_count is None else self.conflict_count), refresh_index=5)
-                actions = [self.sync_now, self.sync_roms, self.toggle_auto_roms, self.toggle_allow_pull, self.toggle_allow_ssh, self.resolve_conflicts, self.status, self.logout]
+                items = [T["sync_now"], T["sync_roms"], T["auto_roms"].format(v=auto), T["allow_pull"].format(v=pull), T["allow_ssh"].format(v=ssh), T["prune"].format(v=prune), T["prune_clean"].format(n=self.cleanable), T["conflicts"].format(n=n), T["status"], T["logout"], T["quit"]]
+                choice = self.menu(T["title"], items, info, refresh=lambda: T["conflicts"].format(n="…" if self.conflict_count is None else self.conflict_count), refresh_index=7)
+                actions = [self.sync_now, self.sync_roms, self.toggle_auto_roms, self.toggle_allow_pull, self.toggle_allow_ssh, self.toggle_prune, self.prune_clean, self.resolve_conflicts, self.status, self.logout]
             else:
                 choice = self.menu(T["title"], [f"{T['server']}: {self.server}", T["login"], T["signup"], T["quit"]])
                 actions = [self.edit_server, self.login, self.signup]

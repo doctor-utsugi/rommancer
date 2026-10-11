@@ -25,6 +25,7 @@ import { normalizeTitle, parseRomName } from '../../lib/romname.js';
 import { ingestUnverified, ingestVerified } from '../uploads/ingest.js';
 import { serverKey } from '../devices/ssh.js';
 import { devicePlan } from '../devices/plan.js';
+import { prunePlan, queuePrunePulls } from '../devices/prune.js';
 import { Prisma } from '@prisma/client';
 import { storeWifiBands } from '../devconfig/service.js';
 import { cardAction, commitOffer, deviceCard, findDeviceCard, gameForSerial, gcCardFile, gciFolderState, hasWantedSaves, isCardEmulator, namedCard, observeCard, prepareCard, recordOffer } from './cards.js';
@@ -520,8 +521,83 @@ agentRouter.post('/sync', express.text({ limit: '16mb', type: '*/*' }), async (r
     // How many copies of the saves a sync overwrote the console keeps
     out.unshift(`backups\t${await saveHistory()}`);
   }
+  const prune = await pruneLine(device, req);
+  if (prune) out.unshift(prune);
   await prisma.device.update({ where: { id: device.id }, data: { lastSyncAt: new Date() } });
   res.type('text/plain').send(out.join('\n') + (out.length ? '\n' : ''));
+});
+
+/**
+ * Deleting roms that are in no list: the console owns the setting. "X-Prune: 0|1" is its value, "X-Prune-Set: 1"
+ * when its user changed it (or answered) since it last told. A change made in the web app waits for the
+ * console's answer: "prune<TAB>value<TAB>files<TAB>bytes" (what turning it on would delete, fetching first what
+ * the server lacks); the console asks its user before turning it on and tells the answer at its next sync.
+ */
+async function pruneLine(device: AgentDevice, req: Request) {
+  const sent = req.header('x-prune');
+  if (sent !== '0' && sent !== '1') return null;
+  const value = sent === '1';
+  if (req.header('x-prune-set') === '1' || !device.pruneRemote || device.pruneRoms === value) {
+    if (device.pruneRoms !== value || device.pruneRemote) await prisma.device.update({ where: { id: device.id }, data: { pruneRoms: value, pruneRemote: false, ...(value ? {} : { pruneHeld: null, pruneAllow: null }) } });
+    return null;
+  }
+  if (!device.pruneRoms) return 'prune\t0\t0\t0';
+  const plan = await prunePlan(device, device.homeRoot ?? device.rootPath);
+  const files = [...plan.del, ...plan.upload];
+  return `prune\t1\t${files.length}\t${files.reduce((n, f) => n + f.size, 0)}`;
+}
+
+/**
+ * The roms to delete from a device that asked for it: "del<TAB>path<TAB>size" per file. Files the server lacks
+ * are fetched first (and deleted at a later pass). A deletion of more than half of the device's roms waits:
+ * "hold<TAB>files<TAB>roms on the device" until the user confirms it (POST /prune/confirm or the web app).
+ */
+agentRouter.get('/prune', async (req, res) => {
+  const device = await deviceFromToken(req);
+  if (!device.pruneRoms || device.pruneRemote) {
+    res.type('text/plain').send('');
+    return;
+  }
+  const home = device.homeRoot ?? device.rootPath;
+  const plan = await prunePlan(device, home);
+  await queuePrunePulls(device.id, plan.upload);
+  const here = (p: string) => (device.homeRoot ? reroot(p, device.homeRoot, device.rootPath) : p);
+  let out: string[];
+  if (plan.held !== null) out = [`hold\t${plan.held}\t${plan.total}`];
+  else out = plan.del.map((f) => `del\t${here(f.path)}\t${f.size}`);
+  await prisma.device.update({ where: { id: device.id }, data: { pruneHeld: plan.held, ...(plan.held === null && plan.del.length ? { pruneAllow: null } : {}) } });
+  res.type('text/plain').send(out.join('\n') + (out.length ? '\n' : ''));
+});
+
+// The user confirmed on the console a held deletion of "X-Count" roms
+agentRouter.post('/prune/confirm', async (req, res) => {
+  const device = await deviceFromToken(req);
+  const count = Number(req.header('x-count'));
+  if (!Number.isInteger(count) || count < 0) throw badRequest('X-Count required');
+  await prisma.device.update({ where: { id: device.id }, data: { pruneAllow: count } });
+  res.type('text/plain').send('ok\n');
+});
+
+/**
+ * Save and state files of roms the device deleted (body: their paths, one per line), for the console's "clean up"
+ * action. Files of a rom whose name another rom in the same folder still has are left alone (they share them).
+ */
+agentRouter.post('/prune/saves', express.text({ limit: '4mb', type: '*/*' }), async (req, res) => {
+  const device = await deviceFromToken(req);
+  const gone = String(req.body ?? '').split('\n').map((l) => l.replace(/\r$/, '')).filter(Boolean).slice(0, 20000);
+  const home = device.homeRoot ?? device.rootPath;
+  const left = await prisma.deviceRom.findMany({ where: { deviceId: device.id }, select: { path: true } });
+  const stems = new Set(left.map((r) => (device.homeRoot ? reroot(r.path, home, device.rootPath) : r.path).replace(/\.[^./]+$/, '')));
+  const coreEmus = (await prisma.emulator.findMany({ where: { core: { not: null } } })) as Emulator[];
+  const out = new Set<string>();
+  for (const rom of gone) {
+    if (stems.has(rom.replace(/\.[^./]+$/, ''))) continue;
+    const ctx = await romContext(device, rom).catch(() => null);
+    if (!ctx) continue;
+    const emus = coreLayout(ctx.layout) ? [ctx.emu, ...coreEmus] : [ctx.emu];
+    for (const e of emus) for (const f of candidatePaths(ctx, e)) out.add(`file\t${f.path}`);
+  }
+  res.type('text/plain').send([...out].join('\n') + (out.size ? '\n' : ''));
 });
 
 /**

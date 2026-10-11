@@ -567,6 +567,13 @@ model Device {
   settingsError   String?               @db.VarChar(512)
   configVersions  DeviceConfigVersion[]
   configOps       DeviceConfigOp[]
+  // Roms in no list assigned to the device are deleted from it (devices/prune.ts). The console owns the
+  // setting: pruneRemote = changed from the web app and not yet answered on the console
+  pruneRoms       Boolean               @default(false)
+  pruneRemote     Boolean               @default(false)
+  // A deletion of more than half of the device's roms waits: how many it would delete, and how many the user allowed
+  pruneHeld       Int?
+  pruneAllow      Int?
   createdAt       DateTime              @default(now())
   user            User                  @relation(fields: [userId], references: [id], onDelete: Cascade)
   console         Console               @relation(fields: [consoleId], references: [id])

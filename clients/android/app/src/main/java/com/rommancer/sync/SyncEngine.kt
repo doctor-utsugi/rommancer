@@ -90,14 +90,23 @@ class SyncEngine(private val context: Context, private val store: Store, private
         onProgress(Progress("server"))
         // Free and total bytes of the shared storage: the server copies list roms only while a reserve is kept
         val space = runCatching { android.os.StatFs((romsDir ?: root).path).let { "${it.availableBytes} ${it.totalBytes}" } }.getOrDefault("")
-        val plan = api.text("/agent/sync", "POST", request.toString().toByteArray(), mapOf("X-Allow-Pull" to if (store.allowPull) "1" else "0", "X-Space" to space, "X-Wifi-Bands" to WifiSetup.bands(context), "X-Probe" to "1"))
+        val pruneSent = store.pruneSet
+        val plan = api.text(
+            "/agent/sync", "POST", request.toString().toByteArray(),
+            mapOf(
+                "X-Allow-Pull" to if (store.allowPull) "1" else "0", "X-Space" to space, "X-Wifi-Bands" to WifiSetup.bands(context), "X-Probe" to "1",
+                "X-Prune" to if (store.pruneRoms) "1" else "0", "X-Prune-Set" to if (pruneSent) "1" else "0",
+            ),
+        )
+        if (pruneSent) store.pruneSet = false
+        pruneAnswer(plan.lines().firstOrNull { it.startsWith("prune\t") })
         var up = 0
         var down = 0
         var errors = 0
         // Games whose save or state arrived, for the notification
         val received = linkedSetOf<String>()
         plan.lines().firstOrNull { it.startsWith("backups\t") }?.substringAfter('\t')?.trim()?.toIntOrNull()?.let { store.backupsKeep = it }
-        val steps = plan.lines().filter { it.isNotBlank() && !it.startsWith("probe\t") && !it.startsWith("backups\t") }
+        val steps = plan.lines().filter { it.isNotBlank() && !it.startsWith("probe\t") && !it.startsWith("backups\t") && !it.startsWith("prune\t") }
         val probes = plan.lines().filter { it.startsWith("probe\t") }.map { it.split('\t') }.filter { it.size >= 3 }
         for ((n, line) in steps.withIndex()) {
             onProgress(Progress("transfer", n + 1, steps.size))
@@ -241,6 +250,72 @@ class SyncEngine(private val context: Context, private val store: Store, private
         if (file.isFile && file.length() <= THUMB_MAX) api.text("/agent/thumb?v=$version", "POST", file.readBytes())
     }
 
+    // ---------- roms that are in none of this device's lists ----------
+
+    /** The web app changed the setting ("prune<TAB>value<TAB>files<TAB>bytes"): off applies at once, on waits for the user */
+    private fun pruneAnswer(line: String?) {
+        val f = line?.split('\t') ?: run { store.pruneAsk = null; return }
+        if (f.getOrNull(1) == "1") store.pruneAsk = "${f.getOrElse(2) { "0" }}\t${f.getOrElse(3) { "0" }}"
+        else { store.pruneAsk = null; store.pruneRoms = false; store.pruneHold = null; store.pruneSet = true }
+    }
+
+    /** A change made here, or the answer to one made in the web app; the server hears it at once */
+    fun pruneSet(on: Boolean): String {
+        store.pruneRoms = on
+        store.pruneSet = true
+        store.pruneAsk = null
+        store.pruneIntro = true
+        if (!on) store.pruneHold = null
+        return runCatching { sync().toString() }.getOrElse { it.message ?: "error" }
+    }
+
+    /**
+     * Deletes the roms the server names as in no list (only with the setting on, only inside the roms folder). A
+     * deletion of more than half of the roms waits in pruneHold for the user (pruneConfirm).
+     */
+    fun prune(): String = synchronized(LOCK) {
+        if (!store.pruneRoms || store.pruneAsk != null) return ""
+        val api = Api(store.server, store.token ?: error("Not linked"))
+        val roms = api.text("/agent/roots").lines().mapNotNull { l -> l.split('\t', limit = 2).takeIf { it.size == 2 && it[0] == "roms" } }.firstOrNull()?.get(1)?.trimEnd('/') ?: return ""
+        val plan = api.text("/agent/prune").lines().map { it.split('\t') }
+        plan.firstOrNull { it[0] == "hold" && it.size >= 3 }?.let { h ->
+            store.pruneHold = "${h[1]}\t${h[2]}"
+            return "prune: ${h[1]} roms waiting for confirmation".also { store.addLog(it) }
+        }
+        store.pruneHold = null
+        val gone = mutableListOf<String>()
+        for (f in plan) {
+            if (f[0] != "del" || f.size < 2 || !f[1].startsWith("$roms/") || f[1].removePrefix("$roms/").count { it == '/' } < 1) continue
+            val file = File(f[1])
+            if (file.isFile && file.delete()) gone += file.path
+        }
+        if (gone.isEmpty()) return ""
+        store.pruned = store.pruned + gone
+        return "prune: ${gone.size} roms in no list deleted".also { store.addLog(it) }
+    }
+
+    /** The user confirmed a held deletion */
+    fun pruneConfirm(): String {
+        val hold = store.pruneHold ?: return ""
+        Api(store.server, store.token ?: error("Not linked")).text("/agent/prune/confirm", "POST", ByteArray(0), mapOf("X-Count" to hold.substringBefore('\t')))
+        store.pruneHold = null
+        return prune()
+    }
+
+    /** Saves and states of the deleted roms: removed once a sync went through without errors (they are on the server) */
+    fun pruneClean(): String {
+        val gone = store.pruned
+        if (gone.isEmpty()) return context.getString(R.string.prune_cleaned, 0)
+        val r = sync()
+        if (r.errors > 0) return r.toString()
+        val api = Api(store.server, store.token ?: error("Not linked"))
+        val files = api.text("/agent/prune/saves", "POST", gone.joinToString("\n").toByteArray()).lines().mapNotNull { l -> l.split('\t').takeIf { it.size >= 2 && it[0] == "file" }?.get(1) }
+        val n = files.count { File(it).let { f -> f.isFile && f.delete() } }
+        store.pruned = emptyList()
+        store.addLog("prune: $n save files of deleted roms removed")
+        return context.getString(R.string.prune_cleaned, n)
+    }
+
     /** Roms of the lists assigned to this device that are not here yet; never deletes anything */
     fun roms(): String = synchronized(LOCK) { romsOnce() }
 
@@ -322,9 +397,10 @@ class SyncEngine(private val context: Context, private val store: Store, private
     fun all(): String {
         val r = sync()
         val sent = runCatching { pulls() }.getOrDefault("")
+        val pruned = runCatching { prune() }.getOrDefault("")
         val roms = if (store.autoRoms) roms() else ""
         runCatching { ConfigEngine(context, store).run() }
-        return listOf("sync: $r", sent, roms).filter { it.isNotBlank() }.joinToString(" · ")
+        return listOf("sync: $r", sent, pruned, roms).filter { it.isNotBlank() }.joinToString(" · ")
     }
 
     /** Folders the save watcher observes (every subfolder of the save roots) and the save extensions */

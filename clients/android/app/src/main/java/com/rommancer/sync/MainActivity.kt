@@ -114,6 +114,8 @@ private sealed interface Screen {
     data object Conflicts : Screen
     data class Conflict(val c: SyncEngine.Conflict) : Screen
     data object Status : Screen
+    /** Deleting roms in no list: "intro" (the choice offered once), "ask" (turned on in the web app), "hold" (a big deletion) */
+    data class Prune(val kind: String) : Screen
 }
 
 @Composable
@@ -337,8 +339,20 @@ private fun Linked(store: Store, onUnlinked: () -> Unit) {
         }
     }
 
+    // What the deletion of roms in no list needs from the user, checked whenever the menu shows
+    var holdLater by remember { mutableStateOf(false) }
+    LaunchedEffect(screen, settingsTick) {
+        if (screen != Screen.Menu) return@LaunchedEffect
+        when {
+            !store.pruneIntro -> screen = Screen.Prune("intro")
+            store.pruneAsk != null -> screen = Screen.Prune("ask")
+            store.pruneHold != null && store.pruneRoms && !holdLater -> screen = Screen.Prune("hold")
+        }
+    }
+
     // B / back returns to the menu from any inner screen; a running sync is left alone
     BackHandler(enabled = screen != Screen.Menu && screen !is Screen.Working) {
+        if (screen == Screen.Prune("hold")) holdLater = true
         screen = if (screen is Screen.Conflict) Screen.Conflicts else Screen.Menu
     }
 
@@ -362,6 +376,10 @@ private fun Linked(store: Store, onUnlinked: () -> Unit) {
                 settingsTick++
             }
             MenuItem(stringResource(R.string.allow_pull, if (store.allowPull) yes else no)) { store.allowPull = !store.allowPull; settingsTick++ }
+            MenuItem(stringResource(R.string.prune, if (store.pruneRoms) yes else no)) { val on = !store.pruneRoms; run(titleSync) { it.pruneSet(on) } }
+            val cleanable = remember(settingsTick, screen) { store.pruned.size }
+            val titleClean = stringResource(R.string.prune_clean, cleanable)
+            MenuItem(titleClean) { run(titleClean) { it.pruneClean() } }
             if (WifiSetup.supported) {
                 val titleWifi = stringResource(R.string.add_wifi)
                 MenuItem(titleWifi) {
@@ -441,6 +459,31 @@ private fun Linked(store: Store, onUnlinked: () -> Unit) {
             MenuItem(stringResource(R.string.keep_server)) { run(title) { e -> "sync: ${e.resolve(c.id, "server")}" } }
             MenuItem(stringResource(R.string.press_back)) { screen = Screen.Conflicts }
             LaunchedEffect(Unit) { runCatching { firstItem.requestFocus() } }
+        }
+        is Screen.Prune -> {
+            val title = stringResource(R.string.syncing)
+            when (s.kind) {
+                "intro" -> {
+                    Text(stringResource(R.string.prune_intro), fontSize = 20.sp)
+                    MenuItem(stringResource(R.string.prune_no), firstItem) { run(title) { it.pruneSet(false) } }
+                    MenuItem(stringResource(R.string.prune_yes)) { run(title) { it.pruneSet(true) } }
+                }
+                "ask" -> {
+                    val (files, bytes) = (store.pruneAsk ?: "0\t0").split('\t').let { it.getOrElse(0) { "0" } to (it.getOrNull(1)?.toLongOrNull() ?: 0L) }
+                    Text(stringResource(R.string.prune_ask, files, android.text.format.Formatter.formatShortFileSize(context, bytes)), fontSize = 20.sp)
+                    MenuItem(stringResource(R.string.prune_keep), firstItem) { run(title) { it.pruneSet(true) } }
+                    MenuItem(stringResource(R.string.prune_off)) { run(title) { it.pruneSet(false) } }
+                }
+                else -> {
+                    val (files, total) = (store.pruneHold ?: "0\t0").split('\t').let { it.getOrElse(0) { "0" } to it.getOrElse(1) { "0" } }
+                    Text(stringResource(R.string.prune_hold, files, total), fontSize = 20.sp)
+                    val titlePrune = stringResource(R.string.p_prune)
+                    MenuItem(stringResource(R.string.prune_delete), firstItem) { run(titlePrune) { it.pruneConfirm() } }
+                    MenuItem(stringResource(R.string.prune_off)) { run(title) { it.pruneSet(false) } }
+                    MenuItem(stringResource(R.string.prune_later)) { holdLater = true; screen = Screen.Menu }
+                }
+            }
+            LaunchedEffect(s) { runCatching { firstItem.requestFocus() } }
         }
         Screen.Status -> {
             val log = store.log
