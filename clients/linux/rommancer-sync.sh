@@ -22,7 +22,7 @@
 #                                   Menu++...) mounted on this computer; the link lives on the card itself,
 #                                   so any computer with this script can sync it. Without a command: sync.
 set -u
-CLIENT_VERSION=20261022
+CLIENT_VERSION=20261023
 # A clock before this date is surely wrong (no battery-backed clock); kept apart from the version, which may run ahead
 CLOCK_MIN=20261001
 # Onion keeps curl (with TLS) and friends outside the default PATH
@@ -547,6 +547,15 @@ version_line() {
   else printf 'Version %s%s' "$CLIENT_VERSION" "${since:+, installed $since}"; fi
 }
 
+# Why a sync asked for on screen failed, in words: no network at all, or a network that does not reach the server
+sync_failed() {
+  [ -n "${VERBOSE:-}" ] || return 0
+  host="${SERVER#*://}"; host="${host%%/*}"
+  if ! ip route 2>/dev/null | grep -q '^default'; then
+    if lang_es; then echo "Sin red: conecta el WiFi"; else echo "No network: connect the WiFi"; fi
+  elif lang_es; then echo "No llega a $host: revisa la red WiFi"; else echo "Cannot reach $host: check the WiFi network"; fi
+}
+
 cmd_sync() {
   need_link
   # A sync asked for on screen goes first: background passes step aside while it waits
@@ -567,11 +576,11 @@ cmd_sync() {
   rm -f "$STATE/.write-test"
   fix_clock
   mark_version
-  build_request "$req" || { log "server unreachable"; drop_lock; return 1; }
+  build_request "$req" || { log "server unreachable"; sync_failed; drop_lock; return 1; }
   progress server 0 0
   # Free and total bytes of the roms' storage: the server copies list roms only while a reserve is kept
   space="$(df -k "$ROMS" 2>/dev/null | awk 'NR == 2 { printf "%.0f %.0f", $4 * 1024, $2 * 1024 }')"
-  http POST "$SERVER/api/v1/agent/sync" "$req" "$plan" "X-Allow-Pull: $ALLOW_PULL" "X-Ssh: $(ssh_offer)" "X-Client-Path-B64: $(b64 "$DIR/$(basename "$0")")" "X-Space: ${space:-}" "X-Wifi-Bands: $(wifi_bands)" "X-Probe: 1" || { log "sync request failed"; drop_lock; return 1; }
+  http POST "$SERVER/api/v1/agent/sync" "$req" "$plan" "X-Allow-Pull: $ALLOW_PULL" "X-Ssh: $(ssh_offer)" "X-Client-Path-B64: $(b64 "$DIR/$(basename "$0")")" "X-Space: ${space:-}" "X-Wifi-Bands: $(wifi_bands)" "X-Probe: 1" || { log "sync request failed"; sync_failed; drop_lock; return 1; }
   # How many copies of overwritten saves to keep
   sed -n "s/^backups$TAB//p" "$plan" > "$WORK/keep" && [ -s "$WORK/keep" ] && mv "$WORK/keep" "$STATE/backups-keep"
   ups=0; downs=0; errs=0; moved=0; total="$(grep -vc "^probe$TAB\|^backups$TAB" "$plan")"
