@@ -1,5 +1,23 @@
 // Textos de la fase 2 (permisos, sincronizacion, revision, obras, dispositivos con scripts...)
 export const esMore = {
+  bulk: {
+    button: 'Añadir por consola y región',
+    title: 'Añadir consolas enteras',
+    help: 'Todos los juegos de las consolas que elijas, en la versión de las regiones que marques. Por ejemplo, todos los europeos de Game Boy y NES.',
+    systems: 'Consolas',
+    systemsHint: 'Escribe para buscar',
+    regions: 'Regiones',
+    anyRegion: 'Cualquier región',
+    best: 'Una versión por juego (la que mejor encaje)',
+    all: 'Todas las versiones que cumplan',
+    extras: 'Incluir prototipos, betas y demos',
+    total: '{{games}} juegos · {{roms}} roms',
+    line: '{{games}} juegos, {{roms}} roms',
+    go_one: 'Añadir {{count}} rom',
+    go_other: 'Añadir {{count}} roms',
+    added_one: '{{count}} rom añadida',
+    added_other: '{{count}} roms añadidas',
+  },
   derive: {
     defaultName: 'otra versión',
     help_filters: 'Las mismas entradas, en la versión que pidas. Mira cuántos juegos la tienen antes de seguir.',
@@ -701,6 +719,24 @@ export const esMore = {
 }
 
 export const enMore: typeof esMore = {
+  bulk: {
+    button: 'Add by system and region',
+    title: 'Add whole systems',
+    help: 'Every game of the systems you pick, in the version of the regions you tick. For example, every European Game Boy and NES game.',
+    systems: 'Systems',
+    systemsHint: 'Type to search',
+    regions: 'Regions',
+    anyRegion: 'Any region',
+    best: 'One version per game (the best fit)',
+    all: 'Every version that matches',
+    extras: 'Include prototypes, betas and demos',
+    total: '{{games}} games · {{roms}} roms',
+    line: '{{games}} games, {{roms}} roms',
+    go_one: 'Add {{count}} rom',
+    go_other: 'Add {{count}} roms',
+    added_one: '{{count}} rom added',
+    added_other: '{{count}} roms added',
+  },
   derive: {
     defaultName: 'another version',
     help_filters: 'The same entries, in the version you ask for. See how many games have it before going on.',

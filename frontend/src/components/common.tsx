@@ -1,8 +1,9 @@
-import { useEffect, useState, type ReactNode, type SelectHTMLAttributes } from 'react'
+import { useEffect, useMemo, useState, type ReactNode, type SelectHTMLAttributes } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
+import { Combobox } from '@/components/combobox'
 import { get } from '@/lib/api'
 import { Button } from '@/components/ui/button'
 import { Progress } from '@/components/ui/progress'
@@ -168,16 +169,10 @@ export function useSystems() {
 export function SystemSelect({ value, onChange, allLabel, onlyWithData = true }: { value: string; onChange(v: string): void; allLabel?: string; onlyWithData?: boolean }) {
   const { data } = useSystems()
   const { t } = useTranslation()
-  return (
-    <NativeSelect value={value} onChange={(e) => onChange(e.target.value)}>
-      <option value="">{allLabel ?? t('games.anySystem')}</option>
-      {data
-        ?.filter((s) => !onlyWithData || s.roms > 0)
-        .map((s) => (
-          <option key={s.id} value={s.id}>
-            {s.name}
-          </option>
-        ))}
-    </NativeSelect>
+  // Typing filters the list: there are dozens of systems
+  const options = useMemo(
+    () => [{ value: '', label: allLabel ?? t('games.anySystem') }, ...(data ?? []).filter((s) => !onlyWithData || s.roms > 0).map((s) => ({ value: String(s.id), label: s.name }))],
+    [data, allLabel, onlyWithData, t],
   )
+  return <Combobox value={String(value)} onChange={onChange} options={options} />
 }

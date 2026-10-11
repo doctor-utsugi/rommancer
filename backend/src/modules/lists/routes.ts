@@ -3,6 +3,8 @@ import { ZipArchive } from 'archiver';
 import fs from 'node:fs';
 import path from 'node:path';
 import { z } from 'zod';
+import { bulkRoms, bulkSchema } from './bulk.js';
+import { hasPermission } from '../../lib/permissions.js';
 import type { Prisma } from '@prisma/client';
 import { prisma } from '../../lib/prisma.js';
 import { badRequest, intParam } from '../../lib/http.js';
@@ -207,6 +209,25 @@ listsRouter.post('/:id/items', async (req, res) => {
     await prisma.romFavorite.createMany({ data: items.map((i) => ({ userId: list.ownerId, romId: i.romId! })), skipDuplicates: true });
   }
   const added = await addItems(list.id, items, me(req));
+  if (added) void refreshChildren(list.id);
+  res.status(201).json({ added });
+});
+
+// Whole systems at once ("every European Game Boy and NES game"): what it would add, then adding it
+listsRouter.post('/:id/items/bulk/preview', async (req, res) => {
+  await loadList(intParam(req), me(req), true);
+  const r = await bulkRoms(bulkSchema.parse(req.body));
+  res.json({ games: r.games, roms: r.romIds.length, perSystem: r.perSystem });
+});
+
+listsRouter.post('/:id/items/bulk', async (req, res) => {
+  const list = await loadList(intParam(req), me(req), true);
+  const { romIds } = await bulkRoms(bulkSchema.parse(req.body));
+  if (romIds.length > 50_000) throw badRequest('Too many roms at once');
+  const items = romIds.map((romId) => ({ romId }));
+  if (list.kind === 'favorites') await prisma.romFavorite.createMany({ data: romIds.map((romId) => ({ userId: list.ownerId, romId })), skipDuplicates: true });
+  // Covers for thousands of games are a bulk scrape: only for those allowed to run one
+  const added = await addItems(list.id, items, hasPermission(me(req), 'scrape.bulk') ? me(req) : undefined);
   if (added) void refreshChildren(list.id);
   res.status(201).json({ added });
 });

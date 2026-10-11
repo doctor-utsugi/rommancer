@@ -3085,3 +3085,23 @@ test('header probes: roms read by their product code, inside a CHD too; hacks li
   assert.equal(summary.unidentified, 2, 'the file with an unknown code and the odd cart, not the port');
   assert.equal((await api('POST', `/devices/${id}/pull`, { systems: [], unidentifiedSystems: [], hackSystems: ['gba'] })).json.queued, 1);
 });
+
+test('lists: whole systems at once, in the regions asked for', async () => {
+  const { prisma } = await import('../src/lib/prisma.js');
+  const nes = (await prisma.system.findUniqueOrThrow({ where: { slug: 'nes' } })).id;
+  const list = (await api('POST', '/lists', { name: 'Every NES' })).json;
+  const preview = async (body: object) => (await api('POST', `/lists/${list.id}/items/bulk/preview`, { systemIds: [nes], ...body })).json;
+  const best = await preview({});
+  assert.ok(best.roms > 0, JSON.stringify(best));
+  assert.equal(best.roms, best.games, 'one version per game');
+  const all = await preview({ mode: 'all' });
+  assert.ok(all.roms >= best.roms);
+  const europe = await preview({ regions: ['Europe'] });
+  assert.ok(europe.games <= best.games);
+  // Only European (or World) versions go in
+  const added = (await api('POST', `/lists/${list.id}/items/bulk`, { systemIds: [nes], regions: ['Europe'] })).json.added;
+  assert.equal(added, europe.roms);
+  const items = await prisma.listItem.findMany({ where: { listId: list.id }, include: { rom: { select: { regions: true } } } });
+  assert.ok(items.every((i) => (i.rom!.regions as string[]).some((r) => r === 'Europe' || r === 'World')));
+  assert.equal((await api('POST', `/lists/${list.id}/items/bulk`, { systemIds: [nes], regions: ['Europe'] })).json.added, 0, 'nothing twice');
+});

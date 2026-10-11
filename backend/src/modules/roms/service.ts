@@ -106,6 +106,13 @@ const DEFAULT_EXCLUDE = ['proto', 'beta', 'demo', 'sample', 'pirate'];
 
 /** Elige la mejor rom de un juego segun preferencias. Devuelve null si ninguna cumple los filtros. */
 export function pickRom<T extends RomForPick>(roms: T[], pref: RomPreference, owned?: Set<number>): T | null {
+  const cands = romCandidates(roms, pref, owned);
+  if (!cands.length) return null;
+  return cands.sort((a, b) => romScore(b, pref, owned) - romScore(a, pref, owned))[0];
+}
+
+/** The roms that meet the preferences' hard rules (flags, achievements, owned, strict regions and languages) */
+export function romCandidates<T extends RomForPick>(roms: T[], pref: RomPreference, owned?: Set<number>): T[] {
   const exclude = pref.excludeFlags ?? DEFAULT_EXCLUDE;
   let cands = roms.filter((r) => !r.isBios && !(r.flags as string[]).some((f) => exclude.includes(f)));
   if (pref.raOnly) cands = cands.filter((r) => r.raGameId != null);
@@ -115,8 +122,7 @@ export function pickRom<T extends RomForPick>(roms: T[], pref: RomPreference, ow
     cands = cands.filter((r) => (r.regions as string[]).some((x) => regions.includes(x) || x === 'World'));
   const langs = pref.languages ?? [];
   if (pref.strictLanguages && langs.length) cands = cands.filter((r) => (r.languages as string[]).some((x) => langs.includes(x)));
-  if (!cands.length) return null;
-  return cands.sort((a, b) => romScore(b, pref, owned) - romScore(a, pref, owned))[0];
+  return cands;
 }
 
 /** How well a rom fits the preferences: region and language order, owned, achievements, clean dump, newest revision */

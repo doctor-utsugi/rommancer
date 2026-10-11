@@ -16,8 +16,9 @@ import { Empty, Field, JobProgress, NativeSelect, PageHeader, errMsg, useJob, fo
 import { VerifiedUpload } from '@/pages/upload'
 import { ListFormDialog } from './lists'
 import { DeriveWizard } from '@/components/derive-wizard'
+import { BulkAddDialog } from '@/components/bulk-add'
 
-type DialogKind = 'edit' | 'share' | 'derive' | 'zip' | 'device' | null
+type DialogKind = 'edit' | 'bulk' | 'share' | 'derive' | 'zip' | 'device' | null
 
 export function ListPage() {
   const { id } = useParams()
@@ -110,6 +111,11 @@ export function ListPage() {
         {list.canEdit && !isFavorites && (
           <Button variant="outline" size="sm" onClick={() => setDialog('edit')}>
             {t('common.edit')}
+          </Button>
+        )}
+        {list.canEdit && !list.parentListId && (
+          <Button variant="outline" size="sm" onClick={() => setDialog('bulk')}>
+            {t('more.bulk.button')}
           </Button>
         )}
         {isOwner && (
@@ -281,6 +287,10 @@ export function ListPage() {
       )}
       {dialog === 'edit' && <ListFormDialog list={list} onClose={() => setDialog(null)} onSaved={() => void refetch()} />}
       {dialog === 'share' && <ShareDialog list={list} onClose={() => setDialog(null)} onSaved={() => void refetch()} />}
+      {dialog === 'bulk' && <BulkAddDialog listId={list.id} onClose={() => {
+        setDialog(null)
+        void refetch()
+      }} />}
       {dialog === 'derive' && <DeriveWizard list={{ id: list.id, name: isFavorites ? t('more.fav.listName') : list.name }} onClose={() => setDialog(null)} />}
       {dialog === 'zip' && <ZipDialog list={list} onClose={() => setDialog(null)} />}
       {dialog === 'device' && <DeviceDialog list={list} onClose={() => setDialog(null)} />}
