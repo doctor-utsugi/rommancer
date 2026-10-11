@@ -29,6 +29,7 @@ import { Prisma } from '@prisma/client';
 import { storeWifiBands } from '../devconfig/service.js';
 import { cardAction, commitOffer, deviceCard, findDeviceCard, gameForSerial, gcCardFile, gciFolderState, hasWantedSaves, isCardEmulator, namedCard, observeCard, prepareCard, recordOffer } from './cards.js';
 import { takeNudge } from './nudge.js';
+import { systemIndex } from '../scanner/systems.js';
 import { FAN_WORK, FIRST_ASK, normTitle, probeRound, probesOf, serialMatch, wantsProbe } from './probe.js';
 
 export const agentRouter = Router();
@@ -88,6 +89,11 @@ async function systemsByExtension() {
 async function systemOf(layout: DeviceLayout, folder: string, romPath: string): Promise<string | null> {
   const byFolder = Object.entries(layout.systemMap).find(([, v]) => v.folder === folder && v.folder !== '')?.[0];
   if (byFolder) return byFolder;
+  // A folder named as other firmwares name it ("megadrive" where ES-DE says "genesis")
+  if (folder) {
+    const known = (await systemIndex()).byFolder.get(folder.toLowerCase());
+    if (known) return known.slug;
+  }
   const ext = path.posix.extname(romPath).toLowerCase();
   const { map, exts } = await systemsByExtension();
   const only = Object.keys(layout.systemMap);
@@ -690,7 +696,13 @@ agentRouter.post('/pull/:id', async (req, res) => {
       } catch (e) {
         if (!(e instanceof HttpError) || e.status !== 422) throw e;
         const inv = await prisma.deviceRom.findFirst({ where: { deviceId: device.id, path: pull.path } });
-        const system = inv?.systemSlug ? await prisma.system.findUnique({ where: { slug: inv.systemSlug } }) : null;
+        // Its folder's system, else the one of its game or of the game it is a hack of
+        const known = inv?.gameId ?? inv?.baseGameId;
+        const system = inv?.systemSlug
+          ? await prisma.system.findUnique({ where: { slug: inv.systemSlug } })
+          : known
+            ? (await prisma.game.findUnique({ where: { id: known }, select: { system: true } }))?.system
+            : null;
         if (!system) throw badRequest('Unknown system for an unverified rom');
         const title = parseRomName(name.replace(/\.[^.]+$/, '')).title || name;
         const game = await prisma.game.findFirst({ where: { systemId: system.id, titleNormalized: normalizeTitle(title).slice(0, 255) } });

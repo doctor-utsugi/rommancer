@@ -281,7 +281,7 @@ devicesRouter.get('/:id/inventory', async (req, res) => {
       newFiles: helpful.length,
       newBytes: helpful.reduce((n, i) => n + i.size, 0),
       waiting: helpful.filter((i) => i.pullPending).length,
-      unidentified: items.filter((i) => !i.gameId && !i.baseGameId && !i.onServer).length,
+      unidentified: items.filter((i) => !i.gameId && !i.baseGameId && !i.onServer && i.system).length,
       hacks: items.filter((i) => i.baseGameId && !i.onServer).length,
       collection: { total: catalogTotal, before: ownedGames.size, after: ownedGames.size + newGames.size },
       consoleSystems: { total: systemsTotal, before: ownedInSystems, after: ownedInSystems + newGames.size },
@@ -322,8 +322,9 @@ async function pullRows(d: Device, body: z.infer<typeof pullBody>) {
   const systems = body.systems ? new Set(body.systems) : null;
   const unidentified = new Set(body.unidentifiedSystems ?? []);
   const hacks = new Set(body.hackSystems ?? []);
+  // Files of no system (ports, apps) have nowhere to go on the server
   const chosen = systems
-    ? withSystem.filter((r) => (r.gameId ? systems.has(r.system ?? '') : r.baseGameId ? hacks.has(r.system ?? '') : !!body.unidentified || unidentified.has(r.system ?? '')))
+    ? withSystem.filter((r) => !!r.system).filter((r) => (r.gameId ? systems.has(r.system ?? '') : r.baseGameId ? hacks.has(r.system ?? '') : !!body.unidentified || unidentified.has(r.system ?? '')))
     : withSystem;
   // Hacks and other unidentified files the server already holds, by their content
   const sha1s = chosen.flatMap((r) => (!r.gameId && r.sha1 ? [r.sha1] : []));

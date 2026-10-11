@@ -550,7 +550,8 @@ function CopyDialog({ deviceId, items, admin, onClose, onCopy }: { deviceId: str
   const groupsOf = (kind: 'new' | 'hack' | 'rest') => {
     const by = new Map<string, { slug: string; name: string; files: number; bytes: number }>()
     for (const i of items) {
-      if (i.onServer || i.pullPending || kindOf(i) !== kind || (kind === 'new' && !i.system)) continue
+      // Files of no system (ports, apps) cannot be stored on the server
+      if (i.onServer || i.pullPending || kindOf(i) !== kind || !i.system) continue
       const slug = i.system ?? ''
       const g = by.get(slug) ?? { slug, name: i.systemName ?? (i.system || t('more.copyPick.noSystem')), files: 0, bytes: 0 }
       g.files++

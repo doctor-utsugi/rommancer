@@ -3021,6 +3021,11 @@ test('header probes: roms read by their product code, inside a CHD too; hacks li
   fs.writeFileSync(path.join(root, 'roms/gba', loose), gba('XAGJ'));
   fs.writeFileSync(path.join(root, 'roms/gba', 'Pokemon Radical Red.gba'), gba('XBPE'));
   fs.writeFileSync(path.join(root, 'roms/gba', 'Unknown Thing.gba'), gba('ZZZZ'));
+  // A folder named as another firmware names it, and one of no system (a port)
+  fs.mkdirSync(path.join(root, 'roms/genesis'), { recursive: true });
+  fs.writeFileSync(path.join(root, 'roms/genesis', 'Odd Cart.md'), crypto.randomBytes(4096));
+  fs.mkdirSync(path.join(root, 'roms/ports'), { recursive: true });
+  fs.writeFileSync(path.join(root, 'roms/ports', 'Some Port.sh'), 'echo port');
   const chd = path.join(DATA, 'ps1/psx/Test Game (USA).chd');
   const disc = fs.existsSync(chd);
   if (disc) {
@@ -3050,7 +3055,7 @@ test('header probes: roms read by their product code, inside a CHD too; hacks li
 
   // Read once: the next sync asks for nothing and keeps what the headers said
   const probes = await prisma.deviceProbe.count({ where: { deviceId: id } });
-  assert.equal(probes, disc ? 4 : 3);
+  assert.equal(probes, disc ? 5 : 4);
   const r = await fetch(`${base}/api/v1/agent/sync`, { method: 'POST', headers: { 'X-Device-Token': claim.json.token, 'X-Probe': '1', 'Content-Type': 'text/plain' }, body: fs.readFileSync(path.join(os.tmpdir(), `rommancer-${process.getuid!()}`, 'request')) });
   const plan = await r.text();
   assert.doesNotMatch(plan, /^probe\t/m);
@@ -3060,6 +3065,7 @@ test('header probes: roms read by their product code, inside a CHD too; hacks li
   // The copy window counts hacks apart: neither new games nor unidentified
   const summary = (await api('GET', `/devices/${id}/inventory`)).json.summary;
   assert.equal(summary.hacks, 1);
-  assert.equal(summary.unidentified, 1, 'only the file with an unknown code');
+  assert.equal((await item('Odd Cart.md')).system, 'md');
+  assert.equal(summary.unidentified, 2, 'the file with an unknown code and the odd cart, not the port');
   assert.equal((await api('POST', `/devices/${id}/pull`, { systems: [], unidentifiedSystems: [], hackSystems: ['gba'] })).json.queued, 1);
 });
