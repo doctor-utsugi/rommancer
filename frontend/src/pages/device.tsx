@@ -82,6 +82,7 @@ export function DevicePage() {
   const [system, setSystem] = useState('')
   const [show, setShow] = useState<'all' | 'new' | 'unidentified' | 'onServer'>('all')
   const [sending, setSending] = useState(false)
+  const [copying, setCopying] = useState(false)
 
   const items = inventory.data?.items ?? []
   const systems = useMemo(() => [...new Map(items.filter((i) => i.system).map((i) => [i.system!, i.systemName ?? i.system!])).entries()], [items])
@@ -147,13 +148,24 @@ export function DevicePage() {
           summary={inventory.data.summary}
           progress={progress.data}
           canPull={allowPull}
-          onCopy={() => void pull({ identified: true })}
-          onCopyRest={() => void pull({})}
+          onCopy={() => setCopying(true)}
           onCancel={() => {
             if (confirm(t('more.hero.cancelConfirm'))) void act(() => del(`/devices/${id}/pulls`), (r) => t('more.hero.cancelled', { count: r.cancelled }))
           }}
           onPause={() => void act(() => post(`/devices/${id}/pulls/pause`, {}))}
           onResume={() => void act(() => post(`/devices/${id}/pulls/resume`, {}))}
+        />
+      )}
+      {copying && inventory.data?.summary && (
+        <CopyDialog
+          deviceId={id!}
+          items={items}
+          admin={user?.role === 'ADMIN'}
+          onClose={() => setCopying(false)}
+          onCopy={(systems, unidentified) => {
+            setCopying(false)
+            void pull({ systems, unidentified })
+          }}
         />
       )}
 
@@ -373,7 +385,6 @@ function CollectionHero({
   progress,
   canPull,
   onCopy,
-  onCopyRest,
   onCancel,
   onPause,
   onResume,
@@ -382,7 +393,6 @@ function CollectionHero({
   progress?: PullProgress
   canPull: boolean
   onCopy: () => void
-  onCopyRest: () => void
   onCancel: () => void
   onPause: () => void
   onResume: () => void
@@ -438,16 +448,11 @@ function CollectionHero({
             </div>
             {canPull && (
               <div className="flex flex-col items-end gap-1">
-                {left > 0 && (
+                {(left > 0 || summary.unidentified > 0) && (
                   <Button onClick={onCopy}>
                     <Download className="size-4" />
-                    {t('more.hero.copyAll')}
+                    {t('more.hero.copy')}
                   </Button>
-                )}
-                {summary.unidentified > 0 && (
-                  <button type="button" className="text-xs text-muted-foreground underline-offset-2 hover:underline" onClick={onCopyRest}>
-                    {t('more.hero.copyRest', { count: summary.unidentified })}
-                  </button>
                 )}
               </div>
             )}
@@ -456,6 +461,170 @@ function CollectionHero({
         {progress && (running || finished) && <CopyProgress p={progress} onCancel={onCancel} onPause={onPause} onResume={onResume} onClose={close} divided={summary.newGames > 0} />}
       </CardContent>
     </Card>
+  )
+}
+
+interface PlacementDest {
+  id: number
+  label: string
+  path: string
+  online: boolean
+  reason?: string
+  systems: string[]
+  general: boolean
+  priority: number
+  reservePercent: number
+  free: number
+  total: number
+  files: number
+  bytes: number
+}
+
+interface Placement {
+  library: { path: string; free: number; total: number; files: number; bytes: number } | null
+  destinations: PlacementDest[]
+  unplaced: { files: number; bytes: number }
+  noTarget: { files: number; bytes: number }
+}
+
+/** A disk as a bar: in use, what the copy would add, and what stays free */
+function DiskBar({ free, total, add }: { free: number; total: number; add: number }) {
+  const { t } = useTranslation()
+  if (!total) return null
+  const used = Math.max(0, total - free)
+  const w = (n: number) => `${Math.min(100, (n / total) * 100)}%`
+  return (
+    <div className="space-y-1">
+      <div className="flex h-2.5 overflow-hidden rounded-full bg-muted">
+        <div className="bg-muted-foreground/50" style={{ width: w(used) }} />
+        <div className="bg-primary" style={{ width: w(Math.min(add, free)) }} />
+      </div>
+      <p className="text-xs text-muted-foreground">
+        {t('more.copyPick.diskLine', { used: formatBytes(used), total: formatBytes(total), left: formatBytes(Math.max(0, free - add)) })}
+      </p>
+    </div>
+  )
+}
+
+/**
+ * What to copy from the console: one line per system with new games (all ticked), plus the unidentified files
+ * (not ticked). Below, every destination folder of the server with its disk and what the selection would bring
+ * to it, by the same rules the copy follows; nothing is copied while something would not fit anywhere.
+ */
+function CopyDialog({ deviceId, items, admin, onClose, onCopy }: { deviceId: string; items: InventoryItem[]; admin: boolean; onClose: () => void; onCopy: (systems: string[], unidentified: boolean) => void }) {
+  const { t } = useTranslation()
+  const groups = useMemo(() => {
+    const by = new Map<string, { slug: string; name: string; files: number; bytes: number }>()
+    for (const i of items) {
+      if (!i.gameId || i.onServer || i.pullPending || !i.system) continue
+      const g = by.get(i.system) ?? { slug: i.system, name: i.systemName ?? i.system, files: 0, bytes: 0 }
+      g.files++
+      g.bytes += i.size
+      by.set(i.system, g)
+    }
+    return [...by.values()].sort((a, b) => a.name.localeCompare(b.name))
+  }, [items])
+  const rest = useMemo(() => items.filter((i) => !i.gameId && !i.onServer && !i.pullPending), [items])
+  const restBytes = rest.reduce((n, i) => n + i.size, 0)
+  const [picked, setPicked] = useState(() => new Set(groups.map((g) => g.slug)))
+  const [withRest, setWithRest] = useState(false)
+  const chosen = groups.filter((g) => picked.has(g.slug))
+  const files = chosen.reduce((n, g) => n + g.files, 0) + (withRest ? rest.length : 0)
+  const bytes = chosen.reduce((n, g) => n + g.bytes, 0) + (withRest ? restBytes : 0)
+  const systems = [...picked].sort()
+  const preview = useQuery({
+    queryKey: ['pull-preview', deviceId, systems.join(','), withRest],
+    queryFn: () => post<Placement>(`/devices/${deviceId}/pull-preview`, { systems, unidentified: withRest }),
+    placeholderData: (prev) => prev,
+  })
+  const p = preview.data
+  const blocked = !p || preview.isFetching || p.unplaced.files > 0 || p.noTarget.files > 0
+  const all = groups.length > 0 && picked.size === groups.length
+  return (
+    <Dialog open onOpenChange={(o) => !o && onClose()}>
+      <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-2xl">
+        <DialogHeader>
+          <DialogTitle>{t('more.copyPick.title')}</DialogTitle>
+        </DialogHeader>
+        <p className="text-sm text-muted-foreground">{t('more.copyPick.help')}</p>
+        <label className="flex items-center gap-2 border-b pb-2 text-sm font-medium">
+          <Checkbox checked={all} onCheckedChange={(c) => setPicked(new Set(c ? groups.map((g) => g.slug) : []))} />
+          {t('more.copyPick.all')}
+        </label>
+        <div className="max-h-64 space-y-1 overflow-y-auto">
+          {groups.map((g) => (
+            <label key={g.slug} className="flex items-center gap-2 text-sm">
+              <Checkbox
+                checked={picked.has(g.slug)}
+                onCheckedChange={(c) => {
+                  const next = new Set(picked)
+                  if (c) next.add(g.slug)
+                  else next.delete(g.slug)
+                  setPicked(next)
+                }}
+              />
+              <span className="flex-1 truncate">{g.name}</span>
+              <span className="shrink-0 text-xs text-muted-foreground">{t('more.hero.files', { count: g.files })}</span>
+              <span className="w-20 shrink-0 text-right text-xs tabular-nums text-muted-foreground">{formatBytes(g.bytes)}</span>
+            </label>
+          ))}
+          {rest.length > 0 && (
+            <label className="flex items-center gap-2 border-t pt-2 text-sm">
+              <Checkbox checked={withRest} onCheckedChange={(c) => setWithRest(!!c)} />
+              <span className="flex-1 truncate">{t('more.copyPick.unidentified')}</span>
+              <span className="shrink-0 text-xs text-muted-foreground">{t('more.hero.files', { count: rest.length })}</span>
+              <span className="w-20 shrink-0 text-right text-xs tabular-nums text-muted-foreground">{formatBytes(restBytes)}</span>
+            </label>
+          )}
+        </div>
+        <div className="space-y-3 rounded-md border p-3">
+          <div className="flex flex-wrap items-baseline justify-between gap-2">
+            <p className="text-sm font-medium">{t('more.copyPick.where')}</p>
+            {admin && (
+              <Link to="/admin/paths" className="text-xs text-primary underline-offset-2 hover:underline">
+                {t('more.copyPick.manage')}
+              </Link>
+            )}
+          </div>
+          {!p && <p className="text-xs text-muted-foreground">{t('common.loading')}</p>}
+          {p?.library && (
+            <div className="space-y-1">
+              <p className="text-sm">
+                {t('more.copyPick.library')} <span className="text-xs text-muted-foreground">{p.library.path}</span>
+              </p>
+              <DiskBar free={p.library.free} total={p.library.total} add={p.library.bytes} />
+            </div>
+          )}
+          {p?.destinations.map((d) => (
+            <div key={d.id} className={`space-y-1 ${d.files ? '' : 'opacity-70'}`}>
+              <div className="flex flex-wrap items-baseline justify-between gap-x-3">
+                <p className="text-sm">
+                  <span className="font-medium">{d.label}</span> <span className="text-xs text-muted-foreground">{d.path}</span>
+                </p>
+                <p className={`text-xs ${d.files ? 'font-medium text-primary' : 'text-muted-foreground'}`}>
+                  {d.files ? t('more.copyPick.gets', { count: d.files, size: formatBytes(d.bytes) }) : t('more.copyPick.getsNothing')}
+                </p>
+              </div>
+              <p className="text-xs text-muted-foreground">
+                {d.general ? t('more.copyPick.general') : ''}
+                {d.general && d.systems.length ? ' · ' : ''}
+                {d.systems.length ? t('more.copyPick.forSystems', { list: d.systems.join(', ') }) : ''}
+                {` · ${t('more.copyPick.reserve', { n: d.reservePercent })}`}
+              </p>
+              {d.online ? <DiskBar free={d.free} total={d.total} add={d.bytes} /> : <p className="text-xs text-destructive">{t('more.copyPick.offline', { reason: d.reason ?? '?' })}</p>}
+            </div>
+          ))}
+          {p && p.unplaced.files > 0 && <p className="text-xs text-destructive">{t('more.copyPick.unplaced', { count: p.unplaced.files, size: formatBytes(p.unplaced.bytes) })}</p>}
+          {p && p.noTarget.files > 0 && <p className="text-xs text-destructive">{t('more.copyPick.noTarget', { count: p.noTarget.files, size: formatBytes(p.noTarget.bytes) })}</p>}
+        </div>
+        <DialogFooter>
+          <Button onClick={() => onCopy(systems, withRest)} disabled={!files || blocked}>
+            <Download className="size-4" />
+            {t('more.copyPick.go', { count: files, size: formatBytes(bytes) })}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   )
 }
 

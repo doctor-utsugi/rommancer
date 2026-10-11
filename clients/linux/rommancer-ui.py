@@ -64,6 +64,7 @@ TEXTS = {
         "p_waiting": "Esperando a la sincronización en curso",
         "p_roms": "Comprobando roms",
         "p_saves": "Comprobando saves",
+        "p_hashing": "Leyendo ficheros nuevos o cambiados",
         "p_server": "Preguntando al servidor",
         "p_transfer": "Transfiriendo saves",
         "p_roms-plan": "Preguntando qué roms tocan",
@@ -116,6 +117,7 @@ TEXTS = {
         "p_waiting": "Waiting for the running sync",
         "p_roms": "Checking roms",
         "p_saves": "Checking saves",
+        "p_hashing": "Reading new or changed files",
         "p_server": "Asking the server",
         "p_transfer": "Transferring saves",
         "p_roms-plan": "Asking which roms belong here",
@@ -635,6 +637,8 @@ class App:
                 file_share = min(cur / size, 1) if size else 0
                 share = ((done - 1) + file_share) / total
                 detail = f"{parts[5][:42]}  {int(file_share * 100)}%"
+            elif len(parts) >= 6:
+                detail = parts[5] if len(parts[5]) <= 34 else parts[5][:33] + "…"
             s.frame(T["title"])
             s.sprite()
             x, width, y = s.left(), s.column(), int(s.h * 0.3)
@@ -650,6 +654,13 @@ class App:
                 fill.w = max(14, int(bar.w * min(share, 1)))
                 pygame.draw.rect(s.surf, ACCENT, fill, border_radius=7)
                 s.text(f"{int(100 * share)}%", (bar.right - 50, bar.bottom + 6), s.small, DIM)
+            else:
+                # No total yet: a stretch of the bar sweeps back and forth, so it never looks stuck
+                seg = bar.copy()
+                seg.w = bar.w // 4
+                t = (pygame.time.get_ticks() / 1400) % 2
+                seg.x = bar.x + int((bar.w - seg.w) * (t if t < 1 else 2 - t))
+                pygame.draw.rect(s.surf, ACCENT, seg, border_radius=7)
             if detail:
                 s.text(detail, (x, bar.bottom + 6), s.small, DIM)
             s.flip()

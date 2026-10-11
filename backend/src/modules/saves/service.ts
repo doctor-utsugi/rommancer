@@ -4,6 +4,7 @@ import crypto from 'node:crypto';
 import type { Emulator, SaveKind } from '@prisma/client';
 import { env } from '../../config/env.js';
 import { prisma } from '../../lib/prisma.js';
+import { nudgeDevices } from './nudge.js';
 
 const MAX_VERSIONS = 50;
 
@@ -95,7 +96,11 @@ export async function storeVersion(
   await prisma.saveVersion.update({ where: { id: version.id }, data: { path: rel } });
   // La version nueva pasa a ser la actual salvo que se indique lo contrario (conflictos).
   // No se comparan fechas: los relojes de las portatiles no son fiables.
-  if (opts.makeCurrent !== false || !save.currentVersionId) await prisma.save.update({ where: { id: save.id }, data: { currentVersionId: version.id } });
+  if (opts.makeCurrent !== false || !save.currentVersionId) {
+    await prisma.save.update({ where: { id: save.id }, data: { currentVersionId: version.id } });
+    // The user's other devices fetch it now instead of at their next regular pass
+    await nudgeDevices(key.userId, opts.sourceDeviceId);
+  }
   await pruneVersions(save.id);
   return { save, version: { ...version, path: rel }, created: true };
 }

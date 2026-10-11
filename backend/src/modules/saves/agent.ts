@@ -28,6 +28,7 @@ import { devicePlan } from '../devices/plan.js';
 import { Prisma } from '@prisma/client';
 import { storeWifiBands } from '../devconfig/service.js';
 import { cardAction, commitOffer, deviceCard, findDeviceCard, gameForSerial, gcCardFile, gciFolderState, hasWantedSaves, isCardEmulator, namedCard, observeCard, prepareCard, recordOffer } from './cards.js';
+import { takeNudge } from './nudge.js';
 
 export const agentRouter = Router();
 
@@ -487,6 +488,24 @@ agentRouter.get('/rom', async (req, res) => {
   else res.sendFile(ref.p);
 });
 
+/**
+ * The device's roms whose save or savestate is synced with the server on this device ("saves<TAB>path"), for the
+ * collection the clients write for EmulationStation. A rom counts by its game, or by its name when no database
+ * knows it (how saves are shared).
+ */
+agentRouter.get('/collections', async (req, res) => {
+  const device = await deviceFromToken(req);
+  const synced = await prisma.saveDeviceState.findMany({
+    where: { deviceId: device.id, versionId: { not: null }, save: { supersededAt: null, cardId: null } },
+    select: { save: { select: { gameId: true, baseName: true } } },
+  });
+  const games = new Set(synced.flatMap((s) => (s.save.gameId ? [s.save.gameId] : [])));
+  const names = new Set(synced.map((s) => s.save.baseName));
+  const roms = await prisma.deviceRom.findMany({ where: { deviceId: device.id }, select: { path: true, gameId: true } });
+  const out = roms.filter((r) => (r.gameId && games.has(r.gameId)) || names.has(path.posix.basename(r.path).replace(/\.[^.]+$/, ''))).map((r) => `saves\t${r.path}`);
+  res.type('text/plain').send(out.join('\n') + (out.length ? '\n' : ''));
+});
+
 // ---------- conflicts this device is part of ----------
 
 agentRouter.get('/conflicts', async (req, res) => {
@@ -525,6 +544,8 @@ agentRouter.get('/poll', async (req, res) => {
     await prisma.device.update({ where: { id: device.id }, data: { wantSyncAt: null } });
   }
   if (await prisma.devicePull.count({ where: { deviceId: device.id, status: { in: OPEN_PULL } } })) out.push('pull');
+  // A save from another device is waiting: sync saves only (no settings, no roms)
+  if (takeNudge(device.id)) out.push('saves');
   res.type('text/plain').send(out.join('\n') + (out.length ? '\n' : ''));
 });
 

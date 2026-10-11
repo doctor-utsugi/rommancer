@@ -18,6 +18,7 @@ import { ownedGameIds, ownedRomIds } from '../roms/service.js';
 import { installClient, serverKey, syncOverSsh } from './ssh.js';
 import { OPEN_PULL, pullTransfers } from '../saves/agent.js';
 import { devicePlan } from './plan.js';
+import { previewPlacement } from '../roms/destination.js';
 
 /** Requests not finished yet, including paused ones (the console is only offered the open ones) */
 const QUEUED_PULL = [...OPEN_PULL, 'paused'];
@@ -287,22 +288,48 @@ devicesRouter.post('/:id/refresh', async (req, res) => {
   res.status(202).json({ ok: true });
 });
 
-// Bring roms the server lacks from the device: given paths, a whole system, or everything missing
-devicesRouter.post('/:id/pull', requirePerm('roms.upload'), async (req, res) => {
-  const d = await ownDevice(intParam(req), me(req));
-  if (!d.allowPull) throw forbidden();
-  // identified: only games a database knows (what the device page offers to copy); otherwise everything missing
-  const body = z.object({ paths: z.array(z.string().max(1024)).max(5000).optional(), system: z.string().max(32).optional(), identified: z.boolean().optional() }).parse(req.body);
+const pullBody = z.object({
+  paths: z.array(z.string().max(1024)).max(5000).optional(),
+  system: z.string().max(32).optional(),
+  identified: z.boolean().optional(),
+  // The copy window's choice: identified games of these systems, plus the unidentified files when asked
+  systems: z.array(z.string().max(32)).max(500).optional(),
+  unidentified: z.boolean().optional(),
+});
+
+/** The device's roms a copy request covers that the server lacks and has not queued yet, with their system */
+async function pullRows(d: Device, body: z.infer<typeof pullBody>) {
   const rows = await prisma.deviceRom.findMany({
     where: { deviceId: d.id, ...(body.paths ? { path: { in: body.paths } } : {}), ...(body.system ? { systemSlug: body.system } : {}), ...(body.identified ? { gameId: { not: null } } : {}) },
   });
-  const ownedRoms = await ownedRomIds({ romIds: [...new Set(rows.flatMap((r) => (r.romId ? [r.romId] : [])))], include: 'any' });
+  // A game's system when its folder named none (the same rule as the inventory)
+  const games = await prisma.game.findMany({ where: { id: { in: [...new Set(rows.flatMap((r) => (r.gameId ? [r.gameId] : [])))] } }, select: { id: true, system: { select: { slug: true } } } });
+  const slugOf = new Map(games.map((g) => [g.id, g.system.slug]));
+  const withSystem = rows.map((r) => ({ ...r, system: r.systemSlug ?? (r.gameId ? slugOf.get(r.gameId) : undefined) ?? null }));
+  const systems = body.systems ? new Set(body.systems) : null;
+  const chosen = systems ? withSystem.filter((r) => (r.gameId ? systems.has(r.system ?? '') : !!body.unidentified)) : withSystem;
+  const ownedRoms = await ownedRomIds({ romIds: [...new Set(chosen.flatMap((r) => (r.romId ? [r.romId] : [])))], include: 'any' });
   const ownedGames = await ownedGameIds();
   const pending = new Set((await prisma.devicePull.findMany({ where: { deviceId: d.id, status: { in: QUEUED_PULL } }, select: { path: true } })).map((p) => p.path));
   // Explicit paths are fetched even if the game is owned (another version); bulk requests only bring what is missing
-  const wanted = rows.filter((r) => !pending.has(r.path) && (body.paths || !((r.romId && ownedRoms.has(r.romId)) || (r.gameId && ownedGames.has(r.gameId)))));
+  return chosen.filter((r) => !pending.has(r.path) && (body.paths || !((r.romId && ownedRoms.has(r.romId)) || (r.gameId && ownedGames.has(r.gameId)))));
+}
+
+// Bring roms the server lacks from the device: given paths, a whole system, chosen systems or everything missing
+devicesRouter.post('/:id/pull', requirePerm('roms.upload'), async (req, res) => {
+  const d = await ownDevice(intParam(req), me(req));
+  if (!d.allowPull) throw forbidden();
+  const wanted = await pullRows(d, pullBody.parse(req.body));
   if (wanted.length) await prisma.devicePull.createMany({ data: wanted.map((r) => ({ deviceId: d.id, path: r.path })) });
   res.status(202).json({ queued: wanted.length });
+});
+
+// Where a copy would land: every destination folder of the server, what each would get and what would not fit
+devicesRouter.post('/:id/pull-preview', requirePerm('roms.upload'), async (req, res) => {
+  const d = await ownDevice(intParam(req), me(req));
+  const rows = await pullRows(d, pullBody.parse(req.body));
+  const sizes = await catalogSizes(rows);
+  res.json(await previewPlacement(rows.map((r) => ({ system: r.system, size: sizes.get(r.path) ?? 0 }))));
 });
 
 /** File sizes by DeviceRom path: what the device reported, else the catalog's (older clients send none) */

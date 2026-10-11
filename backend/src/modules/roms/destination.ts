@@ -8,7 +8,7 @@ import { HttpError } from '../../lib/http.js';
 import { pathKey } from '../scanner/service.js';
 import type { FileHashes } from '../../lib/hash.js';
 import crypto from 'node:crypto';
-import { checkPath, registerIdentity, TMP_DIR, volumeKey } from '../storage/health.js';
+import { checkPath, diskSpace, registerIdentity, TMP_DIR, volumeKey } from '../storage/health.js';
 
 /** Bytes being written right now per disk, so concurrent uploads do not all pass the same free-space check */
 const inFlight = new Map<string, number>();
@@ -149,4 +149,83 @@ export async function userDatSource(systemId: number) {
     (await prisma.datSource.findUnique({ where: { systemId_type_name: { systemId, type: 'USER', name } } })) ??
     (await prisma.datSource.create({ data: { systemId, type: 'USER', name, fileSha1: '', priority: -1 } }))
   );
+}
+
+export interface PlacementDest {
+  id: number;
+  label: string;
+  path: string;
+  online: boolean;
+  reason?: string;
+  /** Systems it takes; empty and general = every system without its own folder */
+  systems: string[];
+  general: boolean;
+  priority: number;
+  reservePercent: number;
+  /** Its disk: bytes free and in all; folders on one disk share them */
+  free: number;
+  total: number;
+  /** What the files would bring to this folder */
+  files: number;
+  bytes: number;
+}
+
+/**
+ * Where FILES would land if they were copied now, with the rules of resolveDestination: the system's folders by
+ * priority, then the general ones, the first that is reachable and keeps its reserve; folders on one disk share
+ * its free space. Every writable folder is listed, whether it gets anything or not.
+ */
+export async function previewPlacement(files: { system: string | null; size: number }[]) {
+  const writable = await prisma.romPath.findMany({ where: { readOnly: false }, orderBy: [{ priority: 'asc' }, { id: 'asc' }] });
+  const dests: (PlacementDest & { volume: string; keep: number })[] = [];
+  for (const rp of writable) {
+    const health = await checkPath(rp);
+    const volume = await volumeKey(rp.path);
+    const total = health.total ?? 0;
+    dests.push({
+      id: rp.id,
+      label: rp.label,
+      path: rp.path,
+      online: health.online,
+      reason: health.reason,
+      systems: (rp.targetSystems as string[] | null) ?? [],
+      general: rp.isDefaultTarget,
+      priority: rp.priority,
+      reservePercent: rp.reservePercent,
+      free: Math.max(0, (health.free ?? 0) - (inFlight.get(volume) ?? 0)),
+      total,
+      files: 0,
+      bytes: 0,
+      volume,
+      keep: (total * rp.reservePercent) / 100,
+    });
+  }
+  const used = new Map<string, number>();
+  const unplaced = { files: 0, bytes: 0 };
+  const noTarget = { files: 0, bytes: 0 };
+  // A new server with no folders yet: everything goes to the library in the data folder
+  if (!dests.length) {
+    const s = await diskSpace(fs.existsSync(env.libraryDir) ? env.libraryDir : path.dirname(env.libraryDir));
+    const bytes = files.reduce((n, f) => n + f.size, 0);
+    return { library: { path: env.libraryDir, free: s?.free ?? 0, total: s?.total ?? 0, files: files.length, bytes }, destinations: [], unplaced, noTarget };
+  }
+  for (const f of files) {
+    const own = f.system ? dests.filter((d) => d.systems.includes(f.system!)) : [];
+    const candidates = [...own, ...dests.filter((d) => d.general && !own.includes(d))];
+    if (!candidates.length) {
+      noTarget.files++;
+      noTarget.bytes += f.size;
+      continue;
+    }
+    const d = candidates.find((c) => c.online && c.free - (used.get(c.volume) ?? 0) - f.size >= c.keep);
+    if (!d) {
+      unplaced.files++;
+      unplaced.bytes += f.size;
+      continue;
+    }
+    used.set(d.volume, (used.get(d.volume) ?? 0) + f.size);
+    d.files++;
+    d.bytes += f.size;
+  }
+  return { library: null, destinations: dests.map(({ volume: _v, keep: _k, ...d }) => d), unplaced, noTarget };
 }

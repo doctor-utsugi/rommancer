@@ -1815,6 +1815,22 @@ test('sync client: roms of assigned lists, save before a game, conflicts resolve
   assert.match((await b.run('resolve', id, 'server')).stdout, /0 up, 1 down/);
   assert.equal(fs.readFileSync(saveB, 'utf8'), 'A-AGAIN');
   assert.equal((await b.run('conflicts')).stdout.trim(), '');
+
+  // EmulationStation collections on Knulli: the game whose save is synced, and the rom Rommancer copied
+  const sysroot = path.join(dir, 'b-sys');
+  const collections = (lang: string) =>
+    execFileP('sh', [client, 'collections'], { env: { ...process.env, ROMMANCER_STATE: path.join(dir, 'roms-b-state'), ROMMANCER_FIRMWARE: 'knulli', ROMMANCER_SYSROOT: sysroot, LANG: lang } });
+  await collections('C');
+  const coll = path.join(sysroot, 'userdata/system/configs/emulationstation/collections');
+  assert.deepEqual(fs.readFileSync(path.join(coll, 'custom-Rommancer - With saves.cfg'), 'utf8').trim().split('\n'), [romPath(b)]);
+  assert.deepEqual(fs.readFileSync(path.join(coll, 'custom-Rommancer - New.cfg'), 'utf8').trim().split('\n'), [romPath(b)]);
+  // Arrivals older than two weeks drop out, and the record forgets them
+  const record = path.join(dir, 'roms-b-state', 'received-roms');
+  fs.writeFileSync(record, fs.readFileSync(record, 'utf8').replace(/^\d+/gm, String(Math.floor(Date.now() / 1000) - 15 * 86400)));
+  await collections('es_ES.UTF-8');
+  assert.equal(fs.readFileSync(path.join(coll, 'custom-Rommancer - Nuevos.cfg'), 'utf8'), '');
+  assert.equal(fs.readFileSync(record, 'utf8'), '');
+  assert.deepEqual(fs.readFileSync(path.join(coll, 'custom-Rommancer - Con partida.cfg'), 'utf8').trim().split('\n'), [romPath(b)]);
 });
 
 test('collection: removing a hand-uploaded game deletes its file, list entries and records', async () => {

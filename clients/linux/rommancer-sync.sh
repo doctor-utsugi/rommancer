@@ -22,7 +22,7 @@
 #                                   Menu++...) mounted on this computer; the link lives on the card itself,
 #                                   so any computer with this script can sync it. Without a command: sync.
 set -u
-CLIENT_VERSION=20261017
+CLIENT_VERSION=20261018
 # A clock before this date is surely wrong (no battery-backed clock); kept apart from the version, which may run ahead
 CLOCK_MIN=20261001
 # Onion keeps curl (with TLS) and friends outside the default PATH
@@ -306,30 +306,92 @@ is_rom() {
   return 0
 }
 
-# Writes the sync request: every rom plus every save file with its sha1
 # Progress for the setup screens: "phase<TAB>done<TAB>total" in RAM
 progress() { printf '%s\t%s\t%s\n' "$1" "$2" "$3" > "$WORK/progress.tmp" && mv "$WORK/progress.tmp" "$WORK/progress"; }
+# The same with the file being worked on (its name is shown): "phase<TAB>done<TAB>total<TAB><TAB><TAB>name"
+progress_file() { printf '%s\t%s\t%s\t\t\t%s\n' "$1" "$2" "$3" "$(basename "$4")" > "$WORK/progress.tmp" && mv "$WORK/progress.tmp" "$WORK/progress"; }
 
-# Writes the sync request: every rom plus every save file with its sha1
+# "meta<TAB>path" for every file under the given find arguments, META being stat's FMT. One stat call for
+# many files where find can (-exec ... +): a fork per file is what makes a big rom folder slow on a handheld
+stat_files() {
+  fmt="$1"; shift
+  find "$@" -type f -exec stat -c "$fmt$TAB%n" {} + > "$WORK/stat" 2>/dev/null
+  [ -s "$WORK/stat" ] || find "$@" -type f 2>/dev/null | while IFS= read -r f; do stat -c "$fmt$TAB%n" "$f" 2>/dev/null; done > "$WORK/stat"
+  cat "$WORK/stat"
+}
+
+# Splits "meta<TAB>path" lines (stdin) against the hash cache: request lines for what the cache already
+# knows go to stdout, the files still to hash to MISS as "meta<TAB>header bytes<TAB>path". KIND "rom" also filters what is not a rom and adds
+# the headerless hash where DATs leave a header out (the same rules as is_rom, is_save and header_size).
+known_lines() {
+  awk -F"$TAB" -v OFS="$TAB" -v kind="$1" -v miss="$2" -v max="$HASH_MAX" -v exts="$EXTS" -v dir="$DIR/" -v cache="$CACHE" '
+    function is_save(n,   i, e, k, rest) {
+      for (i = 1; i <= ne; i++) {
+        e = ex[i]; k = index(n, e)
+        while (k > 0) {
+          rest = substr(n, k + length(e))
+          if (rest == "" || rest ~ /^[0-9]$/ || rest == ".auto") return 1
+          k2 = index(substr(n, k + 1), e); k = k2 ? k + k2 : 0
+        }
+      }
+      return 0
+    }
+    BEGIN {
+      ne = split(tolower(exts), ex, " ")
+      while ((getline l < cache) > 0) if (split(l, a, FS) == 3) c[a[1] FS a[2]] = a[3]
+    }
+    NF != 2 || index($2, "/.") { next }
+    {
+      f = $2; n = tolower(f)
+      if (kind == "file") {
+        if (!is_save(n)) next
+        if ((f FS $1) in c) print "file", f, c[f FS $1]; else print $1, 0, f > miss
+        next
+      }
+      if (index(f, dir) == 1) next
+      if (n ~ /\.(png|jpg|jpeg|mp4|xml|txt|json|cfg|db|ini|pdf|srm|sav|mcd|mcr|dsv|cht|log|sh|lpl|pem)$/ || n ~ /\.state/ || n ~ /\.ss[0-9]$/ || is_save(n)) next
+      split($1, m, " "); size = m[1]
+      if (size + 0 > max + 0) { print "rom", f, "", "", size; next }
+      hs = 0
+      if (n ~ /\.(nes|fds)$/) hs = 16; else if (n ~ /\.lnx$/) hs = 64; else if (n ~ /\.a78$/) hs = 128
+      else if (n ~ /\.(smc|sfc|swc|fig)$/ && size % 1024 == 512) hs = 512
+      if (!((f FS $1) in c) || (hs && !((f "#" hs FS $1) in c))) { print $1, hs, f > miss; next }
+      print "rom", f, c[f FS $1], (hs ? c[f "#" hs FS $1] : ""), size
+    }'
+}
+
+# Hashes a file the cache does not know (META as stat gave it), SKIP leading bytes left out, and caches it
+fresh_sha1() {
+  if [ "${3:-0}" -gt 0 ]; then s="$(tail -c +$(($3 + 1)) "$1" | sha1sum | cut -d' ' -f1)"; k="$1#$3"; else s="$(sha1 "$1")"; k="$1"; fi
+  [ -n "$s" ] || return 1
+  printf '%s\t%s\t%s\n' "$k" "$2" "$s" >> "$CACHE"
+  printf '%s' "$s"
+}
+
+# Writes the sync request: every rom plus every save file with its sha1. Files the hash cache knows (same
+# size and time) are settled in one pass; only new or changed ones are hashed one by one.
 build_request() {
   out="$1"; : > "$out"
   progress connecting 0 0
   roots="$(http GET "$SERVER/api/v1/agent/roots" - -)" || return 1
   ROMS="$(field roms "$roots")"; EXTS="$(field exts "$roots")"
-  find "$ROMS" -mindepth 2 -maxdepth 2 -type f 2>/dev/null > "$WORK/roms"
+  progress roms 0 0
+  : > "$WORK/roms"
+  stat_files '%s %Y' "$ROMS" -mindepth 2 -maxdepth 2 | known_lines rom "$WORK/roms" >> "$out"
   total="$(wc -l < "$WORK/roms")"; i=0
-  while IFS= read -r f; do
-    i=$((i + 1)); [ $((i % 10)) -eq 0 ] && progress roms "$i" "$total"
-    case "$f" in */.*|*"$TAB"*|"$DIR"/*) continue ;; esac
-    is_rom "$f" && rom_line "$f" >> "$out"
+  while IFS="$TAB" read -r meta hs f; do
+    i=$((i + 1)); progress_file hashing "$i" "$total" "$f"
+    full="$(fresh_sha1 "$f" "$meta")" || continue; hl=""
+    [ "$hs" -gt 0 ] && hl="$(fresh_sha1 "$f" "$meta" "$hs")"
+    printf 'rom\t%s\t%s\t%s\t%s\n' "$f" "$full" "$hl" "${meta%% *}" >> "$out"
   done < "$WORK/roms"
-  printf '%s\n' "$roots" | sed -n "s/^saves$TAB//p" | while IFS= read -r d; do find "$d" -type f 2>/dev/null; done > "$WORK/saves"
+  progress saves 0 0
+  : > "$WORK/saves"
+  printf '%s\n' "$roots" | sed -n "s/^saves$TAB//p" | while IFS= read -r d; do stat_files '%s %Y %i' "$d"; done | known_lines file "$WORK/saves" >> "$out"
   total="$(wc -l < "$WORK/saves")"; i=0
-  while IFS= read -r f; do
-    i=$((i + 1)); [ $((i % 10)) -eq 0 ] && progress saves "$i" "$total"
-    case "$f" in */.*|*"$TAB"*) continue ;; esac
-    is_save "$f" || continue
-    s="$(cached_sha1 "$f" save)" && printf 'file\t%s\t%s\n' "$f" "$s" >> "$out"
+  while IFS="$TAB" read -r meta hs f; do
+    i=$((i + 1)); progress_file hashing "$i" "$total" "$f"
+    s="$(fresh_sha1 "$f" "$meta")" && printf 'file\t%s\t%s\n' "$f" "$s" >> "$out"
   done < "$WORK/saves"
   core_lines >> "$out" 2>/dev/null
   save_cache
@@ -657,6 +719,8 @@ cmd_daemon() {
     # The web app can ask for a sync now or for roms: a tiny request on every watch tick
     asked="$(HTTP_MAX=5 http_once GET "$SERVER/api/v1/agent/poll" - - 2>/dev/null)"
     case "$asked" in *sync*) since=$FULL_SECONDS ;; esac
+    # Another device sent a save this one should have: a saves pass now, without settings or roms
+    nudged=0; case "$asked" in *saves*) nudged=1 ;; esac
     # Roms for the server go in the background: saves keep syncing while a long copy runs
     case "$asked" in *pull*) pulls_running || (nohup sh "$DIR/$(basename "$0")" pulls > /dev/null 2>&1 &) ;; esac
     fp="$(fingerprint)"
@@ -665,12 +729,13 @@ cmd_daemon() {
       sleep 3; since=$((since + 3))
       [ "$(fingerprint)" = "$fp" ] || fp="$last"
     fi
-    if [ "$fp" != "$last" ] || [ "$since" -ge "$FULL_SECONDS" ]; then
+    if [ "$fp" != "$last" ] || [ "$since" -ge "$FULL_SECONDS" ] || [ "$nudged" = 1 ]; then
       # Not "full": rom_line (inside cmd_sync) uses that name for a hash
       full_pass=0; [ "$since" -ge "$FULL_SECONDS" ] && full_pass=1
       cmd_sync && { last="$(fingerprint)"; since=0; }
       [ "$full_pass" = 1 ] && cmd_config > /dev/null 2>&1
       [ "$full_pass" = 1 ] && [ "$AUTO_ROMS" = 1 ] && cmd_roms > /dev/null 2>&1
+      cmd_collections > /dev/null 2>&1
     fi
     sleep "$WATCH_SECONDS"; since=$((since + WATCH_SECONDS))
   done
@@ -790,6 +855,8 @@ cmd_roms() {
     mkdir -p "$(dirname "$dest")"
     if http GET "$SERVER/api/v1/agent/rom?f=$ref" - "$dest.part" && { [ "$size" = 0 ] || [ "$(stat -c %s "$dest.part")" = "$size" ]; }; then
       mv "$dest.part" "$dest"; got=$((got + 1))
+      # For the "new" collection: what arrived, and when
+      printf '%s\t%s\n' "$(date +%s)" "$dest" >> "$STATE/received-roms"
     else
       rm -f "$dest.part"; fail=$((fail + 1))
     fi
@@ -797,6 +864,32 @@ cmd_roms() {
   progress roms-finished "$got" "$fail"
   log "roms: $got downloaded, $have already here, $fail failed"
   [ -n "${VERBOSE:-}" ] && printf 'roms: %s downloaded, %s already here, %s failed\n' "$got" "$have" "$fail"
+  return 0
+}
+
+# EmulationStation collections (Knulli, Batocera): games whose save is synced, and roms Rommancer copied in the
+# last two weeks. Only Rommancer's own collection files are written, and only when their content changes;
+# EmulationStation shows them once they are ticked in its collection settings and reads them when it starts
+cmd_collections() {
+  need_link
+  [ -n "${FW:-}" ] || detect
+  case "$FW" in knulli|batocera) ;; *) return 0 ;; esac
+  dir="${ROMMANCER_SYSROOT:-}/userdata/system/configs/emulationstation/collections"
+  mkdir -p "$dir" || return 1
+  if lang_es; then saves_name="Rommancer - Con partida"; new_name="Rommancer - Nuevos"; else saves_name="Rommancer - With saves"; new_name="Rommancer - New"; fi
+  http GET "$SERVER/api/v1/agent/collections" - "$WORK/collections" || return 1
+  sed -n "s/^saves$TAB//p" "$WORK/collections" | sort -u > "$WORK/coll-saves"
+  # The last two weeks' arrivals that are still there, the newest first; older lines are dropped from the record
+  since=$(( $(date +%s) - 14 * 86400 ))
+  if [ -f "$STATE/received-roms" ]; then
+    awk -F"$TAB" -v since="$since" '$1 >= since' "$STATE/received-roms" > "$WORK/received-roms"
+    cmp -s "$WORK/received-roms" "$STATE/received-roms" || cp "$WORK/received-roms" "$STATE/received-roms"
+    sort -t "$TAB" -k1,1nr "$WORK/received-roms" | cut -f2- | awk '!seen[$0]++' | while IFS= read -r f; do [ -f "$f" ] && printf '%s\n' "$f"; done > "$WORK/coll-new"
+  else : > "$WORK/coll-new"; fi
+  for c in saves new; do
+    eval "name=\$${c}_name"
+    cmp -s "$WORK/coll-$c" "$dir/custom-$name.cfg" 2>/dev/null || cp "$WORK/coll-$c" "$dir/custom-$name.cfg"
+  done
   return 0
 }
 
@@ -822,7 +915,7 @@ cmd_game_start() {
   return 0
 }
 
-cmd_all() { cmd_sync; cmd_config; [ "$AUTO_ROMS" = 1 ] && cmd_roms; return 0; }
+cmd_all() { cmd_sync; cmd_config; [ "$AUTO_ROMS" = 1 ] && cmd_roms; cmd_collections > /dev/null 2>&1; return 0; }
 
 # A copy for the server is under way (a lock whose process died does not count)
 pulls_running() { [ -f "$WORK/pull-lock/pid" ] && kill -0 "$(cat "$WORK/pull-lock/pid")" 2>/dev/null; }
@@ -1087,7 +1180,8 @@ case "${1:-}" in
   install) cmd_install ;;
   setup) cmd_setup ;;
   update) cmd_update ;;
-  roms) VERBOSE=1 cmd_roms ;;
+  roms) VERBOSE=1 cmd_roms; cmd_collections > /dev/null 2>&1 ;;
+  collections) cmd_collections ;;
   config) VERBOSE=1 cmd_config ;;
   # What "Sync now" does on screen: saves, then the lists' roms when AUTO_ROMS is on
   all)

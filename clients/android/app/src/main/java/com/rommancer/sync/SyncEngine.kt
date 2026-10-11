@@ -137,6 +137,7 @@ class SyncEngine(private val context: Context, private val store: Store, private
             }
         }
         Notices.received(context, received.toList())
+        runCatching { EsDe.write(context, api, root) }
         return Result(up, down, errors).also {
             store.lastResult = "${java.text.DateFormat.getDateTimeInstance().format(java.util.Date())}: $it"
             store.addLog("sync: $it")
@@ -216,6 +217,7 @@ class SyncEngine(private val context: Context, private val store: Store, private
                 if (size > 0 && part.length() != size) error("size mismatch")
                 part.renameTo(dest)
                 got++
+                EsDe.received(context, dest)
             } catch (e: Exception) {
                 part.delete()
                 failed++
@@ -223,6 +225,7 @@ class SyncEngine(private val context: Context, private val store: Store, private
                 watcher.interrupt()
             }
         }
+        if (got > 0) runCatching { EsDe.write(context, api, root) }
         return "roms: $got downloaded, $have already here, $failed failed".also { store.addLog(it) }
     }
 
