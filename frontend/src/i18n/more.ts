@@ -602,6 +602,11 @@ export const esMore = {
     gameMine: 'Tus partidas de este juego',
     gameShared: 'Compartidas por otros usuarios',
     consoles: 'Consolas',
+    byGame: 'Por juego',
+    asList: 'Lista',
+    saveCount_one: '{{count}} partida',
+    saveCount_other: '{{count}} partidas',
+    lastPlayed: 'Última: {{date}}',
     status: {
       synced: 'tiene la última versión',
       pending: 'la recibirá en su próxima sincronización',
@@ -1251,6 +1256,11 @@ export const enMore: typeof esMore = {
     gameMine: 'Your saves of this game',
     gameShared: 'Shared by other users',
     consoles: 'Consoles',
+    byGame: 'By game',
+    asList: 'List',
+    saveCount_one: '{{count}} save',
+    saveCount_other: '{{count}} saves',
+    lastPlayed: 'Latest: {{date}}',
     status: {
       synced: 'has the latest version',
       pending: 'gets it at its next sync',

@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { Link } from 'react-router'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
-import { Ban, Check, Clock, Download, History, ImageOff, Share2, Trash2, TriangleAlert } from 'lucide-react'
+import { Ban, Check, ChevronDown, ChevronRight, Clock, Download, History, ImageOff, LayoutList, Rows3, Share2, Trash2, TriangleAlert } from 'lucide-react'
 import { toast } from 'sonner'
 import { authUrl, del, get, patch, post, put, upload } from '@/lib/api'
 import { Badge } from '@/components/ui/badge'
@@ -24,6 +24,21 @@ export function SavesPage() {
   const { data } = useQuery({ queryKey: ['saves'], queryFn: () => get<any[]>('/saves') })
   const [open, setOpen] = useState<number | null>(null)
   const [uploading, setUploading] = useState(false)
+  const [view, setView] = useState<'games' | 'list'>(() => {
+    try {
+      return localStorage.getItem('saves-view') === 'list' ? 'list' : 'games'
+    } catch {
+      return 'games'
+    }
+  })
+  const pick = (v: 'games' | 'list') => {
+    setView(v)
+    try {
+      localStorage.setItem('saves-view', v)
+    } catch {
+      /* private mode */
+    }
+  }
   return (
     <div>
       <PageHeader title={t('saves.title')}>
@@ -37,8 +52,18 @@ export function SavesPage() {
           <TabsTrigger value="mine">{t('more.saves.mine')}</TabsTrigger>
           <TabsTrigger value="shared">{t('more.saves.shared')}</TabsTrigger>
         </TabsList>
-        <TabsContent value="mine">
-          <MySaves saves={data} onOpen={setOpen} />
+        <TabsContent value="mine" className="space-y-3">
+          <div className="flex gap-1">
+            <Button size="sm" variant={view === 'games' ? 'default' : 'outline'} onClick={() => pick('games')}>
+              <Rows3 className="size-4" />
+              {t('more.saves.byGame')}
+            </Button>
+            <Button size="sm" variant={view === 'list' ? 'default' : 'outline'} onClick={() => pick('list')}>
+              <LayoutList className="size-4" />
+              {t('more.saves.asList')}
+            </Button>
+          </div>
+          {view === 'games' ? <SavesByGame saves={data} onOpen={setOpen} /> : <MySaves saves={data} onOpen={setOpen} />}
         </TabsContent>
         <TabsContent value="shared">
           <SharedSaves />
@@ -94,6 +119,103 @@ function SaveConsoles({ devices }: { devices?: { deviceId: number; name: string;
             <Icon className="size-3" />
             {d.name}
           </span>
+        )
+      })}
+    </div>
+  )
+}
+
+const currentOf = (s: any) => s.versions.find((v: any) => v.id === s.currentVersionId)
+const dateOf = (s: any) => new Date(currentOf(s)?.fileMtime ?? s.updatedAt).getTime()
+
+/** The user's saves grouped by game, latest played first; each game opens into its saves and states by date */
+function SavesByGame({ saves, onOpen }: { saves: any[] | undefined; onOpen(id: number): void }) {
+  const { t } = useTranslation()
+  const [expanded, setExpanded] = useState<Set<string>>(new Set())
+  if (!saves?.length) return <Empty />
+  const groups = new Map<string, any[]>()
+  for (const s of saves) {
+    const key = s.game ? `g${s.game.id}` : `n${s.baseName}`
+    groups.set(key, [...(groups.get(key) ?? []), s])
+  }
+  const list = [...groups].map(([key, items]) => ({ key, items: items.sort((a, b) => dateOf(b) - dateOf(a)) })).sort((a, b) => dateOf(b.items[0]) - dateOf(a.items[0]))
+  const toggle = (key: string) =>
+    setExpanded((e) => {
+      const n = new Set(e)
+      if (n.has(key)) n.delete(key)
+      else n.add(key)
+      return n
+    })
+  return (
+    <div className="space-y-2">
+      {list.map(({ key, items }) => {
+        const first = items[0]
+        const shot = items.find((s) => currentOf(s)?.thumbPath)
+        const open = expanded.has(key)
+        return (
+          <div key={key} className="rounded-xl border">
+            <button type="button" className="flex w-full items-center gap-3 p-3 text-left hover:bg-muted/50" onClick={() => toggle(key)}>
+              {open ? <ChevronDown className="size-4 shrink-0" /> : <ChevronRight className="size-4 shrink-0" />}
+              {shot ? (
+                <img src={authUrl(`/saves/${shot.id}/versions/${shot.currentVersionId}/thumb`)} loading="lazy" alt="" className="h-12 w-16 shrink-0 rounded border bg-black object-contain [image-rendering:pixelated]" />
+              ) : (
+                <div className="flex h-12 w-16 shrink-0 items-center justify-center rounded border bg-muted text-muted-foreground">
+                  <ImageOff className="size-4" />
+                </div>
+              )}
+              <div className="min-w-0 flex-1">
+                <p className="truncate font-medium">{first.game?.title ?? first.baseName}</p>
+                <p className="truncate text-xs text-muted-foreground">
+                  {first.game?.system.name ?? t('saves.unidentified')} · {t('more.saves.saveCount', { count: items.length })} · {t('more.saves.lastPlayed', { date: formatDate(currentOf(first)?.fileMtime) })}
+                </p>
+              </div>
+              {first.game && (
+                <Link className="shrink-0 text-xs text-primary hover:underline" to={`/games/${first.game.id}`} onClick={(e) => e.stopPropagation()}>
+                  {t('saves.game')}
+                </Link>
+              )}
+            </button>
+            {open && (
+              <div className="divide-y border-t">
+                {items.map((s) => {
+                  const cur = currentOf(s)
+                  return (
+                    <div key={s.id} className="flex flex-wrap items-center gap-3 p-3">
+                      {cur?.thumbPath ? (
+                        <Thumb src={authUrl(`/saves/${s.id}/versions/${cur.id}/thumb`)} className="h-20 w-28" />
+                      ) : (
+                        <div className="flex h-20 w-28 shrink-0 items-center justify-center rounded border bg-muted text-xs text-muted-foreground">{t(`saves.kind.${s.kind}`)}</div>
+                      )}
+                      <div className="min-w-0 flex-1 space-y-1 text-sm">
+                        <div className="flex flex-wrap items-center gap-1">
+                          <Badge variant={s.kind === 'SAVE' ? 'default' : 'secondary'}>{t(`saves.kind.${s.kind}`)}</Badge>
+                          {s.kind === 'STATE' && <span className="text-xs text-muted-foreground">{slotLabel(s.slot)}</span>}
+                          <span className="font-medium">{formatDate(cur?.fileMtime)}</span>
+                          <span className="text-xs text-muted-foreground">· {cur?.sourceDevice?.name ?? t('saves.web')}</span>
+                          {s.versions.some((v: any) => v.sharedAt) && (
+                            <Badge variant="outline">
+                              <Share2 className="size-3" />
+                              {t('more.saves.sharedBadge')}
+                            </Badge>
+                          )}
+                        </div>
+                        <p className="text-xs text-muted-foreground">
+                          {s.emulator.name}
+                          {cur?.coreVersion && ` · ${t('more.saves.core', { version: cur.coreVersion })}`}
+                        </p>
+                        <SaveConsoles devices={s.devices} />
+                        <CoreWarning warnings={s.coreWarnings} version={cur?.coreVersion} />
+                      </div>
+                      <Button variant="outline" size="sm" onClick={() => onOpen(s.id)}>
+                        <History className="size-4" />
+                        {t('saves.versions')} ({s.versions.length})
+                      </Button>
+                    </div>
+                  )
+                })}
+              </div>
+            )}
+          </div>
         )
       })}
     </div>
