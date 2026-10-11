@@ -22,7 +22,7 @@
 #                                   Menu++...) mounted on this computer; the link lives on the card itself,
 #                                   so any computer with this script can sync it. Without a command: sync.
 set -u
-CLIENT_VERSION=20261025
+CLIENT_VERSION=20261026
 # A clock before this date is surely wrong (no battery-backed clock); kept apart from the version, which may run ahead
 CLOCK_MIN=20261001
 # Onion keeps curl (with TLS) and friends outside the default PATH
@@ -824,7 +824,8 @@ cmd_daemon() {
       cmd_sync && { last="$(fingerprint)"; since=0; }
       [ "$full_pass" = 1 ] && cmd_config > /dev/null 2>&1
       [ "$full_pass" = 1 ] && cmd_prune > /dev/null 2>&1
-      [ "$full_pass" = 1 ] && [ "$AUTO_ROMS" = 1 ] && cmd_roms > /dev/null 2>&1
+      # Roms go in the background: a long download must not hold up the saves (one at a time, see cmd_roms)
+      [ "$full_pass" = 1 ] && [ "$AUTO_ROMS" = 1 ] && ! roms_running && (nohup sh "$DIR/$(basename "$0")" roms-bg > /dev/null 2>&1 &)
       cmd_collections > /dev/null 2>&1
     fi
     sleep "$WATCH_SECONDS"; since=$((since + WATCH_SECONDS))
@@ -1436,6 +1437,7 @@ case "${1:-}" in
   update) cmd_update ;;
   roms) VERBOSE=1 cmd_roms; cmd_collections > /dev/null 2>&1 ;;
   roms-stop) cmd_roms_stop ;;
+  roms-bg) cmd_roms > /dev/null 2>&1; cmd_collections > /dev/null 2>&1 ;;
   # "Sync now" without the roms (they go on in the background)
   saves-now) VERBOSE=1; cmd_sync; cmd_config; cmd_prune; cmd_collections > /dev/null 2>&1 ;;
   roms-status) roms_status ;;
