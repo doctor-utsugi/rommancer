@@ -7,6 +7,7 @@
  */
 import { after, before, test } from 'node:test';
 import assert from 'node:assert/strict';
+import os from 'node:os';
 import { execFile, execSync } from 'node:child_process';
 import { promisify } from 'node:util';
 
@@ -1815,6 +1816,9 @@ test('sync client: roms of assigned lists, save before a game, conflicts resolve
   assert.match((await b.run('resolve', id, 'server')).stdout, /0 up, 1 down/);
   assert.equal(fs.readFileSync(saveB, 'utf8'), 'A-AGAIN');
   assert.equal((await b.run('conflicts')).stdout.trim(), '');
+  // What the sync overwrote is kept in the console's state folder, away from the emulator
+  const backups = path.join(dir, 'roms-b-state', 'backups');
+  assert.deepEqual(fs.readdirSync(backups).map((f) => fs.readFileSync(path.join(backups, f), 'utf8')), ['B-AGAIN-LONGER']);
 
   // EmulationStation collections on Knulli: the game whose save is synced, and the rom Rommancer copied
   const sysroot = path.join(dir, 'b-sys');
@@ -2978,4 +2982,70 @@ test('memory cards: GameCube saves sync one by one between Dolphin GCI folders a
   assert.equal(names(b.usa).length, 5);
   const conflicts = (await api('GET', '/saves/conflicts')).json.filter((x: any) => x.save.kind === 'ENTRY');
   assert.equal(conflicts.length, 0);
+});
+
+test('header probes: roms read by their product code, inside a CHD too; hacks linked to their game', async () => {
+  const { prisma } = await import('../src/lib/prisma.js');
+  const client = path.join(ROOT, 'clients/linux/rommancer-sync.sh');
+  const dir = path.join(DATA, 'sync-probe');
+  fs.rmSync(dir, { recursive: true, force: true });
+  // Two games of the database with codes of our own: one a file names loosely, one a hack is made from
+  const gbaId = (await prisma.system.findUniqueOrThrow({ where: { slug: 'gba' } })).id;
+  const source = await prisma.datSource.findFirstOrThrow();
+  const picks = [];
+  for (const title of ['Guru Logichamp', 'Pokemon - FireRed Version']) {
+    const g = await prisma.game.create({ data: { systemId: gbaId, title, titleNormalized: title.toLowerCase() } });
+    picks.push(await prisma.rom.create({ data: { gameId: g.id, datSourceId: source.id, name: `${title} (USA)`, regions: ['USA'], languages: [], flags: [] }, select: { id: true, name: true, gameId: true } }));
+  }
+  await prisma.rom.updateMany({ where: { serial: { in: ['XAGJ', 'XBPE'] } }, data: { serial: null } });
+  await prisma.rom.update({ where: { id: picks[0].id }, data: { serial: 'XAGJ' } });
+  await prisma.rom.update({ where: { id: picks[1].id }, data: { serial: 'XBPE' } });
+  const loose = picks[0].name.replace(/ \(USA\).*/, '').replace(/(\w)(\w)\b/, '$2$1') + ' (Japan).gba';
+  const root = path.join(dir, 'console');
+  fs.mkdirSync(path.join(root, 'roms/gba'), { recursive: true });
+  const gba = (code: string) => {
+    const b = crypto.randomBytes(1 << 20);
+    b.write(code, 0xac, 'latin1');
+    b[0xb2] = 0x96;
+    return b;
+  };
+  fs.writeFileSync(path.join(root, 'roms/gba', loose), gba('XAGJ'));
+  fs.writeFileSync(path.join(root, 'roms/gba', 'Pokemon Radical Red.gba'), gba('XBPE'));
+  fs.writeFileSync(path.join(root, 'roms/gba', 'Unknown Thing.gba'), gba('ZZZZ'));
+  const chd = path.join(DATA, 'ps1/psx/Test Game (USA).chd');
+  const disc = fs.existsSync(chd);
+  if (disc) {
+    fs.mkdirSync(path.join(root, 'roms/psx'), { recursive: true });
+    fs.copyFileSync(chd, path.join(root, 'roms/psx', 'Mystery Disc.chd'));
+    const psx = (await prisma.system.findUniqueOrThrow({ where: { slug: 'psx' } })).id;
+    const g = await prisma.game.create({ data: { systemId: psx, title: 'Probe Disc', titleNormalized: 'probe disc' } });
+    await prisma.rom.create({ data: { gameId: g.id, datSourceId: source.id, name: 'Probe Disc (USA)', serial: 'SLUS-99999', regions: ['USA'], languages: [], flags: [] } });
+  }
+  const claim = await api('POST', '/link/claim', { name: 'probe-console', firmware: 'knulli', root });
+  const id = claim.json.deviceId as number;
+  const state = path.join(dir, 'state');
+  fs.mkdirSync(state, { recursive: true });
+  fs.writeFileSync(path.join(state, 'config'), `SERVER=${base}\nTOKEN=${claim.json.token}\n`);
+  const run = (...args: string[]) => execFileP('sh', [client, ...args], { env: { ...process.env, ROMMANCER_STATE: state } });
+
+  await run('sync');
+  const item = async (name: string) => (await api('GET', `/devices/${id}/inventory`)).json.items.find((i: any) => i.name === name);
+  const guru = await item(loose);
+  assert.equal(guru.gameId, picks[0].gameId, `its own code, whatever its name says (${loose})`);
+  assert.equal(guru.serial, 'XAGJ');
+  const hack = await item('Pokemon Radical Red.gba');
+  assert.equal(hack.gameId, null, 'a hack is not the game');
+  assert.equal(hack.baseGameId, picks[1].gameId);
+  assert.equal((await item('Unknown Thing.gba')).gameId, null);
+  if (disc) assert.equal((await item('Mystery Disc.chd')).gameId, (await prisma.rom.findFirstOrThrow({ where: { name: 'Probe Disc (USA)' } })).gameId, 'read inside the CHD');
+
+  // Read once: the next sync asks for nothing and keeps what the headers said
+  const probes = await prisma.deviceProbe.count({ where: { deviceId: id } });
+  assert.equal(probes, disc ? 4 : 3);
+  const r = await fetch(`${base}/api/v1/agent/sync`, { method: 'POST', headers: { 'X-Device-Token': claim.json.token, 'X-Probe': '1', 'Content-Type': 'text/plain' }, body: fs.readFileSync(path.join(os.tmpdir(), `rommancer-${process.getuid!()}`, 'request')) });
+  const plan = await r.text();
+  assert.doesNotMatch(plan, /^probe\t/m);
+  assert.match(plan, /^backups\t20$/m);
+  assert.equal((await item(loose)).gameId, picks[0].gameId);
+  assert.equal((await item('Pokemon Radical Red.gba')).baseGameId, picks[1].gameId);
 });

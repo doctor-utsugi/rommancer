@@ -541,6 +541,7 @@ model Device {
   sshError        String?               @db.VarChar(255)
   inventory       DeviceRom[]
   pulls           DevicePull[]
+  probes          DeviceProbe[]
   // Extra keys: SD cards of this device synced from a computer (the console keeps its own tokenHash)
   cardTokens      DeviceToken[]
   // Linked from the desktop companion: only known when its card is connected to a computer
@@ -985,11 +986,29 @@ model DeviceRom {
   headerlessSha1 String? @db.Char(40)
   romId          Int?
   gameId         Int?
+  // Product code read from the file's header, and the game it belongs to when the file is a hack or translation of it
+  serial         String? @db.VarChar(64)
+  baseGameId     Int?
   device         Device  @relation(fields: [deviceId], references: [id], onDelete: Cascade)
 
   @@unique([deviceId, pathHash])
   @@index([gameId])
   @@index([romId])
+}
+
+// What the header of a device's file said, read once per path and size ("none" when it holds no code we know)
+model DeviceProbe {
+  id        Int      @id @default(autoincrement())
+  deviceId  Int
+  pathHash  String   @db.Char(40)
+  size      BigInt   @default(0)
+  // Platform the header belongs to (gba, psx, gc...) and its product code
+  platform  String?  @db.VarChar(16)
+  serial    String?  @db.VarChar(64)
+  at        DateTime @default(now())
+  device    Device   @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+
+  @@unique([deviceId, pathHash])
 }
 
 // A rom the server asked a device to send (pending | done | failed)

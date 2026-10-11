@@ -49,13 +49,15 @@ class Api(private val server: String, private val token: String? = null) {
         return pairs(text(path, "POST", body, mapOf("Content-Type" to "application/x-www-form-urlencoded")))
     }
 
-    fun download(path: String, headers: Map<String, String>, target: File) {
+    /** BEFORE runs once the new file is whole beside the target, before it takes its place */
+    fun download(path: String, headers: Map<String, String>, target: File, before: ((File) -> Unit)? = null) {
         val conn = open(path, "GET", headers)
         try {
             check(conn)
             target.parentFile?.mkdirs()
             val tmp = File(target.path + ".rommancer-tmp")
             conn.inputStream.use { input -> tmp.outputStream().use { input.copyTo(it) } }
+            before?.invoke(tmp)
             if (!tmp.renameTo(target)) {
                 tmp.copyTo(target, overwrite = true)
                 tmp.delete()

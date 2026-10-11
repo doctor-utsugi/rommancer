@@ -39,6 +39,8 @@ export function AdminUsersPage() {
   const users = useQuery({ queryKey: ['users'], queryFn: () => get<any[]>('/users') })
   const invs = useQuery({ queryKey: ['invitations'], queryFn: () => get<any[]>('/invitations') })
   const signup = useQuery({ queryKey: ['signup-open'], queryFn: () => get<{ open: boolean }>('/admin/settings/signup') })
+  const history = useQuery({ queryKey: ['save-history'], queryFn: () => get<{ history: number }>('/admin/settings/saves') })
+  const [keep, setKeep] = useState('')
   const [form, setForm] = useState({ username: '', email: '', password: '', role: 'USER', permissions: DEFAULT_PERMISSIONS })
   const [invRole, setInvRole] = useState('USER')
   const [invPerms, setInvPerms] = useState(DEFAULT_PERMISSIONS)
@@ -69,6 +71,29 @@ export function AdminUsersPage() {
               void qc.invalidateQueries({ queryKey: ['signup-open'] })
             })}
           />
+        </CardContent>
+        <CardContent className="flex items-center justify-between gap-4">
+          <div>
+            <p className="font-medium">{t('more.saveHistory')}</p>
+            <p className="text-sm text-muted-foreground">{t('more.saveHistoryHelp')}</p>
+          </div>
+          <form
+            className="flex items-center gap-2"
+            onSubmit={(e) => {
+              e.preventDefault()
+              void act(async () => {
+                await put('/admin/settings/saves', { history: Number(keep) })
+                void qc.invalidateQueries({ queryKey: ['save-history'] })
+                setKeep('')
+                toast.success(t('common.saved'))
+              })
+            }}
+          >
+            <Input type="number" min={1} max={500} className="w-20" value={keep || String(history.data?.history ?? '')} onChange={(e) => setKeep(e.target.value)} />
+            <Button size="sm" type="submit" disabled={!keep || Number(keep) === history.data?.history}>
+              {t('common.save')}
+            </Button>
+          </form>
         </CardContent>
       </Card>
       <Card>

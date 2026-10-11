@@ -12,7 +12,7 @@ import { HttpError, badRequest } from '../../lib/http.js';
 import { copiesSystem, folderFor, layoutOf, systemFilterOf, type DeviceLayout } from '../devices/sink.js';
 import { raDefaults } from '../../seed/data.js';
 import { contentFor, decide, deviceFileName, deviceThumbPath, findLogicalSave, receiveFromDevice, saveDirs, setBase, sha1 } from './core.js';
-import { THUMB_MAX, identifyRom, parseSaveFile, readThumb, storeThumb } from './service.js';
+import { THUMB_MAX, identifyRom, parseSaveFile, readThumb, saveHistory, storeThumb } from './service.js';
 import fs from 'node:fs';
 import crypto from 'node:crypto';
 import { env } from '../../config/env.js';
@@ -29,6 +29,7 @@ import { Prisma } from '@prisma/client';
 import { storeWifiBands } from '../devconfig/service.js';
 import { cardAction, commitOffer, deviceCard, findDeviceCard, gameForSerial, gcCardFile, gciFolderState, hasWantedSaves, isCardEmulator, namedCard, observeCard, prepareCard, recordOffer } from './cards.js';
 import { takeNudge } from './nudge.js';
+import { FAN_WORK, FIRST_ASK, normTitle, probeRound, probesOf, serialMatch, wantsProbe } from './probe.js';
 
 export const agentRouter = Router();
 
@@ -192,21 +193,6 @@ async function storeSshOffer(device: AgentDevice, req: Request) {
 /** A rom file's name as databases write it: the file name without its extension */
 const romName = (p: string) => path.posix.basename(p).replace(/\.[^.]+$/, '');
 
-/** Fan translations and hacks: "[T+Spa]", "[T-En by ...]", "(Hack)", "(English v1.04)" */
-const FAN_WORK = /\[T[+-]|\bhack\b|\((english|spanish|french|german|italian|portuguese) v[\d.]+\)/i;
-
-/** A title compared loosely: no regions or tags, no articles, only letters and digits */
-export function normTitle(name: string) {
-  return name
-    .replace(/\([^)]*\)|\[[^\]]*\]/g, ' ')
-    .toLowerCase()
-    .replace(/&/g, ' and ')
-    .replace(/,\s*(the|a|an)\b/g, ' ')
-    .replace(/^\s*(the|a|an)\s+/, '')
-    .normalize('NFD')
-    .replace(/[^a-z0-9]/g, '');
-}
-
 /** Every game of a system by its loose title and by its roms' loose names; kept ten minutes */
 const titleCache = new Map<string, { at: number; index: Map<string, Set<number>> }>();
 async function titleIndex(slug: string) {
@@ -223,7 +209,9 @@ async function titleIndex(slug: string) {
   return index;
 }
 
-async function storeInventory(device: AgentDevice, scanned: { path: string; hashes: string[]; size?: number }[], allowPull: string | undefined) {
+/** Stores the inventory; returns the files to read by their header (paths as the device sent them) */
+async function storeInventory(device: AgentDevice, scanned: { path: string; hashes: string[]; size: number }[], allowPull: string | undefined) {
+  const sent = new Map(scanned.map((r) => [device.homeRoot ? reroot(r.path, device.rootPath, device.homeRoot) : r.path, r.path]));
   // Kept under the device's own root, so requests made later reach the console with its paths
   const roms = device.homeRoot ? scanned.map((r) => ({ ...r, path: reroot(r.path, device.rootPath, device.homeRoot!) })) : scanned;
   device = device.homeRoot ? { ...device, rootPath: device.homeRoot } : device;
@@ -272,26 +260,44 @@ async function storeInventory(device: AgentDevice, scanned: { path: string; hash
     const games = titles.get(sys)?.get(normTitle(name));
     return games?.size === 1 ? { romId: null, gameId: [...games][0] } : undefined;
   };
-  const rows = roms.map((r) => {
+  // Codes read earlier from the files' own headers (see probe.ts): the game whatever the file's name, or the game a
+  // hack or translation was made from
+  const probed = await probesOf(device.id);
+  const pathHashOf = (p: string) => crypto.createHash('sha1').update(p).digest('hex');
+  const headerHit = async (r: (typeof roms)[number]) => {
+    const p = probed.get(pathHashOf(r.path));
+    if (!p?.serial || !p.platform || Number(p.size) !== r.size) return null;
+    return { serial: p.serial, hit: await serialMatch(p.platform, p.serial, r.path, r.hashes.length > 0) };
+  };
+  const rows = [];
+  const probe: string[] = [];
+  for (const r of roms) {
     const folder = r.path.startsWith(base) ? r.path.slice(base.length).split('/')[0] : '';
-    const hit = r.hashes.map((h) => known.get(h)).find(Boolean) ?? nameHit(r, folder) ?? titleHit(r, folder);
-    return {
+    const exact = r.hashes.map((h) => known.get(h)).find(Boolean) ?? nameHit(r, folder);
+    const header = exact ? null : await headerHit(r);
+    const hit = exact ?? (header?.hit && !header.hit.fan ? header.hit : undefined) ?? (header?.hit?.fan ? undefined : titleHit(r, folder));
+    const ph = pathHashOf(r.path);
+    if (!hit && !header && wantsProbe(r, probed, ph)) probe.push(r.path);
+    rows.push({
       deviceId: device.id,
-      pathHash: crypto.createHash('sha1').update(r.path).digest('hex'),
+      pathHash: ph,
       path: r.path.slice(0, 1024),
       systemSlug: systemsOf.get(r.path) ?? byFolder.get(folder) ?? null,
       sha1: SHA1.test(r.hashes[0] ?? '') ? r.hashes[0] : null,
       headerlessSha1: SHA1.test(r.hashes[1] ?? '') ? r.hashes[1] : null,
       romId: hit?.romId ?? null,
       gameId: hit?.gameId ?? null,
+      serial: header?.serial ?? null,
+      baseGameId: !hit && header?.hit?.fan ? header.hit.gameId : null,
       size: BigInt(r.size ?? 0),
-    };
-  });
+    });
+  }
   await prisma.$transaction([
     prisma.deviceRom.deleteMany({ where: { deviceId: device.id } }),
     prisma.deviceRom.createMany({ data: rows, skipDuplicates: true }),
     prisma.device.update({ where: { id: device.id }, data: { inventoryAt: new Date(), ...(allowPull === '0' || allowPull === '1' ? { allowPull: allowPull === '1' } : {}) } }),
   ]);
+  return probe.map((p) => sent.get(p) ?? p);
 }
 
 /**
@@ -410,7 +416,7 @@ agentRouter.post('/sync', express.text({ limit: '16mb', type: '*/*' }), async (r
   }
   await storeCoreVersions(device, cores);
   // An unreadable body (a client that sent no content type) must not wipe the device's list
-  if (typeof req.body === 'string' && req.body.length) await storeInventory(device, roms, req.header('x-allow-pull'));
+  const probe = typeof req.body === 'string' && req.body.length ? await storeInventory(device, roms, req.header('x-allow-pull')) : [];
   await storeSshOffer(device, req);
   // "X-Wifi-Bands: 2.4 | dual | none": what its WiFi chip can do, so it is only given networks it can see
   await storeWifiBands(device, req.header('x-wifi-bands'));
@@ -483,8 +489,28 @@ agentRouter.post('/sync', express.text({ limit: '16mb', type: '*/*' }), async (r
     if (line) out.push(line);
   }
   out.push(...(await gciLines(device, present)));
+  // Files to read by their header, last: clients that can ("X-Probe: 1") post their blocks to /probe
+  if (req.header('x-probe') === '1') {
+    for (const p of probe.slice(0, 400)) out.push(`probe\t${p}\t${FIRST_ASK}`);
+    // How many copies of the saves a sync overwrote the console keeps
+    out.unshift(`backups\t${await saveHistory()}`);
+  }
   await prisma.device.update({ where: { id: device.id }, data: { lastSyncAt: new Date() } });
   res.type('text/plain').send(out.join('\n') + (out.length ? '\n' : ''));
+});
+
+/**
+ * One round of a header probe. Headers: "X-Path-B64" (the file), "X-Size" (its size), "X-Ranges" (the blocks of
+ * BLOCK bytes in the body, "start:count,..."). Reply: "need<TAB>blocks", "id<TAB>platform<TAB>serial" or "none".
+ */
+agentRouter.post('/probe', express.raw({ limit: '64mb', type: '*/*' }), async (req, res) => {
+  const device = await deviceFromToken(req);
+  const sent = b64(req.header('x-path-b64'));
+  const size = Number(req.header('x-size'));
+  if (!sent || !Number.isSafeInteger(size) || size <= 0) throw badRequest('Path and size needed');
+  const file = device.homeRoot ? reroot(sent, device.rootPath, device.homeRoot) : sent;
+  const body = Buffer.isBuffer(req.body) ? req.body : Buffer.alloc(0);
+  res.type('text/plain').send((await probeRound(device, file, size, req.header('x-ranges') ?? '', body)) + '\n');
 });
 
 // Last lines of the client's log, kept for troubleshooting from the web app

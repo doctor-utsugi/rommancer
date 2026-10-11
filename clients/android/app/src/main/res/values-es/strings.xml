@@ -40,6 +40,7 @@
     <string name="p_roms">Comprobando roms</string>
     <string name="p_server">Preguntando al servidor</string>
     <string name="p_transfer">Transfiriendo saves</string>
+    <string name="p_identify">Identificando roms por su cabecera</string>
     <string name="p_roms_plan">Preguntando qué roms tocan</string>
     <string name="p_roms_download">Descargando roms</string>
     <string name="p_pulls">Enviando juegos al servidor</string>
@@ -67,4 +68,5 @@
     <string name="dolphin_linked">Partidas de GameCube (Dolphin): conectado</string>
     <string name="dolphin_done">Dolphin conectado: las partidas de GameCube se sincronizan desde ahora.</string>
     <string name="dolphin_wrong">Esa no es la carpeta de Dolphin. En el selector abre el menú (☰), elige «Dolphin Emulator» y pulsa «Usar esta carpeta».</string>
+    <string name="updated_at">Actualizado el %1$s</string>
 </resources>

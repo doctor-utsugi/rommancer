@@ -90,13 +90,15 @@ class SyncEngine(private val context: Context, private val store: Store, private
         onProgress(Progress("server"))
         // Free and total bytes of the shared storage: the server copies list roms only while a reserve is kept
         val space = runCatching { android.os.StatFs((romsDir ?: root).path).let { "${it.availableBytes} ${it.totalBytes}" } }.getOrDefault("")
-        val plan = api.text("/agent/sync", "POST", request.toString().toByteArray(), mapOf("X-Allow-Pull" to if (store.allowPull) "1" else "0", "X-Space" to space, "X-Wifi-Bands" to WifiSetup.bands(context)))
+        val plan = api.text("/agent/sync", "POST", request.toString().toByteArray(), mapOf("X-Allow-Pull" to if (store.allowPull) "1" else "0", "X-Space" to space, "X-Wifi-Bands" to WifiSetup.bands(context), "X-Probe" to "1"))
         var up = 0
         var down = 0
         var errors = 0
         // Games whose save or state arrived, for the notification
         val received = linkedSetOf<String>()
-        val steps = plan.lines().filter { it.isNotBlank() }
+        plan.lines().firstOrNull { it.startsWith("backups\t") }?.substringAfter('\t')?.trim()?.toIntOrNull()?.let { store.backupsKeep = it }
+        val steps = plan.lines().filter { it.isNotBlank() && !it.startsWith("probe\t") && !it.startsWith("backups\t") }
+        val probes = plan.lines().filter { it.startsWith("probe\t") }.map { it.split('\t') }.filter { it.size >= 3 }
         for ((n, line) in steps.withIndex()) {
             onProgress(Progress("transfer", n + 1, steps.size))
             val f = line.split('\t')
@@ -120,7 +122,10 @@ class SyncEngine(private val context: Context, private val store: Store, private
                         }
                     }
                     "get" -> {
-                        api.download("/agent/file?v=${f[2]}", mapOf("X-Rom-B64" to Api.b64(f[3]), "X-Path-B64" to Api.b64(f[1])), File(f[1]))
+                        api.download("/agent/file?v=${f[2]}", mapOf("X-Rom-B64" to Api.b64(f[3]), "X-Path-B64" to Api.b64(f[1])), File(f[1])) { tmp ->
+                            val old = File(f[1])
+                            if (old.isFile && !old.readBytes().contentEquals(tmp.readBytes())) backup(old.name, old.readBytes())
+                        }
                         down++
                         received += File(f[3]).nameWithoutExtension
                     }
@@ -136,11 +141,53 @@ class SyncEngine(private val context: Context, private val store: Store, private
                 errors++
             }
         }
+        // Roms no hash or name identified: the server reads their product code from the blocks it asks for
+        for ((n, f) in probes.withIndex()) {
+            onProgress(Progress("identify", n + 1, probes.size))
+            runCatching { probe(api, File(f[1]), f[2]) }
+        }
         Notices.received(context, received.toList())
         runCatching { EsDe.write(context, api, root) }
         return Result(up, down, errors).also {
             store.lastResult = "${java.text.DateFormat.getDateTimeInstance().format(java.util.Date())}: $it"
             store.addLog("sync: $it")
+        }
+    }
+
+    /** One header probe: the 4 KiB blocks the server names ("start:count,..."), sent until it has what it needs */
+    private fun probe(api: Api, file: File, first: String) {
+        if (!file.isFile) return
+        var ask = first
+        java.io.RandomAccessFile(file, "r").use { raf ->
+            var rounds = 0
+            while (ask.isNotEmpty() && rounds++ < 12) {
+                val body = java.io.ByteArrayOutputStream()
+                for (r in ask.split(',')) {
+                    val (start, count) = r.split(':').map { it.toLong() }
+                    val len = (minOf(raf.length(), (start + count) * 4096) - start * 4096).coerceAtLeast(0).toInt()
+                    val buf = ByteArray(len)
+                    raf.seek(start * 4096)
+                    raf.readFully(buf)
+                    body.write(buf)
+                }
+                val reply = api.text("/agent/probe", "POST", body.toByteArray(), mapOf("X-Path-B64" to Api.b64(file.path), "X-Size" to raf.length().toString(), "X-Ranges" to ask))
+                ask = reply.lines().firstOrNull { it.startsWith("need\t") }?.substringAfter('\t')?.trim() ?: ""
+            }
+        }
+    }
+
+    /**
+     * What a sync is about to overwrite, kept first in Rommancer/backups on the shared storage (never beside the
+     * saves, where an emulator could load it): the last copies the server's setting says, at most 256 MB of them
+     */
+    private fun backup(name: String, data: ByteArray) {
+        val dir = File(root, "Rommancer/backups").apply { mkdirs() }
+        val stamp = java.text.SimpleDateFormat("yyyyMMdd-HHmmss", java.util.Locale.ROOT).format(java.util.Date())
+        File(dir, "$stamp-$name").writeBytes(data)
+        var used = 0L
+        dir.listFiles()?.sortedByDescending { it.lastModified() }?.forEachIndexed { i, f ->
+            used += f.length()
+            if (i >= store.backupsKeep || used > 256L * 1024 * 1024) f.delete()
         }
     }
 
@@ -161,6 +208,7 @@ class SyncEngine(private val context: Context, private val store: Store, private
             "-"
         }
         if (now != expect) return false
+        if (now != "-") runCatching { backup(path.substringAfterLast('/'), readSave(path)) }
         if (Dolphin.isVirtual(path)) dolphin.write(path, data) else {
             val file = File(path)
             file.parentFile?.mkdirs()

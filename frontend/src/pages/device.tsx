@@ -26,6 +26,8 @@ interface InventoryItem {
   systemName: string | null
   gameId: number | null
   gameTitle: string | null
+  baseGameId: number | null
+  baseTitle: string | null
   onServer: boolean
   pullPending: boolean
   size: number
@@ -90,7 +92,7 @@ export function DevicePage() {
     (i) =>
       (!system || i.system === system) &&
       (show === 'all' || (show === 'new' && i.gameId && !i.onServer) || (show === 'unidentified' && !i.gameId && !i.onServer) || (show === 'onServer' && i.onServer)) &&
-      (!q || `${i.name} ${i.gameTitle ?? ''}`.toLowerCase().includes(q.toLowerCase())),
+      (!q || `${i.name} ${i.gameTitle ?? ''} ${i.baseTitle ?? ''}`.toLowerCase().includes(q.toLowerCase())),
   )
   const allowPull = !!inventory.data?.allowPull && can('roms.upload')
 
@@ -229,6 +231,14 @@ export function DevicePage() {
                       <p className="truncate text-xs text-muted-foreground" title={i.path}>
                         {i.name}
                       </p>
+                      {i.baseGameId && (
+                        <p className="truncate text-xs text-muted-foreground">
+                          {t('more.device.hackOf')}{' '}
+                          <Link className="hover:underline" to={`/games/${i.baseGameId}`}>
+                            {i.baseTitle}
+                          </Link>
+                        </p>
+                      )}
                     </TableCell>
                     <TableCell className="truncate">{i.systemName ?? <span className="text-muted-foreground">{i.folder ?? '-'}</span>}</TableCell>
                     <TableCell>{i.onServer ? <Check className="size-4 text-green-600" /> : <X className="size-4 text-muted-foreground" />}</TableCell>

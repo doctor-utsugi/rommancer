@@ -40,6 +40,7 @@
     <string name="p_roms">Checking roms</string>
     <string name="p_server">Asking the server</string>
     <string name="p_transfer">Transferring saves</string>
+    <string name="p_identify">Identifying roms by their header</string>
     <string name="p_roms_plan">Asking which roms belong here</string>
     <string name="p_roms_download">Downloading roms</string>
     <string name="p_pulls">Sending games to the server</string>
@@ -67,4 +68,5 @@
     <string name="dolphin_linked">GameCube saves (Dolphin): connected</string>
     <string name="dolphin_done">Dolphin shared: GameCube saves sync from now on.</string>
     <string name="dolphin_wrong">That is not Dolphin\'s folder. Open the menu (☰) in the picker, choose “Dolphin Emulator” and tap “Use this folder”.</string>
+    <string name="updated_at">Updated %1$s</string>
 </resources>

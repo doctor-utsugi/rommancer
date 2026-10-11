@@ -231,7 +231,7 @@ devicesRouter.get('/:id/inventory', async (req, res) => {
   const rows = await prisma.deviceRom.findMany({ where: { deviceId: d.id }, orderBy: [{ systemSlug: 'asc' }, { path: 'asc' }] });
   const ownedRoms = await ownedRomIds({ romIds: [...new Set(rows.flatMap((r) => (r.romId ? [r.romId] : [])))], include: 'any' });
   const ownedGames = await ownedGameIds();
-  const games = await prisma.game.findMany({ where: { id: { in: [...new Set(rows.flatMap((r) => (r.gameId ? [r.gameId] : [])))] } }, select: { id: true, title: true, systemId: true } });
+  const games = await prisma.game.findMany({ where: { id: { in: [...new Set(rows.flatMap((r) => [r.gameId, r.baseGameId].filter((x): x is number => !!x)))] } }, select: { id: true, title: true, systemId: true } });
   const gameById = new Map(games.map((g) => [g.id, g]));
   const systems = await prisma.system.findMany({ select: { id: true, slug: true, name: true } });
   const sysName = new Map(systems.map((x) => [x.slug, x.name]));
@@ -254,6 +254,10 @@ devicesRouter.get('/:id/inventory', async (req, res) => {
       folder,
       gameId: r.gameId,
       gameTitle: game?.title ?? null,
+      // A hack or translation: the game it was made from, by the product code in its header
+      baseGameId: r.baseGameId,
+      baseTitle: r.baseGameId ? (gameById.get(r.baseGameId)?.title ?? null) : null,
+      serial: r.serial,
       onServer: !!((r.romId && ownedRoms.has(r.romId)) || (r.gameId && ownedGames.has(r.gameId))),
       pullPending: pending.has(r.path),
     };

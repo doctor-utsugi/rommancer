@@ -125,12 +125,15 @@ private fun App(resumes: Int) {
     // Two columns like the handheld setup app: content on the left, the spinning save point on the right
     Row(Modifier.fillMaxSize().padding(horizontal = 24.dp, vertical = 12.dp)) {
         Column(Modifier.weight(0.6f).fillMaxHeight().verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-            // The installed version, small beside the name
-            val version = remember { runCatching { context.packageManager.getPackageInfo(context.packageName, 0).versionName }.getOrNull().orEmpty() }
-            Row(verticalAlignment = Alignment.Bottom) {
-                Text("Rommancer Sync", fontSize = 26.sp, fontWeight = FontWeight.SemiBold, color = Accent)
-                if (version.isNotEmpty()) Text("  v$version", fontSize = 14.sp, color = Dim, modifier = Modifier.padding(bottom = 4.dp))
+            // When the app was last updated, always in sight under the name
+            val updated = remember {
+                runCatching {
+                    val t = context.packageManager.getPackageInfo(context.packageName, 0).lastUpdateTime
+                    java.text.SimpleDateFormat("d MMM yyyy, HH:mm", java.util.Locale.getDefault()).format(java.util.Date(t))
+                }.getOrNull().orEmpty()
             }
+            Text("Rommancer Sync", fontSize = 26.sp, fontWeight = FontWeight.SemiBold, color = Accent)
+            if (updated.isNotEmpty()) Text(stringResource(R.string.updated_at, updated), fontSize = 14.sp, color = Dim)
             when {
                 !canRead -> StoragePermission()
                 linked -> Linked(store) { linked = false }
@@ -408,6 +411,7 @@ private fun Linked(store: Store, onUnlinked: () -> Unit) {
                 "roms" -> stringResource(R.string.p_roms)
                 "server" -> stringResource(R.string.p_server)
                 "transfer" -> stringResource(R.string.p_transfer)
+                "identify" -> stringResource(R.string.p_identify)
                 "roms-plan" -> stringResource(R.string.p_roms_plan)
                 "roms-download" -> stringResource(R.string.p_roms_download)
                 "pulls" -> stringResource(R.string.p_pulls)

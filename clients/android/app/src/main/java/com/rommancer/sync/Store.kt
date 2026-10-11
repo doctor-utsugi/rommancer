@@ -14,6 +14,11 @@ class Store(context: Context) {
     val user: String? get() = prefs.getString("user", null)
     val linked: Boolean get() = !token.isNullOrBlank()
 
+    /** Copies of overwritten saves to keep, as the server says */
+    var backupsKeep: Int
+        get() = prefs.getInt("backupsKeep", 20)
+        set(v) = prefs.edit().putInt("backupsKeep", v).apply()
+
     var lastResult: String
         get() = prefs.getString("lastResult", "") ?: ""
         set(v) = prefs.edit().putString("lastResult", v).apply()

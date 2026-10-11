@@ -59,6 +59,8 @@ TEXTS = {
         "press": "Pulsa A para continuar",
         "nolog": "Todavía no hay registro",
         "version": "Versión {v}",
+        "updated": "Actualizado el {d}",
+        "months": "ene feb mar abr may jun jul ago sep oct nov dic",
         "installed": "instalada el {d}",
         "p_connecting": "Conectando con el servidor",
         "p_waiting": "Esperando a la sincronización en curso",
@@ -66,6 +68,7 @@ TEXTS = {
         "p_saves": "Comprobando saves",
         "p_hashing": "Leyendo ficheros nuevos o cambiados",
         "p_server": "Preguntando al servidor",
+        "p_identify": "Identificando roms por su cabecera",
         "p_transfer": "Transfiriendo saves",
         "p_roms-plan": "Preguntando qué roms tocan",
         "p_roms-download": "Descargando roms",
@@ -112,6 +115,8 @@ TEXTS = {
         "press": "Press A to continue",
         "nolog": "No log yet",
         "version": "Version {v}",
+        "updated": "Updated {d}",
+        "months": "Jan Feb Mar Apr May Jun Jul Aug Sep Oct Nov Dec",
         "installed": "installed {d}",
         "p_connecting": "Contacting the server",
         "p_waiting": "Waiting for the running sync",
@@ -119,6 +124,7 @@ TEXTS = {
         "p_saves": "Checking saves",
         "p_hashing": "Reading new or changed files",
         "p_server": "Asking the server",
+        "p_identify": "Identifying roms by their header",
         "p_transfer": "Transferring saves",
         "p_roms-plan": "Asking which roms belong here",
         "p_roms-download": "Downloading roms",
@@ -293,6 +299,16 @@ def client_version():
         return "?"
 
 
+def updated_at():
+    """When this console last got a new client: the sync script's time, as 11 oct 2026, 18:40"""
+    try:
+        t = time.localtime(os.path.getmtime(os.path.join(HERE, "rommancer-sync.sh")))
+    except OSError:
+        return ""
+    month = T["months"].split()[t.tm_mon - 1]
+    return T["updated"].format(d=f"{t.tm_mday} {month} {t.tm_year}, {t.tm_hour:02d}:{t.tm_min:02d}")
+
+
 class Screen:
     def __init__(self):
         pygame.display.init()
@@ -342,10 +358,15 @@ class Screen:
     def frame(self, title, footer=""):
         self.surf.fill(BG)
         r = self.text(title, (self.w // 2, int(self.h * 0.04)), self.big, ACCENT, center=True)
-        # The app's own screens say which version this is, small beside the name
-        if title == T["title"]:
-            v = client_version()
-            self.text(f"v{v}", (r.right + int(self.w * 0.01), r.bottom - self.small.get_height()), self.small, DIM)
+        # Every screen says when the client was last updated: top right, or under the title when it does not fit
+        when = updated_at()
+        if when:
+            img = self.small.render(when, True, DIM)
+            x = self.w - img.get_width() - int(self.w * 0.02)
+            if x > r.right + int(self.w * 0.02):
+                self.surf.blit(img, (x, int(self.h * 0.015)))
+            else:
+                self.text(when, (self.w // 2, r.bottom), self.small, DIM, center=True)
         if footer:
             self.text(footer, (self.w // 2, self.h - int(self.h * 0.07)), self.small, DIM, center=True)
 

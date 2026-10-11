@@ -19,6 +19,7 @@ import { addRomRule, resolveRomGroups } from '../grouping/service.js';
 import { resolveWorks } from '../sync/wikidata.js';
 import { identifyHacks, linkFileAsHack } from '../hacks/identify.js';
 import { setSignupOpen, signupOpen } from '../auth/routes.js';
+import { HISTORY_KEY, saveHistory } from '../saves/service.js';
 
 registerJob('scan', async (ctx) => scanPath(ctx.params.romPathId, ctx, !!ctx.params.force, !!ctx.params.allowMassRemoval));
 registerJob('rematch', async () => rematchAll());
@@ -374,6 +375,16 @@ adminRouter.post('/games/:id/work', async (req, res) => {
 
 adminRouter.get('/settings/signup', async (_req, res) => {
   res.json({ open: await signupOpen() });
+});
+
+adminRouter.get('/settings/saves', async (_req, res) => {
+  res.json({ history: await saveHistory() });
+});
+
+adminRouter.put('/settings/saves', async (req, res) => {
+  const { history } = z.object({ history: z.number().int().min(1).max(500) }).parse(req.body);
+  await prisma.setting.upsert({ where: { key: HISTORY_KEY }, create: { key: HISTORY_KEY, value: String(history) }, update: { value: String(history) } });
+  res.json({ history });
 });
 
 adminRouter.put('/settings/signup', async (req, res) => {

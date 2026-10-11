@@ -423,6 +423,7 @@ export const esMore = {
     pullSystem: 'Traer los de este sistema',
     pull: 'Traer',
     pending: 'Pedido',
+    hackOf: 'Hack o traducción de',
     queued: '{{count}} juegos pedidos a la consola',
     games: '{{count}} juegos',
     client: 'cliente',
@@ -469,6 +470,8 @@ export const esMore = {
   },
   signupOpen: 'Registro abierto',
   signupOpenHelp: 'Cualquiera puede crear una cuenta (sin ser administrador) desde la web o desde Rommancer Sync.',
+  saveHistory: 'Copias de cada partida',
+  saveHistoryHelp: 'Versiones que el servidor guarda de cada partida, y copias que guarda cada consola de lo que una sincronización le sobrescribió. La versión que tiene cada consola nunca se borra.',
   perms: {
     title: 'Permisos',
     'collection.view': 'Ver colección',
@@ -1120,6 +1123,7 @@ export const enMore: typeof esMore = {
     pullSystem: "Bring this system's",
     pull: 'Bring',
     pending: 'Requested',
+    hackOf: 'Hack or translation of',
     queued: '{{count}} games requested from the console',
     games: '{{count}} games',
     client: 'client',
@@ -1166,6 +1170,8 @@ export const enMore: typeof esMore = {
   },
   signupOpen: 'Open sign-up',
   signupOpenHelp: 'Anyone can create a (non-admin) account from the web or from Rommancer Sync.',
+  saveHistory: 'Copies of each save',
+  saveHistoryHelp: 'Versions the server keeps of each save, and copies each console keeps of what a sync overwrote on it. The version each console holds is never removed.',
   perms: {
     title: 'Permissions',
     'collection.view': 'View collection',

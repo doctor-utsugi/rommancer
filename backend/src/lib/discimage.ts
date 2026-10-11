@@ -339,3 +339,18 @@ export async function discId(readAt: (pos: number, len: number) => Promise<Buffe
     platform,
   };
 }
+
+/** A CSO/ZSO read through any byte source (a header probe holding only the bytes a device sent) */
+export async function openCsoOn(src: { read(pos: number, len: number): Promise<Buffer> }, format: 'cso' | 'zso') {
+  const fd = {
+    async read(buf: Buffer, off: number, len: number, pos: number) {
+      const b = await src.read(pos, len);
+      b.copy(buf, off);
+      return { bytesRead: b.length, buffer: buf };
+    },
+    async close() {},
+  } as unknown as fs.promises.FileHandle;
+  const r = new CsoReader(fd, format);
+  await r.init();
+  return r;
+}

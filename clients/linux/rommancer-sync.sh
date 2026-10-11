@@ -22,7 +22,7 @@
 #                                   Menu++...) mounted on this computer; the link lives on the card itself,
 #                                   so any computer with this script can sync it. Without a command: sync.
 set -u
-CLIENT_VERSION=20261018
+CLIENT_VERSION=20261019
 # A clock before this date is surely wrong (no battery-backed clock); kept apart from the version, which may run ahead
 CLOCK_MIN=20261001
 # Onion keeps curl (with TLS) and friends outside the default PATH
@@ -448,6 +448,21 @@ emu_running() {
 # A memory card with the server's newer saves put in ("cget"): swapped in only if the file is still the one
 # the server read (EXPECT, "-" for none) and no emulator runs; otherwise the next sync tries again.
 # START: right before a game launches, when its emulator has not loaded the card yet
+# Puts a save the server sent in place. What it overwrites is kept first in the state folder (never beside the
+# saves, where an emulator could load it): the last copies the server's setting says, at most 256 MB of them
+replace_save() {
+  if [ -f "$2" ] && ! cmp -s "$1" "$2"; then
+    bd="$STATE/backups"; mkdir -p "$bd"
+    cp "$2" "$bd/$(date +%Y%m%d-%H%M%S)-$(basename "$2")" 2>/dev/null || log "backup of $(basename "$2") failed"
+    keep="$(cat "$STATE/backups-keep" 2>/dev/null)"; case "$keep" in ''|*[!0-9]*) keep=20 ;; esac
+    ls -1t "$bd" | while IFS= read -r old; do
+      keep=$((keep - 1)); sz="$(stat -c %s "$bd/$old" 2>/dev/null || echo 0)"; used=$((${used:-0} + sz))
+      [ "$keep" -lt 0 ] || [ "$used" -gt 268435456 ] && rm -f "$bd/$old"
+    done
+  fi
+  mv "$1" "$2"
+}
+
 card_get() {
   cp_="$1"; ce_="$2"; cr_="$3"; cw_="${4:-}"
   if [ -z "$SD" ] && [ "$cw_" != start ] && emu_running; then log "card: an emulator is running, $(basename "$cp_") later"; return 1; fi
@@ -459,7 +474,7 @@ card_get() {
   if [ "$cn_" != "$ce_" ] || { [ -z "$SD" ] && [ "$cw_" != start ] && emu_running; }; then
     rm -f "$cp_.rommancer-tmp"; log "card: $(basename "$cp_") changed meanwhile, later"; return 1
   fi
-  mv "$cp_.rommancer-tmp" "$cp_"
+  replace_save "$cp_.rommancer-tmp" "$cp_"
   # Tell the server at once: a game saved on this card before the next sync is then this console's newer save
   http_once POST "$SERVER/api/v1/agent/card/ack?sha=$(sha1 "$cp_")" - - "X-Path-B64: $(b64 "$cp_")" >/dev/null 2>&1 || log "card: $(basename "$cp_") written, server not told yet"
 }
@@ -534,10 +549,13 @@ cmd_sync() {
   progress server 0 0
   # Free and total bytes of the roms' storage: the server copies list roms only while a reserve is kept
   space="$(df -k "$ROMS" 2>/dev/null | awk 'NR == 2 { printf "%.0f %.0f", $4 * 1024, $2 * 1024 }')"
-  http POST "$SERVER/api/v1/agent/sync" "$req" "$plan" "X-Allow-Pull: $ALLOW_PULL" "X-Ssh: $(ssh_offer)" "X-Client-Path-B64: $(b64 "$DIR/$(basename "$0")")" "X-Space: ${space:-}" "X-Wifi-Bands: $(wifi_bands)" || { log "sync request failed"; drop_lock; return 1; }
-  ups=0; downs=0; errs=0; moved=0; total="$(grep -c . "$plan")"
+  http POST "$SERVER/api/v1/agent/sync" "$req" "$plan" "X-Allow-Pull: $ALLOW_PULL" "X-Ssh: $(ssh_offer)" "X-Client-Path-B64: $(b64 "$DIR/$(basename "$0")")" "X-Space: ${space:-}" "X-Wifi-Bands: $(wifi_bands)" "X-Probe: 1" || { log "sync request failed"; drop_lock; return 1; }
+  # How many copies of overwritten saves to keep
+  sed -n "s/^backups$TAB//p" "$plan" > "$WORK/keep" && [ -s "$WORK/keep" ] && mv "$WORK/keep" "$STATE/backups-keep"
+  ups=0; downs=0; errs=0; moved=0; total="$(grep -vc "^probe$TAB\|^backups$TAB" "$plan")"
   : > "$WORK/received"
   while IFS="$TAB" read -r action p a b; do
+    case "$action" in probe|backups) continue ;; esac
     moved=$((moved + 1)); progress transfer "$moved" "$total"
     case "$action" in
       put)
@@ -554,7 +572,7 @@ cmd_sync() {
         else errs=$((errs + 1)); fi ;;
       get)
         mkdir -p "$(dirname "$p")"
-        if http GET "$SERVER/api/v1/agent/file?v=$a" - "$p.rommancer-tmp" "X-Rom-B64: $(b64 "$b")" "X-Path-B64: $(b64 "$p")" && mv "$p.rommancer-tmp" "$p"; then
+        if http GET "$SERVER/api/v1/agent/file?v=$a" - "$p.rommancer-tmp" "X-Rom-B64: $(b64 "$b")" "X-Path-B64: $(b64 "$p")" && replace_save "$p.rommancer-tmp" "$p"; then
           downs=$((downs + 1))
           rn="$(basename "$b")"; printf '%s\n' "${rn%.*}" >> "$WORK/received"
         else rm -f "$p.rommancer-tmp"; errs=$((errs + 1)); fi ;;
@@ -563,6 +581,14 @@ cmd_sync() {
       cget) if card_get "$p" "$a" "$b"; then downs=$((downs + 1)); rn="$(basename "$p")"; printf '%s\n' "${rn%.*}" >> "$WORK/received"; fi ;;
     esac
   done < "$plan"
+  # Roms no hash or name identified: the server reads their product code from the blocks it asks for
+  probes="$(grep -c "^probe$TAB" "$plan")"
+  n=0
+  grep "^probe$TAB" "$plan" > "$WORK/probes"
+  while IFS="$TAB" read -r _ p a; do
+    n=$((n + 1)); progress_file identify "$n" "$probes" "$p"
+    probe_file "$p" "$a"
+  done < "$WORK/probes"
   progress finished "$ups" "$downs"
   # One line per game: its save and its states count once
   sort -u "$WORK/received" -o "$WORK/received" 2>/dev/null
@@ -575,6 +601,21 @@ cmd_sync() {
   drop_lock
   trap - EXIT INT TERM
   return 0
+}
+
+# One header probe: the blocks of 4 KiB the server names ("start:count,..."), sent until it has what it needs
+probe_file() {
+  pf="$1"; ask="$2"; rounds=0
+  psize="$(stat -c %s "$pf" 2>/dev/null)" || return 0
+  while [ -n "$ask" ] && [ "$rounds" -lt 12 ]; do
+    rounds=$((rounds + 1))
+    : > "$WORK/probe-body"
+    for r in $(printf '%s' "$ask" | tr ',' ' '); do
+      dd if="$pf" bs=4096 skip="${r%%:*}" count="${r#*:}" 2>/dev/null >> "$WORK/probe-body"
+    done
+    http POST "$SERVER/api/v1/agent/probe" "$WORK/probe-body" "$WORK/probe-reply" "X-Path-B64: $(b64 "$pf")" "X-Size: $psize" "X-Ranges: $ask" "Content-Type: application/octet-stream" || return 0
+    ask="$(sed -n "s/^need$TAB//p" "$WORK/probe-reply")"
+  done
 }
 
 # What the WiFi chip can use ("dual" or "2.4"), so the server only hands it networks it can see
@@ -909,7 +950,7 @@ cmd_game_start() {
     [ "$action" = cget ] && { card_get "$p" "$v" "$rom" start && log "game-start: card $(basename "$p")"; continue; }
     [ "$action" = get ] || continue
     mkdir -p "$(dirname "$p")"
-    http GET "$SERVER/api/v1/agent/file?v=$v" - "$p.rommancer-tmp" "$rh" "X-Path-B64: $(b64 "$p")" && mv "$p.rommancer-tmp" "$p" && log "game-start: got $(basename "$p")"
+    http GET "$SERVER/api/v1/agent/file?v=$v" - "$p.rommancer-tmp" "$rh" "X-Path-B64: $(b64 "$p")" && replace_save "$p.rommancer-tmp" "$p" && log "game-start: got $(basename "$p")"
     rm -f "$p.rommancer-tmp"
   done < "$WORK/gs-plan"
   return 0

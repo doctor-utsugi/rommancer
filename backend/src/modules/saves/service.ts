@@ -6,7 +6,12 @@ import { env } from '../../config/env.js';
 import { prisma } from '../../lib/prisma.js';
 import { nudgeDevices } from './nudge.js';
 
-const MAX_VERSIONS = 50;
+/** Versions kept of each save, set by the admin; consoles keep as many copies of what a sync overwrote */
+export const HISTORY_KEY = 'saves.history';
+export async function saveHistory() {
+  const v = Number((await prisma.setting.findUnique({ where: { key: HISTORY_KEY } }))?.value);
+  return Number.isInteger(v) && v >= 1 ? v : 20;
+}
 
 export interface SaveKey {
   userId: number;
@@ -107,8 +112,11 @@ export async function storeVersion(
 
 async function pruneVersions(saveId: number) {
   const save = await prisma.save.findUniqueOrThrow({ where: { id: saveId } });
-  const old = await prisma.saveVersion.findMany({ where: { saveId }, orderBy: { createdAt: 'desc' }, skip: MAX_VERSIONS });
+  const old = await prisma.saveVersion.findMany({ where: { saveId }, orderBy: { createdAt: 'desc' }, skip: await saveHistory() });
   const keep = new Set((await prisma.saveConflict.findMany({ where: { saveId, resolvedAt: null } })).flatMap((c) => [c.deviceVersionId, c.serverVersionId]));
+  // What each device holds stays: a sync only overwrites a device's file when it is that version, so its content
+  // is always on the server
+  for (const d of await prisma.saveDeviceState.findMany({ where: { saveId }, select: { versionId: true } })) if (d.versionId) keep.add(d.versionId);
   for (const v of old) {
     // Shared versions stay until their owner stops sharing them
     if (v.id === save.currentVersionId || keep.has(v.id) || v.sharedAt) continue;
