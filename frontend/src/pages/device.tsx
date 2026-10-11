@@ -574,6 +574,14 @@ function CopyDialog({ deviceId, items, admin, onClose, onCopy }: { deviceId: str
   const [picked, setPicked] = useState(() => new Set(groups.map((g) => g.slug)))
   const [pickedHacks, setPickedHacks] = useState(() => new Set(hackGroups.map((g) => g.slug)))
   const [pickedRest, setPickedRest] = useState(() => new Set<string>())
+  // A platform's whole line: every column it has files in
+  const rowAll = (pl: { slug: string }) =>
+    (!newOf.has(pl.slug) || picked.has(pl.slug)) && (!hackOf.has(pl.slug) || pickedHacks.has(pl.slug)) && (!restOf.has(pl.slug) || pickedRest.has(pl.slug))
+  const setRow = (slug: string, on: boolean) => {
+    if (newOf.has(slug)) setPicked((p) => toggled(p, slug, on))
+    if (hackOf.has(slug)) setPickedHacks((p) => toggled(p, slug, on))
+    if (restOf.has(slug)) setPickedRest((p) => toggled(p, slug, on))
+  }
   const chosen = [...groups.filter((g) => picked.has(g.slug)), ...hackGroups.filter((g) => pickedHacks.has(g.slug)), ...rest.filter((g) => pickedRest.has(g.slug))]
   const files = chosen.reduce((n, g) => n + g.files, 0)
   const bytes = chosen.reduce((n, g) => n + g.bytes, 0)
@@ -599,7 +607,12 @@ function CopyDialog({ deviceId, items, admin, onClose, onCopy }: { deviceId: str
           <table className="w-full text-sm">
             <thead className="sticky top-0 bg-background text-xs text-muted-foreground">
               <tr className="border-b">
-                <th className="py-1.5 text-left font-medium">{t('more.copyPick.platform')}</th>
+                <th className="py-1.5 text-left font-medium">
+                  <label className="flex items-center gap-1.5">
+                    <Checkbox checked={platforms.length > 0 && platforms.every(rowAll)} onCheckedChange={(c) => platforms.forEach((pl) => setRow(pl.slug, !!c))} />
+                    {t('more.copyPick.platform')}
+                  </label>
+                </th>
                 <th className="py-1.5 text-left font-medium">
                   <label className="flex items-center gap-1.5">
                     <Checkbox checked={all} disabled={!groups.length} onCheckedChange={(c) => setPicked(new Set(c ? groups.map((g) => g.slug) : []))} />
@@ -623,7 +636,12 @@ function CopyDialog({ deviceId, items, admin, onClose, onCopy }: { deviceId: str
             <tbody>
               {platforms.map((pl) => (
                 <tr key={pl.slug} className="border-b last:border-0">
-                  <td className="py-1.5 pr-2">{pl.name}</td>
+                  <td className="py-1.5 pr-2">
+                    <label className="flex items-center gap-1.5">
+                      <Checkbox checked={rowAll(pl)} onCheckedChange={(c) => setRow(pl.slug, !!c)} />
+                      {pl.name}
+                    </label>
+                  </td>
                   <td className="py-1.5 pr-2">
                     <PickCell g={newOf.get(pl.slug)} checked={picked.has(pl.slug)} onChange={(c) => setPicked(toggled(picked, pl.slug, c))} />
                   </td>
