@@ -22,7 +22,7 @@
 #                                   Menu++...) mounted on this computer; the link lives on the card itself,
 #                                   so any computer with this script can sync it. Without a command: sync.
 set -u
-CLIENT_VERSION=20261026
+CLIENT_VERSION=20261027
 # A clock before this date is surely wrong (no battery-backed clock); kept apart from the version, which may run ahead
 CLOCK_MIN=20261001
 # Onion keeps curl (with TLS) and friends outside the default PATH
@@ -785,6 +785,8 @@ cmd_update() {
     cp "$WORK/update.tmp" "$target.new" && chmod +x "$target.new" 2>/dev/null; mv "$target.new" "$target" && log "updated $name"
     [ "$name" = rommancer-sync.sh ] && echo restart
   done
+  # Reached the server (the daemon tells this from a check that could not)
+  return 0
 }
 
 cmd_daemon() {
@@ -796,11 +798,13 @@ cmd_daemon() {
   fi
   echo $$ > "$STATE/pid"
   cmd_install > /dev/null 2>&1
-  last=""; since=$FULL_SECONDS
+  last=""; since=$FULL_SECONDS; update_due=1
   while :; do
-    # Each full pass also checks for a newer client and restarts into it
-    if [ "$since" -ge "$FULL_SECONDS" ] && [ "$(cmd_update 2>/dev/null)" = restart ]; then
-      exec sh "$DIR/$(basename "$0")" daemon
+    # Each full pass also checks for a newer client and restarts into it. At power-on the WiFi may not be up yet:
+    # a check that could not reach the server is tried again at the next tick, not a full pass later
+    if [ "$since" -ge "$FULL_SECONDS" ] || [ "$update_due" = 1 ]; then
+      up="$(cmd_update 2>/dev/null)" && update_due=0 || update_due=1
+      [ "$up" = restart ] && exec sh "$DIR/$(basename "$0")" daemon
     fi
     if [ -z "${SAVE_DIRS:-}" ]; then
       roots="$(http GET "$SERVER/api/v1/agent/roots" - -)" && { SAVE_DIRS="$(printf '%s\n' "$roots" | sed -n "s/^saves$TAB//p")"; EXTS="$(field exts "$roots")"; }
