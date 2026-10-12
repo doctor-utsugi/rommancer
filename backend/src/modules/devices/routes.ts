@@ -13,7 +13,7 @@ import { ZipArchive } from 'archiver';
 import { sha256 } from '../../lib/crypto.js';
 import { scriptFiles } from '../saves/script.js';
 import { loadList, resolveListFiles } from '../lists/service.js';
-import { copiesSystem, folderFor, layoutOf, openSink, systemFilterOf } from './sink.js';
+import { clearListCaches, copiesSystem, folderFor, layoutOf, openSink, systemFilterOf } from './sink.js';
 import { ownedGameIds, ownedRomIds } from '../roms/service.js';
 import { installClient, serverKey, syncOverSsh } from './ssh.js';
 import { OPEN_PULL, pullTransfers } from '../saves/agent.js';
@@ -721,6 +721,7 @@ registerJob('transfer', async (ctx) => {
   let done = 0;
   let copied = 0;
   let skipped = 0;
+  const touched = new Set<string>();
   try {
     for (const it of items) {
       const folder = layout.systemMap[it.systemSlug]?.folder ?? it.systemSlug;
@@ -738,12 +739,14 @@ registerJob('transfer', async (ctx) => {
           if (f.archiveEntry) await sink!.putStream(extractEntryStream(f.absPath, f.archiveEntry), dest);
           else await sink!.putFile(f.absPath, dest);
           copied++;
+          touched.add(path.posix.join(layout.romsRoot, folder));
           plan.push({ dest, action: 'copy' });
           ctx.log(`Copied ${dest}`);
         }
         await ctx.progress(++done, total, dest);
       }
     }
+    if (sink) await clearListCaches(sink, touched);
   } finally {
     await sink?.close();
   }

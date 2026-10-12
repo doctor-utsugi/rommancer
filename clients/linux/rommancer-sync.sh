@@ -22,7 +22,7 @@
 #                                   Menu++...) mounted on this computer; the link lives on the card itself,
 #                                   so any computer with this script can sync it. Without a command: sync.
 set -u
-CLIENT_VERSION=20261032
+CLIENT_VERSION=20261033
 # A clock before this date is surely wrong (no battery-backed clock); kept apart from the version, which may run ahead
 CLOCK_MIN=20261001
 # Onion keeps curl (with TLS) and friends outside the default PATH
@@ -844,6 +844,8 @@ cmd_daemon() {
       [ "$full_pass" = 1 ] && cmd_prune > /dev/null 2>&1
       cmd_collections > /dev/null 2>&1
     fi
+    # Game lists still to reload (a download or deletion ended during a game)
+    refresh_lists
     sleep "$WATCH_SECONDS"; since=$((since + WATCH_SECONDS))
   done
 }
@@ -970,8 +972,9 @@ cmd_prune() {
     [ "$kind" = del ] || continue
     case "$p" in "${ROMS%/}"/*/*) ;; *) continue ;; esac
     [ -f "$p" ] || continue
-    rm -f "$p" && { n=$((n + 1)); printf '%s\n' "$p" >> "$STATE/pruned"; }
+    rm -f "$p" && { n=$((n + 1)); printf '%s\n' "$p" >> "$STATE/pruned"; roms_changed "$p"; }
   done < "$WORK/pruneplan"
+  refresh_lists
   [ "$n" -gt 0 ] && log "prune: $n roms in no list deleted"
   [ -n "${VERBOSE:-}" ] && printf 'deleted: %s roms in no list\n' "$n"
   return 0
@@ -999,6 +1002,40 @@ free_bytes() {
   echo $(( $(df -k "$d" 2>/dev/null | awk 'NR == 2 { print $4 }') * 1024 ))
 }
 
+# Roms Rommancer added or deleted (one path per argument): the firmware's game lists must show the change
+roms_changed() { printf '%s\n' "$@" >> "$WORK/lists-changed"; }
+
+# The firmware's menus read their game lists again after roms came or went, whoever changed them (a download asked
+# on screen, a deletion of roms in no list). Onion keeps each system's list in a <folder>_cache6.db next to its roms,
+# read again once gone; EmulationStation (Knulli, Batocera, ROCKNIX) reloads through its local API, never during a
+# game (the next game end or daemon tick does it); ArkOS's has no API and reads its lists when it starts, so it
+# restarts right after a game or the Rommancer app closes (AFTER-GAME), never under the user's feet. MinUI/NextUI
+# list their folders as they are; for the others (muOS) no list cache is known
+refresh_lists() {
+  if [ -s "$WORK/lists-changed" ]; then
+    sed 's#/[^/]*$##' "$WORK/lists-changed" | sort -u | while IFS= read -r d; do
+      while [ -n "$d" ] && [ "$d" != / ] && [ "$d" != . ]; do
+        for c in "$d"/*_cache6.db; do [ -f "$c" ] && rm -f "$c" && log "game list cache $(basename "$c") cleared"; done
+        d="$(dirname "$d")"
+      done
+    done
+    rm -f "$WORK/lists-changed"; touch "$STATE/lists-pending"
+  fi
+  [ -f "$STATE/lists-pending" ] || return 0
+  [ -n "${FW:-}" ] || detect
+  case "$FW" in
+    knulli|batocera|rocknix)
+      playing && return 0
+      curl -fsS -m 10 "${ROMMANCER_ES_API:-http://127.0.0.1:1234}/reloadgames" >/dev/null 2>&1 && { rm -f "$STATE/lists-pending"; log "game lists reloaded"; } ;;
+    arkos)
+      [ "${1:-}" = after-game ] || return 0
+      rm -f "$STATE/lists-pending"; log "game lists: restarting EmulationStation"
+      systemctl restart emulationstation >/dev/null 2>&1 || sudo -n systemctl restart emulationstation >/dev/null 2>&1 ;;
+    *) rm -f "$STATE/lists-pending" ;;
+  esac
+  return 0
+}
+
 # curl's config syntax: a value between quotes, with its backslashes and quotes escaped
 curl_quote() { printf '"%s"' "$(printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g')"; }
 
@@ -1018,7 +1055,7 @@ roms_fetch() {
       if [ "$size" = 0 ] || [ "$ps" -gt "$size" ]; then rm -f "$part"; ps=0; fi
     fi
     # Already whole (stopped right before it was renamed)
-    if [ "$size" -gt 0 ] && [ "$ps" = "$size" ]; then mv "$part" "$dest" && { got=$((got + 1)); printf '%s\t%s\n' "$(date +%s)" "$dest" >> "$STATE/received-roms"; }; continue; fi
+    if [ "$size" -gt 0 ] && [ "$ps" = "$size" ]; then mv "$part" "$dest" && { got=$((got + 1)); roms_changed "$dest"; printf '%s\t%s\n' "$(date +%s)" "$dest" >> "$STATE/received-roms"; }; continue; fi
     # The card's free space, read once and counted down
     [ -n "$free" ] || free="$(free_bytes "$(dirname "$dest")")"
     if [ "$size" -gt 0 ] && [ "$free" -lt $((size - ps + 52428800)) ]; then
@@ -1057,7 +1094,7 @@ EOR
     ps="$(stat -c %s "$dest.part" 2>/dev/null || echo -1)"
     # Whole: its size, or (unknown size) a transfer that ended with the server's OK; one cut by a stop printed nothing
     if { [ "$size" -gt 0 ] && [ "$ps" = "$size" ]; } || { [ "$size" = 0 ] && [ "$code" = 200 ] && [ "$ps" -ge 0 ]; }; then
-      mv "$dest.part" "$dest" && got=$((got + 1))
+      mv "$dest.part" "$dest" && { got=$((got + 1)); roms_changed "$dest"; }
       # For the "new" collection: what arrived, and when
       printf '%s\t%s\n' "$(date +%s)" "$dest" >> "$STATE/received-roms"
     elif [ "$stopped" = 0 ]; then
@@ -1104,7 +1141,7 @@ cmd_roms() {
     fi
     mkdir -p "$(dirname "$dest")"
     if http GET "$SERVER/api/v1/agent/rom?f=$ref" - "$dest.part" && { [ "$size" = 0 ] || [ "$(stat -c %s "$dest.part")" = "$size" ]; }; then
-      mv "$dest.part" "$dest"; got=$((got + 1))
+      mv "$dest.part" "$dest"; got=$((got + 1)); roms_changed "$dest"
       # For the "new" collection: what arrived, and when
       printf '%s\t%s\n' "$(date +%s)" "$dest" >> "$STATE/received-roms"
     else
@@ -1115,6 +1152,7 @@ cmd_roms() {
   done < "$WORK/romplan"
   fi
   rm -rf "$WORK/roms-lock"
+  refresh_lists
   if [ "$stopped" = 1 ]; then
     rm -f "$WORK/roms-stop"
     progress roms-finished "$got" "$fail"
@@ -1600,7 +1638,7 @@ case "${1:-}" in
     [ -n "$SD" ] && sync ;;
   game-start) cmd_game_start "${2:-}" ;;
   # After a game: copies for the server may go on, and the game's saves go up
-  game-stop) rm -f "$WORK/playing"; cmd_sync ;;
+  game-stop) rm -f "$WORK/playing"; cmd_sync; refresh_lists after-game ;;
   conflicts) cmd_conflicts ;;
   resolve) cmd_resolve "${2:-}" "${3:-}" ;;
   set) set_setting "${2:-}" "${3:-}" ;;

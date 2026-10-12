@@ -3236,7 +3236,7 @@ test('sync client: one rom download at a time, and it can be stopped', async () 
   const work = path.join(dir, 'work');
   fs.mkdirSync(state, { recursive: true });
   fs.writeFileSync(path.join(state, 'config'), `SERVER=${base}\nTOKEN=${claim.json.token}\n`);
-  const env = { ...process.env, ROMMANCER_STATE: state, TMPDIR: work };
+  const env: NodeJS.ProcessEnv = { ...process.env, ROMMANCER_STATE: state, TMPDIR: work };
   fs.mkdirSync(work, { recursive: true });
   const run = (...args: string[]) => execFileP('sh', [client, ...args], { env });
   await run('sync');
@@ -3260,8 +3260,23 @@ test('sync client: one rom download at a time, and it can be stopped', async () 
   half[0] ^= 0xff;
   fs.rmSync(rom);
   fs.writeFileSync(`${rom}.part`, half);
+  // The firmware's game lists are read again once roms came: Onion's cache goes, EmulationStation is told to reload
+  fs.writeFileSync(path.join(root, 'roms/nes/nes_cache6.db'), 'cache');
+  const reloads: string[] = [];
+  const es = http.createServer((q, r) => { reloads.push(q.url ?? ''); r.end('ok'); });
+  await new Promise<void>((resolve) => es.listen(0, '127.0.0.1', resolve));
+  env.ROMMANCER_ES_API = `http://127.0.0.1:${(es.address() as { port: number }).port}`;
   await run('sync');
-  assert.match((await run('roms')).stdout, /roms: 1 downloaded/);
+  Object.assign(env, { ROMMANCER_FIRMWARE: 'knulli', ROMMANCER_SYSROOT: dir });
+  try {
+    assert.match((await run('roms')).stdout, /roms: 1 downloaded/);
+  } finally {
+    delete env.ROMMANCER_FIRMWARE;
+    es.close();
+  }
+  assert.ok(!fs.existsSync(path.join(root, 'roms/nes/nes_cache6.db')), 'Onion-style cache cleared');
+  assert.deepEqual(reloads, ['/reloadgames']);
+  assert.ok(!fs.existsSync(path.join(state, 'lists-pending')));
   const resumed = fs.readFileSync(rom);
   assert.equal(resumed.length, whole.length);
   assert.equal(resumed[0], half[0], 'resumed, not started again');

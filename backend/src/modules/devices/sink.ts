@@ -24,6 +24,7 @@ export interface Sink {
   /** Writes a temporary file beside REL and renames it over REL: readers never see half a file */
   replaceBuffer(buf: Buffer, rel: string): Promise<void>;
   list(relDir: string): Promise<SinkEntry[]>;
+  remove(rel: string): Promise<void>;
   close(): Promise<void>;
 }
 
@@ -72,6 +73,9 @@ class LocalSink implements Sink {
       if (st) out.push({ name: e.name, size: st.size, mtimeMs: st.mtimeMs, isDir: st.isDirectory() });
     }
     return out;
+  }
+  async remove(rel: string) {
+    await fs.promises.rm(this.abs(rel), { force: true });
   }
   async close() {}
 }
@@ -137,8 +141,22 @@ class SftpSink implements Sink {
       return [];
     }
   }
+  async remove(rel: string) {
+    await this.client.delete(this.abs(rel), true);
+  }
   async close() {
     await this.client.end();
+  }
+}
+
+/**
+ * Roms came into these folders: the firmware's game lists must show them. Onion keeps each system's list in a
+ * <folder>_cache6.db beside its roms and reads the folder again once it is gone (other firmwares list their folders
+ * when they start, or as they are)
+ */
+export async function clearListCaches(sink: Sink, relDirs: Iterable<string>) {
+  for (const dir of new Set(relDirs)) {
+    for (const e of await sink.list(dir)) if (!e.isDir && e.name.endsWith('_cache6.db')) await sink.remove(path.posix.join(dir, e.name)).catch(() => undefined);
   }
 }
 

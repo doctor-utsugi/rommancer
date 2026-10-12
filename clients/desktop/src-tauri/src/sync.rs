@@ -355,6 +355,7 @@ impl<'a> Engine<'a> {
     pub fn roms(&mut self, out: &mut Outcome) -> Result<()> {
         self.progress("roms-plan", 0, 0);
         let plan: Vec<_> = pairs(&self.api.get_text("/agent/roms")?).into_iter().filter(|r| r.len() >= 4 && r[0] == "rom").collect();
+        let mut arrived: Vec<PathBuf> = Vec::new();
         for (i, r) in plan.iter().enumerate() {
             self.check()?;
             let dest = PathBuf::from(&r[1]);
@@ -374,11 +375,18 @@ impl<'a> Engine<'a> {
                 self.cancelled,
             );
             match res {
-                Ok(()) if size == 0 || fs::metadata(&dest).map(|m| m.len()).unwrap_or(0) == size => out.roms += 1,
-                Err(e) if e.to_string() == "cancelled" => return Err(e),
+                Ok(()) if size == 0 || fs::metadata(&dest).map(|m| m.len()).unwrap_or(0) == size => {
+                    out.roms += 1;
+                    arrived.push(dest.clone());
+                }
+                Err(e) if e.to_string() == "cancelled" => {
+                    clear_list_caches(Path::new(&self.root), &arrived);
+                    return Err(e);
+                }
                 _ => out.roms_failed += 1,
             }
         }
+        clear_list_caches(Path::new(&self.root), &arrived);
         Ok(())
     }
 
@@ -447,5 +455,30 @@ impl<'a> Engine<'a> {
             out.config += 1;
         }
         Ok(())
+    }
+}
+
+/// Roms arrived in these files' folders: the console's game lists must show them. Onion keeps each system's list in
+/// a <folder>_cache6.db beside its roms (or above, for games in their own folder) and reads the folder again once it
+/// is gone; other firmwares list their folders when they start
+fn clear_list_caches(root: &Path, files: &[PathBuf]) {
+    let mut dirs: Vec<PathBuf> = files.iter().filter_map(|f| f.parent().map(Path::to_path_buf)).collect();
+    dirs.sort();
+    dirs.dedup();
+    for start in dirs {
+        let mut dir = Some(start.as_path());
+        while let Some(d) = dir {
+            if !d.starts_with(root) {
+                break;
+            }
+            if let Ok(entries) = fs::read_dir(d) {
+                for e in entries.flatten() {
+                    if e.file_name().to_string_lossy().ends_with("_cache6.db") {
+                        let _ = fs::remove_file(e.path());
+                    }
+                }
+            }
+            dir = d.parent();
+        }
     }
 }
