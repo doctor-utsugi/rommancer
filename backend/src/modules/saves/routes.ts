@@ -13,7 +13,7 @@ import { coreVersionOf, resolveConflict } from './core.js';
 import { layoutOf } from '../devices/sink.js';
 import { raDefaults } from '../../seed/data.js';
 import { convertSave, type SaveFormat } from './convert.js';
-import { identifyRom, parseSaveFile, readThumb, readVersion, removeVersion, storeThumb, storeVersion } from './service.js';
+import { identifyRom, parseSaveFile, readThumb, readVersion, removeVersion, romForSave, storeThumb, storeVersion } from './service.js';
 import { cardFamily, mainCard, readSnapshot, splitWholeCard } from './cards.js';
 import './sync.js';
 
@@ -359,21 +359,6 @@ const WEB_SYSTEMS: Record<string, string> = {
   virtualboy: 'vb', colecovision: 'coleco',
 };
 
-/** The server's rom a save belongs to: its own, one of its game's (the one named like the save first), or by name */
-async function romForSave(s: { romId: number | null; gameId: number | null; baseName: string }) {
-  const withFile = { parts: { some: { files: { some: { status: { in: ['MATCHED' as const, 'UNVERIFIED' as const] } } } } } };
-  const include = { game: { include: { system: true } } };
-  if (s.romId) {
-    const r = await prisma.rom.findFirst({ where: { id: s.romId, ...withFile }, include });
-    if (r) return r;
-  }
-  if (s.gameId) {
-    const roms = await prisma.rom.findMany({ where: { gameId: s.gameId, ...withFile }, include });
-    const named = roms.find((r) => r.name.toLowerCase() === s.baseName.toLowerCase());
-    if (named ?? roms[0]) return named ?? roms[0];
-  }
-  return prisma.rom.findFirst({ where: { name: s.baseName, ...withFile }, include });
-}
 
 // What the play page needs for a version: the EmulatorJS system, the rom and the save or state to load
 savesRouter.get('/:id/versions/:versionId/play', requirePerm('roms.download'), async (req, res) => {
@@ -381,7 +366,23 @@ savesRouter.get('/:id/versions/:versionId/play', requirePerm('roms.download'), a
   const v = await prisma.saveVersion.findFirstOrThrow({ where: { id: intParam(req, 'versionId'), saveId: s.id } });
   if (s.kind === 'ENTRY') throw badRequest('Memory card entries cannot be played in the browser');
   const rom = await romForSave(s);
-  if (!rom) throw new HttpError(404, 'The rom of this save is not on the server');
+  if (!rom) {
+    // Where it is: the consoles that sent this save, and whether the rom was asked from one of them
+    const from = await prisma.saveVersion.findMany({ where: { saveId: s.id, sourceDeviceId: { not: null } }, distinct: ['sourceDeviceId'], select: { sourceDevice: { select: { id: true, name: true } } } });
+    const devices = from.flatMap((v) => (v.sourceDevice ? [v.sourceDevice] : []));
+    const pull = devices.length ? await prisma.devicePull.findFirst({ where: { deviceId: { in: devices.map((d) => d.id) }, path: { contains: `/${s.baseName}.` } }, orderBy: { id: 'desc' } }) : null;
+    const where = devices.length ? ` It is only on ${devices.map((d) => d.name).join(', ')}` : '';
+    const state = !pull
+      ? devices.length
+        ? ': it is asked from there at its next sync if the console lets the server fetch roms'
+        : ''
+      : pull.status === 'failed'
+        ? `: fetching it failed (${pull.result ?? 'unknown'})`
+        : pull.status === 'done'
+          ? ''
+          : ': it is on its way to the server (the console sends it when it syncs); try again once it arrives';
+    throw new HttpError(404, `The rom "${s.baseName}" is not on the server.${where}${state}`);
+  }
   const system = WEB_SYSTEMS[rom.game.system.slug];
   if (!system) throw badRequest(`${rom.game.system.name} cannot be played in the browser`);
   // Saves go as RetroArch writes them (the browser runs RetroArch cores); states as they are

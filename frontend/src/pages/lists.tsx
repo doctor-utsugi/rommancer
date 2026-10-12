@@ -3,7 +3,7 @@ import { Link, useNavigate } from 'react-router'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
-import { Star } from 'lucide-react'
+import { Gamepad2, Star } from 'lucide-react'
 import { get, patch, post } from '@/lib/api'
 import { useAuth } from '@/lib/auth'
 import { Badge } from '@/components/ui/badge'
@@ -86,6 +86,16 @@ export function ListsPage() {
                     {l.isCollaborative && ` · ${t('lists.collaborative').split(' (')[0]}`}
                     {l.parentListId && ` · ${t('lists.derive')}`}
                   </p>
+                  {l.devices?.length > 0 && (
+                    <div className="flex flex-wrap gap-1 pt-1">
+                      {l.devices.map(({ device }: any) => (
+                        <Badge key={device.id} variant="secondary">
+                          <Gamepad2 className="size-3" />
+                          {device.name}
+                        </Badge>
+                      ))}
+                    </div>
+                  )}
                 </CardContent>
               </Card>
             </Link>

@@ -159,3 +159,19 @@ export async function readVersion(versionId: number): Promise<Buffer> {
   const v = await prisma.saveVersion.findUniqueOrThrow({ where: { id: versionId } });
   return fs.promises.readFile(path.join(env.savesDir, v.path));
 }
+
+/** The server's rom a save belongs to: its own, one of its game's (the one named like the save first), or by name */
+export async function romForSave(s: { romId: number | null; gameId: number | null; baseName: string }) {
+  const withFile = { parts: { some: { files: { some: { status: { in: ['MATCHED' as const, 'UNVERIFIED' as const] } } } } } };
+  const include = { game: { include: { system: true } } };
+  if (s.romId) {
+    const r = await prisma.rom.findFirst({ where: { id: s.romId, ...withFile }, include });
+    if (r) return r;
+  }
+  if (s.gameId) {
+    const roms = await prisma.rom.findMany({ where: { gameId: s.gameId, ...withFile }, include });
+    const named = roms.find((r) => r.name.toLowerCase() === s.baseName.toLowerCase());
+    if (named ?? roms[0]) return named ?? roms[0];
+  }
+  return prisma.rom.findFirst({ where: { name: s.baseName, ...withFile }, include });
+}

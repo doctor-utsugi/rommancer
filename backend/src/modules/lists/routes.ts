@@ -58,7 +58,13 @@ listsRouter.get('/', async (req, res) => {
   const lists = await prisma.list.findMany({
     where,
     orderBy: { updatedAt: 'desc' },
-    include: { owner: { select: { id: true, username: true } }, _count: { select: { items: true } }, shares: { select: { userId: true, canEdit: true } } },
+    include: {
+      owner: { select: { id: true, username: true } },
+      _count: { select: { items: true } },
+      shares: { select: { userId: true, canEdit: true } },
+      // Only the user's own consoles that have it
+      devices: { where: { device: { userId: u.id } }, select: { device: { select: { id: true, name: true } } } },
+    },
   });
   // The user's favourites always come first
   res.json(lists.sort((a, b) => Number(b.kind === 'favorites' && b.ownerId === u.id) - Number(a.kind === 'favorites' && a.ownerId === u.id)));

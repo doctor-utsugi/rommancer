@@ -7,12 +7,13 @@ import path from 'node:path';
 import express, { Router, type Request } from 'express';
 import type { Device, Emulator, Firmware } from '@prisma/client';
 import { prisma } from '../../lib/prisma.js';
+import { hasPermission, normalizePermissions } from '../../lib/permissions.js';
 import { sha256 } from '../../lib/crypto.js';
 import { HttpError, badRequest } from '../../lib/http.js';
 import { copiesSystem, folderFor, layoutOf, systemFilterOf, type DeviceLayout } from '../devices/sink.js';
 import { raDefaults } from '../../seed/data.js';
 import { contentFor, decide, deviceFileName, deviceThumbPath, findLogicalSave, receiveFromDevice, saveDirs, setBase, sha1 } from './core.js';
-import { THUMB_MAX, identifyRom, parseSaveFile, readThumb, saveHistory, storeThumb } from './service.js';
+import { THUMB_MAX, identifyRom, parseSaveFile, readThumb, saveHistory, storeThumb, romForSave } from './service.js';
 import fs from 'node:fs';
 import crypto from 'node:crypto';
 import { env } from '../../config/env.js';
@@ -562,6 +563,7 @@ agentRouter.post('/sync', express.text({ limit: '16mb', type: '*/*' }), async (r
       })
     ).map((v) => v.sha1),
   );
+  const romsOfSaves: { path: string; baseName: string; gameId: number | null }[] = [];
   for (const { path: rom, hashes } of withSaves) {
     const ctx = await romContext(device, rom).catch(() => null);
     if (!ctx) continue;
@@ -583,6 +585,7 @@ agentRouter.post('/sync', express.text({ limit: '16mb', type: '*/*' }), async (r
     const gameId = known?.gameId ?? (hasLocal ? ((await identifyRom(ctx.baseName, systemId))?.gameId ?? null) : null);
     // Saves uploaded before the rom could be identified get their game now
     if (gameId && hasLocal) await prisma.save.updateMany({ where: { userId: device.userId, baseName: ctx.baseName, gameId: null }, data: { gameId } });
+    if (hasLocal) romsOfSaves.push({ path: rom, baseName: ctx.baseName, gameId });
     // Several cores with their own file for this game on this device: each keeps its own save
     const exactOnly = emus.length > 1;
     for (const f of candidates) {
@@ -614,6 +617,7 @@ agentRouter.post('/sync', express.text({ limit: '16mb', type: '*/*' }), async (r
       if (thumb) out.push(thumb);
     }
   }
+  await pullRomsOfSaves(device, romsOfSaves);
   // Card files named for no rom: shared by every game (pcsx-card2.mcd) or kept under a disc's serial
   for (const [p, h] of present) {
     const named = cardFiles.has(p) ? null : namedCard(path.posix.basename(p));
@@ -641,6 +645,25 @@ agentRouter.post('/sync', express.text({ limit: '16mb', type: '*/*' }), async (r
   await prisma.device.update({ where: { id: device.id }, data: { lastSyncAt: new Date() } });
   res.type('text/plain').send(out.join('\n') + (out.length ? '\n' : ''));
 });
+
+/**
+ * Roms with saves on this device that the server does not have (a translation kept in a folder of its own): asked
+ * from the device once, so their saves get a game and can be played in the browser. Only where the device lets the
+ * server fetch roms and its owner may upload them
+ */
+async function pullRomsOfSaves(device: AgentDevice, roms: { path: string; baseName: string; gameId: number | null }[]) {
+  if (!roms.length || !device.allowPull) return;
+  const user = await prisma.user.findUnique({ where: { id: device.userId }, select: { role: true, permissions: true } });
+  if (!user || !hasPermission({ role: user.role, permissions: normalizePermissions(user.permissions) }, 'roms.upload')) return;
+  const home = (p: string) => (device.homeRoot ? reroot(p, device.rootPath, device.homeRoot) : p);
+  const asked = new Set((await prisma.devicePull.findMany({ where: { deviceId: device.id, path: { in: roms.map((r) => home(r.path)) } }, select: { path: true } })).map((p) => p.path));
+  const missing: string[] = [];
+  for (const r of roms) {
+    if (asked.has(home(r.path))) continue;
+    if (!(await romForSave({ romId: null, gameId: r.gameId, baseName: r.baseName }))) missing.push(home(r.path));
+  }
+  if (missing.length) await prisma.devicePull.createMany({ data: missing.map((p) => ({ deviceId: device.id, path: p })) });
+}
 
 /**
  * Deleting roms that are in no list: the console owns the setting. "X-Prune: 0|1" is its value, "X-Prune-Set: 1"
@@ -979,13 +1002,17 @@ agentRouter.post('/pull/:id', async (req, res) => {
       } catch (e) {
         if (!(e instanceof HttpError) || e.status !== 422) throw e;
         const inv = await prisma.deviceRom.findFirst({ where: { deviceId: device.id, path: pull.path } });
-        // Its folder's system, else the one of its game or of the game it is a hack of
+        // Its folder's system, else the one of its game or of the game it is a hack of; a rom outside the inventory
+        // (asked for its saves, in a folder of its own) by the system folder it is under
         const known = inv?.gameId ?? inv?.baseGameId;
+        const outside = inv ? null : await romContext(device, pull.path).catch(() => null);
         const system = inv?.systemSlug
           ? await prisma.system.findUnique({ where: { slug: inv.systemSlug } })
           : known
             ? (await prisma.game.findUnique({ where: { id: known }, select: { system: true } }))?.system
-            : null;
+            : outside
+              ? await prisma.system.findUnique({ where: { slug: outside.slug } })
+              : null;
         if (!system) throw badRequest('Unknown system for an unverified rom');
         const title = parseRomName(name.replace(/\.[^.]+$/, '')).title || name;
         const game = await prisma.game.findFirst({ where: { systemId: system.id, titleNormalized: normalizeTitle(title).slice(0, 255) } });
