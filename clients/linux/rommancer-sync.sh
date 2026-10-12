@@ -22,7 +22,7 @@
 #                                   Menu++...) mounted on this computer; the link lives on the card itself,
 #                                   so any computer with this script can sync it. Without a command: sync.
 set -u
-CLIENT_VERSION=20261063
+CLIENT_VERSION=20261064
 # A clock before this date is surely wrong (no battery-backed clock); kept apart from the version, which may run ahead
 CLOCK_MIN=20261001
 # Onion keeps curl (with TLS) and friends outside the default PATH
@@ -2105,6 +2105,14 @@ show_summary() {
   return 0
 }
 
+# Each infoPanel start costs about half the CPU: a new step or file shows at once, a changed share every 10 seconds
+redraw() {
+  [ "$2" = "$shown" ] && return 0
+  now="$(date +%s)"
+  [ "$3" = "$shown_key" ] && [ $((now - shown_at)) -lt 10 ] && return 0
+  panel "$1" "$2"; shown="$2"; shown_key="$3"; shown_at="$now"
+}
+
 # Runs a command in the background and keeps an Onion panel updated with its progress; B stops a game download, or
 # leaves the sending of games to the server going on behind the menu. Its summary at the end
 with_progress() {
@@ -2115,7 +2123,7 @@ with_progress() {
   ( VERBOSE=1; "$@" > "$WORK/run-out" 2>&1 ) &
   job=$!
   rm -f "$WORK/key-b"; key_watch & kw=$!
-  shown=""; left=0
+  shown=""; shown_key=""; shown_at=0; left=0
   while kill -0 "$job" 2>/dev/null; do
     line="$(cat "$WORK/progress" 2>/dev/null)"
     if [ -f "$WORK/key-b" ]; then
@@ -2126,7 +2134,7 @@ with_progress() {
       esac
     fi
     text="$(progress_text "$line")"
-    [ "$text" != "$shown" ] && { panel "$title" "$text"; shown="$text"; }
+    redraw "$title" "$text" "$(printf '%s' "$line" | cut -f1)$TAB${line##*$TAB}"
     sleep 2
   done
   key_watch_end "$kw"
@@ -2181,11 +2189,11 @@ pulls_status() {
 watch_pulls() {
   pulls_running || return 0
   rm -f "$WORK/key-b"; key_watch & kw=$!
-  shown=""
+  shown=""; shown_key=""; shown_at=0
   while pulls_running && [ ! -f "$WORK/key-b" ]; do
     IFS="$TAB" read -r pd pt ps pn < "$WORK/pull-progress" 2>/dev/null
     text="$(progress_text "pulls$TAB${pd:-0}$TAB${pt:-0}$TAB${ps:-0}$TAB$TAB${pn:-}" nostep)"
-    [ "$text" != "$shown" ] && { panel "$(t st_pulls)" "$text"; shown="$text"; }
+    redraw "$(t st_pulls)" "$text" "${pn:-}"
     sleep 2
   done
   key_watch_end "$kw"; rm -f "$WORK/key-b"
