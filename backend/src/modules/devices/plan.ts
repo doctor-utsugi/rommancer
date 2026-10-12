@@ -63,14 +63,14 @@ export async function devicePlan(device: Device & { firmware: Firmware }, root =
       const gameId = it.romId ? (romOf.get(it.romId)?.gameId ?? null) : it.hackId ? (hackGame.get(it.hackId) ?? null) : null;
       for (const f of it.files) {
         const rel = path.posix.join(layout.romsRoot, folder, f.destName);
-        const dest = path.posix.join(root.replace(/\/+$/, ''), rel);
+        const dest = path.posix.join(root, rel);
         if (seen.has(dest)) continue;
         seen.add(dest);
         // Archive entries: the catalogue knows the size; plain files: the file itself
         const size = f.archiveEntry
           ? Number(romOf.get(it.romId ?? -1)?.parts.reduce((n, p) => n + Number(p.size), 0) ?? 0)
           : ((await fs.promises.stat(f.absPath).catch(() => null))?.size ?? 0);
-        const onDevice = havePaths.has(pathKey(path.posix.join(homeRoot.replace(/\/+$/, ''), rel)));
+        const onDevice = havePaths.has(pathKey(path.posix.join(homeRoot, rel)));
         const present = onDevice || (gameId !== null && haveGames.has(gameId));
         const excluded = !copiesSystem(filter, it.systemSlug) || (gameId !== null && excludedGames.has(gameId));
         files.push({ dest, size, absPath: f.absPath, archiveEntry: f.archiveEntry ?? null, system: it.systemSlug, gameId, title: it.title, present, onDevice, excluded });

@@ -1,6 +1,6 @@
 [package]
 name = "rommancer-desktop"
-version = "0.1.0"
+version = "0.2.0"
 description = "Rommancer companion: syncs SD cards and folders with a Rommancer server"
 edition = "2021"
 

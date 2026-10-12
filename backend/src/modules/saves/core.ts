@@ -23,18 +23,28 @@ export type DeviceWithFirmware = Device & { firmware: Firmware };
 /** NextUI/MinUI: the tag in a rom folder's last parentheses ("Game Boy Advance (GBA)" is GBA), or the whole name */
 export const minuiTag = (folder: string) => /\(([^()]*)\)[^()]*$/.exec(folder)?.[1] ?? folder;
 
-export function saveDirs(layout: DeviceLayout, slug: string, emu: Emulator) {
+/**
+ * Folders (relative to the device root) of a system's saves, states and roms. ROMREL, the rom's path relative to the
+ * root, names the content folder of the "content" layouts (RetroArch's "sort by content directory")
+ */
+export function saveDirs(layout: DeviceLayout, slug: string, emu: Emulator, romRel?: string) {
   const folder = layout.systemMap[slug]?.folder ?? slug;
   if (layout.savesLayout === 'minui') {
     const tag = minuiTag(folder);
     return { saves: path.posix.join(layout.savesRoot, tag), states: path.posix.join(layout.statesRoot, `${tag}-${emu.slug.replace(/^minui-/, '')}`), roms: path.posix.join(layout.romsRoot, folder) };
   }
-  const sub = (root: string) => {
-    switch (layout.savesLayout) {
+  const content = romRel ? path.posix.basename(path.posix.dirname(romRel)) : folder;
+  const sub = (root: string, kind: string) => {
+    switch (kind) {
       case 'system':
         return path.posix.join(root, folder);
       case 'core':
         return path.posix.join(root, emu.core ?? emu.name);
+      // RetroArch sorting by content directory: the folder the rom is in, then (content-core) the core
+      case 'content':
+        return path.posix.join(root, content);
+      case 'content-core':
+        return path.posix.join(root, content, emu.core ?? emu.name);
       case 'rom':
         return path.posix.join(layout.romsRoot, folder);
       // TWiLight Menu++ and some flashcarts: a "saves" folder inside each rom folder
@@ -48,7 +58,7 @@ export function saveDirs(layout: DeviceLayout, slug: string, emu: Emulator) {
         return root;
     }
   };
-  return { saves: sub(layout.savesRoot), states: sub(layout.statesRoot), roms: path.posix.join(layout.romsRoot, folder) };
+  return { saves: sub(layout.savesRoot, layout.savesLayout), states: sub(layout.statesRoot, layout.statesLayout ?? layout.savesLayout), roms: path.posix.join(layout.romsRoot, folder) };
 }
 
 /** Nombre del fichero en el dispositivo para un save de un tipo y ranura. */

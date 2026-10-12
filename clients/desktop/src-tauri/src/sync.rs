@@ -3,7 +3,7 @@
 
 use crate::api::{b64, pairs, DeviceApi};
 use anyhow::{bail, Result};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
 use std::io::Read;
@@ -19,9 +19,14 @@ const NOT_ROMS: &[&str] = &[
 
 #[derive(Serialize, Clone, Default)]
 pub struct Progress {
+    /// The card's root, or "pc" for this PC
     pub root: String,
-    /// connecting, roms, saves, server, transfer, pulls, roms-plan, roms-download, finished
+    /// connecting, roms, saves, server, transfer, config, pulls, roms-plan, roms-download
     pub phase: String,
+    /// Numbered steps, so the bar never seems to go back: saves, settings, sending, games
+    pub step: u32,
+    pub steps: u32,
+    pub step_name: String,
     pub done: u64,
     pub total: u64,
     pub file: String,
@@ -29,25 +34,86 @@ pub struct Progress {
     pub file_total: u64,
 }
 
-#[derive(Serialize, Clone, Default)]
+/// What a sync did, one fact per field (the UI shows the ones that are not zero)
+#[derive(Serialize, Deserialize, Clone, Default)]
 pub struct Outcome {
-    pub up: u32,
-    pub down: u32,
+    pub saves_up: u32,
+    pub saves_down: u32,
+    pub states_up: u32,
+    pub states_down: u32,
+    /// List games copied here
+    pub games_down: u32,
+    pub games_failed: u32,
+    /// Games the server asked for, sent
+    pub games_sent: u32,
     pub errors: u32,
-    pub sent: u32,
-    pub roms: u32,
-    pub roms_failed: u32,
     /// Configuration work done on the card (copies, the user's settings, restores)
     pub config: u32,
+    /// Saves of this device waiting for the user's choice
+    pub conflicts: u32,
+}
+
+impl Outcome {
+    /// The machine-readable summary lines of the console clients ("sum<TAB>key<TAB>n")
+    pub fn sum_lines(&self) -> Vec<String> {
+        [
+            ("saves-up", self.saves_up),
+            ("saves-down", self.saves_down),
+            ("states-up", self.states_up),
+            ("states-down", self.states_down),
+            ("games-down", self.games_down),
+            ("games-sent", self.games_sent),
+            ("conflicts", self.conflicts),
+            ("errors", self.errors + self.games_failed),
+        ]
+        .iter()
+        .filter(|(_, n)| *n > 0)
+        .map(|(k, n)| format!("sum\t{k}\t{n}"))
+        .collect()
+    }
+}
+
+/// A save of this device that changed here and on the server
+#[derive(Serialize, Clone)]
+pub struct Conflict {
+    pub id: u64,
+    pub game: String,
+    pub kind: String,
+    pub device_date: String,
+    pub server_date: String,
+    pub server_device: String,
 }
 
 pub struct Engine<'a> {
     pub api: DeviceApi,
+    /// Name of this sync in progress events: the card's root, or "pc"
+    pub key: String,
+    /// Where the files are (the card's root, or the device root of this PC)
     pub root: String,
     pub cache_file: PathBuf,
     pub report: &'a dyn Fn(Progress),
     pub cancelled: &'a dyn Fn() -> bool,
+    pub log: &'a dyn Fn(String),
+    /// The steps of this run, in order: saves, settings, sending, games
+    pub steps: Vec<&'static str>,
+    /// Whether the server may ask this device for games (X-Allow-Pull)
+    pub allow_pull: bool,
     cache: HashMap<String, (u64, u64, String)>,
+}
+
+/// The step a phase belongs to
+fn step_of(phase: &str) -> &'static str {
+    match phase {
+        "config" => "settings",
+        "pulls" => "sending",
+        "roms-plan" | "roms-download" => "games",
+        _ => "saves",
+    }
+}
+
+fn is_state(path: &str) -> bool {
+    let n = lower(path);
+    n.contains(".state") || n.ends_with(".st0") || n.ends_with(".sav.state")
 }
 
 fn lower(s: &str) -> String {
@@ -110,7 +176,7 @@ fn wire(p: &Path) -> String {
 }
 
 impl<'a> Engine<'a> {
-    pub fn new(api: DeviceApi, root: String, cache_file: PathBuf, report: &'a dyn Fn(Progress), cancelled: &'a dyn Fn() -> bool) -> Self {
+    pub fn new(api: DeviceApi, key: String, root: String, cache_file: PathBuf, report: &'a dyn Fn(Progress), cancelled: &'a dyn Fn() -> bool, log: &'a dyn Fn(String)) -> Self {
         let mut cache = HashMap::new();
         if let Ok(text) = fs::read_to_string(&cache_file) {
             for l in text.lines() {
@@ -122,11 +188,32 @@ impl<'a> Engine<'a> {
                 }
             }
         }
-        Self { api, root, cache_file, report, cancelled, cache }
+        Self { api, key, root, cache_file, report, cancelled, log, steps: vec!["saves"], allow_pull: true, cache }
+    }
+
+    /// A progress event with its step filled in
+    fn emit(&self, mut p: Progress) {
+        let name = step_of(&p.phase);
+        p.root = self.key.clone();
+        p.step = self.steps.iter().position(|s| *s == name).map(|i| i as u32 + 1).unwrap_or(1);
+        p.steps = self.steps.len() as u32;
+        p.step_name = name.into();
+        (self.report)(p);
     }
 
     fn progress(&self, phase: &str, done: u64, total: u64) {
-        (self.report)(Progress { root: self.root.clone(), phase: phase.into(), done, total, ..Default::default() });
+        self.emit(Progress { phase: phase.into(), done, total, ..Default::default() });
+    }
+
+    /// Saves of this device waiting for the user's choice
+    pub fn conflicts(&self) -> Result<Vec<Conflict>> {
+        Ok(pairs(&self.api.get_text("/agent/conflicts")?)
+            .into_iter()
+            .filter(|l| l.len() >= 7 && l[0] == "conflict")
+            .filter_map(|l| {
+                Some(Conflict { id: l[1].parse().ok()?, game: l[2].clone(), kind: l[3].clone(), device_date: l[4].clone(), server_date: l[5].clone(), server_device: l[6].clone() })
+            })
+            .collect())
     }
 
     fn check(&self) -> Result<()> {
@@ -240,9 +327,12 @@ impl<'a> Engine<'a> {
         self.save_cache();
 
         self.progress("server", 0, 0);
-        // Free and total bytes of the card: the server copies list roms only while a reserve is kept
-        let space = crate::card::space_of(Path::new(&self.root)).map(|(f, t)| format!("{f} {t}")).unwrap_or_default();
-        let plan = pairs(&self.api.post_text("/agent/sync", request.into_bytes(), &[("X-Allow-Pull", "1".into()), ("X-Space", space)])?);
+        // Free and total bytes where list games go: the server copies them only while a reserve is kept
+        let space_at = roms_dir.clone().filter(|d| d.is_dir()).unwrap_or_else(|| PathBuf::from(&self.root));
+        let space = crate::card::space_of(&space_at).map(|(f, t)| format!("{f} {t}")).unwrap_or_default();
+        let allow = if self.allow_pull { "1" } else { "0" };
+        (self.log)(format!("sync: {} roms, {} save files", roms.len(), saves.len()));
+        let plan = pairs(&self.api.post_text("/agent/sync", request.into_bytes(), &[("X-Allow-Pull", allow.into()), ("X-Space", space)])?);
         let steps: Vec<_> = plan.into_iter().filter(|s| s.len() >= 3 && ["put", "get", "tput", "tget", "cget"].contains(&s[0].as_str())).collect();
         for (n, s) in steps.iter().enumerate() {
             self.check()?;
@@ -257,7 +347,12 @@ impl<'a> Engine<'a> {
                         ("X-Save-Exact", s.get(3).cloned().unwrap_or_else(|| "0".into())),
                     ];
                     self.api.post_text("/agent/upload", body, &headers).map(|reply| {
-                        out.up += 1;
+                        if is_state(&s[1]) {
+                            out.states_up += 1;
+                        } else {
+                            out.saves_up += 1;
+                        }
+                        (self.log)(format!("up: {}", s[1]));
                         // A new savestate: the server asks for its screenshot; a memory card may come back with the server's saves in it
                         for t in pairs(&reply).into_iter().filter(|t| t.len() >= 3) {
                             match t[0].as_str() {
@@ -266,7 +361,7 @@ impl<'a> Engine<'a> {
                                 }
                                 "cget" => {
                                     if let Ok(true) = self.card_get(&t[1], &t[2]) {
-                                        out.down += 1;
+                                        out.saves_down += 1;
                                     }
                                 }
                                 _ => {}
@@ -277,7 +372,8 @@ impl<'a> Engine<'a> {
                 // cget <file> <sha1|-> <rom>: a memory card with the server's newer saves put in
                 "cget" => self.card_get(&s[1], &s[2]).map(|got| {
                     if got {
-                        out.down += 1;
+                        out.saves_down += 1;
+                        (self.log)(format!("down: {} (memory card)", s[1]));
                     }
                 }),
                 // Savestate screenshots: ours when the server lacks it, the server's beside a state it sent
@@ -286,11 +382,22 @@ impl<'a> Engine<'a> {
                 // get <file> <version> <rom>
                 _ => {
                     let headers = [("X-Rom-B64", b64(s.get(3).map(String::as_str).unwrap_or(""))), ("X-Path-B64", b64(&s[1]))];
-                    self.api.download(&format!("/agent/file?v={}", s[2]), &headers, Path::new(&s[1]), &mut |_| {}, self.cancelled).map(|_| out.down += 1)
+                    self.api.download(&format!("/agent/file?v={}", s[2]), &headers, Path::new(&s[1]), &mut |_| {}, self.cancelled).map(|_| {
+                        if is_state(&s[1]) {
+                            out.states_down += 1;
+                        } else {
+                            out.saves_down += 1;
+                        }
+                        (self.log)(format!("down: {}", s[1]));
+                    })
                 }
             };
-            if r.is_err() {
+            if let Err(e) = r {
+                if e.to_string() == "cancelled" {
+                    return Err(e);
+                }
                 out.errors += 1;
+                (self.log)(format!("error: {} {}: {e}", s[0], s[1]));
             }
         }
         Ok(())
@@ -332,20 +439,29 @@ impl<'a> Engine<'a> {
         for (i, p) in wanted.iter().enumerate() {
             self.check()?;
             let file = PathBuf::from(&p[2]);
-            (self.report)(Progress {
-                root: self.root.clone(),
+            let size = fs::metadata(&file).map(|m| m.len()).unwrap_or(0);
+            self.emit(Progress {
                 phase: "pulls".into(),
                 done: i as u64 + 1,
                 total: wanted.len() as u64,
                 file: file.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default(),
+                file_total: size,
                 ..Default::default()
             });
             if !file.is_file() {
+                (self.log)(format!("pull: {} is not here any more", p[2]));
                 let _ = self.api.post_text(&format!("/agent/pull/{}", p[1]), Vec::new(), &[("X-Missing", "1".into())]);
                 continue;
             }
-            if self.api.upload(&format!("/agent/pull/{}", p[1]), &file, &[]).is_ok() {
-                out.sent += 1;
+            match self.api.upload(&format!("/agent/pull/{}", p[1]), &file, &[]) {
+                Ok(_) => {
+                    out.games_sent += 1;
+                    (self.log)(format!("pull: sent {}", p[2]));
+                }
+                Err(e) => {
+                    out.errors += 1;
+                    (self.log)(format!("error: pull {}: {e}", p[2]));
+                }
             }
         }
         Ok(())
@@ -364,26 +480,33 @@ impl<'a> Engine<'a> {
                 continue;
             }
             let name = dest.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
-            let report = self.report;
-            let root = self.root.clone();
             let total = plan.len() as u64;
-            let res = self.api.download(
+            let api = &self.api;
+            let res = api.download(
                 &format!("/agent/rom?f={}", r[3]),
                 &[],
                 &dest,
-                &mut |done| report(Progress { root: root.clone(), phase: "roms-download".into(), done: i as u64 + 1, total, file: name.clone(), file_done: done, file_total: size }),
+                &mut |done| self.emit(Progress { phase: "roms-download".into(), done: i as u64 + 1, total, file: name.clone(), file_done: done, file_total: size, ..Default::default() }),
                 self.cancelled,
             );
             match res {
                 Ok(()) if size == 0 || fs::metadata(&dest).map(|m| m.len()).unwrap_or(0) == size => {
-                    out.roms += 1;
+                    out.games_down += 1;
+                    (self.log)(format!("roms: {}", r[1]));
                     arrived.push(dest.clone());
                 }
                 Err(e) if e.to_string() == "cancelled" => {
                     clear_list_caches(Path::new(&self.root), &arrived);
                     return Err(e);
                 }
-                _ => out.roms_failed += 1,
+                Err(e) => {
+                    out.games_failed += 1;
+                    (self.log)(format!("error: roms {}: {e}", r[1]));
+                }
+                _ => {
+                    out.games_failed += 1;
+                    (self.log)(format!("error: roms {}: size differs", r[1]));
+                }
             }
         }
         clear_list_caches(Path::new(&self.root), &arrived);

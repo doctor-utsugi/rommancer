@@ -184,6 +184,8 @@ export interface DeviceLayout {
   statesRoot: string;
   biosRoot: string;
   savesLayout: string;
+  /** Savestates' own layout where it differs from the saves' (RetroArch sorts each kind by its own settings) */
+  statesLayout: string;
   systemMap: Record<string, { folder: string; emulator: string }>;
 }
 
@@ -195,6 +197,7 @@ export function layoutOf(device: Device & { firmware: Firmware }): DeviceLayout 
     statesRoot: o.statesRoot ?? device.firmware.statesRoot,
     biosRoot: o.biosRoot ?? device.firmware.biosRoot,
     savesLayout: o.savesLayout ?? device.firmware.savesLayout,
+    statesLayout: o.statesLayout ?? o.savesLayout ?? device.firmware.savesLayout,
     // systemMapOnly: a layout the user defined holds just its own systems, not the base firmware's too
     systemMap: (o as { systemMapOnly?: boolean }).systemMapOnly ? (o.systemMap ?? {}) : { ...(device.firmware.systemMap as DeviceLayout['systemMap']), ...(o.systemMap ?? {}) },
   };

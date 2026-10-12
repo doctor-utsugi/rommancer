@@ -56,7 +56,7 @@ const firmwareBody = z.object({
   savesRoot: z.string().max(255),
   statesRoot: z.string().max(255),
   biosRoot: z.string().max(255),
-  savesLayout: z.enum(['flat', 'system', 'core', 'rom', 'rom-core', 'rom-saves', 'beside', 'minui']),
+  savesLayout: z.enum(['flat', 'system', 'core', 'content', 'content-core', 'rom', 'rom-core', 'rom-saves', 'beside', 'minui']),
   systemMap: z.record(z.string(), z.object({ folder: z.string(), emulator: z.string() })),
 });
 
@@ -96,7 +96,8 @@ const deviceBody = z.object({
       savesRoot: z.string().optional(),
       statesRoot: z.string().optional(),
       biosRoot: z.string().optional(),
-      savesLayout: z.enum(['flat', 'system', 'core', 'rom', 'rom-core', 'rom-saves', 'beside', 'minui']).optional(),
+      savesLayout: z.enum(['flat', 'system', 'core', 'content', 'content-core', 'rom', 'rom-core', 'rom-saves', 'beside', 'minui']).optional(),
+      statesLayout: z.enum(['flat', 'system', 'core', 'content', 'content-core', 'rom', 'rom-core', 'rom-saves', 'beside']).optional(),
       systemMap: z.record(z.string(), z.object({ folder: z.string(), emulator: z.string() })).optional(),
     })
     .nullable()
@@ -314,7 +315,7 @@ const pathKey = (p: string) => crypto.createHash('sha1').update(p).digest('hex')
 /** Share of a list already on a device: items whose files are at their destination or whose game it has. */
 export async function listProgress(listId: number, device: Awaited<ReturnType<typeof ownDevice>>) {
   const layout = layoutOf(device);
-  const root = device.rootPath.replace(/\/+$/, '');
+  const root = device.rootPath;
   const { items } = await resolveListFiles(listId);
   const inv = await prisma.deviceRom.findMany({ where: { deviceId: device.id }, select: { pathHash: true, gameId: true } });
   const paths = new Set(inv.map((r) => r.pathHash));
@@ -346,7 +347,7 @@ devicesRouter.get('/:id/inventory', async (req, res) => {
   const sysById = new Map(systems.map((x) => [x.id, x]));
   const pending = new Set((await prisma.devicePull.findMany({ where: { deviceId: d.id, status: { in: QUEUED_PULL } }, select: { path: true } })).map((p) => p.path));
   const sizes = await catalogSizes(rows);
-  const romsBase = path.posix.join(d.rootPath.replace(/\/+$/, ''), layoutOf(d).romsRoot) + '/';
+  const romsBase = path.posix.join(d.rootPath, layoutOf(d).romsRoot) + '/';
   // Hacks and other unidentified files already stored on the server, by their content
   const loose = rows.flatMap((r) => (!r.gameId && r.sha1 ? [r.sha1] : []));
   const stored = new Set(loose.length ? (await prisma.romFile.findMany({ where: { sha1: { in: loose } }, select: { sha1: true } })).map((f) => f.sha1) : []);

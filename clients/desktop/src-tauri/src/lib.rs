@@ -1,48 +1,80 @@
-//! Rommancer companion: sits in the tray, notices SD cards (and folders the user added), syncs the linked
-//! ones when they appear, and lets the user link cards, assign lists, copy roms and send missing games.
+//! Rommancer companion: this PC as a device of its own (its RetroArch saves and states, synced in the
+//! background like a console), plus the SD cards and folders of other consoles, synced when they appear.
 
 mod api;
 mod card;
+mod pc;
 mod sync;
 mod wifi;
 
 use api::{DeviceApi, RootHeader, UserApi};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tauri::menu::{Menu, MenuItem};
 use tauri::tray::TrayIconBuilder;
 use tauri::{AppHandle, Emitter, Manager, State, WindowEvent};
 
 #[derive(Serialize, Deserialize, Clone)]
+#[serde(default)]
 struct Settings {
     server: String,
     username: Option<String>,
     refresh_token: Option<String>,
     /// Sync linked cards as soon as they are inserted
     auto_sync: bool,
-    /// Copy the roms of a card's lists on every sync
+    /// Copy the games of a device's lists on every full sync
     auto_roms: bool,
+    /// The server may ask this PC and the cards synced here for games it lacks
+    allow_pull: bool,
     folders: Vec<String>,
+    /// This PC as a device, once set up
+    pc: Option<pc::PcLink>,
 }
 
 impl Default for Settings {
     fn default() -> Self {
-        Self { server: "https://".into(), username: None, refresh_token: None, auto_sync: true, auto_roms: true, folders: vec![] }
+        Self { server: "https://".into(), username: None, refresh_token: None, auto_sync: true, auto_roms: true, allow_pull: true, folders: vec![], pc: None }
     }
 }
+
+const LOG_LINES: usize = 300;
 
 struct AppState {
     settings: Mutex<Settings>,
     user: Mutex<Option<Arc<UserApi>>>,
-    /// Cards being synced, with their cancel flag
+    /// Devices being synced (a card's root, or "pc"), with their cancel flag
     running: Mutex<HashMap<String, Arc<AtomicBool>>>,
     /// Roots present at the last look, to notice insertions
     present: Mutex<HashSet<String>>,
+    /// Recent log lines per device, with their time (ms)
+    logs: Mutex<HashMap<String, VecDeque<(u64, String)>>>,
+    /// The last sync of each device, kept across restarts
+    last: Mutex<HashMap<String, Finished>>,
+    pc_conflicts: Mutex<u32>,
+    pc_offline: Mutex<Option<u64>>,
+}
+
+fn now_ms() -> u64 {
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0)
+}
+
+fn push_log(app: &AppHandle, key: &str, line: String) {
+    let state = app.state::<AppState>();
+    let mut logs = state.logs.lock().unwrap();
+    let q = logs.entry(key.to_string()).or_default();
+    q.push_back((now_ms(), line));
+    while q.len() > LOG_LINES {
+        q.pop_front();
+    }
+}
+
+fn last_path(app: &AppHandle) -> PathBuf {
+    data_dir(app).join("last-syncs.json")
 }
 
 fn settings_path(app: &AppHandle) -> PathBuf {
@@ -76,13 +108,31 @@ fn user(state: &AppState) -> Result<Arc<UserApi>, String> {
 }
 
 #[derive(Serialize)]
+struct PcInfo {
+    name: String,
+    device_id: u64,
+    root: String,
+    saves_dir: String,
+    states_dir: String,
+    roms_dir: String,
+    saves_layout: String,
+    states_layout: String,
+    cfg: Option<String>,
+}
+
+#[derive(Serialize)]
 struct Status {
     server: String,
     username: Option<String>,
     signed_in: bool,
     auto_sync: bool,
     auto_roms: bool,
+    allow_pull: bool,
     syncing: Vec<String>,
+    pc: Option<PcInfo>,
+    pc_conflicts: u32,
+    /// Milliseconds since the epoch of the first failed contact in a row; none while the server answers
+    pc_offline_since: Option<u64>,
 }
 
 #[tauri::command]
@@ -94,7 +144,21 @@ fn status(state: State<AppState>) -> Status {
         signed_in: state.user.lock().unwrap().is_some(),
         auto_sync: s.auto_sync,
         auto_roms: s.auto_roms,
+        allow_pull: s.allow_pull,
         syncing: state.running.lock().unwrap().keys().cloned().collect(),
+        pc: s.pc.as_ref().map(|p| PcInfo {
+            name: p.name.clone(),
+            device_id: p.device_id,
+            root: p.root.clone(),
+            saves_dir: p.saves_dir.clone(),
+            states_dir: p.states_dir.clone(),
+            roms_dir: p.roms_dir.clone(),
+            saves_layout: p.saves_layout.clone(),
+            states_layout: p.states_layout.clone(),
+            cfg: p.cfg.clone(),
+        }),
+        pc_conflicts: *state.pc_conflicts.lock().unwrap(),
+        pc_offline_since: *state.pc_offline.lock().unwrap(),
     }
 }
 
@@ -147,13 +211,16 @@ fn cards(state: State<AppState>) -> Vec<card::Card> {
 }
 
 #[tauri::command]
-fn set_options(app: AppHandle, state: State<AppState>, auto_sync: Option<bool>, auto_roms: Option<bool>) {
+fn set_options(app: AppHandle, state: State<AppState>, auto_sync: Option<bool>, auto_roms: Option<bool>, allow_pull: Option<bool>) {
     let mut s = state.settings.lock().unwrap();
     if let Some(v) = auto_sync {
         s.auto_sync = v;
     }
     if let Some(v) = auto_roms {
         s.auto_roms = v;
+    }
+    if let Some(v) = allow_pull {
+        s.allow_pull = v;
     }
     save_settings(&app, &s);
 }
@@ -217,13 +284,13 @@ async fn attach_card(app: AppHandle, state: State<'_, AppState>, root: String, d
     Ok(device_id)
 }
 
-/// Interface language from the system: the first of the locale variables that says one
 /// The WiFi networks this computer knows, to hand them to the consoles; nothing leaves the app until the user picks them
 #[tauri::command]
 async fn local_wifi() -> Result<Vec<wifi::LocalWifi>, String> {
     tauri::async_runtime::spawn_blocking(wifi::known_networks).await.map_err(|e| e.to_string())?
 }
 
+/// Interface language from the system: the first of the locale variables that says one
 #[tauri::command]
 fn system_lang() -> String {
     ["LANGUAGE", "LC_ALL", "LC_MESSAGES", "LANG", "LC_TIME"]
@@ -263,43 +330,212 @@ fn device_api(root: &str, link: &card::Link) -> DeviceApi {
     DeviceApi::new(&link.server, &link.token, header)
 }
 
-#[derive(Serialize, Clone)]
+#[derive(Serialize, Deserialize, Clone)]
 struct Finished {
+    /// The card's root, or "pc"
     root: String,
     ok: bool,
+    #[serde(default)]
+    cancelled: bool,
     message: String,
     outcome: sync::Outcome,
+    /// When it ended (ms)
+    #[serde(default)]
+    at: u64,
+    /// full, saves or pulls
+    #[serde(default)]
+    mode: String,
+    /// When this device last synced without errors (ms; 0: never)
+    #[serde(default)]
+    ok_at: u64,
 }
 
-/// Sync a card in the background: saves, the roms the server asked for, then the lists' roms (AUTO_ROMS)
+/// A device that syncs from here: a card (or folder) linked on itself, or this PC
+#[derive(Clone)]
+enum Target {
+    Card { root: String, link: card::Link },
+    Pc(pc::PcLink),
+}
+
+impl Target {
+    fn key(&self) -> String {
+        match self {
+            Target::Card { root, .. } => root.clone(),
+            Target::Pc(_) => pc::KEY.into(),
+        }
+    }
+    fn root(&self) -> String {
+        match self {
+            Target::Card { root, .. } => root.clone(),
+            Target::Pc(p) => p.root.clone(),
+        }
+    }
+    fn token(&self) -> &str {
+        match self {
+            Target::Card { link, .. } => &link.token,
+            Target::Pc(p) => &p.token,
+        }
+    }
+    fn api(&self) -> DeviceApi {
+        match self {
+            Target::Card { root, link } => device_api(root, link),
+            Target::Pc(p) => DeviceApi::new(&p.server, &p.token, RootHeader::Moves(p.root.clone())),
+        }
+    }
+}
+
+fn target(state: &AppState, key: &str) -> Result<Target, String> {
+    if key == pc::KEY {
+        return state.settings.lock().unwrap().pc.clone().map(Target::Pc).ok_or_else(|| "this PC is not set up".to_string());
+    }
+    let link = card::read_link(Path::new(key)).ok_or("card not linked")?;
+    Ok(Target::Card { root: key.to_string(), link })
+}
+
+#[derive(Clone, Copy, PartialEq, Debug)]
+enum Mode {
+    /// Everything: saves, settings (cards), games the server asked for, list games
+    Full,
+    /// Saves and states only (a save written here, or one waiting on the server)
+    Saves,
+    /// Only the games the server asked for
+    Pulls,
+}
+
+impl Mode {
+    fn parse(s: &str) -> Mode {
+        match s {
+            "saves" => Mode::Saves,
+            "pulls" => Mode::Pulls,
+            _ => Mode::Full,
+        }
+    }
+    fn name(self) -> &'static str {
+        match self {
+            Mode::Full => "full",
+            Mode::Saves => "saves",
+            Mode::Pulls => "pulls",
+        }
+    }
+}
+
+/// No answer from the server (as opposed to an answer that says no)
+fn unreachable(e: &anyhow::Error) -> bool {
+    e.chain().any(|c| c.downcast_ref::<reqwest::Error>().is_some_and(|r| r.is_connect() || r.is_timeout() || r.is_request()))
+}
+
+fn set_offline(app: &AppHandle, offline: bool) {
+    let state = app.state::<AppState>();
+    let mut o = state.pc_offline.lock().unwrap();
+    let next = if offline { Some(o.unwrap_or_else(now_ms)) } else { None };
+    if *o != next {
+        *o = next;
+        let _ = app.emit("pc-state", ());
+    }
+}
+
+/// Sync a device: a card (by its root) or this PC ("pc"). MODE: full (default), saves or pulls
 #[tauri::command]
-fn sync_card(app: AppHandle, state: State<AppState>, root: String, roms: Option<bool>) -> Result<(), String> {
-    start_sync(&app, &state, root, roms)
+fn sync_device(app: AppHandle, state: State<AppState>, key: String, mode: Option<String>, roms: Option<bool>) -> Result<(), String> {
+    start_sync(&app, &state, key, Mode::parse(mode.as_deref().unwrap_or("full")), roms)
 }
 
-fn start_sync(app: &AppHandle, state: &AppState, root: String, roms: Option<bool>) -> Result<(), String> {
-    let link = card::read_link(Path::new(&root)).ok_or("card not linked")?;
+fn start_sync(app: &AppHandle, state: &AppState, key: String, mode: Mode, roms: Option<bool>) -> Result<(), String> {
+    let t = target(state, &key)?;
     let cancel = Arc::new(AtomicBool::new(false));
     {
         let mut running = state.running.lock().unwrap();
-        if running.contains_key(&root) {
+        if running.contains_key(&key) {
             return Ok(());
         }
-        running.insert(root.clone(), cancel.clone());
+        running.insert(key.clone(), cancel.clone());
     }
-    let with_roms = roms.unwrap_or(state.settings.lock().unwrap().auto_roms);
+    let (auto_roms, allow_pull) = {
+        let s = state.settings.lock().unwrap();
+        (s.auto_roms, s.allow_pull)
+    };
+    let with_roms = mode == Mode::Full && roms.unwrap_or(auto_roms);
+    let is_pc = matches!(t, Target::Pc(_));
     let app = app.clone();
+    let _ = app.emit("sync-started", &key);
     std::thread::spawn(move || {
         let report = |p: sync::Progress| {
             let _ = app.emit("progress", p);
         };
         let cancelled = || cancel.load(Ordering::Relaxed);
-        let cache = data_dir(&app).join(format!("hashes-{}.tsv", link.token.chars().take(12).collect::<String>()));
-        let mut engine = sync::Engine::new(device_api(&root, &link), root.clone(), cache, &report, &cancelled);
+        let log = |line: String| push_log(&app, &key, line);
+        log(format!("sync: start ({})", mode.name()));
+        let cache = data_dir(&app).join(format!("hashes-{}.tsv", t.token().chars().take(12).collect::<String>()));
+        let mut engine = sync::Engine::new(t.api(), key.clone(), t.root(), cache, &report, &cancelled, &log);
+        engine.allow_pull = allow_pull;
+        engine.steps = match mode {
+            Mode::Full => {
+                let mut v = vec!["saves"];
+                // A computer has no console settings to apply
+                if !is_pc {
+                    v.push("settings");
+                }
+                v.push("sending");
+                if with_roms {
+                    v.push("games");
+                }
+                v
+            }
+            Mode::Saves => vec!["saves"],
+            Mode::Pulls => vec!["sending"],
+        };
         let mut out = sync::Outcome::default();
-        let result = engine.sync(&mut out).and_then(|_| engine.config(&mut out)).and_then(|_| engine.pulls(&mut out)).and_then(|_| if with_roms { engine.roms(&mut out) } else { Ok(()) });
-        let fin = Finished { root: root.clone(), ok: result.is_ok(), message: result.err().map(|e| e.to_string()).unwrap_or_default(), outcome: out };
-        app.state::<AppState>().running.lock().unwrap().remove(&root);
+        let mut run = || -> anyhow::Result<()> {
+            if mode != Mode::Pulls {
+                engine.sync(&mut out)?;
+                out.conflicts = engine.conflicts().map(|c| c.len() as u32).unwrap_or(0);
+            }
+            if mode == Mode::Full && !is_pc {
+                engine.config(&mut out)?;
+            }
+            if mode != Mode::Saves {
+                engine.pulls(&mut out)?;
+            }
+            if with_roms {
+                engine.roms(&mut out)?;
+            }
+            Ok(())
+        };
+        let result = run();
+        let was_cancelled = matches!(&result, Err(e) if e.to_string() == "cancelled");
+        if is_pc {
+            set_offline(&app, matches!(&result, Err(e) if unreachable(e)));
+            if mode != Mode::Pulls && (result.is_ok() || out.conflicts > 0) {
+                *app.state::<AppState>().pc_conflicts.lock().unwrap() = out.conflicts;
+            }
+        }
+        for l in out.sum_lines() {
+            log(l);
+        }
+        match &result {
+            Ok(()) => log("sync: done".into()),
+            Err(_) if was_cancelled => log("sync: cancelled".into()),
+            Err(e) => log(format!("error: {e:#}")),
+        }
+        let at = now_ms();
+        let ok_at = if result.is_ok() { at } else { app.state::<AppState>().last.lock().unwrap().get(&key).map(|f| f.ok_at).unwrap_or(0) };
+        let fin = Finished {
+            root: key.clone(),
+            ok_at,
+            ok: result.is_ok(),
+            cancelled: was_cancelled,
+            message: result.err().map(|e| format!("{e:#}")).unwrap_or_default(),
+            outcome: out,
+            at,
+            mode: mode.name().into(),
+        };
+        let state = app.state::<AppState>();
+        {
+            let mut last = state.last.lock().unwrap();
+            last.insert(key.clone(), fin.clone());
+            let _ = std::fs::write(last_path(&app), serde_json::to_string(&*last).unwrap_or_default());
+        }
+        state.running.lock().unwrap().remove(&key);
         let _ = app.emit("sync-finished", fin);
     });
     Ok(())
@@ -310,6 +546,282 @@ fn cancel_sync(state: State<AppState>, root: String) {
     if let Some(c) = state.running.lock().unwrap().get(&root) {
         c.store(true, Ordering::Relaxed);
     }
+}
+
+/// The last sync of every device synced here
+#[tauri::command]
+fn results(state: State<AppState>) -> HashMap<String, Finished> {
+    state.last.lock().unwrap().clone()
+}
+
+/// Recent log lines of a device: (time in ms, line)
+#[tauri::command]
+fn log_lines(state: State<AppState>, key: String) -> Vec<(u64, String)> {
+    state.logs.lock().unwrap().get(&key).map(|q| q.iter().cloned().collect()).unwrap_or_default()
+}
+
+/// Saves of a device that changed both there and on the server
+#[tauri::command]
+async fn conflicts(state: State<'_, AppState>, key: String) -> Result<Vec<sync::Conflict>, String> {
+    let t = target(&state, &key)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let never = || false;
+        let quiet = |_: sync::Progress| {};
+        let silent = |_: String| {};
+        let engine = sync::Engine::new(t.api(), t.key(), t.root(), PathBuf::new(), &quiet, &never, &silent);
+        engine.conflicts().map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// Keeps this device's version ("device") or the server's ("server") of a conflicting save, then syncs the saves
+/// so the kept version is in place
+#[tauri::command]
+async fn resolve_conflict(app: AppHandle, state: State<'_, AppState>, key: String, id: u64, keep: String) -> Result<(), String> {
+    if keep != "device" && keep != "server" {
+        return Err("keep must be device or server".into());
+    }
+    let t = target(&state, &key)?;
+    let path = format!("/agent/conflicts/{id}?keep={keep}");
+    tauri::async_runtime::spawn_blocking(move || t.api().post_text(&path, Vec::new(), &[]).map_err(|e| e.to_string())).await.map_err(|e| e.to_string())??;
+    push_log(&app, &key, format!("conflict {id}: kept the {keep} version"));
+    if key == pc::KEY {
+        let mut n = state.pc_conflicts.lock().unwrap();
+        *n = n.saturating_sub(1);
+    }
+    start_sync(&app, &state, key, Mode::Saves, None)
+}
+
+/// RetroArch installs found on this computer, the suggested games folder and the computer's name
+#[tauri::command]
+fn retroarch_detect() -> pc::Detected {
+    pc::detect()
+}
+
+/// What a retroarch.cfg the user picked says
+#[tauri::command]
+fn retroarch_read(cfg: String) -> Result<pc::RetroArch, String> {
+    let p = PathBuf::from(&cfg);
+    if !p.is_file() {
+        return Err("not a file".into());
+    }
+    Ok(pc::parse(&p, ""))
+}
+
+/// Makes this PC a device: console "PC" with RetroArch's layout, its saves and states where RetroArch keeps them and
+/// the list games in ROMS_DIR. SAVES_DIR / STATES_DIR are none when RetroArch keeps them next to the games
+#[tauri::command]
+#[allow(clippy::too_many_arguments)]
+async fn pc_setup(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    name: String,
+    saves_dir: Option<String>,
+    states_dir: Option<String>,
+    saves_layout: String,
+    states_layout: String,
+    roms_dir: String,
+    cfg: Option<String>,
+) -> Result<u64, String> {
+    let u = user(&state)?;
+    let clean = |p: &str| pc::wire(Path::new(p.trim()));
+    let roms_dir = clean(&roms_dir);
+    if roms_dir.is_empty() {
+        return Err("pick the games folder".into());
+    }
+    let saves = saves_dir.as_deref().map(clean).filter(|s| !s.is_empty()).unwrap_or_else(|| roms_dir.clone());
+    let states = states_dir.as_deref().map(clean).filter(|s| !s.is_empty()).unwrap_or_else(|| roms_dir.clone());
+    let (root, saves_rel, states_rel, roms_rel) = pc::layout_of(&saves, &states, &roms_dir)?;
+    std::fs::create_dir_all(&roms_dir).map_err(|e| format!("cannot create {roms_dir}: {e}"))?;
+    let overrides = serde_json::json!({ "romsRoot": roms_rel, "savesRoot": saves_rel, "statesRoot": states_rel, "savesLayout": saves_layout, "statesLayout": states_layout });
+    let claim = {
+        let u = u.clone();
+        let name = name.clone();
+        let root = root.clone();
+        tauri::async_runtime::spawn_blocking(move || -> anyhow::Result<Value> {
+            let consoles = u.call("GET", "/devices/consoles", None)?;
+            let console_id = match consoles.as_array().and_then(|a| a.iter().find(|c| c.get("name").and_then(|n| n.as_str()).is_some_and(|n| n.eq_ignore_ascii_case("PC")))) {
+                Some(c) => c.get("id").and_then(|v| v.as_u64()),
+                None => u.call("POST", "/devices/consoles", Some(&serde_json::json!({ "name": "PC", "manufacturer": "PC" })))?.get("id").and_then(|v| v.as_u64()),
+            }
+            .ok_or_else(|| anyhow::anyhow!("no console PC on the server"))?;
+            let firmwares = u.call("GET", "/devices/firmwares", None)?;
+            let firmware_id = firmwares
+                .as_array()
+                .and_then(|a| a.iter().find(|f| f.get("slug").and_then(|s| s.as_str()) == Some("retroarch-desktop")))
+                .and_then(|f| f.get("id").and_then(|v| v.as_u64()))
+                .ok_or_else(|| anyhow::anyhow!("the server has no RetroArch desktop layout"))?;
+            let body = serde_json::json!({
+                "name": name, "firmware": "retroarch-desktop", "root": root, "model": "PC",
+                "consoleId": console_id, "firmwareId": firmware_id, "offline": false, "overrides": overrides.to_string(),
+            });
+            u.call("POST", "/link/claim", Some(&body))
+        })
+        .await
+        .map_err(|e| e.to_string())?
+        .map_err(|e| e.to_string())?
+    };
+    persist_session(&app, &state);
+    let token = claim.get("token").and_then(|v| v.as_str()).ok_or("no token")?.to_string();
+    let id = claim.get("deviceId").and_then(|v| v.as_u64()).ok_or("no device id")?;
+    {
+        let mut s = state.settings.lock().unwrap();
+        s.pc = Some(pc::PcLink { server: u.server.clone(), token, device_id: id, name, root, saves_dir: saves, states_dir: states, roms_dir, saves_layout, states_layout, cfg });
+        save_settings(&app, &s);
+    }
+    *state.pc_conflicts.lock().unwrap() = 0;
+    *state.pc_offline.lock().unwrap() = None;
+    state.last.lock().unwrap().remove(pc::KEY);
+    let _ = app.emit("pc-state", ());
+    let _ = start_sync(&app, &state, pc::KEY.into(), Mode::Full, None);
+    Ok(id)
+}
+
+/// Forgets this PC's link here (the device and its saves stay on the server)
+#[tauri::command]
+fn pc_forget(app: AppHandle, state: State<AppState>) {
+    if let Some(c) = state.running.lock().unwrap().get(pc::KEY) {
+        c.store(true, Ordering::Relaxed);
+    }
+    let mut s = state.settings.lock().unwrap();
+    s.pc = None;
+    save_settings(&app, &s);
+    state.last.lock().unwrap().remove(pc::KEY);
+    *state.pc_conflicts.lock().unwrap() = 0;
+    *state.pc_offline.lock().unwrap() = None;
+    let _ = app.emit("pc-state", ());
+}
+
+/// The tray's texts in the interface language, and its tooltip (the state line)
+#[tauri::command]
+fn set_tray(app: AppHandle, tooltip: String, open: String, sync: String, quit: String) -> Result<(), String> {
+    let tray = app.tray_by_id("tray").ok_or("no tray")?;
+    let items = (
+        MenuItem::with_id(&app, "open", open, true, None::<&str>).map_err(|e| e.to_string())?,
+        MenuItem::with_id(&app, "sync", sync, true, None::<&str>).map_err(|e| e.to_string())?,
+        MenuItem::with_id(&app, "quit", quit, true, None::<&str>).map_err(|e| e.to_string())?,
+    );
+    let menu = Menu::with_items(&app, &[&items.0, &items.1, &items.2]).map_err(|e| e.to_string())?;
+    tray.set_menu(Some(menu)).map_err(|e| e.to_string())?;
+    tray.set_tooltip(Some(tooltip)).map_err(|e| e.to_string())
+}
+
+/// "Sync now" from the tray: this PC and every linked card that is in
+fn sync_everything(app: &AppHandle) {
+    let state = app.state::<AppState>();
+    let (folders, has_pc) = {
+        let s = state.settings.lock().unwrap();
+        (s.folders.clone(), s.pc.is_some())
+    };
+    if has_pc {
+        let _ = start_sync(app, &state, pc::KEY.into(), Mode::Full, None);
+    }
+    for c in card::list(&folders).into_iter().filter(|c| c.link.is_some()) {
+        let _ = start_sync(app, &state, c.root, Mode::Full, None);
+    }
+}
+
+/// This PC in the background, like a console: a saves sync 5 s after RetroArch stops writing, the server's requests
+/// every 15 s, a full sync every 15 minutes and once at start
+fn watch_pc(app: AppHandle) {
+    const QUIET: Duration = Duration::from_secs(5);
+    const POLL: Duration = Duration::from_secs(15);
+    const FULL: Duration = Duration::from_secs(15 * 60);
+    const SCAN: Duration = Duration::from_secs(2);
+    std::thread::spawn(move || {
+        let mut linked: Option<String> = None;
+        let mut last_full: Option<Instant> = None;
+        let mut last_poll: Option<Instant> = None;
+        let mut last_scan: Option<Instant> = None;
+        let mut baseline: Option<u64> = None;
+        let mut changed_at: Option<Instant> = None;
+        let mut was_running = false;
+        loop {
+            std::thread::sleep(Duration::from_secs(1));
+            let state = app.state::<AppState>();
+            let Some(link) = state.settings.lock().unwrap().pc.clone() else {
+                linked = None;
+                continue;
+            };
+            // A new link (or another device): start over
+            if linked.as_deref() != Some(link.token.as_str()) {
+                linked = Some(link.token.clone());
+                (last_full, last_poll, baseline, changed_at) = (None, None, None, None);
+            }
+            if state.user.lock().unwrap().is_none() {
+                continue;
+            }
+            let running = state.running.lock().unwrap().contains_key(pc::KEY);
+            if last_scan.is_none_or(|t| t.elapsed() >= SCAN) {
+                last_scan = Some(Instant::now());
+                let sig = pc::signature(&link.watched());
+                if running || was_running || baseline.is_none() {
+                    // What a sync writes is not RetroArch saving
+                    changed_at = None;
+                } else if baseline != Some(sig) {
+                    changed_at = Some(Instant::now());
+                }
+                baseline = Some(sig);
+                was_running = running;
+            }
+            if running {
+                continue;
+            }
+            if last_full.is_none_or(|t| t.elapsed() >= FULL) {
+                last_full = Some(Instant::now());
+                changed_at = None;
+                let _ = start_sync(&app, &state, pc::KEY.into(), Mode::Full, None);
+                continue;
+            }
+            if changed_at.is_some_and(|t| t.elapsed() >= QUIET) {
+                changed_at = None;
+                push_log(&app, pc::KEY, "watch: saves changed".into());
+                let _ = start_sync(&app, &state, pc::KEY.into(), Mode::Saves, None);
+                continue;
+            }
+            if last_poll.is_none_or(|t| t.elapsed() >= POLL) {
+                last_poll = Some(Instant::now());
+                let api = Target::Pc(link.clone()).api();
+                match api.get_text("/agent/poll") {
+                    Ok(text) => {
+                        set_offline(&app, false);
+                        let lines = api::pairs(&text);
+                        let has = |k: &str| lines.iter().any(|l| l[0] == k);
+                        let conflicts = lines.iter().find(|l| l[0] == "conflicts" && l.len() >= 2).and_then(|l| l[1].parse().ok()).unwrap_or(0);
+                        let changed = {
+                            let mut n = state.pc_conflicts.lock().unwrap();
+                            std::mem::replace(&mut *n, conflicts) != conflicts
+                        };
+                        if changed {
+                            let _ = app.emit("pc-state", ());
+                        }
+                        let mode = if has("sync") {
+                            last_full = Some(Instant::now());
+                            Some(Mode::Full)
+                        } else if has("saves") {
+                            Some(Mode::Saves)
+                        } else if has("pull") {
+                            Some(Mode::Pulls)
+                        } else {
+                            None
+                        };
+                        if let Some(m) = mode {
+                            push_log(&app, pc::KEY, format!("poll: {}", m.name()));
+                            let _ = start_sync(&app, &state, pc::KEY.into(), m, None);
+                        }
+                    }
+                    Err(e) => {
+                        let offline = unreachable(&e);
+                        set_offline(&app, offline);
+                        if !offline {
+                            push_log(&app, pc::KEY, format!("error: poll: {e}"));
+                        }
+                    }
+                }
+            }
+        }
+    });
 }
 
 /// The binary is replaced when the app is updated while it sits in the tray: tell the window so it can restart
@@ -350,7 +862,7 @@ fn watch_cards(app: AppHandle) {
         // Only cards inserted while the app runs, not the ones present at start
         if !first && state.settings.lock().unwrap().auto_sync {
             for c in new.into_iter().filter(|c| c.link.is_some() && c.removable) {
-                let _ = start_sync(&app, &state, c.root, None);
+                let _ = start_sync(&app, &state, c.root, Mode::Full, None);
             }
         }
         std::thread::sleep(Duration::from_secs(3));
@@ -377,11 +889,22 @@ pub fn run() {
             let handle = app.handle().clone();
             let settings: Settings = std::fs::read_to_string(settings_path(&handle)).ok().and_then(|t| serde_json::from_str(&t).ok()).unwrap_or_default();
             let user = settings.refresh_token.clone().map(|r| Arc::new(UserApi::new(&settings.server, Some(r))));
-            app.manage(AppState { settings: Mutex::new(settings), user: Mutex::new(user), running: Mutex::new(HashMap::new()), present: Mutex::new(HashSet::new()) });
+            let last: HashMap<String, Finished> = std::fs::read_to_string(last_path(&handle)).ok().and_then(|t| serde_json::from_str(&t).ok()).unwrap_or_default();
+            app.manage(AppState {
+                settings: Mutex::new(settings),
+                user: Mutex::new(user),
+                running: Mutex::new(HashMap::new()),
+                present: Mutex::new(HashSet::new()),
+                logs: Mutex::new(HashMap::new()),
+                last: Mutex::new(last),
+                pc_conflicts: Mutex::new(0),
+                pc_offline: Mutex::new(None),
+            });
 
+            // The window puts the texts in the interface language as soon as it loads
             let open = MenuItem::with_id(app, "open", "Rommancer", true, None::<&str>)?;
-            let sync_all = MenuItem::with_id(app, "sync", "Sync cards / Sincronizar tarjetas", true, None::<&str>)?;
-            let quit = MenuItem::with_id(app, "quit", "Quit / Salir", true, None::<&str>)?;
+            let sync_all = MenuItem::with_id(app, "sync", "Sync now", true, None::<&str>)?;
+            let quit = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
             let menu = Menu::with_items(app, &[&open, &sync_all, &quit])?;
             TrayIconBuilder::with_id("tray")
                 .icon(app.default_window_icon().cloned().expect("icon"))
@@ -389,13 +912,7 @@ pub fn run() {
                 .menu(&menu)
                 .on_menu_event(|app, e| match e.id.as_ref() {
                     "open" => show(app),
-                    "sync" => {
-                        let state = app.state::<AppState>();
-                        let folders = state.settings.lock().unwrap().folders.clone();
-                        for c in card::list(&folders).into_iter().filter(|c| c.link.is_some()) {
-                            let _ = start_sync(app, &state, c.root, None);
-                        }
-                    }
+                    "sync" => sync_everything(app),
                     "quit" => app.exit(0),
                     _ => {}
                 })
@@ -408,6 +925,7 @@ pub fn run() {
                 }
             }
             watch_update(handle.clone());
+            watch_pc(handle.clone());
             watch_cards(handle);
             Ok(())
         })
@@ -418,7 +936,34 @@ pub fn run() {
                 let _ = window.hide();
             }
         })
-        .invoke_handler(tauri::generate_handler![status, login, logout, api, cards, set_options, add_folder, remove_folder, link_card, attach_card, system_lang, restart_app, unlink_card, device_id, sync_card, cancel_sync, local_wifi])
+        .invoke_handler(tauri::generate_handler![
+            status,
+            login,
+            logout,
+            api,
+            cards,
+            set_options,
+            add_folder,
+            remove_folder,
+            link_card,
+            attach_card,
+            system_lang,
+            restart_app,
+            unlink_card,
+            device_id,
+            sync_device,
+            cancel_sync,
+            results,
+            log_lines,
+            conflicts,
+            resolve_conflict,
+            retroarch_detect,
+            retroarch_read,
+            pc_setup,
+            pc_forget,
+            set_tray,
+            local_wifi
+        ])
         .run(tauri::generate_context!())
         .expect("error while running Rommancer");
 }

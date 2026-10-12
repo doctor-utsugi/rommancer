@@ -9,6 +9,7 @@
   --accent-fg: #ffffff;
   --ok: #1d8a4b;
   --danger: #c23b3b;
+  --warn: #b26a00;
   color-scheme: light;
 }
 
@@ -24,6 +25,7 @@
     --accent-fg: #0b1220;
     --ok: #5cc98a;
     --danger: #ff7a7a;
+    --warn: #f0b04a;
     color-scheme: dark;
   }
 }
@@ -203,14 +205,6 @@ aside header {
   justify-content: space-between;
   align-items: center;
   font-size: 17px;
-}
-
-.options {
-  background: var(--panel);
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  padding: 8px 10px;
-  margin: 4px 0;
 }
 
 main {
@@ -525,4 +519,70 @@ ul.net-list li + li {
   color: #fff;
   font-size: 11px;
   font-weight: 600;
+}
+
+.warn {
+  color: var(--warn);
+}
+
+/* The state line under a device's name: one fact per line */
+p.state {
+  margin: 2px 0 0;
+}
+
+p.fact {
+  margin: 2px 0;
+}
+
+.progress p.step {
+  margin: 0 0 4px;
+  font-weight: 600;
+}
+
+.progress p.file {
+  margin: 6px 0 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mono {
+  font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+  font-size: 12px;
+  word-break: break-all;
+}
+
+pre.log {
+  margin: 0;
+  max-height: 320px;
+  overflow: auto;
+  font-size: 11px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+.conflict {
+  padding: 10px 0;
+  border-top: 1px solid var(--border);
+}
+
+.conflict p {
+  margin: 4px 0 8px;
+}
+
+ul.cards.top-device {
+  margin: 8px 0 2px;
+}
+
+.side-nav {
+  margin-top: auto;
+  padding-top: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.tabs button.warn {
+  color: var(--warn);
 }

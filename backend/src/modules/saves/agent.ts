@@ -176,8 +176,9 @@ function asideLines(f: { kind: string; path: string; emu?: Emulator }, files: { 
 function candidatePaths(ctx: RomCtx, emu: Emulator = ctx.emu) {
   ctx = { ...ctx, emu };
   // "beside": flashcarts keep each save next to its rom, in whatever folder the rom is
-  const dirs = ctx.layout.savesLayout === 'beside' ? { saves: path.posix.dirname(ctx.rel), states: path.posix.dirname(ctx.rel) } : saveDirs(ctx.layout, ctx.slug, ctx.emu);
-  const abs = (p: string) => path.posix.join(ctx.root, p);
+  const dirs = ctx.layout.savesLayout === 'beside' ? { saves: path.posix.dirname(ctx.rel), states: path.posix.dirname(ctx.rel) } : saveDirs(ctx.layout, ctx.slug, ctx.emu, ctx.rel);
+  // A root of "/" (a computer's saves and roms in folders of their own) trims to ""
+  const abs = (p: string) => path.posix.join(ctx.root || '/', p);
   const minui = ctx.layout.savesLayout === 'minui';
   const base = minui ? path.posix.basename(ctx.rel) : ctx.baseName;
   const files: { kind: 'SAVE' | 'STATE'; slot: number; path: string }[] = [{ kind: 'SAVE', slot: 0, path: abs(path.posix.join(dirs.saves, deviceFileName(base, ctx.emu, 'SAVE', 0))) }];
@@ -262,14 +263,20 @@ async function registerUnknownCores(layout: DeviceLayout, root: string, files: I
   if (!coreLayout(layout)) return;
   const known = new Set((await prisma.emulator.findMany({ where: { core: { not: null } }, select: { core: true } })).map((e) => e.core));
   const systemFolders = new Map(Object.entries(layout.systemMap).map(([slug, v]) => [v.folder, slug]));
-  const base = path.posix.join(root, layout.savesLayout === 'rom-core' ? layout.romsRoot : layout.savesRoot);
+  // rom-core: <roms>/<system>/<core>/<file>; content-core: <saves>/<rom folder>/<core>/<file>; core: <saves>/<core>/<file>
+  const bases = [
+    { kind: layout.savesLayout, dir: layout.savesRoot },
+    { kind: layout.statesLayout, dir: layout.statesRoot },
+  ]
+    .filter((b) => coreKind(b.kind))
+    .map((b) => ({ deep: b.kind !== 'core', base: path.posix.join(root || '/', b.kind === 'rom-core' ? layout.romsRoot : b.dir) }));
   const found = new Map<string, string | undefined>();
   for (const f of files) {
-    if (!f.startsWith(base + '/')) continue;
-    const parts = f.slice(base.length + 1).split('/');
-    // rom-core: <system>/<core>/<file>; core: <core>/<file>
-    const [system, core] = layout.savesLayout === 'rom-core' ? [parts[0], parts[1]] : [undefined, parts[0]];
-    if (parts.length !== (layout.savesLayout === 'rom-core' ? 3 : 2) || !core || core.startsWith('.') || known.has(core) || systemFolders.has(core)) continue;
+    const at = bases.find((b) => f.startsWith(b.base + '/'));
+    if (!at) continue;
+    const parts = f.slice(at.base.length + 1).split('/');
+    const [system, core] = at.deep ? [parts[0], parts[1]] : [undefined, parts[0]];
+    if (parts.length !== (at.deep ? 3 : 2) || !core || core.startsWith('.') || known.has(core) || systemFolders.has(core)) continue;
     found.set(core, system ? systemFolders.get(system) : undefined);
   }
   for (const [core, systemSlug] of found) {
@@ -323,7 +330,7 @@ async function storeInventory(device: AgentDevice, scanned: { path: string; hash
   const roms = device.homeRoot ? scanned.map((r) => ({ ...r, path: reroot(r.path, device.rootPath, device.homeRoot!) })) : scanned;
   device = device.homeRoot ? { ...device, rootPath: device.homeRoot } : device;
   const layout = layoutOf(device);
-  const base = path.posix.join(device.rootPath.replace(/\/+$/, ''), layout.romsRoot) + '/';
+  const base = path.posix.join(device.rootPath, layout.romsRoot) + '/';
   const byFolder = new Map(Object.entries(layout.systemMap).map(([slug, v]) => [v.folder, slug]));
   const hashes = [...new Set(roms.flatMap((r) => r.hashes).filter((h) => SHA1.test(h)))];
   const known = new Map<string, { romId: number; gameId: number }>();
@@ -427,7 +434,9 @@ async function storeCoreVersions(device: AgentDevice, cores: Map<string, string>
   await prisma.device.update({ where: { id: device.id }, data: { coreVersions: data } });
 }
 
-const coreLayout = (layout: { savesLayout: string }) => layout.savesLayout === 'core' || layout.savesLayout === 'rom-core';
+/** Layouts whose folder names the core: a file's folder tells which emulator wrote it */
+const coreKind = (kind: string) => kind === 'core' || kind === 'rom-core' || kind === 'content-core';
+const coreLayout = (layout: { savesLayout: string; statesLayout: string }) => coreKind(layout.savesLayout) || coreKind(layout.statesLayout);
 
 /** In per-core layouts the save's folder names the core, which may differ from the firmware default. */
 async function emulatorForPath(ctx: RomCtx, filePath: string): Promise<Emulator> {
@@ -442,7 +451,7 @@ const relToRoot = (device: AgentDevice, abs: string) => {
   const root = trimRoot(device.rootPath);
   return abs.startsWith(root + '/') ? abs.slice(root.length + 1) : abs;
 };
-const absOf = (device: AgentDevice, rel: string) => (rel.startsWith('/') ? rel : path.posix.join(trimRoot(device.rootPath), rel));
+const absOf = (device: AgentDevice, rel: string) => (rel.startsWith('/') ? rel : path.posix.join(device.rootPath, rel));
 
 /**
  * Lines for the GameCube saves in Dolphin's GCI folders: each .gci is a card file holding one save ("put" when it
@@ -544,7 +553,7 @@ agentRouter.post('/sync', express.text({ limit: '16mb', type: '*/*' }), async (r
   const savedNames = new Set(userSaves.map((s) => s.baseName));
   const savedGames = new Set(userSaves.map((s) => s.gameId).filter((g): g is number => g !== null));
   const systemIds = new Map<string, number | undefined>();
-  await registerUnknownCores(layoutOf(device), device.rootPath.replace(/\/+$/, ''), present.keys());
+  await registerUnknownCores(layoutOf(device), device.rootPath, present.keys());
   const coreEmus = (await prisma.emulator.findMany({ where: { core: { not: null } } })) as Emulator[];
   const out: string[] = [];
   const cardFiles = new Set<string>();
@@ -570,7 +579,9 @@ agentRouter.post('/sync', express.text({ limit: '16mb', type: '*/*' }), async (r
     // Emulators whose save folder already holds files for this rom; the firmware default otherwise
     let emus: Emulator[] = [ctx.emu];
     if (coreLayout(ctx.layout)) {
-      const found = coreEmus.filter((e) => candidatePaths(ctx, e).some((f) => present.has(f.path)));
+      // Only files in per-core folders tell the core (saves may be flat while states are sorted by core)
+      const perCore = (k: string) => coreKind(k === 'SAVE' ? ctx.layout.savesLayout : ctx.layout.statesLayout);
+      const found = coreEmus.filter((e) => candidatePaths(ctx, e).some((f) => perCore(f.kind) && present.has(f.path)));
       if (found.length) emus = found;
     }
     const candidates = emus.flatMap((e) => candidatePaths(ctx, e).map((f) => ({ ...f, emu: e })));
@@ -1057,11 +1068,13 @@ agentRouter.get('/ssh-key', async (req, res) => {
 agentRouter.get('/roots', async (req, res) => {
   const device = await deviceFromToken(req);
   const layout = layoutOf(device);
-  const root = device.rootPath.replace(/\/+$/, '');
-  const abs = (p: string) => path.posix.join(root, p);
-  const nextToRoms = layout.savesLayout.startsWith('rom') || layout.savesLayout === 'beside';
-  const lines = [`roms\t${abs(layout.romsRoot)}`, `saves\t${abs(nextToRoms ? layout.romsRoot : layout.savesRoot)}`];
-  if (!nextToRoms && layout.statesRoot !== layout.savesRoot) lines.push(`saves\t${abs(layout.statesRoot)}`);
+  const abs = (p: string) => path.posix.join(device.rootPath, p);
+  // Saves and states each next to the roms or in their own folder
+  const dirOf = (kind: string, dir: string) => (kind.startsWith('rom') || kind === 'beside' ? layout.romsRoot : dir);
+  const saves = dirOf(layout.savesLayout, layout.savesRoot);
+  const states = dirOf(layout.statesLayout, layout.statesRoot);
+  const lines = [`roms\t${abs(layout.romsRoot)}`, `saves\t${abs(saves)}`];
+  if (states !== saves) lines.push(`saves\t${abs(states)}`);
   // Roms anywhere under the roms folder, not only <system>/<file> (clients that know it look deeper)
   if (layout.savesLayout === 'beside') lines.push('scan\tdeep');
   const exts = new Set<string>();
