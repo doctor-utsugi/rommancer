@@ -1247,8 +1247,26 @@ class App:
             self.server = value.strip()
 
 
+class Ask(App):
+    """One question on screen, without the setup app's network work: the console script asks with it before a game
+    starts (\"ask TITLE MESSAGE OPTION...\") and reads the chosen option's index on stdout (nothing: none chosen)"""
+
+    def __init__(self):
+        self.screen = Screen()
+        self.pad = Pad()
+        self.script = [a.strip() for a in os.environ.get("ROMMANCER_UI_TEST", "").split(",") if a.strip()]
+        self.clock = pygame.time.Clock()
+
+    def ask(self, title, message, options):
+        choice = self.menu(title, options, info=[message], wide=True)
+        if choice is not None:
+            print(choice)
+
+
 def main():
     try:
+        if len(sys.argv) > 4 and sys.argv[1] == "ask":
+            return Ask().ask(sys.argv[2], sys.argv[3], sys.argv[4:])
         App().run()
     finally:
         pygame.quit()

@@ -1169,9 +1169,22 @@ agentRouter.get('/manifest', async (req, res) => {
   res.type('text/plain').send(candidatePaths(ctx).map((f) => f.path).join('\n') + '\n');
 });
 
+const localStamp = (d: Date | undefined) => (d ? d.toLocaleString('sv-SE', { hour12: false }).slice(0, 16) : '-');
+
+/** "conflict<TAB>id<TAB>kind<TAB>this device's date<TAB>server's date<TAB>server's device", dates in the server's time */
+async function conflictLine(c: { id: number; deviceVersionId: number; serverVersionId: number; saveId: number }) {
+  const [mine, theirs, save] = await Promise.all([
+    prisma.saveVersion.findUnique({ where: { id: c.deviceVersionId } }),
+    prisma.saveVersion.findUnique({ where: { id: c.serverVersionId }, include: { sourceDevice: { select: { name: true } } } }),
+    prisma.save.findUnique({ where: { id: c.saveId } }),
+  ]);
+  return ['conflict', c.id, save?.kind ?? 'SAVE', localStamp(mine?.createdAt), localStamp(theirs?.createdAt), theirs?.sourceDevice?.name ?? 'web'].join('\t');
+}
+
 /**
  * Inicio de juego. Cuerpo: lineas "ruta<TAB>sha1" de los ficheros que existen.
- * Respuesta: "get<TAB>ruta<TAB>version" para bajar o "put<TAB>ruta" para subir.
+ * Respuesta: "get<TAB>ruta<TAB>version" para bajar o "put<TAB>ruta" para subir; "conflict<TAB>..." (conflictLine) for
+ * a save of the game in conflict on this device, to settle before it starts.
  */
 agentRouter.post('/start', express.text({ limit: '1mb', type: '*/*' }), async (req, res) => {
   const device = await deviceFromToken(req);
@@ -1193,6 +1206,11 @@ agentRouter.post('/start', express.text({ limit: '1mb', type: '*/*' }), async (r
     }
     const save = await findLogicalSave(device.userId, ctx.emu, f.kind, f.slot, ctx.baseName, ident?.gameId ?? null, false, device.id);
     const deviceSha1 = present.get(f.path);
+    const open = save && deviceSha1 ? await prisma.saveConflict.findFirst({ where: { saveId: save.id, deviceId: device.id, resolvedAt: null } }) : null;
+    if (open) {
+      out.push(await conflictLine(open));
+      continue;
+    }
     const d = await decide(save, device, ctx.emu, deviceSha1 ? { sha1: deviceSha1 } : null);
     if (d.action === 'download') out.push(...asideLines(f, files, present), `get\t${f.path}\t${d.versionId}`);
     // En conflicto tambien se sube: el servidor guarda ambas versiones y avisa

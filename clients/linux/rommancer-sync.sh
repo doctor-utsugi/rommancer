@@ -22,7 +22,7 @@
 #                                   Menu++...) mounted on this computer; the link lives on the card itself,
 #                                   so any computer with this script can sync it. Without a command: sync.
 set -u
-CLIENT_VERSION=20261060
+CLIENT_VERSION=20261061
 # A clock before this date is surely wrong (no battery-backed clock); kept apart from the version, which may run ahead
 CLOCK_MIN=20261001
 # Onion keeps curl (with TLS) and friends outside the default PATH
@@ -1679,7 +1679,29 @@ cmd_collections() {
   return 0
 }
 
-# Right before a game starts (Knulli/Batocera event): fetch the server's saves for that rom only
+# What the server says about the files of the game in ROM (rh: its header), into gs-plan
+gs_plan() {
+  : > "$WORK/gs-present"
+  while IFS= read -r p; do [ -f "$p" ] && printf '%s\t%s\n' "$p" "$(sha1 "$p")" >> "$WORK/gs-present"; done < "$WORK/gs-manifest"
+  http POST "$SERVER/api/v1/agent/start" "$WORK/gs-present" "$WORK/gs-plan" "$rh"
+}
+
+# A question on the console's screen, from a script with no menu open (before a game): Onion's prompt, or the setup
+# app's pygame screen elsewhere. Returns the chosen option's index; 255 when none was chosen or nothing could show it
+ask_screen() {
+  if [ -x "$ONION_BIN/prompt" ]; then menu "$@"; return $?; fi
+  if [ -f "$DIR/rommancer-ui.py" ] && command -v python3 >/dev/null 2>&1; then
+    # Never holds the game for long: no answer in three minutes leaves it for later
+    tm=""; command -v timeout >/dev/null 2>&1 && tm="timeout 180"
+    # The answer is what it prints, never its exit code (a failure must not read as a choice)
+    ans="$(cd "$DIR" && $tm python3 rommancer-ui.py ask "$@" 2> "$WORK/ui-ask.err" | tail -n 1)"
+    case "$ans" in [0-9]|[0-9][0-9]) return "$ans" ;; esac
+  fi
+  return 255
+}
+
+# Right before a game starts (Onion's runtime, EmulationStation's event): sends what changed here, settles its
+# conflicts on screen and fetches the server's saves, for that rom only
 cmd_game_start() {
   touch "$WORK/playing"
   rom="$1"; [ -n "$TOKEN" ] && [ -f "$rom" ] || return 0
@@ -1696,9 +1718,32 @@ cmd_game_start() {
     esac
     return 0
   fi
-  : > "$WORK/gs-present"
-  while IFS= read -r p; do [ -f "$p" ] && printf '%s\t%s\n' "$p" "$(sha1 "$p")" >> "$WORK/gs-present"; done < "$WORK/gs-manifest"
-  http POST "$SERVER/api/v1/agent/start" "$WORK/gs-present" "$WORK/gs-plan" "$rh" || return 0
+  gs_plan || return 0
+  # Saves changed here since the last sync go up first (savestates wait for the sync: big, and the game does not
+  # need them sent): one that clashes with the server's becomes a conflict
+  if grep -q "^put$TAB" "$WORK/gs-plan"; then
+    grep "^put$TAB" "$WORK/gs-plan" | while IFS="$TAB" read -r _ p; do
+      is_state "$p" && continue
+      http POST "$SERVER/api/v1/agent/upload" "$p" - "$rh" "X-Path-B64: $(b64 "$p")" >/dev/null && log "game-start: sent $(basename "$p")"
+    done
+    gs_plan || return 0
+  fi
+  # Conflicts are settled on screen before the game starts; unanswered (or no screen) they wait, the local save plays
+  if grep -q "^conflict$TAB" "$WORK/gs-plan"; then
+    rm -f "$WORK/gs-resolved"
+    grep "^conflict$TAB" "$WORK/gs-plan" > "$WORK/gs-conflicts"
+    while IFS="$TAB" read -r _ id kind mine theirs dev; do
+      game="$(basename "$rom")"; game="${game%.*}"
+      [ "$kind" = STATE ] && game="$game ($(t savestate))"
+      ask_screen "$(t gsconflict)" "$(t conflictinfo "$game" "$mine" "$theirs" "$dev")" "$(t keepdevice)" "$(t keepserver)" "$(t decidelater)" < /dev/null
+      case $? in
+        0) keep=device ;; 1) keep=server ;; *) log "game-start: conflict $id left for later"; continue ;;
+      esac
+      printf 'keep=%s' "$keep" > "$WORK/resolve"
+      http POST "$SERVER/api/v1/agent/conflicts/$id" "$WORK/resolve" - "Content-Type: application/x-www-form-urlencoded" >/dev/null && log "conflict $id: kept $keep" && touch "$WORK/gs-resolved"
+    done < "$WORK/gs-conflicts"
+    [ -f "$WORK/gs-resolved" ] && { gs_plan || return 0; }
+  fi
   while IFS="$TAB" read -r action p v; do
     [ "$action" = tget ] && { thumb_get "$p" "$v"; continue; }
     [ "$action" = aside ] && { set_aside "$p"; continue; }
@@ -1852,6 +1897,7 @@ t() {
       restartask) echo "Rommancer fetches each game's save right before the game starts. Onion turns this on after a restart." ;;
       yes) echo "yes" ;; no) echo "no" ;; conflicts) echo "Conflicts ($2)" ;; noconflicts) echo "No conflicts" ;;
       keepdevice) echo "Keep this console's save" ;; keepserver) echo "Use the server's save" ;;
+      gsconflict) echo "Save conflict" ;; decidelater) echo "Decide later (play this console's)" ;; savestate) echo "savestate" ;;
       conflictinfo) echo "$2: this console $3, server $4 ($5)" ;;
       conflictsline) if [ "$2" = 1 ]; then echo "1 save in conflict"; else echo "$2 saves in conflict"; fi ;;
       offlinesince) echo "Offline since $2" ;;
