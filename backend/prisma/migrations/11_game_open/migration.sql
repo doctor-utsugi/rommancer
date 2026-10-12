@@ -1,0 +1,9 @@
+CREATE TABLE `GameOpen` (
+    `deviceId` INTEGER NOT NULL,
+    `baseName` VARCHAR(255) NOT NULL,
+    `firstAt` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+
+    PRIMARY KEY (`deviceId`, `baseName`)
+) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+
+ALTER TABLE `GameOpen` ADD CONSTRAINT `GameOpen_deviceId_fkey` FOREIGN KEY (`deviceId`) REFERENCES `Device`(`id`) ON DELETE CASCADE ON UPDATE CASCADE;

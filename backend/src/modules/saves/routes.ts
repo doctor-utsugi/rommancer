@@ -122,6 +122,9 @@ async function withCoreWarnings<T extends WithVersions>(userId: number, saves: T
   }));
 }
 
+/** How long after a rom's first opening the save a game writes as it starts can still be dated */
+const OPENING_MS = 2 * 60_000;
+
 /** Whether a save's file is all one byte (0x00 or 0xFF): the SRAM a game writes on its first start, before any play */
 const blankCache = new Map<string, boolean>();
 async function isBlank(v: { id: number; sha1: string }) {
@@ -146,10 +149,25 @@ savesRouter.get('/', async (req, res) => {
       versions: { orderBy: { fileMtime: 'desc' }, include: { sourceDevice: { select: { id: true, name: true } } } },
     },
   });
-  // "unplayed": a save with only the blank file a game writes when started; savestates and memory card entries are
-  // only written when the player saves, so they always count
+  // "unplayed": a save that is only the file a game writes when first opened. Savestates and memory card entries are
+  // only written when the player saves, so they always count. A save counts once a version of it is dated after the
+  // first opening of its rom on the console that sent it (plus a margin for the game writing it as it starts); with
+  // no opening known (consoles without game events), only a blank file (all 0x00 or 0xFF) is left out
   const out = await withCoreWarnings(u.id, saves);
-  for (const s of out) (s as typeof s & { unplayed: boolean }).unplayed = s.kind === 'SAVE' && s.versions.length === 1 && (await isBlank(s.versions[0]));
+  const names = [...new Set(out.filter((s) => s.kind === 'SAVE').map((s) => s.baseName))];
+  const opens = names.length ? await prisma.gameOpen.findMany({ where: { baseName: { in: names }, device: { userId: u.id } } }) : [];
+  const opened = new Map(opens.map((o) => [`${o.deviceId}\t${o.baseName}`, o.firstAt.getTime()]));
+  for (const s of out) {
+    let unplayed = false;
+    if (s.kind === 'SAVE') {
+      const firsts = s.versions.map((v) => opened.get(`${v.sourceDeviceId}\t${s.baseName}`));
+      // An opening noted after a version already existed is not the first one (saves from before openings were noted)
+      const known = firsts.every((f, i) => f !== undefined && s.versions[i].fileMtime.getTime() >= f - OPENING_MS);
+      if (known) unplayed = s.versions.every((v, i) => v.fileMtime.getTime() <= firsts[i]! + OPENING_MS);
+      else unplayed = s.versions.length === 1 && (await isBlank(s.versions[0]));
+    }
+    (s as typeof s & { unplayed: boolean }).unplayed = unplayed;
+  }
   res.json(out);
 });
 

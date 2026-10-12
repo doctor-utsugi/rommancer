@@ -22,7 +22,7 @@
 #                                   Menu++...) mounted on this computer; the link lives on the card itself,
 #                                   so any computer with this script can sync it. Without a command: sync.
 set -u
-CLIENT_VERSION=20261047
+CLIENT_VERSION=20261048
 # A clock before this date is surely wrong (no battery-backed clock); kept apart from the version, which may run ahead
 CLOCK_MIN=20261001
 # Onion keeps curl (with TLS) and friends outside the default PATH
@@ -695,6 +695,17 @@ state_text() {
   esac
 }
 
+# A game just started, on firmwares with no game events (Onion): the server notes the rom's first opening, so a save the
+# game writes as it starts does not count as play. Onion leaves the launch command in /tmp/cmd_to_run.sh, the rom last
+game_opened() {
+  [ -n "${FW:-}" ] || detect
+  [ "$FW" = onion ] && [ -f /tmp/cmd_to_run.sh ] || return 0
+  rom="$(sed -n 's/.*"\([^"]*\)"[^"]*$/\1/p' /tmp/cmd_to_run.sh | tail -n 1)"
+  [ -f "$rom" ] || return 0
+  HTTP_MAX=5 http_once POST "$SERVER/api/v1/agent/opened" - - "X-Rom-B64: $(b64 "$rom")" > /dev/null 2>&1
+  return 0
+}
+
 # The state changed (EVENT: offline, online, conflicts): said in the game when one is on screen, else in the menu
 state_changed() {
   [ -n "${FW:-}" ] || detect
@@ -1068,7 +1079,7 @@ cmd_daemon() {
     fi
     # A game starts: where its saves stand, on its screen
     if game_running; then
-      [ "${in_game:-0}" = 1 ] || { in_game=1; warned=0; if [ -f "$WORK/offline-since" ]; then ra_msg "Rommancer: $(state_text start-offline)"; else ra_msg "Rommancer: $(state_text start-ok)"; fi; }
+      [ "${in_game:-0}" = 1 ] || { in_game=1; warned=0; if [ -f "$WORK/offline-since" ]; then ra_msg "Rommancer: $(state_text start-offline)"; else ra_msg "Rommancer: $(state_text start-ok)"; fi; game_opened; }
     else in_game=0; fi
     case "$asked" in *sync*) since=$FULL_SECONDS ;; esac
     # Another device sent a save this one should have: a saves pass now, without settings or roms
