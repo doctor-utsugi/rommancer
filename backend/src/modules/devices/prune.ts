@@ -51,7 +51,9 @@ export async function prunePlan(device: Device & { firmware: Firmware }, home = 
   const gameIds = [...new Set(rows.flatMap((r) => [r.gameId, r.baseGameId].filter((x): x is number => !!x)))];
   const games = gameIds.length ? await prisma.game.findMany({ where: { id: { in: gameIds } }, select: { id: true, system: { select: { slug: true } } } }) : [];
   const slugOf = new Map(games.map((g) => [g.id, g.system.slug]));
-  const roms = rows.filter((r) => r.systemSlug ?? slugOf.get(r.gameId ?? r.baseGameId ?? 0));
+  // A frontend's games (LaunchBox) are the user's library, never Rommancer's to delete
+  const launched = ((device.launcher ?? null) as { roms?: Record<string, unknown> } | null)?.roms ?? {};
+  const roms = rows.filter((r) => (r.systemSlug ?? slugOf.get(r.gameId ?? r.baseGameId ?? 0)) && !(r.path in launched));
   const stays = (r: (typeof rows)[number]) => listPaths.has(r.path) || (r.gameId !== null && listGames.has(r.gameId));
   const kept = new Map<string, string[]>();
   for (const r of roms.filter(stays)) {

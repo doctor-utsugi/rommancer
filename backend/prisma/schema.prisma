@@ -573,6 +573,9 @@ model Device {
   systemCores     Json?
   // The core each game was last seen saving with on this device ({ "<rom name>": "Snes9x" })
   romCores        Json?
+  // Games a frontend on this device launches (LaunchBox): each rom's system and emulator setup, and where each
+  // setup keeps saves and states. See LauncherInfo in saves/agent.ts
+  launcher        Json?
   // The user's settings (RetroAchievements, WiFi) are kept applied on it; what was last applied and when
   keepSettings    Boolean               @default(true)
   settingsHash    String?               @db.Char(40)

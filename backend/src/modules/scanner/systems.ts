@@ -71,3 +71,39 @@ export function guessSystem(idx: SystemIndex, relPath: string, forced: System | 
   const ext = path.extname(entryName ?? relPath).toLowerCase();
   return idx.byExt.get(ext) ?? null;
 }
+
+const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, '');
+
+// Frontend platform names (LaunchBox's) that the DAT names do not spell out
+const PLATFORM_NAMES: Record<string, string> = {
+  sonypsp: 'psp',
+  sonypspminis: 'psp',
+  atari800: 'atari800',
+  nintendofamicomdisksystem: 'fds',
+  commodoreamigacd32: 'amigacd32',
+  '3dointeractivemultiplayer': '3do',
+  sinclairzxspectrum: 'zxspectrum',
+  arcade: 'fbneo',
+  snkneogeoaes: 'fbneo',
+  snkneogeomvs: 'fbneo',
+  necpc9801: 'pc98',
+  bandaiwonderswan: 'wswan',
+  bandaiwonderswancolor: 'wswanc',
+};
+
+/**
+ * A system from a frontend's platform name ("Nintendo Game Boy Advance", "Sega Genesis", "NEC TurboGrafx-16"): a
+ * part of its DAT name, alone or after the maker, or its own name; null when none matches
+ */
+export async function systemForPlatform(name: string): Promise<string | null> {
+  const n = norm(name);
+  if (!n) return null;
+  if (PLATFORM_NAMES[n]) return PLATFORM_NAMES[n];
+  const idx = await systemIndex();
+  for (const s of idx.bySlug.values()) {
+    const [maker, ...parts] = s.datName.split(' - ');
+    const names = [s.datName, s.name, s.slug, parts.join(' '), ...parts, ...((s.datAliases as string[] | null) ?? [])];
+    if (names.some((x) => norm(x) === n || norm(maker + x) === n)) return s.slug;
+  }
+  return null;
+}

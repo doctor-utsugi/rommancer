@@ -31,7 +31,7 @@ import { Prisma } from '@prisma/client';
 import { storeWifiBands } from '../devconfig/service.js';
 import { cardAction, commitOffer, deviceCard, findDeviceCard, gameForSerial, gcCardFile, gciFolderState, hasWantedSaves, isCardEmulator, namedCard, observeCard, prepareCard, recordOffer } from './cards.js';
 import { takeNudge } from './nudge.js';
-import { systemIndex } from '../scanner/systems.js';
+import { systemForPlatform, systemIndex } from '../scanner/systems.js';
 import { FAN_WORK, FIRST_ASK, normTitle, probeRound, probesOf, serialMatch, wantsProbe } from './probe.js';
 
 export const agentRouter = Router();
@@ -194,8 +194,68 @@ async function systemOf(layout: DeviceLayout, folder: string, romPath: string): 
   return map.get(ext) ?? (only.length === 1 && !map.has(ext) && !ext ? only[0] : null);
 }
 
+/**
+ * What a frontend on the device (LaunchBox) says about the games it launches, sent with each sync: every emulator
+ * setup (an emulator, or "core:<name>" for a RetroArch core, with its save and state folders; null keeps them next
+ * to the rom) and, by rom path, the game's system and setup
+ */
+export interface LauncherInfo {
+  setups: Record<string, { emulator: string; saves: string | null; states: string | null; savesLayout: string; statesLayout: string }>;
+  roms: Record<string, { system: string; setup: string }>;
+}
+
+const launcherOf = (device: Device) => (device.launcher ?? null) as LauncherInfo | null;
+
+/** "setup<TAB>key<TAB>emulator<TAB>saves|-<TAB>states|-<TAB>saves layout<TAB>states layout" lines and the platform
+ * and setup at the end of rom lines; the platform names a system the way the frontend does */
+async function readLauncher(setups: string[][], roms: { path: string; platform: string; setup: string }[]): Promise<LauncherInfo | null> {
+  if (!setups.length) return null;
+  const info: LauncherInfo = { setups: {}, roms: {} };
+  const dir = (v: string | undefined) => (v && v !== '-' ? v.replace(/\/+$/, '') : null);
+  for (const [key, emulator, saves, states, savesLayout, statesLayout] of setups) {
+    if (key && emulator) info.setups[key] = { emulator, saves: dir(saves), states: dir(states), savesLayout: savesLayout || 'flat', statesLayout: statesLayout || savesLayout || 'flat' };
+  }
+  const systems = new Map<string, string | null>();
+  for (const r of roms) {
+    if (!info.setups[r.setup]) continue;
+    if (!systems.has(r.platform)) systems.set(r.platform, await systemForPlatform(r.platform));
+    const system = systems.get(r.platform);
+    if (system) info.roms[r.path] = { system, setup: r.setup };
+  }
+  return info;
+}
+
+/** A rom's system and emulator as its frontend has them, the setup's folders as the layout (absolute ones) */
+async function launcherContext(device: AgentDevice, romPath: string) {
+  const info = launcherOf(device);
+  const game = info?.roms[device.homeRoot ? reroot(romPath, device.rootPath, device.homeRoot) : romPath];
+  const setup = game && info!.setups[game.setup];
+  if (!game || !setup) return null;
+  const emu = setup.emulator.startsWith('core:') ? await emulatorForCore(setup.emulator.slice(5)) : await emulatorBySlug(setup.emulator).catch(() => null);
+  if (!emu) return null;
+  const layout: DeviceLayout = {
+    ...layoutOf(device),
+    savesRoot: setup.saves ?? '',
+    statesRoot: setup.states ?? '',
+    savesLayout: setup.saves ? setup.savesLayout : 'beside',
+    statesLayout: setup.states ? setup.statesLayout : 'beside',
+  };
+  const baseName = path.posix.basename(romPath).replace(/\.[^.]+$/, '');
+  return { layout, slug: game.system, emu, baseName, root: '', rel: romPath, reported: true, launched: true };
+}
+
+/** Kept only when it changed (a library of thousands of games is sent with every sync) */
+async function storeLauncher(device: AgentDevice, info: LauncherInfo | null): Promise<AgentDevice> {
+  const home = info && device.homeRoot ? { ...info, roms: Object.fromEntries(Object.entries(info.roms).map(([p, v]) => [reroot(p, device.rootPath, device.homeRoot!), v])) } : info;
+  if (JSON.stringify(home) === JSON.stringify(device.launcher ?? null)) return device;
+  await prisma.device.update({ where: { id: device.id }, data: { launcher: home ? (home as unknown as Prisma.InputJsonValue) : Prisma.DbNull } });
+  return { ...device, launcher: home as Prisma.JsonValue };
+}
+
 /** Sistema y emulador de una rom del dispositivo a partir de su carpeta. */
 async function romContext(device: AgentDevice, romPath: string) {
+  const launched = await launcherContext(device, romPath);
+  if (launched) return launched;
   const layout = layoutOf(device);
   const root = device.rootPath.replace(/\/+$/, '');
   const rel = romPath.startsWith(root + '/') ? romPath.slice(root.length + 1) : romPath;
@@ -214,7 +274,7 @@ async function romContext(device: AgentDevice, romPath: string) {
   const emuSlug = layout.systemMap[slug]?.emulator ?? raDefaults[slug];
   if (!emuSlug && !reported) throw badRequest(`No emulator known for ${slug}`);
   const emu = reported ? await emulatorForCore(reported) : await emulatorBySlug(emuSlug!);
-  return { layout, slug, emu, baseName, root, rel, reported: !!reported };
+  return { layout, slug, emu, baseName, root, rel, reported: !!reported, launched: false };
 }
 
 type RomCtx = Awaited<ReturnType<typeof romContext>>;
@@ -238,10 +298,13 @@ function asideLines(f: { kind: string; path: string; emu?: Emulator }, files: { 
 
 function candidatePaths(ctx: RomCtx, emu: Emulator = ctx.emu) {
   ctx = { ...ctx, emu };
-  // "beside": flashcarts keep each save next to its rom, in whatever folder the rom is
-  const dirs = ctx.layout.savesLayout === 'beside' ? { saves: path.posix.dirname(ctx.rel), states: path.posix.dirname(ctx.rel) } : saveDirs(ctx.layout, ctx.slug, ctx.emu, ctx.rel);
-  // A root of "/" (a computer's saves and roms in folders of their own) trims to ""
-  const abs = (p: string) => path.posix.join(ctx.root || '/', p);
+  // "beside": flashcarts keep each save and state next to its rom; emulators a frontend launches, either kind
+  const dirs = saveDirs(ctx.layout, ctx.slug, ctx.emu, ctx.rel);
+  const beside = (kind: string) => kind === 'beside' || (!ctx.launched && ctx.layout.savesLayout === 'beside');
+  if (beside(ctx.layout.savesLayout)) dirs.saves = path.posix.dirname(ctx.rel);
+  if (beside(ctx.layout.statesLayout)) dirs.states = path.posix.dirname(ctx.rel);
+  // A root of "/" (a computer's saves and roms in folders of their own) trims to ""; a frontend's folders are absolute
+  const abs = (p: string) => (ROOT.test(p) ? p : path.posix.join(ctx.root || '/', p));
   const minui = ctx.layout.savesLayout === 'minui';
   const base = minui ? path.posix.basename(ctx.rel) : ctx.baseName;
   const files: { kind: 'SAVE' | 'STATE'; slot: number; path: string }[] = [{ kind: 'SAVE', slot: 0, path: abs(path.posix.join(dirs.saves, deviceFileName(base, ctx.emu, 'SAVE', 0))) }];
@@ -403,9 +466,10 @@ async function storeInventory(device: AgentDevice, scanned: { path: string; hash
     for (const p of parts) for (const h of [p.sha1, p.headerlessSha1]) if (h) known.set(h, { romId: p.rom.id, gameId: p.rom.gameId });
   }
   const systemsOf = new Map<string, string | null>();
+  const launched = launcherOf(device)?.roms ?? {};
   for (const r of roms) {
     const folder = r.path.startsWith(base) ? r.path.slice(base.length).split('/')[0] : '';
-    systemsOf.set(r.path, await systemOf(layout, folder, r.path));
+    systemsOf.set(r.path, launched[r.path]?.system ?? (await systemOf(layout, folder, r.path)));
   }
   // No hash or no match (big files go unhashed; .chd, .cso and .rvz never hash like the dump in a database):
   // the file name, exactly as a database names the rom, within the system of its folder. A file in no system's
@@ -582,7 +646,7 @@ async function cardLine(device: AgentDevice, absPath: string, emu: Emulator, sco
  * and "put<TAB>save<TAB>rom"; the client then uses /file and /upload with that rom.
  */
 agentRouter.post('/sync', express.text({ limit: '16mb', type: '*/*' }), async (req, res) => {
-  const device = await deviceFromToken(req);
+  let device = await deviceFromToken(req);
   // "rom<TAB>path[<TAB>sha1[<TAB>headerless sha1[<TAB>size]]]": the hashes identify roms with non-DAT names
   const roms: { path: string; hashes: string[]; size: number }[] = [];
   // "srom<TAB>path": a rom in a folder of its own under its system that has saves here; its saves sync, but it is not
@@ -591,9 +655,14 @@ agentRouter.post('/sync', express.text({ limit: '16mb', type: '*/*' }), async (r
   const present = new Map<string, string>();
   const cores = new Map<string, string>();
   const mtimes = new Map<string, number>();
+  // A frontend's games: "rom" lines end in the platform and emulator setup, after "setup" lines (see readLauncher)
+  const setups: string[][] = [];
+  const launched: { path: string; platform: string; setup: string }[] = [];
   for (const line of String(req.body ?? '').split('\n')) {
-    const [kind, p, h, h2, size] = line.replace(/\r$/, '').split('\t');
+    const [kind, p, h, h2, size, platform, setup] = line.replace(/\r$/, '').split('\t');
     if (kind === 'rom' && p) roms.push({ path: p, hashes: [h ?? '', h2 ?? ''].filter(Boolean), size: Number(size) || 0 });
+    if (kind === 'rom' && p && platform && setup) launched.push({ path: p, platform, setup });
+    else if (kind === 'setup' && p) setups.push(line.replace(/\r$/, '').split('\t').slice(1));
     else if (kind === 'srom' && p) nested.push({ path: p, hashes: [], size: 0 });
     else if (kind === 'file' && p && SHA1.test(h ?? '')) {
       present.set(p, h);
@@ -602,6 +671,7 @@ agentRouter.post('/sync', express.text({ limit: '16mb', type: '*/*' }), async (r
     else if (kind === 'core' && p && h) cores.set(p, h);
   }
   await storeCoreVersions(device, cores);
+  if (typeof req.body === 'string' && req.body.length) device = await storeLauncher(device, await readLauncher(setups, launched));
   // An unreadable body (a client that sent no content type) must not wipe the device's list. The same list as last
   // time is not stored again (devices sync every few seconds while files change), but at least every half hour, so
   // roms the catalogue learnt since get identified
