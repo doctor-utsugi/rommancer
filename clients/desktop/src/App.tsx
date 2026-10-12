@@ -101,6 +101,11 @@ interface Conflict {
   device_date: string
   server_date: string
   server_device: string
+  device_when: string
+  server_when: string
+  zone: string
+  since: string
+  newer: string
 }
 
 const api = <T,>(method: string, path: string, body?: unknown) => invoke<T>('api', { method, path, body })
@@ -854,24 +859,32 @@ function Conflicts({ syncKey, isPc }: { syncKey: string; isPc: boolean }) {
       <p className="muted small">{t('conflictsHelp')}</p>
       {error && <p className="error">{error}</p>}
       {!rows.length && <p className="muted">{t('conflictNone')}</p>}
-      {rows.map((c) => (
-        <div key={c.id} className="conflict">
-          <strong>{c.game}</strong> <span className="muted small">· {t(c.kind === 'STATE' ? 'kindState' : 'kindSave')}</span>
-          <p className="muted small">
-            {t('conflictHere', { date: date(c.device_date) })}
-            <br />
-            {t('conflictServer', { date: date(c.server_date), device: c.server_device === '-' ? '—' : c.server_device })}
-          </p>
-          <div className="row wrap">
-            <button disabled={busy} onClick={() => void keep(c.id, 'device')}>
-              {t(isPc ? 'keepPc' : 'keepCard')}
-            </button>
-            <button disabled={busy} onClick={() => void keep(c.id, 'server')}>
-              {t('keepServer')}
-            </button>
+      {rows.map((c) => {
+        // Both saves side by side, the newer first: where and when each was made, and a button under each
+        const newer = c.newer || (c.device_date >= c.server_date ? 'device' : 'server')
+        const here = { side: 'device' as const, who: t(isPc ? 'thisPc' : 'thisCard'), at: c.device_when || date(c.device_date) }
+        const there = { side: 'server' as const, who: c.server_device === '-' ? 'web' : c.server_device, at: c.server_when || date(c.server_date) }
+        const cards = newer === 'device' ? [here, there] : [there, here]
+        return (
+          <div key={c.id} className="conflict">
+            <strong>{c.game}</strong> <span className="muted small">· {t(c.kind === 'STATE' ? 'kindState' : 'kindSave')}</span>
+            {c.since && <p className="muted small">{t('conflictSince', { date: c.since })}</p>}
+            <div className="versions">
+              {cards.map((k, i) => (
+                <div key={k.side} className={'version' + (i === 0 ? ' newer' : '')}>
+                  <span className="tag">{t(i === 0 ? 'newer' : 'older')}</span>
+                  <span className="who">{k.who}</span>
+                  <span className="at">{k.at}</span>
+                  {c.zone && <span className="muted small">{c.zone}</span>}
+                  <button className={i === 0 ? 'primary' : ''} disabled={busy} onClick={() => void keep(c.id, k.side)}>
+                    {t('keepThis')}
+                  </button>
+                </div>
+              ))}
+            </div>
           </div>
-        </div>
-      ))}
+        )
+      })}
     </div>
   )
 }

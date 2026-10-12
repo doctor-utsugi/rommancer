@@ -112,9 +112,20 @@ TEXTS = {
         "no": "no",
         "conflicts": "Conflicts ({n})",
         "no_conflicts": "No conflicts",
-        "conflict_info": "{game}: this console saved on {mine}; the server has a version from {theirs} ({dev}).",
-        "keep_device": "Keep this console's save",
-        "keep_server": "Use the server's save",
+        "save_conflict": "Save conflict",
+        "kind_save": "save",
+        "kind_state": "savestate",
+        "this_console": "This console",
+        "this_console_short": "this console",
+        "newer_tag": "NEWER",
+        "older_tag": "OLDER",
+        "keep_one": "Keep {who}'s ({at})",
+        "decide_later": "Decide later: play this console's",
+        "conflict_zone": "Times in {tz}.",
+        "conflict_since": "Both changed after {when}.",
+        "conflict_history": "The one you don't keep stays in the save's history on the web.",
+        "conflict_keys": "A choose   B back",
+        "conflict_keys_start": "A choose   B decide later",
         "prune_intro": "Rommancer can delete from this console the games that are in none of its lists. The ones the server lacks are sent to it before they are deleted. Saves stay. You can change it later in Settings or on the web. Turn it on?",
         "prune_ask": "Deleting games in no list was turned on from the server. If you keep it, {n} games ({size}) will be deleted. Do you want to keep this option?",
         "prune_hold": "{n} of the {total} games on this console (more than half) would be deleted for being in no list. A list may have been emptied. Delete them?",
@@ -1044,11 +1055,71 @@ class App:
             pick = self.menu(title, [r[2][:40] for r in rows])
             if pick is None:
                 return
-            c = rows[pick]
-            info = T["conflict_info"].format(game=c[2], mine=c[4][:16].replace("T", " "), theirs=c[5][:16].replace("T", " "), dev=c[6])
-            choice = self.menu(title, [T["keep_device"], T["keep_server"]], info=[info])
-            if choice is not None:
-                self.run_with_progress("resolve", title, c[1], "device" if choice == 0 else "server")
+            keep = self.conflict_screen(rows[pick])
+            if keep:
+                self.run_with_progress("resolve", title, rows[pick][1], keep)
+
+    def conflict_screen(self, c, start=False):
+        """One conflict (a server \"conflict\" line, split): both saves side by side, the newer first and selected, where
+        and when each was made, the time zone, since when they differ. \"device\" or \"server\" for the one kept; None
+        (B, or \"decide later\" before a game) leaves it"""
+        c = c + ["-"] * (13 - len(c))
+        game, kind, dev, here_name = c[2], c[3], c[6], c[7]
+        mine = c[8] if c[8] != "-" else c[4][:16].replace("T", " ")
+        theirs = c[9] if c[9] != "-" else c[5][:16].replace("T", " ")
+        newer = c[12] if c[12] in ("device", "server") else ("device" if c[4] >= c[5] else "server")
+        here = {"side": "device", "who": T["this_console"], "when": mine}
+        there = {"side": "server", "who": dev if dev != "-" else "web", "when": theirs}
+        cards = [here, there] if newer == "device" else [there, here]
+        options = [T["keep_one"].format(who=k["who"] if k is there else T["this_console_short"], at=k["when"].split()[-1]) for k in cards]
+        sides = [k["side"] for k in cards]
+        if start:
+            options.append(T["decide_later"])
+        foot = []
+        if c[10] != "-":
+            foot.append(T["conflict_zone"].format(tz=c[10]))
+        if c[11] != "-":
+            foot.append(T["conflict_since"].format(when=c[11]))
+        foot.append(T["conflict_history"])
+        sel = 0
+        while True:
+            s = self.screen
+            s.frame(T["save_conflict"], T["conflict_keys_start" if start else "conflict_keys"], (f"{game} · {T['kind_state' if kind == 'STATE' else 'kind_save']}", FG))
+            x, width = s.left(), s.column(True)
+            gap = int(s.w * 0.03)
+            pad = int(s.w * 0.02)
+            cw, top = (width - gap) // 2, int(s.h * 0.17)
+            ch = 2 * pad + 2 * s.small.get_linesize() + s.font.get_linesize()
+            for i, k in enumerate(cards):
+                cx = x + i * (cw + gap)
+                is_new = i == 0
+                pygame.draw.rect(s.surf, ACCENT if is_new else DIM, (cx, top, cw, ch), 2, border_radius=10)
+                y = top + pad
+                s.text(T["newer_tag"] if is_new else T["older_tag"], (cx + pad, y), s.small, ACCENT if is_new else DIM)
+                y += s.small.get_linesize()
+                s.text(s.clip(k["who"], s.small, cw - 2 * pad), (cx + pad, y), s.small, FG)
+                y += s.small.get_linesize()
+                s.text(s.clip(k["when"], s.font, cw - 2 * pad), (cx + pad, y), s.font, FG)
+            y = s.lines(foot, x, top + ch + int(s.h * 0.02), width)
+            y += int(s.h * 0.02)
+            step = int(s.font.get_linesize() * 1.25)
+            for i, label in enumerate(options):
+                r = s.text(s.clip(label, s.font, width - 20), (x + 10, y), s.font, ACCENT if i == sel else FG)
+                if i == sel:
+                    pygame.draw.rect(s.surf, ACCENT, r.inflate(20, 8), 2, border_radius=8)
+                y += step
+            s.flip()
+            a = self.next_action(timeout=0)
+            if a is None:
+                self.clock.tick(SPRITE_FPS)
+            elif a == "up":
+                sel = (sel - 1) % len(options)
+            elif a == "down":
+                sel = (sel + 1) % len(options)
+            elif a in ("a", "start"):
+                return sides[sel] if sel < len(sides) else None
+            elif a in ("b", "quit"):
+                return None
 
     # ---------- the console's lists ----------
 
@@ -1256,9 +1327,9 @@ class App:
             self.server = value.strip()
 
 
-class Ask(App):
-    """One question on screen, without the setup app's network work: the console script asks with it before a game
-    starts (\"ask TITLE MESSAGE OPTION...\") and reads the chosen option's index on stdout (nothing: none chosen)"""
+class Prompt(App):
+    """The conflict screen alone, without the setup app's network work: the console script shows it before a game starts
+    ("conflict LINE [start]") and reads the save kept on stdout ("device" or "server"; nothing: left for later)"""
 
     def __init__(self):
         self.screen = Screen()
@@ -1266,16 +1337,14 @@ class Ask(App):
         self.script = [a.strip() for a in os.environ.get("ROMMANCER_UI_TEST", "").split(",") if a.strip()]
         self.clock = pygame.time.Clock()
 
-    def ask(self, title, message, options):
-        choice = self.menu(title, options, info=[message], wide=True)
-        if choice is not None:
-            print(choice)
-
 
 def main():
     try:
-        if len(sys.argv) > 4 and sys.argv[1] == "ask":
-            return Ask().ask(sys.argv[2], sys.argv[3], sys.argv[4:])
+        if len(sys.argv) > 2 and sys.argv[1] == "conflict":
+            keep = Prompt().conflict_screen(sys.argv[2].split("\t"), start=sys.argv[3:4] == ["start"])
+            if keep:
+                print(keep)
+            return 0
         App().run()
     finally:
         pygame.quit()

@@ -571,6 +571,51 @@ pre.log {
   margin: 4px 0 8px;
 }
 
+.versions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  margin-top: 8px;
+}
+
+.version {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 10px 12px;
+  border: 1.5px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel);
+}
+
+.version.newer {
+  border-color: var(--accent);
+}
+
+.version .tag {
+  font-size: 11px;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.version.newer .tag {
+  color: var(--accent);
+}
+
+.version .who {
+  font-weight: 500;
+}
+
+.version .at {
+  font-size: 18px;
+  font-weight: 500;
+}
+
+.version button {
+  margin-top: 8px;
+}
+
 ul.cards.top-device {
   margin: 8px 0 2px;
 }

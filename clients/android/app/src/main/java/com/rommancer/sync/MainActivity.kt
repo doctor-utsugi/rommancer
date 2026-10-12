@@ -712,11 +712,33 @@ private fun Linked(store: Store, onUnlinked: () -> Unit) {
         }
         is Screen.Conflict -> {
             val c = s.c
-            Text(stringResource(R.string.conflict_info, c.game, c.mine.take(16).replace('T', ' '), c.theirs.take(16).replace('T', ' '), c.device), color = Dim)
-            val keepDevice = stringResource(R.string.keep_device)
-            val keepServer = stringResource(R.string.keep_server)
-            MenuItem(keepDevice, firstItem) { run(keepDevice) { e -> e.resolve(c.id, "device") } }
-            MenuItem(keepServer) { run(keepServer) { e -> e.resolve(c.id, "server") } }
+            // Both saves side by side, the newer first (and selected): where and when each was made
+            val here = Triple("device", stringResource(R.string.this_device), c.mine)
+            val there = Triple("server", c.device, c.theirs)
+            val cards = if (c.newer == "device") listOf(here, there) else listOf(there, here)
+            Text(stringResource(R.string.save_conflict), color = Warn, fontSize = 13.sp, letterSpacing = 0.6.sp)
+            Text(c.game, fontSize = 20.sp)
+            Text(stringResource(if (c.kind == "STATE") R.string.kind_state else R.string.kind_save), color = Dim, fontSize = 14.sp)
+            Row(Modifier.fillMaxWidth().padding(vertical = 8.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                cards.forEachIndexed { i, (_, who, at) ->
+                    Column(
+                        Modifier.weight(1f)
+                            .border(2.dp, if (i == 0) Accent else Dim.copy(alpha = 0.5f), RoundedCornerShape(10.dp))
+                            .padding(12.dp),
+                    ) {
+                        Text(stringResource(if (i == 0) R.string.newer else R.string.older), color = if (i == 0) Accent else Dim, fontSize = 12.sp, letterSpacing = 0.6.sp)
+                        Text(who, fontSize = 15.sp, maxLines = 1)
+                        Text(at, fontSize = 20.sp)
+                        if (c.zone.isNotEmpty()) Text(c.zone, color = Dim, fontSize = 12.sp)
+                    }
+                }
+            }
+            if (c.since.isNotEmpty()) Text(stringResource(R.string.conflict_since, c.since), color = Dim, fontSize = 14.sp)
+            Text(stringResource(R.string.conflict_history), color = Dim, fontSize = 14.sp)
+            cards.forEachIndexed { i, (side, who, at) ->
+                val label = stringResource(R.string.keep_one, if (side == "device") stringResource(R.string.this_device_short) else who, at.substringAfterLast(' '))
+                MenuItem(label, if (i == 0) firstItem else null) { run(label) { e -> e.resolve(c.id, side) } }
+            }
             MenuItem(stringResource(R.string.press_back)) { screen = Screen.Conflicts }
             LaunchedEffect(Unit) { runCatching { firstItem.requestFocus() } }
         }

@@ -45,9 +45,16 @@
 
     <!-- Conflicts -->
     <string name="no_conflicts">No conflicts</string>
-    <string name="keep_device">Keep this device\'s save</string>
-    <string name="keep_server">Use the server\'s save</string>
-    <string name="conflict_info">%1$s: this device saved on %2$s; the server has a version from %3$s (%4$s).</string>
+    <string name="save_conflict">SAVE CONFLICT</string>
+    <string name="kind_save">Save</string>
+    <string name="kind_state">Savestate</string>
+    <string name="this_device">This device</string>
+    <string name="this_device_short">this device</string>
+    <string name="newer">NEWER</string>
+    <string name="older">OLDER</string>
+    <string name="keep_one">Keep %1$s\'s save (%2$s)</string>
+    <string name="conflict_since">Both changed after %1$s.</string>
+    <string name="conflict_history">The one you don\'t keep stays in the save\'s history on the web.</string>
 
     <!-- Lists -->
     <string name="lists_info">%1$d lists on this device. A adds or removes one; on leaving, their games download or go.</string>

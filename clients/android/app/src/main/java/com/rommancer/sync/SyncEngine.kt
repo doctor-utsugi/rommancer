@@ -20,7 +20,11 @@ class SyncEngine(private val context: Context, private val store: Store, private
         val share: Float get() = if (total == 0) 0f else ((if (phase == "roms-download" || phase == "pulls") done - 1 + fileShare else done.toFloat()) / total).coerceIn(0f, 1f)
     }
 
-    data class Conflict(val id: Int, val game: String, val kind: String, val mine: String, val theirs: String, val device: String)
+    /**
+     * A save in conflict here: MINE / THEIRS as people read them in the server's time zone ZONE, DEVICE where the
+     * server's was made, SINCE when both last had the same save (empty: unknown), NEWER "device" or "server"
+     */
+    data class Conflict(val id: Int, val game: String, val kind: String, val mine: String, val theirs: String, val device: String, val zone: String, val since: String, val newer: String)
 
     /** A list this device may have; OWNER is empty for the user's own */
     data class DeviceList(val id: Int, val on: Boolean, val items: Int, val name: String, val owner: String)
@@ -458,7 +462,14 @@ class SyncEngine(private val context: Context, private val store: Store, private
     fun pollOrNull(): Set<String>? = runCatching { Api(store.server, store.token ?: return emptySet()).text("/agent/poll").lines().filter { it.isNotBlank() }.toSet() }.getOrNull()
 
     fun conflicts(): List<Conflict> = Api(store.server, store.token ?: error("Not linked")).text("/agent/conflicts").lines()
-        .mapNotNull { l -> l.split('\t').takeIf { it.size >= 7 && it[0] == "conflict" }?.let { Conflict(it[1].toInt(), it[2], it[3], it[4], it[5], it[6]) } }
+        .mapNotNull { l -> l.split('\t').takeIf { it.size >= 7 && it[0] == "conflict" }?.let { conflictOf(it) } }
+
+    /** Older servers send only the ISO dates: shown as they come, the newer told by them */
+    private fun conflictOf(f: List<String>): Conflict {
+        val g = { i: Int -> f.getOrNull(i)?.takeIf { it != "-" }.orEmpty() }
+        val newer = g(12).ifEmpty { if (f[4] >= f[5]) "device" else "server" }
+        return Conflict(f[1].toInt(), f[2], f[3], g(8).ifEmpty { f[4].take(16).replace('T', ' ') }, g(9).ifEmpty { f[5].take(16).replace('T', ' ') }, f[6], g(10), g(11), newer)
+    }
 
     fun lists(): Lists {
         val rows = Api(store.server, store.token ?: error("Not linked")).text("/agent/lists").lines().map { it.split('\t') }

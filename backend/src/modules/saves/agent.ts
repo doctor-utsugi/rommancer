@@ -988,16 +988,8 @@ agentRouter.post('/lists', express.text({ limit: '16kb', type: '*/*' }), async (
 
 agentRouter.get('/conflicts', async (req, res) => {
   const device = await deviceFromToken(req);
-  const rows = await prisma.saveConflict.findMany({ where: { deviceId: device.id, resolvedAt: null }, include: { save: true }, orderBy: { createdAt: 'desc' } });
-  const versions = await prisma.saveVersion.findMany({
-    where: { id: { in: rows.flatMap((c) => [c.deviceVersionId, c.serverVersionId]) } },
-    include: { sourceDevice: { select: { name: true } } },
-  });
-  const v = new Map(versions.map((x) => [x.id, x]));
-  // conflict<TAB>id<TAB>game<TAB>kind<TAB>this device's version date<TAB>server version date<TAB>server version's device
-  const lines = rows.map((c) =>
-    ['conflict', c.id, c.save.baseName, c.save.kind, v.get(c.deviceVersionId)?.createdAt.toISOString() ?? '-', v.get(c.serverVersionId)?.createdAt.toISOString() ?? '-', v.get(c.serverVersionId)?.sourceDevice?.name ?? '-'].join('\t'),
-  );
+  const rows = await prisma.saveConflict.findMany({ where: { deviceId: device.id, resolvedAt: null }, orderBy: { createdAt: 'desc' } });
+  const lines = await Promise.all(rows.map((c) => conflictLine(c)));
   res.type('text/plain').send(lines.join('\n') + (lines.length ? '\n' : ''));
 });
 
@@ -1169,16 +1161,45 @@ agentRouter.get('/manifest', async (req, res) => {
   res.type('text/plain').send(candidatePaths(ctx).map((f) => f.path).join('\n') + '\n');
 });
 
-const localStamp = (d: Date | undefined) => (d ? d.toLocaleString('sv-SE', { hour12: false }).slice(0, 16) : '-');
+/** A date as people read it on the console, in the server's time zone: "Today 21:58", "Yesterday 09:12", "Mon 12 Oct 21:04" */
+function readableDate(d: Date | undefined) {
+  if (!d) return '-';
+  const day = (x: Date) => x.toLocaleDateString('sv-SE');
+  const now = new Date();
+  const hm = d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
+  if (day(d) === day(now)) return `Today ${hm}`;
+  if (day(d) === day(new Date(now.getTime() - 86_400_000))) return `Yesterday ${hm}`;
+  const date = d.toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short', ...(d.getFullYear() === now.getFullYear() ? {} : { year: 'numeric' }) });
+  return `${date.replace(/,/g, '')} ${hm}`;
+}
 
-/** "conflict<TAB>id<TAB>kind<TAB>this device's date<TAB>server's date<TAB>server's device", dates in the server's time */
-async function conflictLine(c: { id: number; deviceVersionId: number; serverVersionId: number; saveId: number }) {
-  const [mine, theirs, save] = await Promise.all([
+/** The server's time zone as "CEST (UTC+2)": the dates of conflicts are in it */
+function zoneLabel() {
+  const name = new Intl.DateTimeFormat('en-GB', { timeZoneName: 'short' }).formatToParts(new Date()).find((p) => p.type === 'timeZoneName')?.value ?? '';
+  const off = -new Date().getTimezoneOffset();
+  const utc = `UTC${off >= 0 ? '+' : '-'}${Math.floor(Math.abs(off) / 60)}${Math.abs(off) % 60 ? `:${String(Math.abs(off) % 60).padStart(2, '0')}` : ''}`;
+  return name && name !== utc && !name.startsWith('GMT') ? `${name} (${utc})` : utc;
+}
+
+/**
+ * "conflict<TAB>id<TAB>game<TAB>kind<TAB>this device's date<TAB>server's date<TAB>server's device" (ISO dates), then for
+ * the conflict screens: this device's name, both dates as read on screen, the time zone they are in, when both last
+ * had the same save ("-": never) and which is newer ("device" or "server")
+ */
+async function conflictLine(c: { id: number; deviceVersionId: number; serverVersionId: number; saveId: number; deviceId: number }) {
+  const [mine, theirs, save, here, base] = await Promise.all([
     prisma.saveVersion.findUnique({ where: { id: c.deviceVersionId } }),
     prisma.saveVersion.findUnique({ where: { id: c.serverVersionId }, include: { sourceDevice: { select: { name: true } } } }),
     prisma.save.findUnique({ where: { id: c.saveId } }),
+    prisma.device.findUnique({ where: { id: c.deviceId }, select: { name: true } }),
+    prisma.saveDeviceState.findUnique({ where: { saveId_deviceId: { saveId: c.saveId, deviceId: c.deviceId } } }),
   ]);
-  return ['conflict', c.id, save?.kind ?? 'SAVE', localStamp(mine?.createdAt), localStamp(theirs?.createdAt), theirs?.sourceDevice?.name ?? 'web'].join('\t');
+  const common = base?.versionId && base.versionId !== c.deviceVersionId ? await prisma.saveVersion.findUnique({ where: { id: base.versionId } }) : null;
+  const newer = (mine?.createdAt.getTime() ?? 0) >= (theirs?.createdAt.getTime() ?? 0) ? 'device' : 'server';
+  return [
+    'conflict', c.id, save?.baseName ?? '-', save?.kind ?? 'SAVE', mine?.createdAt.toISOString() ?? '-', theirs?.createdAt.toISOString() ?? '-', theirs?.sourceDevice?.name ?? 'web',
+    here?.name ?? '-', readableDate(mine?.createdAt), readableDate(theirs?.createdAt), zoneLabel(), common ? readableDate(common.createdAt) : '-', newer,
+  ].map((f) => String(f).replace(/[\t\n]/g, ' ')).join('\t');
 }
 
 /**

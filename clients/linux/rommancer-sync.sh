@@ -22,7 +22,7 @@
 #                                   Menu++...) mounted on this computer; the link lives on the card itself,
 #                                   so any computer with this script can sync it. Without a command: sync.
 set -u
-CLIENT_VERSION=20261062
+CLIENT_VERSION=20261063
 # A clock before this date is surely wrong (no battery-backed clock); kept apart from the version, which may run ahead
 CLOCK_MIN=20261001
 # Onion keeps curl (with TLS) and friends outside the default PATH
@@ -1689,16 +1689,34 @@ gs_plan() {
   http POST "$SERVER/api/v1/agent/start" "$WORK/gs-present" "$WORK/gs-plan" "$rh"
 }
 
-# A question on the console's screen, from a script with no menu open (before a game): Onion's prompt, or the setup
-# app's pygame screen elsewhere. Returns the chosen option's index; 255 when none was chosen or nothing could show it
-ask_screen() {
-  if [ -x "$ONION_BIN/prompt" ]; then menu "$@"; return $?; fi
-  if [ -f "$DIR/rommancer-ui.py" ] && command -v python3 >/dev/null 2>&1; then
-    # Never holds the game for long: no answer in three minutes leaves it for later
-    tm=""; command -v timeout >/dev/null 2>&1 && tm="timeout 180"
+# One conflict on screen (a "conflict" line of the server: conflictLine), the newer save first; START: before its game,
+# with a way to decide later. Returns 0 to keep this console's save, 1 the server's, 255 none chosen
+conflict_ask() {
+  IFS="$TAB" read -r _ _ c_game c_kind _ _ c_dev _ c_mine c_theirs c_tz c_base c_newer <<EOF2
+$1
+EOF2
+  if [ -f "$DIR/rommancer-ui.py" ] && [ ! -x "$ONION_BIN/prompt" ] && command -v python3 >/dev/null 2>&1; then
+    tm=""; command -v timeout >/dev/null 2>&1 && [ -n "${2:-}" ] && tm="timeout 180"
     # The answer is what it prints, never its exit code (a failure must not read as a choice)
-    ans="$(cd "$DIR" && $tm python3 rommancer-ui.py ask "$@" 2> "$WORK/ui-ask.err" | tail -n 1)"
-    case "$ans" in [0-9]|[0-9][0-9]) return "$ans" ;; esac
+    ans="$(cd "$DIR" && $tm python3 rommancer-ui.py conflict "$1" ${2:+start} 2> "$WORK/ui-ask.err" | tail -n 1)"
+    case "$ans" in device) return 0 ;; server) return 1 ;; esac
+    return 255
+  fi
+  [ -x "$ONION_BIN/prompt" ] || return 255
+  c_what="$(t savekind)"; [ "$c_kind" = STATE ] && c_what="$(t savestate)"
+  c_here="$(t thisconsole)"; [ "$c_newer" = device ] && c_here="$c_here  ·  $(t newer)"
+  c_there="$c_dev"; [ "$c_newer" = server ] && c_there="$c_there  ·  $(t newer)"
+  c_msg="$c_game ($c_what)
+■ $c_here: $c_mine
+■ $c_there: $c_theirs
+$(t conflictfoot "$c_tz" "$c_base")"
+  keep_here="$(t keephere "${c_mine##* }")"; keep_there="$(t keepthere "$c_dev" "${c_theirs##* }")"
+  if [ "$c_newer" = server ]; then
+    menu "$(t gsconflict)" "$c_msg" "$keep_there" "$keep_here" ${2:+"$(t decidelater)"}
+    case $? in 0) return 1 ;; 1) return 0 ;; esac
+  else
+    menu "$(t gsconflict)" "$c_msg" "$keep_here" "$keep_there" ${2:+"$(t decidelater)"}
+    case $? in 0) return 0 ;; 1) return 1 ;; esac
   fi
   return 255
 }
@@ -1735,10 +1753,9 @@ cmd_game_start() {
   if [ "$GAME_ASK" = 1 ] && grep -q "^conflict$TAB" "$WORK/gs-plan"; then
     rm -f "$WORK/gs-resolved"
     grep "^conflict$TAB" "$WORK/gs-plan" > "$WORK/gs-conflicts"
-    while IFS="$TAB" read -r _ id kind mine theirs dev; do
-      game="$(basename "$rom")"; game="${game%.*}"
-      [ "$kind" = STATE ] && game="$game ($(t savestate))"
-      ask_screen "$(t gsconflict)" "$(t conflictinfo "$game" "$mine" "$theirs" "$dev")" "$(t keepdevice)" "$(t keepserver)" "$(t decidelater)" < /dev/null
+    while IFS= read -r cline; do
+      id="$(printf '%s' "$cline" | cut -f2)"
+      conflict_ask "$cline" start < /dev/null
       case $? in
         0) keep=device ;; 1) keep=server ;; *) log "game-start: conflict $id left for later"; continue ;;
       esac
@@ -1900,9 +1917,10 @@ t() {
       restarttitle) echo "Restart to finish" ;; restartnow) echo "Restart now" ;; restarting) echo "Restarting..." ;;
       restartask) echo "Rommancer fetches each game's save right before the game starts. Onion turns this on after a restart." ;;
       yes) echo "yes" ;; no) echo "no" ;; conflicts) echo "Conflicts ($2)" ;; noconflicts) echo "No conflicts" ;;
-      keepdevice) echo "Keep this console's save" ;; keepserver) echo "Use the server's save" ;;
+      thisconsole) echo "This console" ;; newer) echo "newer" ;; savekind) echo "save" ;;
+      keephere) echo "Keep this console's ($2)" ;; keepthere) echo "Keep $2's ($3)" ;;
+      conflictfoot) if [ "$3" = - ]; then echo "Times in $2. The one you don't keep stays in the save's history on the web."; else echo "Times in $2. Both changed after $3. The one you don't keep stays in the save's history on the web."; fi ;;
       gsconflict) echo "Save conflict" ;; decidelater) echo "Decide later (play this console's)" ;; savestate) echo "savestate" ;;
-      conflictinfo) echo "$2: this console $3, server $4 ($5)" ;;
       conflictsline) if [ "$2" = 1 ]; then echo "1 save in conflict"; else echo "$2 saves in conflict"; fi ;;
       offlinesince) echo "Offline since $2" ;;
       w_roms) echo "Downloading games $2" ;; w_pulls) echo "Sending games to the server $2" ;;
@@ -2210,10 +2228,9 @@ setup_conflicts() {
     menu "$(t conflicts "$n")" "" "$@"; pick=$?
     [ "$pick" -lt "$n" ] || return 0
     line="$(sed -n "$((pick + 1))p" "$WORK/conflicts.list")"
-    id="$(printf '%s' "$line" | cut -f2)"; game="$(printf '%s' "$line" | cut -f3)"
-    mine="$(printf '%s' "$line" | cut -f5 | cut -c1-16 | tr T ' ')"; theirs="$(printf '%s' "$line" | cut -f6 | cut -c1-16 | tr T ' ')"; dev="$(printf '%s' "$line" | cut -f7)"
-    menu "$(t conflicts "$n")" "$(t conflictinfo "$game" "$mine" "$theirs" "$dev")" "$(t keepdevice)" "$(t keepserver)"; rc=$?
-    case $rc in
+    id="$(printf '%s' "$line" | cut -f2)"
+    conflict_ask "$line"
+    case $? in
       0) with_progress "$(t conflicts "$n")" cmd_resolve "$id" device ;;
       1) with_progress "$(t conflicts "$n")" cmd_resolve "$id" server ;;
     esac

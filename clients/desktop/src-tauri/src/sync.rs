@@ -90,6 +90,13 @@ pub struct Conflict {
     pub device_date: String,
     pub server_date: String,
     pub server_device: String,
+    /// Both dates as people read them in the server's time zone, that zone, when both last had the same save and
+    /// which is newer ("device" or "server"); empty from servers that do not send them
+    pub device_when: String,
+    pub server_when: String,
+    pub zone: String,
+    pub since: String,
+    pub newer: String,
 }
 
 pub struct Engine<'a> {
@@ -224,7 +231,20 @@ impl<'a> Engine<'a> {
             .into_iter()
             .filter(|l| l.len() >= 7 && l[0] == "conflict")
             .filter_map(|l| {
-                Some(Conflict { id: l[1].parse().ok()?, game: l[2].clone(), kind: l[3].clone(), device_date: l[4].clone(), server_date: l[5].clone(), server_device: l[6].clone() })
+                let f = |i: usize| l.get(i).filter(|v| v.as_str() != "-").cloned().unwrap_or_default();
+                Some(Conflict {
+                    id: l[1].parse().ok()?,
+                    game: l[2].clone(),
+                    kind: l[3].clone(),
+                    device_date: l[4].clone(),
+                    server_date: l[5].clone(),
+                    server_device: l[6].clone(),
+                    device_when: f(8),
+                    server_when: f(9),
+                    zone: f(10),
+                    since: f(11),
+                    newer: f(12),
+                })
             })
             .collect())
     }
