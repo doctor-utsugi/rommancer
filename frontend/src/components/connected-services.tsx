@@ -243,6 +243,7 @@ function SimpleService({
   clear,
   steps,
   check,
+  notice,
 }: {
   icon: ReactNode
   name: string
@@ -255,6 +256,8 @@ function SimpleService({
   steps: { text: string; href?: string }[]
   /** Whether the saved credentials work, tried live by the server (undefined while it tries) */
   check: { ok: boolean; error: string | null } | null | undefined
+  /** What stops the service working whatever the user enters, in place of the check */
+  notice?: ReactNode
 }) {
   const { t } = useTranslation()
   const qc = useQueryClient()
@@ -278,9 +281,10 @@ function SimpleService({
           <p className="font-medium">{name}</p>
           <p className="text-xs text-muted-foreground">
             {connected ? connectedLabel : t('more.services.notConnected')}
-            {connected && check === undefined && ` · ${t('more.services.checking')}`}
+            {!notice && connected && check === undefined && ` · ${t('more.services.checking')}`}
           </p>
-          {connected && check && (
+          {notice}
+          {!notice && connected && check && (
             <p className={`text-xs ${check.ok ? 'text-emerald-600' : 'text-destructive'}`}>{check.ok ? t('more.services.works') : t('more.services.fails', { error: check.error })}</p>
           )}
         </div>
@@ -333,8 +337,7 @@ function SimpleService({
 export function ConnectedServicesCard() {
   const { t } = useTranslation()
   const { user } = useAuth()
-  const any = !!user?.hasScreenScraper || !!user?.hasTheGamesDb
-  const { data: check } = useQuery({ queryKey: ['services-check'], queryFn: () => get<any>('/users/me/services'), enabled: any, staleTime: 5 * 60_000 })
+  const { data: check } = useQuery({ queryKey: ['services-check'], queryFn: () => get<any>('/users/me/services'), staleTime: 5 * 60_000 })
   return (
     <Card>
       <CardHeader>
@@ -360,6 +363,25 @@ export function ConnectedServicesCard() {
             { text: t('more.services.ssStep3') },
           ]}
           check={check ? check.screenscraper : undefined}
+          notice={
+            check?.ssDevId === false && (
+              <div className="mt-1 grid gap-1 rounded-md border border-amber-500/40 bg-amber-500/10 p-2 text-xs">
+                <p className="font-medium">{t('more.services.ssNoDevId')}</p>
+                <ol className="list-decimal space-y-1 pl-5">
+                  <li>
+                    <a className="inline-flex items-center gap-1 text-primary underline" href="https://www.screenscraper.fr/forumsujets.php?frub=12&numpage=0" target="_blank" rel="noreferrer">
+                      {t('more.services.ssDevStep1')}
+                      <ExternalLink className="size-3" />
+                    </a>
+                  </li>
+                  <li>{t('more.services.ssDevStep2')}</li>
+                  <li>
+                    {t('more.services.ssDevStep3')} <code>SCREENSCRAPER_DEV_ID</code>, <code>SCREENSCRAPER_DEV_PASSWORD</code>
+                  </li>
+                </ol>
+              </div>
+            )
+          }
         />
         <SimpleService
           icon={<Gamepad2 className="size-5 text-violet-600" />}

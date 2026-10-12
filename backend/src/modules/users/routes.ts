@@ -54,7 +54,7 @@ usersRouter.get('/me', async (req, res) => {
 });
 
 /** Whether the user's ScreenScraper account and TheGamesDB key work right now (tried live, kept five minutes) */
-const servicesSeen = new Map<number, { at: number; out: Record<string, { ok: boolean; error: string | null } | null> }>();
+const servicesSeen = new Map<number, { at: number; out: object }>();
 usersRouter.get('/me/services', async (req, res) => {
   const id = me(req).id;
   const hit = servicesSeen.get(id);
@@ -64,6 +64,7 @@ usersRouter.get('/me/services', async (req, res) => {
   const tgdb = decrypt(u.tgdbApiKey);
   const [ss, tg] = await Promise.all([ssUser ? checkScreenScraper(ssUser, decrypt(u.ssPassword) ?? '') : undefined, tgdb ? checkTheGamesDb(tgdb) : undefined]);
   const out = {
+    ssDevId: !!env.screenscraper.devId,
     screenscraper: ss === undefined ? null : { ok: ss === null, error: ss },
     thegamesdb: tg === undefined ? null : { ok: tg === null, error: tg },
   };
@@ -103,7 +104,8 @@ usersRouter.patch('/me', async (req, res) => {
     await checkKey(raUser, body.raApiKey);
   }
   // ScreenScraper accounts and TheGamesDB keys are tried before they are kept: a wrong one says why
-  if (body.ssUser || body.ssPassword) {
+  // (without the server's developer id nothing can be tried: the account is kept for when it has one)
+  if ((body.ssUser || body.ssPassword) && env.screenscraper.devId) {
     const why = await checkScreenScraper(body.ssUser ?? decrypt(u.ssUser) ?? '', body.ssPassword ?? decrypt(u.ssPassword) ?? '');
     if (why) throw new HttpError(400, `ScreenScraper: ${why}`);
   }

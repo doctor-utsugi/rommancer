@@ -242,10 +242,13 @@ function SavesByGame({ saves, onOpen }: { saves: any[] | undefined; onOpen(id: n
                         <SaveConsoles devices={s.devices} />
                         <CoreWarning warnings={s.coreWarnings} version={cur?.coreVersion} />
                       </div>
-                      <Button variant="outline" size="sm" onClick={() => onOpen(s.id)}>
-                        <History className="size-4" />
-                        {t('saves.versions')} ({s.versions.length})
-                      </Button>
+                      <div className="flex flex-wrap justify-end gap-2">
+                        {cur && playable(s) && <PlayButton save={s} versionId={cur.id} />}
+                        <Button variant="outline" size="sm" onClick={() => onOpen(s.id)}>
+                          <History className="size-4" />
+                          {t('saves.versions')} ({s.versions.length})
+                        </Button>
+                      </div>
                     </div>
                   )
                 })}
@@ -324,10 +327,13 @@ export function MySaves({ saves, onOpen }: { saves: any[] | undefined; onOpen(id
                 <SaveConsoles devices={s.devices} />
               </TableCell>
               <TableCell>
-                <Button variant="outline" size="sm" onClick={() => onOpen(s.id)}>
-                  <History className="size-4" />
-                  {t('saves.versions')}
-                </Button>
+                <div className="flex gap-2">
+                  {cur && playable(s) && <PlayButton save={s} versionId={cur.id} />}
+                  <Button variant="outline" size="sm" onClick={() => onOpen(s.id)}>
+                    <History className="size-4" />
+                    {t('saves.versions')}
+                  </Button>
+                </div>
               </TableCell>
             </TableRow>
           )
@@ -782,6 +788,17 @@ const playable = (s: any) => s.kind !== 'ENTRY' && (!s.game || WEB_SYSTEMS.inclu
  * them with their download links in its address's fragment. Nothing played there is kept. The tab opens at once
  * (a tab opened after waiting for the server would be blocked as a popup)
  */
+/** Plays the save's current version */
+function PlayButton({ save, versionId }: { save: any; versionId: number }) {
+  const { t } = useTranslation()
+  return (
+    <Button variant="outline" size="sm" title={t(save.kind === 'STATE' ? 'more.saves.playStateHelp' : 'more.saves.playHelp')} onClick={() => void play(save.id, versionId, t)}>
+      <Play className="size-4" />
+      {t('more.saves.play')}
+    </Button>
+  )
+}
+
 async function play(saveId: number, versionId: number, t: (k: string) => string) {
   const tab = window.open('about:blank', '_blank')
   try {
