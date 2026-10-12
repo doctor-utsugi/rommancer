@@ -22,7 +22,7 @@
 #                                   Menu++...) mounted on this computer; the link lives on the card itself,
 #                                   so any computer with this script can sync it. Without a command: sync.
 set -u
-CLIENT_VERSION=20261038
+CLIENT_VERSION=20261039
 # A clock before this date is surely wrong (no battery-backed clock); kept apart from the version, which may run ahead
 CLOCK_MIN=20261001
 # Onion keeps curl (with TLS) and friends outside the default PATH
@@ -756,7 +756,7 @@ cmd_sync() {
   log "sync: $ups up, $downs down, $errs errors"
   # The last log lines go to the server so problems can be seen without access to the device (a line repeated
   # in a row counted once, so a run of failures does not push everything else out)
-  { log_tail; [ -f "$DIR/last-run.txt" ] && { echo "--- last-run.txt"; tail -n 20 "$DIR/last-run.txt"; }; } > "$WORK/report" 2>/dev/null
+  { log_tail; lists_report; [ -f "$DIR/last-run.txt" ] && { echo "--- last-run.txt"; tail -n 20 "$DIR/last-run.txt"; }; } > "$WORK/report" 2>/dev/null
   http POST "$SERVER/api/v1/agent/log" "$WORK/report" - "X-Client-Version: $CLIENT_VERSION" >/dev/null 2>&1
   [ -n "${VERBOSE:-}" ] && printf 'sync: %s up, %s down, %s errors\n' "$ups" "$downs" "$errs"
   drop_lock
@@ -764,14 +764,27 @@ cmd_sync() {
   return 0
 }
 
-# The last 40 log lines, with a message repeated in a row kept once as "... (xN)"
+# The last 40 log lines, with a message repeated in a row kept once as "... (xN)"; the plain tail when that fails
+# (old BusyBox awks read "name (" as a function call)
 log_tail() {
   tail -n 400 "$LOG" 2>/dev/null | awk '
+    function out() { s = last; if (n > 0) s = s " (x" (n + 1) ")"; print s }
     { m = substr($0, 21) }
     NR > 1 && m == pm { n++; last = $0; next }
-    NR > 1 { print last (n ? " (x" n + 1 ")" : "") }
+    NR > 1 { out() }
     { pm = m; last = $0; n = 0 }
-    END { if (NR) print last (n ? " (x" n + 1 ")" : "") }' | tail -n 40
+    END { if (NR > 0) out() }' > "$WORK/log-tail" 2>/dev/null
+  if [ -s "$WORK/log-tail" ]; then tail -n 40 "$WORK/log-tail"; else tail -n 40 "$LOG" 2>/dev/null; fi
+}
+
+# Onion's game lists as the menu will read them: refreshes still due, and each list cache (size, time)
+lists_report() {
+  [ "$FW" = onion ] || return 0
+  echo "--- lists"
+  [ -f "$STATE/lists-refreshed2" ] && echo "catch-up done"
+  [ -s "$STATE/lists-changed" ] && echo "pending: $(sed -n 's#^\(.*/Roms/[^/]*\)/.*#\1#p' "$STATE/lists-changed" | sort -u | sed 's#.*/##' | tr '\n' ' ')"
+  ps 2>/dev/null | grep -q '[M]ainUI' && echo "menu running"
+  for c in "$ROOT"/Roms/*/*_cache6.db; do [ -f "$c" ] && stat -c '%s %y %n' "$c" 2>/dev/null | sed "s#$ROOT/Roms/##; s#\.[0-9]* [+-][0-9]* # #"; done | tail -n 20
 }
 
 # One header probe: the blocks of 4 KiB the server names ("start:count,..."), sent until it has what it needs
