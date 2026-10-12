@@ -22,7 +22,7 @@
 #                                   Menu++...) mounted on this computer; the link lives on the card itself,
 #                                   so any computer with this script can sync it. Without a command: sync.
 set -u
-CLIENT_VERSION=20261039
+CLIENT_VERSION=20261040
 # A clock before this date is surely wrong (no battery-backed clock); kept apart from the version, which may run ahead
 CLOCK_MIN=20261001
 # Onion keeps curl (with TLS) and friends outside the default PATH
@@ -777,14 +777,23 @@ log_tail() {
   if [ -s "$WORK/log-tail" ]; then tail -n 40 "$WORK/log-tail"; else tail -n 40 "$LOG" 2>/dev/null; fi
 }
 
-# Onion's game lists as the menu will read them: refreshes still due, and each list cache (size, time)
+# Onion's game lists as the menu will read them: refreshes still due, the menu running, and per system folder with
+# files: how many, its list cache, what else is in it (not a rom: caches, lists, folders, hidden files) and the
+# list window the menu keeps for it
 lists_report() {
   [ "$FW" = onion ] || return 0
   echo "--- lists"
   [ -f "$STATE/lists-refreshed2" ] && echo "catch-up done"
   [ -s "$STATE/lists-changed" ] && echo "pending: $(sed -n 's#^\(.*/Roms/[^/]*\)/.*#\1#p' "$STATE/lists-changed" | sort -u | sed 's#.*/##' | tr '\n' ' ')"
   ps 2>/dev/null | grep -q '[M]ainUI' && echo "menu running"
-  for c in "$ROOT"/Roms/*/*_cache6.db; do [ -f "$c" ] && stat -c '%s %y %n' "$c" 2>/dev/null | sed "s#$ROOT/Roms/##; s#\.[0-9]* [+-][0-9]* # #"; done | tail -n 20
+  for d in "$ROOT"/Roms/*/; do
+    d="${d%/}"; b="$(basename "$d")"
+    n="$(ls -A "$d" 2>/dev/null | wc -l)"; [ "$n" -gt 0 ] || continue
+    c="$(stat -c '%s@%y' "$d/${b}_cache6.db" 2>/dev/null | cut -c1-28)"
+    x="$(ls -Ap "$d" 2>/dev/null | grep -E '/$|^\.|\.(db|xml|json|txt|journal)$|-journal$' | head -n 8 | tr '\n' ' ')"
+    printf '%s: %s files, cache %s%s\n' "$b" "$n" "${c:-none}" "${x:+, other: $x}"
+    grep -A3 -F "$d" /appconfigs/romwinidx.json 2>/dev/null | tr -d ' \t\n' | cut -c1-160; echo
+  done | grep -v '^$' | head -n 40
 }
 
 # One header probe: the blocks of 4 KiB the server names ("start:count,..."), sent until it has what it needs
