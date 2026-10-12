@@ -3260,8 +3260,7 @@ test('sync client: one rom download at a time, and it can be stopped', async () 
   half[0] ^= 0xff;
   fs.rmSync(rom);
   fs.writeFileSync(`${rom}.part`, half);
-  // The firmware's game lists are read again once roms came: Onion's cache goes, EmulationStation is told to reload
-  fs.writeFileSync(path.join(root, 'roms/nes/nes_cache6.db'), 'cache');
+  // The firmware's game lists are read again once roms came: EmulationStation is told to reload
   const reloads: string[] = [];
   const es = http.createServer((q, r) => { reloads.push(q.url ?? ''); r.end('ok'); });
   await new Promise<void>((resolve) => es.listen(0, '127.0.0.1', resolve));
@@ -3274,9 +3273,22 @@ test('sync client: one rom download at a time, and it can be stopped', async () 
     delete env.ROMMANCER_FIRMWARE;
     es.close();
   }
-  assert.ok(!fs.existsSync(path.join(root, 'roms/nes/nes_cache6.db')), 'Onion-style cache cleared');
   assert.deepEqual(reloads, ['/reloadgames']);
-  assert.ok(!fs.existsSync(path.join(state, 'lists-pending')));
+  assert.ok(!fs.existsSync(path.join(state, 'lists-changed')));
+  // Onion (its menu not running): the system's list caches go, at the next game end too
+  const gb = path.join(root, 'Roms/GB');
+  fs.mkdirSync(gb, { recursive: true });
+  for (const c of ['GB_cache6.db', 'GB_cache2.db']) fs.writeFileSync(path.join(gb, c), 'cache');
+  fs.writeFileSync(path.join(state, 'lists-changed'), `${gb}/Tetris (World).gb\n`);
+  Object.assign(env, { ROMMANCER_FIRMWARE: 'onion', ROMMANCER_ROOT: root });
+  try {
+    await run('game-stop');
+  } finally {
+    delete env.ROMMANCER_FIRMWARE;
+    delete env.ROMMANCER_ROOT;
+  }
+  assert.deepEqual(fs.readdirSync(gb), [], 'Onion list caches cleared');
+  assert.ok(!fs.existsSync(path.join(state, 'lists-changed')));
   const resumed = fs.readFileSync(rom);
   assert.equal(resumed.length, whole.length);
   assert.equal(resumed[0], half[0], 'resumed, not started again');

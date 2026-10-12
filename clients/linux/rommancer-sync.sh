@@ -22,7 +22,7 @@
 #                                   Menu++...) mounted on this computer; the link lives on the card itself,
 #                                   so any computer with this script can sync it. Without a command: sync.
 set -u
-CLIENT_VERSION=20261034
+CLIENT_VERSION=20261035
 # A clock before this date is surely wrong (no battery-backed clock); kept apart from the version, which may run ahead
 CLOCK_MIN=20261001
 # Onion keeps curl (with TLS) and friends outside the default PATH
@@ -1002,42 +1002,59 @@ free_bytes() {
   echo $(( $(df -k "$d" 2>/dev/null | awk 'NR == 2 { print $4 }') * 1024 ))
 }
 
-# Roms Rommancer added or deleted (one path per argument): the firmware's game lists must show the change
-roms_changed() { printf '%s\n' "$@" >> "$WORK/lists-changed"; }
+# Roms Rommancer added or deleted (one path per argument): the firmware's game lists must show the change. Kept on the
+# card, so a refresh that has to wait (Onion's menu open, a game running) still happens after a reboot
+roms_changed() { printf '%s\n' "$@" >> "$STATE/lists-changed"; }
 
 # The firmware's menus read their game lists again after roms came or went, whoever changed them (a download asked
-# on screen, a deletion of roms in no list). Onion keeps each system's list in a <folder>_cache6.db next to its roms,
-# read again once gone; EmulationStation (Knulli, Batocera, ROCKNIX) reloads through its local API, never during a
-# game (the next game end or daemon tick does it); ArkOS's has no API and reads its lists when it starts, so it
-# restarts right after a game or the Rommancer app closes (AFTER-GAME), never under the user's feet. MinUI/NextUI
-# list their folders as they are; for the others (muOS) no list cache is known
+# on screen, a deletion of roms in no list):
+# - Onion: its own reset_list.sh, as its game list options do: the folder's list cache goes and the list window starts
+#   at the top (a cache rebuilt under an old window position shows blank rows). MainUI writes its state when it
+#   closes, so only while it is not running (the Rommancer app, a game, the boot before the menu)
+# - EmulationStation (Knulli, Batocera, ROCKNIX): its local API, never during a game or the Rommancer app (done when
+#   it closes, or at a daemon tick)
+# - ArkOS: its EmulationStation has no API and reads its lists when it starts: restarted right after a game or the
+#   Rommancer app closes (AFTER-GAME), never under the user's feet
+# - MinUI/NextUI list their folders as they are; for the others (muOS) no list cache is known
+ONION_RESET=/mnt/SDCARD/.tmp_update/script/reset_list.sh
 refresh_lists() {
-  # Once: roms copied before the lists were refreshed by themselves, every system folder read again
-  if [ ! -f "$STATE/lists-refreshed" ] && [ -n "${ROMS:-}" ] && [ -d "$ROMS" ]; then
-    find "$ROMS" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | sed 's#$#/-#' >> "$WORK/lists-changed"
-    touch "$STATE/lists-refreshed"
-  fi
-  if [ -s "$WORK/lists-changed" ]; then
-    sed 's#/[^/]*$##' "$WORK/lists-changed" | sort -u | while IFS= read -r d; do
-      while [ -n "$d" ] && [ "$d" != / ] && [ "$d" != . ]; do
-        for c in "$d"/*_cache6.db; do [ -f "$c" ] && rm -f "$c" && log "game list cache $(basename "$c") cleared"; done
-        d="$(dirname "$d")"
-      done
-    done
-    rm -f "$WORK/lists-changed"; touch "$STATE/lists-pending"
-  fi
-  [ -f "$STATE/lists-pending" ] || return 0
   [ -n "${FW:-}" ] || detect
+  # Once: roms copied before lists were refreshed this way, every system folder read again
+  r="${ROMS:-}"; [ -z "$r" ] && [ "$FW" = onion ] && r="$ROOT/Roms"
+  if [ ! -f "$STATE/lists-refreshed2" ] && [ -n "$r" ] && [ -d "$r" ]; then
+    find "$r" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | sed 's#$#/-#' >> "$STATE/lists-changed"
+    touch "$STATE/lists-refreshed2"
+  fi
+  [ -s "$STATE/lists-changed" ] || return 0
   case "$FW" in
+    onion)
+      ps 2>/dev/null | grep -q '[M]ainUI' && return 0
+      sed -n 's#^\(.*/Roms/[^/]*\)/.*#\1#p' "$STATE/lists-changed" | sort -u | while IFS= read -r d; do
+        [ -d "$d" ] || continue
+        if [ -f "$ONION_RESET" ] && [ -f /tmp/state.json ]; then sh "$ONION_RESET" "$d" >/dev/null 2>&1
+        else
+          # Before the menu ever ran (boot): no window state yet, only the saved index and the caches
+          [ -f /appconfigs/romwinidx.json ] && awk -v search="$d" '$0 ~ search { n = 4 }; n { n--; next }; 1' /appconfigs/romwinidx.json > "$WORK/romwinidx" && cat "$WORK/romwinidx" > /appconfigs/romwinidx.json
+          rm -f "$d/$(basename "$d")_cache2.db" "$d/$(basename "$d")_cache6.db"
+        fi
+        log "game list of $(basename "$d") refreshed"
+      done ;;
     knulli|batocera|rocknix)
       playing && return 0
-      curl -fsS -m 10 "${ROMMANCER_ES_API:-http://127.0.0.1:1234}/reloadgames" >/dev/null 2>&1 && { rm -f "$STATE/lists-pending"; log "game lists reloaded"; } ;;
+      curl -fsS -m 10 "${ROMMANCER_ES_API:-http://127.0.0.1:1234}/reloadgames" >/dev/null 2>&1 || return 0
+      log "game lists reloaded" ;;
     arkos)
       [ "${1:-}" = after-game ] || return 0
-      rm -f "$STATE/lists-pending"; log "game lists: restarting EmulationStation"
-      systemctl restart emulationstation >/dev/null 2>&1 || sudo -n systemctl restart emulationstation >/dev/null 2>&1 ;;
-    *) rm -f "$STATE/lists-pending" ;;
+      rm -f "$STATE/lists-changed"; log "game lists: restarting EmulationStation"
+      systemctl restart emulationstation >/dev/null 2>&1 || sudo -n systemctl restart emulationstation >/dev/null 2>&1
+      return 0 ;;
+    *)
+      # A card synced elsewhere may hold Onion's caches all the same
+      sed 's#/[^/]*$##' "$STATE/lists-changed" | sort -u | while IFS= read -r d; do
+        for c in "$d"/*_cache6.db; do [ -f "$c" ] && rm -f "$c"; done
+      done ;;
   esac
+  rm -f "$STATE/lists-changed"
   return 0
 }
 
@@ -1677,7 +1694,9 @@ case "${1:-}" in
     n=0; while [ "$n" -lt "${BOOT_WAIT:-25}" ]; do
       grep -q '^finished' "$WORK/progress" 2>/dev/null && break
       sleep 1; n=$((n + 1))
-    done ;;
+    done
+    # Before the menu starts: game lists still to refresh (Onion's could not while its menu was open)
+    refresh_lists ;;
   status) cmd_status ;;
   unlink) cmd_unlink ;;
   "")
