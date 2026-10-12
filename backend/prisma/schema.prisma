@@ -569,6 +569,8 @@ model Device {
   wifiBandsManual Boolean               @default(false)
   // RetroArch cores installed and their versions ({ "mGBA": "0.10.3" }), as the client last reported them
   coreVersions    Json?
+  // The RetroArch core the firmware launches for each system ({ "snes": "Supafaust" }), as the client last reported it
+  systemCores     Json?
   // The user's settings (RetroAchievements, WiFi) are kept applied on it; what was last applied and when
   keepSettings    Boolean               @default(true)
   settingsHash    String?               @db.Char(40)

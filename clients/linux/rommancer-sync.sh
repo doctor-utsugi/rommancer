@@ -22,7 +22,7 @@
 #                                   Menu++...) mounted on this computer; the link lives on the card itself,
 #                                   so any computer with this script can sync it. Without a command: sync.
 set -u
-CLIENT_VERSION=20261053
+CLIENT_VERSION=20261054
 # A clock before this date is surely wrong (no battery-backed clock); kept apart from the version, which may run ahead
 CLOCK_MIN=20261001
 # Onion keeps curl (with TLS) and friends outside the default PATH
@@ -427,6 +427,7 @@ build_request() {
   done < "$WORK/saves"
   nested_lines "$out" > "$WORK/nested" && cat "$WORK/nested" >> "$out"
   core_lines >> "$out" 2>/dev/null
+  emu_lines >> "$out" 2>/dev/null
   save_cache
 }
 
@@ -473,6 +474,18 @@ core_lines() {
       /^[[:space:]]*display_version[[:space:]]*=/ { v = $2 }
       END { if (n != "" && v != "") printf "core\t%s\t%s\n", n, v }' "$@"
   done | awk -F"$TAB" '!seen[$2]++'
+}
+
+# "emu<TAB>rom folder<TAB>core file": the core each of Onion's emulator folders launches (Emu/SFC/launch.sh runs
+# mednafen_supafaust_libretro.so), so the server puts saves in that core's folder
+emu_lines() {
+  [ -z "$SD" ] || return 0
+  for l in "${ROOT%/}"/Emu/*/launch.sh; do
+    [ -f "$l" ] || continue
+    so="$(grep -o '[A-Za-z0-9_+-]*_libretro\.so' "$l" | head -n 1)"
+    rp="$(sed -n 's/.*"rompath"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "${l%/*}/config.json" 2>/dev/null | head -n 1)"
+    [ -n "$so" ] && [ -n "$rp" ] && printf 'emu\t%s\t%s\n' "${rp##*/}" "${so%_libretro.so}"
+  done
 }
 
 save_cache() {

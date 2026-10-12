@@ -481,7 +481,7 @@ export function VersionsDialog({ saveId, onClose }: { saveId: number; onClose():
                       <Button variant="outline" size="sm" onClick={() => void act(() => post(`/saves/${s.id}/restore`, { versionId: v.id }))}>
                         {t('saves.restore')}
                       </Button>
-                      <Button variant="ghost" size="icon-sm" onClick={() => void act(() => del(`/saves/${s.id}/versions/${v.id}`))}>
+                      <Button variant="ghost" size="icon-sm" onClick={() => confirm(t('common.confirmDelete')) && void act(() => del(`/saves/${s.id}/versions/${v.id}`))}>
                         <Trash2 className="size-4" />
                       </Button>
                     </>

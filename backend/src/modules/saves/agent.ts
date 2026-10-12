@@ -99,6 +99,55 @@ async function emulatorBySlug(slug: string) {
   return emu;
 }
 
+/** The emulator of a RetroArch core by the name it gives its save folder, made on first sight like registerUnknownCores */
+async function emulatorForCore(core: string) {
+  const slug = 'ra-' + core.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+  const known = (await prisma.emulator.findFirst({ where: { core } })) ?? (await emulatorBySlug(slug).catch(() => null));
+  if (known) return known;
+  const ps1 = /psx|pcsx|swanstation|duckstation/i.test(core);
+  return prisma.emulator.upsert({ where: { slug }, create: { slug, name: `RetroArch ${core}`, core, saveFormat: ps1 ? 'ps1card' : 'raw', saveExt: '.srm', stateExt: '.state' }, update: {} });
+}
+
+/** Libretro core files (without "_libretro.so") and the folder name RetroArch gives their saves */
+const LIBRETRO_CORES: Record<string, string> = {
+  mednafen_supafaust: 'Supafaust', snes9x: 'Snes9x', snes9x2002: 'Snes9x 2002', snes9x2005: 'Snes9x 2005', snes9x2005_plus: 'Snes9x 2005 Plus',
+  snes9x2010: 'Snes9x 2010', bsnes: 'bsnes', mesen_s: 'Mesen-S', fceumm: 'FCEUmm', nestopia: 'Nestopia', quicknes: 'QuickNES', mesen: 'Mesen',
+  gambatte: 'Gambatte', gearboy: 'Gearboy', sameboy: 'SameBoy', tgbdual: 'TGB Dual', mgba: 'mGBA', gpsp: 'gpSP', vba_next: 'VBA Next',
+  vbam: 'VBA-M', picodrive: 'PicoDrive', genesis_plus_gx: 'Genesis Plus GX', genesis_plus_gx_wide: 'Genesis Plus GX Wide', smsplus: 'SMS Plus GX',
+  gearsystem: 'Gearsystem', pcsx_rearmed: 'PCSX-ReARMed', swanstation: 'SwanStation', mednafen_psx: 'Beetle PSX', mednafen_psx_hw: 'Beetle PSX HW',
+  mednafen_pce_fast: 'Beetle PCE Fast', mednafen_pce: 'Beetle PCE', mednafen_supergrafx: 'Beetle SuperGrafx', mednafen_wswan: 'Beetle WonderSwan',
+  mednafen_ngp: 'Beetle NeoPop', race: 'RACE', mednafen_vb: 'Beetle VB', mednafen_lynx: 'Beetle Lynx', handy: 'Handy', pokemini: 'PokeMini',
+  stella: 'Stella', stella2014: 'Stella 2014', prosystem: 'ProSystem', fbneo: 'FinalBurn Neo', mame2003_plus: 'MAME 2003-Plus',
+  mupen64plus_next: 'Mupen64Plus-Next', parallel_n64: 'ParaLLEl N64', melonds: 'melonDS', melondsds: 'melonDS DS', desmume: 'DeSmuME',
+};
+
+/**
+ * "emu<TAB>rom folder<TAB>core file" lines: the core each emulator folder of the firmware launches (Onion's
+ * Emu/SFC/launch.sh runs Supafaust where RetroArch's default is Snes9x), so saves go where that core reads them
+ */
+async function storeSystemCores(device: AgentDevice, launched: Map<string, string>) {
+  if (!launched.size) return;
+  const bySystemFolder = new Map(Object.entries(layoutOf(device).systemMap).map(([slug, v]) => [v.folder.toLowerCase(), slug]));
+  const cores: Record<string, string> = {};
+  for (const [folder, so] of launched) {
+    const slug = bySystemFolder.get(folder.toLowerCase());
+    const core = LIBRETRO_CORES[so.replace(/_libretro(\.so|\.dll|\.dylib)?$/, '')];
+    if (slug && core) cores[slug] = core;
+  }
+  const before = (device.systemCores ?? {}) as Record<string, string>;
+  if (JSON.stringify(cores) === JSON.stringify(before)) return;
+  // A system that changed core: what this device had synced was in the old core's folder, so the new folder's files
+  // have no known base (a different one is a conflict, never an upload over the synced save)
+  const layout = layoutOf(device);
+  for (const slug of new Set([...Object.keys(cores), ...Object.keys(before)])) {
+    if (cores[slug] === before[slug]) continue;
+    const old = before[slug] ? await emulatorForCore(before[slug]) : await emulatorBySlug(layout.systemMap[slug]?.emulator ?? raDefaults[slug] ?? '').catch(() => null);
+    if (old) await prisma.saveDeviceState.deleteMany({ where: { deviceId: device.id, save: { emulatorId: old.id } } });
+  }
+  device.systemCores = cores;
+  await prisma.device.update({ where: { id: device.id }, data: { systemCores: Object.keys(cores).length ? cores : Prisma.DbNull } });
+}
+
 /** Extensions that belong to one system only (".gb", ".sfc"...), to tell a rom's system without its folder */
 let extSystems: { at: number; map: Map<string, string>; exts: Map<string, string[]> } | null = null;
 async function systemsByExtension() {
@@ -147,11 +196,12 @@ async function romContext(device: AgentDevice, romPath: string) {
     if (ident) slug = (await prisma.system.findUnique({ where: { id: ident.systemId } }))?.slug ?? null;
   }
   if (!slug) throw badRequest(`Unknown system for ${romPath}`);
-  // Systems the firmware does not list are played with RetroArch's usual core for them
+  // The core the device says it launches wins; else the firmware's, else RetroArch's usual core for the system
+  const reported = ((device.systemCores ?? {}) as Record<string, string>)[slug];
   const emuSlug = layout.systemMap[slug]?.emulator ?? raDefaults[slug];
-  if (!emuSlug) throw badRequest(`No emulator known for ${slug}`);
-  const emu = await emulatorBySlug(emuSlug);
-  return { layout, slug, emu, baseName, root, rel };
+  if (!emuSlug && !reported) throw badRequest(`No emulator known for ${slug}`);
+  const emu = reported ? await emulatorForCore(reported) : await emulatorBySlug(emuSlug!);
+  return { layout, slug, emu, baseName, root, rel, reported: !!reported };
 }
 
 type RomCtx = Awaited<ReturnType<typeof romContext>>;
@@ -527,14 +577,17 @@ agentRouter.post('/sync', express.text({ limit: '16mb', type: '*/*' }), async (r
   const nested: { path: string; hashes: string[]; size: number }[] = [];
   const present = new Map<string, string>();
   const cores = new Map<string, string>();
+  const launched = new Map<string, string>();
   for (const line of String(req.body ?? '').split('\n')) {
     const [kind, p, h, h2, size] = line.replace(/\r$/, '').split('\t');
     if (kind === 'rom' && p) roms.push({ path: p, hashes: [h ?? '', h2 ?? ''].filter(Boolean), size: Number(size) || 0 });
     else if (kind === 'srom' && p) nested.push({ path: p, hashes: [], size: 0 });
     else if (kind === 'file' && p && SHA1.test(h ?? '')) present.set(p, h);
     else if (kind === 'core' && p && h) cores.set(p, h);
+    else if (kind === 'emu' && p && h) launched.set(p, h);
   }
   await storeCoreVersions(device, cores);
+  await storeSystemCores(device, launched);
   // An unreadable body (a client that sent no content type) must not wipe the device's list. The same list as last
   // time is not stored again (devices sync every few seconds while files change), but at least every half hour, so
   // roms the catalogue learnt since get identified
@@ -578,7 +631,8 @@ agentRouter.post('/sync', express.text({ limit: '16mb', type: '*/*' }), async (r
     if (!ctx) continue;
     // Emulators whose save folder already holds files for this rom; the firmware default otherwise
     let emus: Emulator[] = [ctx.emu];
-    if (coreLayout(ctx.layout)) {
+    // A core the device says it launches for the system is the only one reading saves there: others' folders are leftovers
+    if (coreLayout(ctx.layout) && !ctx.reported) {
       // Only files in per-core folders tell the core (saves may be flat while states are sorted by core)
       const perCore = (k: string) => coreKind(k === 'SAVE' ? ctx.layout.savesLayout : ctx.layout.statesLayout);
       const found = coreEmus.filter((e) => candidatePaths(ctx, e).some((f) => perCore(f.kind) && present.has(f.path)));
