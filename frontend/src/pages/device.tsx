@@ -126,12 +126,13 @@ export function DevicePage() {
   }
   const pull = (body: object) => act(() => post(`/devices/${id}/pull`, body), (r) => t('more.device.queued', { count: r.queued }))
 
-  if (!device.data) return <p className="text-sm text-muted-foreground">{t('common.loading')}</p>
   useEffect(() => {
     if (!hash) return
     const t = setTimeout(() => document.getElementById(hash.slice(1))?.scrollIntoView({ behavior: 'smooth', block: 'center' }), 300)
     return () => clearTimeout(t)
   }, [hash, tab, device.data])
+
+  if (!device.data) return <p className="text-sm text-muted-foreground">{t('common.loading')}</p>
   const d = device.data
   return (
     <div className="space-y-6">
