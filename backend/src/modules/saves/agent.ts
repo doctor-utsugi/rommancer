@@ -244,6 +244,20 @@ async function launcherContext(device: AgentDevice, romPath: string) {
   return { layout, slug: game.system, emu, baseName, root: '', rel: romPath, reported: true, launched: true };
 }
 
+/**
+ * A memory card in the save folder of a frontend's emulator setup (DuckStation's per-game cards are named after the
+ * game's title): its emulator; the game comes from the saves inside it (see observeCard)
+ */
+async function launcherCard(device: AgentDevice, file: string) {
+  if (!/\.(mcd|mcr)$/i.test(file)) return null;
+  for (const setup of Object.values(launcherOf(device)?.setups ?? {})) {
+    if (!setup.saves || setup.emulator.startsWith('core:') || !file.startsWith(setup.saves + '/')) continue;
+    const emu = await emulatorBySlug(setup.emulator).catch(() => null);
+    if (emu && isCardEmulator(emu)) return emu;
+  }
+  return null;
+}
+
 /** Kept only when it changed (a library of thousands of games is sent with every sync) */
 async function storeLauncher(device: AgentDevice, info: LauncherInfo | null): Promise<AgentDevice> {
   const home = info && device.homeRoot ? { ...info, roms: Object.fromEntries(Object.entries(info.roms).map(([p, v]) => [reroot(p, device.rootPath, device.homeRoot!), v])) } : info;
@@ -771,7 +785,12 @@ agentRouter.post('/sync', express.text({ limit: '16mb', type: '*/*' }), async (r
   // Card files named for no rom: shared by every game (pcsx-card2.mcd) or kept under a disc's serial
   for (const [p, h] of present) {
     const named = cardFiles.has(p) ? null : namedCard(path.posix.basename(p));
-    if (!named) continue;
+    if (!named) {
+      const emu = cardFiles.has(p) ? null : await launcherCard(device, p);
+      const line = emu && (await cardLine(device, p, emu, { shared: false, gameId: null }, h, '-'));
+      if (line) out.push(line);
+      continue;
+    }
     const emu = await namedCardEmulator(named.emulator);
     const line = await cardLine(device, p, emu, { shared: named.shared, gameId: named.serial ? await gameForSerial(named.serial) : null }, h, '-');
     if (line) out.push(line);
@@ -1220,6 +1239,13 @@ agentRouter.get('/roots', async (req, res) => {
     // Dolphin's GameCube cards: a .gci per save, or a card image (MemoryCardA.USA.raw)
     if (slug === 'gc') ['.gci', '.raw'].forEach((e) => exts.add(e));
   }
+  // A frontend's emulator setups: their own folders, with their emulators' files
+  for (const setup of Object.values(launcherOf(device)?.setups ?? {})) {
+    for (const d of [setup.saves, setup.states]) if (d && !lines.includes(`saves\t${d}`)) lines.push(`saves\t${d}`);
+    const emu = setup.emulator.startsWith('core:') ? null : await prisma.emulator.findUnique({ where: { slug: setup.emulator } });
+    [emu?.saveExt ?? '.srm', emu?.stateExt ?? '.state'].forEach((e) => e && exts.add(e.toLowerCase()));
+    if (emu && isCardEmulator(emu)) ['.mcd', '.mcr', '.gci', '.raw'].forEach((e) => exts.add(e));
+  }
   lines.push(`exts\t${[...exts].join(' ')}`);
   res.type('text/plain').send(lines.join('\n') + '\n');
 });
@@ -1346,6 +1372,12 @@ agentRouter.post('/upload', express.raw({ limit: '128mb', type: '*/*' }), async 
     const emu = await namedCardEmulator(named.emulator);
     const dc = await deviceCard(device, relToRoot(device, filePath), emu, { shared: named.shared, gameId: named.serial ? await gameForSerial(named.serial) : null });
     res.type('text/plain').send(await cardUpload(device, dc, emu, filePath, buf, '-'));
+    return;
+  }
+  const cardEmu = !romPath || romPath === '-' ? await launcherCard(device, filePath) : null;
+  if (cardEmu) {
+    const dc = await deviceCard(device, relToRoot(device, filePath), cardEmu, { shared: false, gameId: null });
+    res.type('text/plain').send(await cardUpload(device, dc, cardEmu, filePath, buf, '-'));
     return;
   }
   const ctx = await romContext(device, romPath);

@@ -201,6 +201,13 @@ export async function observeCard(device: Device, dc: DeviceCard, emu: Emulator,
     return result;
   }
   const present = new Map(card.entries.map((e) => [e.name, e]));
+  // A per-game card named after no rom (a title): its game is the one all its saves belong to
+  if (!dc.shared && !dc.gameId && card.entries.length) {
+    const games = new Set<number | null>();
+    for (const e of card.entries) games.add((await gameForEntry(e.code, null, cardFamily(emu) ?? 'ps1')).gameId);
+    const [only] = [...games];
+    if (games.size === 1 && only) dc = await prisma.deviceCard.update({ where: { id: dc.id }, data: { gameId: only } });
+  }
   for (const o of await offerOf(dc)) if (present.get(o.name)?.sha1 === o.entrySha1) await setCardBase(dc, device.id, o.saveId, o.versionId, o.entrySha1);
   const bases = new Map((await prisma.cardEntryBase.findMany({ where: { deviceCardId: dc.id } })).map((b) => [b.saveId, b]));
   const saves = await prisma.save.findMany({ where: { cardId: dc.cardId, baseName: { in: [...present.keys()] } } });
