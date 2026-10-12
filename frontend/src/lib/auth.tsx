@@ -22,7 +22,7 @@ export interface Me {
 interface AuthCtx {
   user: Me | null
   loading: boolean
-  login(username: string, password: string): Promise<void>
+  login(username: string, password: string, remember?: boolean): Promise<void>
   register(data: { token: string; username: string; email: string; password: string }): Promise<void>
   signup(data: { username: string; email: string; password: string }): Promise<void>
   logout(): Promise<void>
@@ -64,9 +64,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const value: AuthCtx = {
     user,
     loading,
-    async login(username, password) {
-      const r = await api('POST', '/auth/login', { username, password })
-      tokens.set(r.accessToken, r.refreshToken, r.filesToken)
+    async login(username, password, remember = true) {
+      const r = await api('POST', '/auth/login', { username, password, remember })
+      tokens.set(r.accessToken, r.refreshToken, r.filesToken, remember)
       await reload()
     },
     async signup(data) {

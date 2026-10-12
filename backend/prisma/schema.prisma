@@ -123,6 +123,8 @@ model RefreshToken {
   userId    Int
   tokenHash String   @unique @db.Char(64)
   expiresAt DateTime
+  // "Keep me signed in": lasts the server's session length; otherwise until the browser closes (a day at most)
+  persistent Boolean  @default(true)
   user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 }
 

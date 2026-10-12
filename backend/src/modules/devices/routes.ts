@@ -495,9 +495,14 @@ devicesRouter.put('/by-list/:listId', requirePerm('roms.download'), async (req, 
   const mine = await prisma.device.findMany({ where: { userId: me(req).id, connType: 'AGENT' }, select: { id: true } });
   const allowed = new Set(mine.map((d) => d.id));
   if (deviceIds.some((id) => !allowed.has(id))) throw forbidden();
+  const before = await prisma.deviceList.findMany({ where: { listId: list.id, deviceId: { in: [...allowed] } }, select: { deviceId: true } });
+  const had = new Set(before.map((r) => r.deviceId));
+  const changed = [...allowed].filter((id) => had.has(id) !== deviceIds.includes(id));
   await prisma.$transaction([
     prisma.deviceList.deleteMany({ where: { listId: list.id, deviceId: { in: [...allowed] } } }),
     prisma.deviceList.createMany({ data: [...new Set(deviceIds)].map((deviceId) => ({ deviceId, listId: list.id })) }),
+    // The consoles look at their lists again on their next poll
+    prisma.device.updateMany({ where: { id: { in: changed } }, data: { wantSyncAt: new Date() } }),
   ]);
   res.json({ deviceIds });
 });
@@ -653,6 +658,7 @@ devicesRouter.put('/:id/lists', requirePerm('roms.download'), async (req, res) =
   await prisma.$transaction([
     prisma.deviceList.deleteMany({ where: { deviceId: d.id } }),
     prisma.deviceList.createMany({ data: [...new Set(listIds)].map((listId) => ({ deviceId: d.id, listId })) }),
+    prisma.device.update({ where: { id: d.id }, data: { wantSyncAt: new Date() } }),
   ]);
   res.json({ listIds });
 });

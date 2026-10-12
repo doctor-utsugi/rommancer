@@ -18,7 +18,7 @@ import { SOURCES, forceSync, raCatalogKey } from '../sync/service.js';
 import { addRomRule, resolveRomGroups } from '../grouping/service.js';
 import { resolveWorks } from '../sync/wikidata.js';
 import { identifyHacks, linkFileAsHack } from '../hacks/identify.js';
-import { setSignupOpen, signupOpen } from '../auth/routes.js';
+import { SESSION_MIN_DAYS, sessionDays, setSessionDays, setSignupOpen, signupOpen } from '../auth/routes.js';
 import { HISTORY_KEY, saveHistory } from '../saves/service.js';
 
 registerJob('scan', async (ctx) => scanPath(ctx.params.romPathId, ctx, !!ctx.params.force, !!ctx.params.allowMassRemoval));
@@ -385,6 +385,18 @@ adminRouter.put('/settings/saves', async (req, res) => {
   const { history } = z.object({ history: z.number().int().min(1).max(500) }).parse(req.body);
   await prisma.setting.upsert({ where: { key: HISTORY_KEY }, create: { key: HISTORY_KEY, value: String(history) }, update: { value: String(history) } });
   res.json({ history });
+});
+
+adminRouter.get('/settings/session', async (_req, res) => {
+  res.json({ days: await sessionDays(), min: SESSION_MIN_DAYS });
+});
+
+adminRouter.put('/settings/session', async (req, res) => {
+  const { days } = z
+    .object({ days: z.number().int().refine((d) => d === 0 || (d >= SESSION_MIN_DAYS && d <= 3650)) })
+    .parse(req.body);
+  await setSessionDays(days);
+  res.json({ days, min: SESSION_MIN_DAYS });
 });
 
 adminRouter.put('/settings/signup', async (req, res) => {

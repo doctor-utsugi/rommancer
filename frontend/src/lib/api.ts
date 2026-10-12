@@ -10,26 +10,46 @@ export class ApiError extends Error {
   }
 }
 
+// A kept session lives in localStorage (survives closing the browser); one not kept in sessionStorage
+const KEYS = ['accessToken', 'refreshToken', 'filesToken']
+const read = (k: string) => {
+  try {
+    return sessionStorage.getItem(k) ?? localStorage.getItem(k)
+  } catch {
+    return null
+  }
+}
+const kept = () => {
+  try {
+    return sessionStorage.getItem('refreshToken') === null
+  } catch {
+    return true
+  }
+}
+
 const store = {
   get access() {
-    return localStorage.getItem('accessToken')
+    return read('accessToken')
   },
   get refresh() {
-    return localStorage.getItem('refreshToken')
+    return read('refreshToken')
   },
   // Token solo para ficheros (imagenes y descargas por URL)
   get files() {
-    return localStorage.getItem('filesToken')
+    return read('filesToken')
   },
-  set(access: string, refresh: string, files?: string) {
-    localStorage.setItem('accessToken', access)
-    localStorage.setItem('refreshToken', refresh)
-    if (files) localStorage.setItem('filesToken', files)
+  set(access: string, refresh: string, files?: string, persistent = kept()) {
+    const [to, other] = persistent ? [localStorage, sessionStorage] : [sessionStorage, localStorage]
+    for (const k of KEYS) other.removeItem(k)
+    to.setItem('accessToken', access)
+    to.setItem('refreshToken', refresh)
+    if (files) to.setItem('filesToken', files)
   },
   clear() {
-    localStorage.removeItem('accessToken')
-    localStorage.removeItem('refreshToken')
-    localStorage.removeItem('filesToken')
+    for (const k of KEYS) {
+      localStorage.removeItem(k)
+      sessionStorage.removeItem(k)
+    }
   },
 }
 
@@ -37,6 +57,8 @@ export const tokens = store
 
 let refreshing: Promise<boolean> | null = null
 
+// true: new tokens; false: the session is over (the server refused it); throws when the server could not be
+// reached (a restart, no network): the session is kept and the request fails like any network error
 async function tryRefresh(): Promise<boolean> {
   const rt = store.refresh
   if (!rt) return false
@@ -46,9 +68,13 @@ async function tryRefresh(): Promise<boolean> {
     body: JSON.stringify({ refreshToken: rt }),
   })
     .then(async (r) => {
-      if (!r.ok) return false
+      if (r.status === 401) {
+        // Another tab refreshed with this token first and stored its own: that one counts
+        return store.refresh !== rt && !!store.refresh
+      }
+      if (!r.ok) throw new ApiError(r.status, r.statusText)
       const j = await r.json()
-      store.set(j.accessToken, j.refreshToken, j.filesToken)
+      store.set(j.accessToken, j.refreshToken, j.filesToken, j.persistent ?? kept())
       return true
     })
     .finally(() => {

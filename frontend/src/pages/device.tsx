@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react'
 import { Link, useParams } from 'react-router'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
-import { Check, Download, Pause, Play, RefreshCw, Send, Terminal, X } from 'lucide-react'
+import { Check, Download, ListPlus, Pause, Play, RefreshCw, Send, Terminal, X } from 'lucide-react'
 import { toast } from 'sonner'
 import { del, get, post, put, type Paged } from '@/lib/api'
 import { useAuth } from '@/lib/auth'
@@ -84,6 +84,7 @@ export function DevicePage() {
   const [system, setSystem] = useState('')
   const [show, setShow] = useState<'all' | 'new' | 'unidentified' | 'onServer'>('all')
   const [sending, setSending] = useState(false)
+  const [choosing, setChoosing] = useState(false)
   const [copying, setCopying] = useState(false)
 
   const items = inventory.data?.items ?? []
@@ -263,6 +264,13 @@ export function DevicePage() {
         </TabsContent>
 
         <TabsContent value="lists">
+          {can('roms.download') && (
+            <div className="mb-3 flex justify-end">
+              <Button size="sm" variant="outline" onClick={() => setChoosing(true)}>
+                <ListPlus /> {t('more.device.chooseLists')}
+              </Button>
+            </div>
+          )}
           {!lists.data?.length ? (
             <Empty>{t('more.device.noLists')}</Empty>
           ) : (
@@ -270,10 +278,24 @@ export function DevicePage() {
               {lists.data.map((l) => (
                 <Card key={l.id}>
                   <CardHeader>
-                    <CardTitle className="text-base">
+                    <CardTitle className="flex items-center justify-between gap-2 text-base">
                       <Link className="hover:underline" to={`/lists/${l.id}`}>
                         {l.name}
                       </Link>
+                      {can('roms.download') && (
+                        <Button
+                          size="icon-sm"
+                          variant="ghost"
+                          title={t('more.device.removeList')}
+                          aria-label={t('more.device.removeList')}
+                          onClick={() => act(async () => {
+                            await put(`/devices/${id}/lists`, { listIds: lists.data!.filter((x) => x.id !== l.id).map((x) => x.id) })
+                            void qc.invalidateQueries({ queryKey: ['device-lists', id] })
+                          })}
+                        >
+                          <X />
+                        </Button>
+                      )}
                     </CardTitle>
                   </CardHeader>
                   <CardContent className="space-y-2 text-sm">
@@ -326,6 +348,14 @@ export function DevicePage() {
           )}
         </TabsContent>
       </Tabs>
+      {choosing && (
+        <ChooseListsDialog
+          deviceId={String(id)}
+          current={(lists.data ?? []).map((l) => l.id)}
+          onClose={() => setChoosing(false)}
+          onSaved={() => void qc.invalidateQueries({ queryKey: ['device-lists', id] })}
+        />
+      )}
       {sending && <SendDialog deviceId={Number(id)} onClose={() => setSending(false)} onSent={() => void qc.invalidateQueries({ queryKey: ['device-lists', id] })} />}
     </div>
   )
@@ -1148,5 +1178,67 @@ function SyncState({ deviceId }: { deviceId: string }) {
       )}
       {s.clockSync === false && <p className="text-muted-foreground">{t('more.syncState.clock')}</p>}
     </div>
+  )
+}
+
+/** The lists copied to a device: every list the user can see (own, shared, public), ticked when assigned */
+function ChooseListsDialog({ deviceId, current, onClose, onSaved }: { deviceId: string; current: number[]; onClose(): void; onSaved(): void }) {
+  const { t } = useTranslation()
+  const all = useQuery({ queryKey: ['lists', 'all'], queryFn: () => get<any[]>('/lists?scope=all') })
+  const [picked, setPicked] = useState(() => new Set(current))
+  const [q, setQ] = useState('')
+  const [busy, setBusy] = useState(false)
+  const shown = (all.data ?? []).filter((l) => !q || l.name.toLowerCase().includes(q.toLowerCase()))
+  const save = async () => {
+    setBusy(true)
+    try {
+      await put(`/devices/${deviceId}/lists`, { listIds: [...picked] })
+      onSaved()
+      onClose()
+      toast.success(t('common.saved'))
+    } catch (e) {
+      toast.error(errMsg(e))
+    } finally {
+      setBusy(false)
+    }
+  }
+  return (
+    <Dialog open onOpenChange={(o) => !o && onClose()}>
+      <DialogContent className="max-w-lg">
+        <DialogHeader>
+          <DialogTitle>{t('more.device.chooseLists')}</DialogTitle>
+        </DialogHeader>
+        <p className="text-sm text-muted-foreground">{t('more.device.chooseListsHelp')}</p>
+        <Input placeholder={t('common.search')} value={q} onChange={(e) => setQ(e.target.value)} />
+        <div className="max-h-80 space-y-1 overflow-y-auto">
+          {!shown.length && <Empty>{t('more.device.noListsToChoose')}</Empty>}
+          {shown.map((l) => (
+            <label key={l.id} className="flex items-center gap-2 rounded px-1 py-1 text-sm hover:bg-muted">
+              <Checkbox
+                checked={picked.has(l.id)}
+                onCheckedChange={(c) => {
+                  const next = new Set(picked)
+                  if (c) next.add(l.id)
+                  else next.delete(l.id)
+                  setPicked(next)
+                }}
+              />
+              <span className="min-w-0 flex-1 truncate">{l.name}</span>
+              <span className="shrink-0 text-xs text-muted-foreground">
+                {l.owner?.username} · {l._count?.items ?? 0}
+              </span>
+            </label>
+          ))}
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose}>
+            {t('common.cancel')}
+          </Button>
+          <Button onClick={save} disabled={busy}>
+            {t('common.save')}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   )
 }

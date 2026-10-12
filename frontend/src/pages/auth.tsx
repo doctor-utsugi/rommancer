@@ -7,6 +7,7 @@ import { get } from '@/lib/api'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
+import { Checkbox } from '@/components/ui/checkbox'
 import { Field, errMsg } from '@/components/common'
 
 function Shell({ title, children }: { title: string; children: React.ReactNode }) {
@@ -39,6 +40,7 @@ function LoginForm({ onSignup }: { onSignup?: () => void }) {
   const { login } = useAuth()
   const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
+  const [remember, setRemember] = useState(true)
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
   const submit = async (e: FormEvent) => {
@@ -46,7 +48,7 @@ function LoginForm({ onSignup }: { onSignup?: () => void }) {
     setBusy(true)
     setError('')
     try {
-      await login(username, password)
+      await login(username, password, remember)
     } catch {
       setError(t('auth.invalid'))
     } finally {
@@ -62,6 +64,10 @@ function LoginForm({ onSignup }: { onSignup?: () => void }) {
         <Field label={t('common.password')}>
           <Input type="password" value={password} onChange={(e) => setPassword(e.target.value)} autoComplete="current-password" required />
         </Field>
+        <label className="flex items-center gap-2 text-sm">
+          <Checkbox checked={remember} onCheckedChange={(c) => setRemember(!!c)} />
+          {t('more.session.remember')}
+        </label>
         {error && <p className="text-sm text-destructive">{error}</p>}
         <Button type="submit" disabled={busy}>
           {t('auth.login')}

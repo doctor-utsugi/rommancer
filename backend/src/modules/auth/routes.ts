@@ -11,7 +11,15 @@ import { signAccess, signFiles } from './middleware.js';
 
 export const authRouter = Router();
 
-const REFRESH_DAYS = 30;
+// Session length (days since the last use, set by the admin): 30 at least, 0 for sessions that never expire
+const SESSION_KEY = 'sessionDays';
+export const SESSION_DEFAULT_DAYS = 90;
+export const SESSION_MIN_DAYS = 30;
+// A session not kept: one day at most (the browser forgets it when it closes)
+const SHORT_SESSION_MS = 86400_000;
+// A refresh token just used stays valid this long, so tabs refreshing at once or a reply lost on the way
+// do not end the session
+const ROTATE_GRACE_MS = 60_000;
 const MAX_FAILS = 5;
 const WINDOW_MS = 15 * 60_000;
 
@@ -41,15 +49,28 @@ export function resetLoginLimits() {
 
 const clientIp = (req: Request) => req.ip ?? req.socket.remoteAddress ?? 'unknown';
 
-export async function issueTokens(user: User) {
+export async function sessionDays() {
+  const v = Number((await prisma.setting.findUnique({ where: { key: SESSION_KEY } }))?.value);
+  return Number.isInteger(v) && (v === 0 || v >= SESSION_MIN_DAYS) ? v : SESSION_DEFAULT_DAYS;
+}
+
+export async function setSessionDays(days: number) {
+  await prisma.setting.upsert({ where: { key: SESSION_KEY }, create: { key: SESSION_KEY, value: String(days) }, update: { value: String(days) } });
+}
+
+export async function issueTokens(user: User, persistent = true) {
   const refresh = crypto.randomBytes(32).toString('hex');
+  const days = await sessionDays();
+  // A session that never expires still gets a date (a hundred years)
+  const ms = !persistent ? SHORT_SESSION_MS : (days || 36500) * 86400_000;
   await prisma.refreshToken.create({
-    data: { userId: user.id, tokenHash: sha256(refresh), expiresAt: new Date(Date.now() + REFRESH_DAYS * 86400_000) },
+    data: { userId: user.id, tokenHash: sha256(refresh), expiresAt: new Date(Date.now() + ms), persistent },
   });
   return {
     accessToken: signAccess(user),
     filesToken: signFiles(user),
     refreshToken: refresh,
+    persistent,
     user: { id: user.id, username: user.username, role: user.role, mustChangePassword: user.mustChangePassword },
   };
 }
@@ -68,16 +89,22 @@ export async function verifyCredentials(req: Request, username: string, password
 }
 
 authRouter.post('/login', async (req, res) => {
-  const { username, password } = z.object({ username: z.string().max(191), password: z.string().max(512) }).parse(req.body);
-  res.json(await issueTokens(await verifyCredentials(req, username, password)));
+  const { username, password, remember } = z
+    .object({ username: z.string().max(191), password: z.string().max(512), remember: z.boolean().default(true) })
+    .parse(req.body);
+  const user = await verifyCredentials(req, username, password);
+  await prisma.refreshToken.deleteMany({ where: { userId: user.id, expiresAt: { lt: new Date() } } });
+  res.json(await issueTokens(user, remember));
 });
 
 authRouter.post('/refresh', async (req, res) => {
   const { refreshToken } = z.object({ refreshToken: z.string() }).parse(req.body);
   const row = await prisma.refreshToken.findUnique({ where: { tokenHash: sha256(refreshToken) }, include: { user: true } });
   if (!row || row.expiresAt < new Date()) throw new HttpError(401, 'Invalid refresh token');
-  await prisma.refreshToken.delete({ where: { id: row.id } });
-  res.json(await issueTokens(row.user));
+  // Rotated: the old token ends after a short grace instead of at once
+  const grace = new Date(Date.now() + ROTATE_GRACE_MS);
+  if (row.expiresAt > grace) await prisma.refreshToken.update({ where: { id: row.id }, data: { expiresAt: grace } });
+  res.json(await issueTokens(row.user, row.persistent));
 });
 
 authRouter.post('/logout', async (req, res) => {

@@ -41,6 +41,8 @@ export function AdminUsersPage() {
   const signup = useQuery({ queryKey: ['signup-open'], queryFn: () => get<{ open: boolean }>('/admin/settings/signup') })
   const history = useQuery({ queryKey: ['save-history'], queryFn: () => get<{ history: number }>('/admin/settings/saves') })
   const [keep, setKeep] = useState('')
+  const session = useQuery({ queryKey: ['session-days'], queryFn: () => get<{ days: number; min: number }>('/admin/settings/session') })
+  const [days, setDays] = useState('')
   const [form, setForm] = useState({ username: '', email: '', password: '', role: 'USER', permissions: DEFAULT_PERMISSIONS })
   const [invRole, setInvRole] = useState('USER')
   const [invPerms, setInvPerms] = useState(DEFAULT_PERMISSIONS)
@@ -94,6 +96,43 @@ export function AdminUsersPage() {
               {t('common.save')}
             </Button>
           </form>
+        </CardContent>
+        <CardContent className="flex items-center justify-between gap-4">
+          <div>
+            <p className="font-medium">{t('more.session.title')}</p>
+            <p className="text-sm text-muted-foreground">{t('more.session.help', { min: session.data?.min ?? 30 })}</p>
+          </div>
+          <div className="flex shrink-0 items-center gap-3">
+            <label className="flex items-center gap-2 text-sm whitespace-nowrap">
+              <Switch
+                checked={session.data?.days === 0}
+                onCheckedChange={(never) => act(async () => {
+                  await put('/admin/settings/session', { days: never ? 0 : 90 })
+                  void qc.invalidateQueries({ queryKey: ['session-days'] })
+                })}
+              />
+              {t('more.session.never')}
+            </label>
+            {session.data?.days !== 0 && (
+              <form
+                className="flex items-center gap-2"
+                onSubmit={(e) => {
+                  e.preventDefault()
+                  void act(async () => {
+                    await put('/admin/settings/session', { days: Number(days) })
+                    void qc.invalidateQueries({ queryKey: ['session-days'] })
+                    setDays('')
+                    toast.success(t('common.saved'))
+                  })
+                }}
+              >
+                <Input type="number" min={session.data?.min ?? 30} max={3650} className="w-20" aria-label={t('more.session.days')} value={days || String(session.data?.days ?? '')} onChange={(e) => setDays(e.target.value)} />
+                <Button size="sm" type="submit" disabled={!days || Number(days) === session.data?.days}>
+                  {t('common.save')}
+                </Button>
+              </form>
+            )}
+          </div>
         </CardContent>
       </Card>
       <Card>

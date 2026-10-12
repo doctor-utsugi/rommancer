@@ -292,6 +292,28 @@ test('auth: login admin, invitacion y registro de usuario', async () => {
   assert.equal(refreshed.status, 200);
   adminToken = refreshed.json.accessToken;
   adminFiles = refreshed.json.filesToken;
+  // A refresh token just used still works for a moment (tabs refreshing at once, a reply lost on the way)
+  const again = await api('POST', '/auth/refresh', { refreshToken: r.json.refreshToken });
+  assert.equal(again.status, 200);
+  assert.equal(again.json.persistent, true);
+  // Session length: the admin's, 30 days at least or never; a session not kept lasts a day and stays so
+  const { prisma } = await import('../src/lib/prisma.js');
+  const { sha256 } = await import('../src/lib/crypto.js');
+  assert.deepEqual((await api('GET', '/admin/settings/session')).json, { days: 90, min: 30 });
+  const until = async (t: string) => (await prisma.refreshToken.findUniqueOrThrow({ where: { tokenHash: sha256(t) } })).expiresAt.getTime() - Date.now();
+  assert.ok((await until(refreshed.json.refreshToken)) > 89 * 86400_000);
+  assert.equal((await api('PUT', '/admin/settings/session', { days: 10 })).status, 400);
+  assert.equal((await api('PUT', '/admin/settings/session', { days: 0 })).status, 200);
+  const forever = await api('POST', '/auth/login', { username: 'admin', password: 'admin-segura-2026' });
+  assert.ok((await until(forever.json.refreshToken)) > 3650 * 86400_000);
+  assert.equal((await api('PUT', '/admin/settings/session', { days: 90 })).status, 200);
+  const short = await api('POST', '/auth/login', { username: 'admin', password: 'admin-segura-2026', remember: false });
+  assert.equal(short.json.persistent, false);
+  assert.ok((await until(short.json.refreshToken)) <= 86400_000);
+  const shortNext = await api('POST', '/auth/refresh', { refreshToken: short.json.refreshToken });
+  assert.equal(shortNext.json.persistent, false);
+  assert.ok((await until(shortNext.json.refreshToken)) <= 86400_000);
+  assert.ok((await until(short.json.refreshToken)) <= 60_000, 'the used token ends after the grace');
   // El token de ficheros no sirve como token de API
   assert.equal((await api('GET', '/systems', undefined, adminFiles)).status, 401);
 
@@ -1789,6 +1811,15 @@ test('sync client: roms of assigned lists, save before a game, conflicts resolve
   // One list sent to several consoles at once
   assert.equal((await api('PUT', `/devices/by-list/${list.json.id}`, { deviceIds: [a.id, b.id] })).status, 200);
   assert.deepEqual((await api('GET', `/devices/by-list/${list.json.id}`)).json.sort(), [a.id, b.id].sort());
+  // Seen from a device: its lists replaced from its page, the console asked to look at them again
+  await prisma.device.updateMany({ where: { id: { in: [a.id, b.id] } }, data: { wantSyncAt: null } });
+  const other = await api('POST', '/lists', { name: 'Other' });
+  assert.equal((await api('PUT', `/devices/${a.id}/lists`, { listIds: [list.json.id, other.json.id] })).status, 200);
+  assert.deepEqual((await api('GET', `/devices/${a.id}/lists`)).json.map((l: any) => l.id).sort(), [list.json.id, other.json.id].sort());
+  assert.ok((await prisma.device.findUniqueOrThrow({ where: { id: a.id } })).wantSyncAt);
+  assert.equal((await prisma.device.findUniqueOrThrow({ where: { id: b.id } })).wantSyncAt, null);
+  assert.equal((await api('PUT', `/devices/${a.id}/lists`, { listIds: [list.json.id] })).status, 200);
+  assert.equal((await api('DELETE', `/lists/${other.json.id}`)).status < 300, true);
 
   const plan = await fetch(`${base}/api/v1/agent/roms`, { headers: { 'X-Device-Token': fs.readFileSync(path.join(dir, 'roms-a-state', 'config'), 'utf8').match(/TOKEN=(.*)/)![1] } });
   const planText = await plan.text();
