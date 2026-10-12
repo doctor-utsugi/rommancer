@@ -912,7 +912,7 @@ function ExcludedSystems({ deviceId, canEdit, onChange }: { deviceId: string; ca
             <DialogTitle>{t('more.excluded.title')}</DialogTitle>
           </DialogHeader>
           <p className="text-sm text-muted-foreground">{t('more.excluded.help')}</p>
-          <div className="max-h-80 space-y-1 overflow-y-auto">
+          <div className="max-h-80 min-w-0 space-y-1 overflow-y-auto">
             {systems.map((s) => (
               <label key={s.slug} className="flex items-center gap-2 text-sm">
                 <Checkbox
@@ -1227,13 +1227,13 @@ function ChooseListsDialog({ current, onClose, onSubmit }: { current: number[]; 
   const same = picked.size === current.length && current.every((x) => picked.has(x))
   return (
     <Dialog open onOpenChange={(o) => !o && onClose()}>
-      <DialogContent className="max-w-lg">
+      <DialogContent className="sm:max-w-lg">
         <DialogHeader>
           <DialogTitle>{t('more.device.chooseLists')}</DialogTitle>
         </DialogHeader>
         <p className="text-sm text-muted-foreground">{t('more.device.chooseListsHelp')}</p>
         <Input placeholder={t('common.search')} value={q} onChange={(e) => setQ(e.target.value)} />
-        <div className="max-h-80 space-y-1 overflow-y-auto">
+        <div className="max-h-80 min-w-0 space-y-1 overflow-y-auto">
           {!shown.length && <Empty>{t('more.device.noListsToChoose')}</Empty>}
           {shown.map((l) => (
             <label key={l.id} className="flex items-center gap-2 rounded px-1 py-1 text-sm hover:bg-muted">
@@ -1267,6 +1267,7 @@ function ChooseListsDialog({ current, onClose, onSubmit }: { current: number[]; 
 function ConfirmListsDialog(props: { deviceId: string; listIds: number[]; removed: string[]; onClose(): void; onConfirm(): Promise<void> }) {
   const { t } = useTranslation()
   const [busy, setBusy] = useState(false)
+  const [showFiles, setShowFiles] = useState(false)
   const preview = useQuery({
     queryKey: ['device-lists-preview', props.deviceId, props.listIds],
     queryFn: () => post<any>(`/devices/${props.deviceId}/lists/preview`, { listIds: props.listIds }),
@@ -1285,11 +1286,11 @@ function ConfirmListsDialog(props: { deviceId: string; listIds: number[]; remove
   }
   return (
     <Dialog open onOpenChange={(o) => !o && props.onClose()}>
-      <DialogContent className="max-w-lg">
+      <DialogContent className="sm:max-w-lg">
         <DialogHeader>
-          <DialogTitle>{t('more.device.removeListsTitle', { count: props.removed.length, names: props.removed.join(', ') })}</DialogTitle>
+          <DialogTitle className="pr-6">{t('more.device.removeListsTitle', { count: props.removed.length, names: props.removed.join(', ') })}</DialogTitle>
         </DialogHeader>
-        <div className="space-y-2 text-sm">
+        <div className="min-w-0 space-y-2 text-sm">
           {preview.isLoading && <p className="text-muted-foreground">{t('common.loading')}</p>}
           {preview.isError && <p className="text-destructive">{errMsg(preview.error)}</p>}
           {p && !p.prune && <p>{t('more.device.removeKeeps')}</p>}
@@ -1299,12 +1300,19 @@ function ConfirmListsDialog(props: { deviceId: string; listIds: number[]; remove
             <>
               {p.del > 0 && <p className="font-medium text-destructive">{t('more.device.removeDeletes', { count: p.del, size: formatBytes(p.delBytes) })}</p>}
               {p.upload > 0 && <p className="font-medium text-destructive">{t('more.device.removeDeletesLater', { count: p.upload, size: formatBytes(p.uploadBytes) })}</p>}
-              <ul className="max-h-40 overflow-y-auto rounded border p-2 text-xs text-muted-foreground">
-                {p.sample.map((f: string) => (
-                  <li key={f} className="truncate">{f}</li>
-                ))}
-                {p.del + p.upload > p.sample.length && <li>…</li>}
-              </ul>
+              <Button variant="link" size="sm" className="h-auto p-0" onClick={() => setShowFiles((v) => !v)}>
+                {t(showFiles ? 'more.device.hideFiles' : 'more.device.showFiles', { count: p.del + p.upload })}
+              </Button>
+              {showFiles && (
+                <ul className="max-h-48 min-w-0 overflow-y-auto rounded-md border p-2 text-xs text-muted-foreground">
+                  {p.sample.map((f: string) => (
+                    <li key={f} className="truncate" title={f}>
+                      {f}
+                    </li>
+                  ))}
+                  {p.del + p.upload > p.sample.length && <li>…</li>}
+                </ul>
+              )}
             </>
           )}
           {p?.prune && p.stuck > 0 && <p className="text-muted-foreground">{t('more.device.removeStuck', { count: p.stuck })}</p>}
