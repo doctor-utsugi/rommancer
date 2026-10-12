@@ -1908,6 +1908,56 @@ test('sync client: roms of assigned lists, save before a game, conflicts resolve
   assert.deepEqual(fs.readFileSync(path.join(coll, 'custom-Rommancer - Con partida.cfg'), 'utf8').trim().split('\n'), [romPath(b)]);
 });
 
+test('sync client: the console chooses its own lists', async () => {
+  const client = path.join(ROOT, 'clients/linux/rommancer-sync.sh');
+  const dir = path.join(DATA, 'console-lists');
+  fs.rmSync(dir, { recursive: true, force: true });
+  const { prisma } = await import('../src/lib/prisma.js');
+  const root = path.join(dir, 'root');
+  const r = await api('POST', '/link/claim', { name: 'lists-console', firmware: 'knulli', root });
+  const id = r.json.deviceId as number;
+  const state = path.join(dir, 'state');
+  fs.mkdirSync(state, { recursive: true });
+  fs.writeFileSync(path.join(state, 'config'), `SERVER=${base}\nTOKEN=${r.json.token}\n`);
+  const run = (...args: string[]) => execFileP('sh', [client, ...args], { env: { ...process.env, ROMMANCER_STATE: state } });
+  const rows = async () => (await run('lists')).stdout.split('\n').filter((l) => l.startsWith('list\t')).map((l) => l.split('\t'));
+
+  const mine = (await api('POST', '/lists', { name: 'Console pick' })).json;
+  await api('POST', `/lists/${mine.id}/items`, { gameId: ctx.smb3GameId });
+  // Another user's lists: their public one is offered (saying whose), their private one is not
+  const pub = (await api('POST', '/lists', { name: 'Their public', visibility: 'PUBLIC' }, userToken)).json;
+  const priv = (await api('POST', '/lists', { name: 'Their private' }, userToken)).json;
+
+  let seen = await rows();
+  assert.ok(seen.some((l) => l[1] === String(mine.id) && l[2] === '0' && l[4] === 'Console pick' && !l[5]), JSON.stringify(seen));
+  assert.ok(seen.some((l) => l[1] === String(pub.id) && !!l[5]), 'a list of someone else says whose');
+  assert.ok(!seen.some((l) => l[1] === String(priv.id)), 'private lists of others are not offered');
+
+  // Chosen on the console: the device has it, first in the list, and is asked to look at its lists
+  await prisma.device.update({ where: { id }, data: { wantSyncAt: null } });
+  assert.match((await run('lists-set', String(mine.id))).stdout, /^lists\t1$/m);
+  assert.deepEqual((await api('GET', `/devices/${id}/lists`)).json.map((l: any) => l.id), [mine.id]);
+  assert.ok((await prisma.device.findUniqueOrThrow({ where: { id } })).wantSyncAt);
+  seen = await rows();
+  assert.deepEqual(seen[0].slice(1, 3), [String(mine.id), '1'], "the console's own lists come first");
+
+  // Removing it while roms in no list are deleted: the console is told how many would go, before anything changes
+  assert.match((await run('roms')).stdout, /roms: [1-9]\d* downloaded/);
+  await run('sync');
+  await prisma.device.update({ where: { id }, data: { pruneRoms: true } });
+  const preview = (await run('lists-preview')).stdout;
+  assert.match(preview, /^delete\t[1-9]\d*\t[1-9]\d*$/m, preview);
+  assert.deepEqual((await api('GET', `/devices/${id}/lists`)).json.map((l: any) => l.id), [mine.id], 'a preview changes nothing');
+  // Keeping it deletes nothing
+  assert.match((await run('lists-preview', String(mine.id))).stdout, /^delete\t0\t0$/m);
+  assert.match((await run('lists-set')).stdout, /^lists\t0$/m);
+  assert.deepEqual((await api('GET', `/devices/${id}/lists`)).json, []);
+  // A list that does not exist is refused, and the lists stay as they were
+  await assert.rejects(run('lists-set', String(mine.id), '999999999'));
+  assert.deepEqual((await api('GET', `/devices/${id}/lists`)).json, []);
+  await prisma.device.update({ where: { id }, data: { pruneRoms: false } });
+});
+
 test('collection: removing a hand-uploaded game deletes its file, list entries and records', async () => {
   const { prisma } = await import('../src/lib/prisma.js');
   const game = await prisma.game.findFirstOrThrow({ where: { title: 'Juego Snes' }, include: { hacks: { include: { files: { include: { romPath: true } } } }, roms: { include: { parts: { include: { files: { include: { romPath: true } } } } } } } });

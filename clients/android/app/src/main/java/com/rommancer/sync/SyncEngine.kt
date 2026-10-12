@@ -16,6 +16,15 @@ class SyncEngine(private val context: Context, private val store: Store, private
 
     data class Conflict(val id: Int, val game: String, val kind: String, val mine: String, val theirs: String, val device: String)
 
+    /** A list this device may have; OWNER is empty for the user's own */
+    data class DeviceList(val id: Int, val on: Boolean, val items: Int, val name: String, val owner: String)
+
+    /** The lists offered (the device's first) and whether roms in no list are deleted */
+    data class Lists(val prune: Boolean, val lists: List<DeviceList>)
+
+    /** What having only some lists would delete here: FILES deleted, UPLOAD sent to the server first, BYTES of both */
+    data class ListsDrop(val files: Int, val upload: Int, val bytes: Long)
+
     data class Result(val up: Int, val down: Int, val errors: Int) {
         override fun toString() = "$up up, $down down, $errors errors"
     }
@@ -404,6 +413,27 @@ class SyncEngine(private val context: Context, private val store: Store, private
 
     fun conflicts(): List<Conflict> = Api(store.server, store.token ?: error("Not linked")).text("/agent/conflicts").lines()
         .mapNotNull { l -> l.split('\t').takeIf { it.size >= 7 && it[0] == "conflict" }?.let { Conflict(it[1].toInt(), it[2], it[3], it[4], it[5], it[6]) } }
+
+    fun lists(): Lists {
+        val rows = Api(store.server, store.token ?: error("Not linked")).text("/agent/lists").lines().map { it.split('\t') }
+        return Lists(
+            prune = rows.any { it.size >= 2 && it[0] == "prune" && it[1] == "1" },
+            lists = rows.filter { it.size >= 5 && it[0] == "list" }.map { DeviceList(it[1].toInt(), it[2] == "1", it[3].toIntOrNull() ?: 0, it[4], it.getOrElse(5) { "" }) },
+        )
+    }
+
+    fun listsPreview(ids: List<Int>): ListsDrop {
+        val rows = Api(store.server, store.token ?: error("Not linked")).text("/agent/lists/preview", "POST", ids.joinToString("\n").toByteArray(), mapOf("Content-Type" to "text/plain"))
+            .lines().map { it.split('\t') }.filter { it.size >= 3 }.associate { it[0] to (it[1].toIntOrNull() to it[2].toLongOrNull()) }
+        val del = rows["delete"]; val up = rows["upload"]
+        return ListsDrop(del?.first ?: 0, up?.first ?: 0, (del?.second ?: 0L) + (up?.second ?: 0L))
+    }
+
+    /** Gives the device exactly these lists */
+    fun listsSet(ids: List<Int>) {
+        Api(store.server, store.token ?: error("Not linked")).text("/agent/lists", "POST", ids.joinToString("\n").toByteArray(), mapOf("Content-Type" to "text/plain"))
+        store.addLog("lists: ${ids.size} on this device")
+    }
 
     fun resolve(id: Int, keep: String): Result {
         Api(store.server, store.token ?: error("Not linked")).form("/agent/conflicts/$id", mapOf("keep" to keep))

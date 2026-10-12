@@ -81,6 +81,13 @@
     <string name="prune_off">No, desactivarlo</string>
     <string name="prune_delete">Sí, borrarlas</string>
     <string name="prune_later">Ahora no</string>
+    <string name="lists">Listas de este dispositivo</string>
+    <string name="lists_info">%1$d listas en este dispositivo. A pone o quita una; al salir se descargan o borran sus roms.</string>
+    <string name="no_lists">No hay listas. Créalas en la web de Rommancer.</string>
+    <string name="list_drop">Quitar «%1$s» borrará %2$d roms de este dispositivo (%3$s).</string>
+    <string name="list_drop_up">%1$d que el servidor no tiene se le envían antes.</string>
+    <string name="list_drop_go">Quitar y borrar %1$d roms</string>
+    <string name="cancel">Cancelar</string>
     <string name="p_prune">Borrando roms fuera de listas</string>
     <string name="roms_stop">Parar la descarga de roms</string>
     <string name="stopping">Parando…</string>

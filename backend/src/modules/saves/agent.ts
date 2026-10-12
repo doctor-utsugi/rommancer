@@ -25,6 +25,7 @@ import { ingestUnverified, ingestVerified } from '../uploads/ingest.js';
 import { serverKey } from '../devices/ssh.js';
 import { devicePlan } from '../devices/plan.js';
 import { prunePlan, queuePrunePulls } from '../devices/prune.js';
+import { deviceUser, listsPreview, setDeviceLists, visibleLists } from '../devices/lists.js';
 import { Prisma } from '@prisma/client';
 import { storeWifiBands } from '../devconfig/service.js';
 import { cardAction, commitOffer, deviceCard, findDeviceCard, gameForSerial, gcCardFile, gciFolderState, hasWantedSaves, isCardEmulator, namedCard, observeCard, prepareCard, recordOffer } from './cards.js';
@@ -836,6 +837,43 @@ agentRouter.get('/collections', async (req, res) => {
   const roms = await prisma.deviceRom.findMany({ where: { deviceId: device.id }, select: { path: true, gameId: true } });
   const out = roms.filter((r) => (r.gameId && games.has(r.gameId)) || names.has(path.posix.basename(r.path).replace(/\.[^.]+$/, ''))).map((r) => `saves\t${r.path}`);
   res.type('text/plain').send(out.join('\n') + (out.length ? '\n' : ''));
+});
+
+// ---------- the device's lists, chosen on the console ----------
+
+const listIdsOf = (body: unknown) =>
+  [...new Set(String(body ?? '').split(/[\s,]+/).filter((x) => /^\d+$/.test(x)).map(Number))].slice(0, 100);
+const field = (s: string) => s.replace(/[\t\r\n]+/g, ' ').trim();
+
+/**
+ * The lists the device's owner may give it, for the console's screens: "prune<TAB>0|1", then one
+ * "list<TAB>id<TAB>on<TAB>items<TAB>name<TAB>owner" each (owner empty for the user's own, last: shells merge empty
+ * tab-separated fields), the device's first
+ */
+agentRouter.get('/lists', async (req, res) => {
+  const device = await deviceFromToken(req);
+  const u = await deviceUser(device);
+  const lists = await visibleLists(u);
+  const on = new Set((await prisma.deviceList.findMany({ where: { deviceId: device.id }, select: { listId: true } })).map((r) => r.listId));
+  const rows = [...lists.filter((l) => on.has(l.id)), ...lists.filter((l) => !on.has(l.id))];
+  const out = [`prune\t${device.pruneRoms ? 1 : 0}`, ...rows.map((l) => ['list', l.id, on.has(l.id) ? 1 : 0, l._count.items, field(l.name), l.ownerId === u.id ? '' : field(l.owner.username)].join('\t'))];
+  res.type('text/plain').send(out.join('\n') + '\n');
+});
+
+// What giving the device these lists (ids in the body) would delete from it: "delete<TAB>files<TAB>bytes",
+// "upload<TAB>files<TAB>bytes" (sent to the server first) and "stuck<TAB>files" (the server cannot get them: they stay)
+agentRouter.post('/lists/preview', express.text({ limit: '16kb', type: '*/*' }), async (req, res) => {
+  const device = await deviceFromToken(req);
+  const p = await listsPreview(device, await deviceUser(device), listIdsOf(req.body));
+  const n = (x: number | undefined) => x ?? 0;
+  res.type('text/plain').send(`delete\t${n(p.del)}\t${n(p.delBytes)}\nupload\t${n(p.upload)}\t${n(p.uploadBytes)}\nstuck\t${n(p.stuck)}\n`);
+});
+
+// Gives the device the lists whose ids are in the body (and only those)
+agentRouter.post('/lists', express.text({ limit: '16kb', type: '*/*' }), async (req, res) => {
+  const device = await deviceFromToken(req);
+  const ids = await setDeviceLists(device, await deviceUser(device), listIdsOf(req.body));
+  res.type('text/plain').send(`lists\t${ids.length}\n`);
 });
 
 // ---------- conflicts this device is part of ----------

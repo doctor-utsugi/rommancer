@@ -19,6 +19,7 @@ import { installClient, serverKey, syncOverSsh } from './ssh.js';
 import { OPEN_PULL, pullTransfers, romDownloads } from '../saves/agent.js';
 import { devicePlan } from './plan.js';
 import { prunePlan } from './prune.js';
+import { listsPreview, setDeviceLists } from './lists.js';
 import { previewPlacement } from '../roms/destination.js';
 
 /** Requests not finished yet, including paused ones (the console is only offered the open ones) */
@@ -727,32 +728,11 @@ devicesRouter.post('/:id/prune/confirm', requirePerm('roms.download'), async (re
   res.json({ ok: true });
 });
 
-// What giving the device these lists would delete from it: nothing unless it deletes roms in no list; then the
-// files that would go now, those that go once the server has them, and those that stay (the server cannot get them)
+// What giving the device these lists would delete from it
 devicesRouter.post('/:id/lists/preview', async (req, res) => {
   const d = await ownDevice(intParam(req), me(req));
   const { listIds } = z.object({ listIds: z.array(z.number().int()).max(100) }).parse(req.body);
-  for (const id of listIds) await loadList(id, me(req));
-  if (!d.pruneRoms || !d.inventoryAt) return res.json({ prune: d.pruneRoms, inventory: !!d.inventoryAt });
-  const now = await prunePlan(d);
-  const next = await prunePlan(d, d.rootPath, [...new Set(listIds)]);
-  // Only what this change adds to what would go anyway
-  const before = new Set([...now.del, ...now.upload].map((f) => f.path));
-  const fresh = (files: { path: string; size: number }[]) => files.filter((f) => !before.has(f.path));
-  const del = fresh(next.del);
-  const upload = fresh(next.upload);
-  const bytes = (files: { size: number }[]) => files.reduce((n, f) => n + f.size, 0);
-  res.json({
-    prune: true,
-    inventory: true,
-    del: del.length,
-    delBytes: bytes(del),
-    upload: upload.length,
-    uploadBytes: bytes(upload),
-    stuck: Math.max(0, next.stuck - now.stuck),
-    total: next.total,
-    sample: [...del, ...upload].slice(0, 50).map((f) => path.posix.basename(f.path)),
-  });
+  res.json(await listsPreview(d, me(req), listIds));
 });
 
 devicesRouter.get('/:id/lists', async (req, res) => {
@@ -764,13 +744,7 @@ devicesRouter.get('/:id/lists', async (req, res) => {
 devicesRouter.put('/:id/lists', requirePerm('roms.download'), async (req, res) => {
   const d = await ownDevice(intParam(req), me(req));
   const { listIds } = z.object({ listIds: z.array(z.number().int()).max(100) }).parse(req.body);
-  for (const id of listIds) await loadList(id, me(req));
-  await prisma.$transaction([
-    prisma.deviceList.deleteMany({ where: { deviceId: d.id } }),
-    prisma.deviceList.createMany({ data: [...new Set(listIds)].map((listId) => ({ deviceId: d.id, listId })) }),
-    prisma.device.update({ where: { id: d.id }, data: { wantSyncAt: new Date() } }),
-  ]);
-  res.json({ listIds });
+  res.json({ listIds: await setDeviceLists(d, me(req), listIds) });
 });
 
 devicesRouter.delete('/:id', async (req, res) => {

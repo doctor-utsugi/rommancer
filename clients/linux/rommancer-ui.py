@@ -102,6 +102,15 @@ TEXTS = {
         "back_keys": "B volver al menu (el envio sigue)",
         "stop_keys": "B parar la descarga de roms",
         "stopping": "Parando la descarga...",
+        "lists": "Listas de esta consola",
+        "lists_info": "{n} listas en esta consola. A pone o quita una; al salir se descargan o borran sus roms.",
+        "no_lists": "No hay listas. Créalas en la web de Rommancer.",
+        "lists_fail": "No se pudo hablar con el servidor",
+        "back": "Volver",
+        "list_drop": "Quitar «{name}» borrará {n} roms de esta consola ({size}).",
+        "list_drop_up": "{n} que el servidor no tiene se le envían antes.",
+        "list_drop_go": "Quitar y borrar {n} roms",
+        "cancel": "Cancelar",
     },
     "en": {
         "title": "Rommancer Sync",
@@ -176,6 +185,15 @@ TEXTS = {
         "back_keys": "B back to the menu (the copy goes on)",
         "stop_keys": "B stop the rom download",
         "stopping": "Stopping the download...",
+        "lists": "This console's lists",
+        "lists_info": "{n} lists on this console. A adds or removes one; on leaving, their roms download or go.",
+        "no_lists": "No lists yet. Create them in Rommancer's web app.",
+        "lists_fail": "Could not reach the server",
+        "back": "Back",
+        "list_drop": "Removing \u201c{name}\u201d deletes {n} roms from this console ({size}).",
+        "list_drop_up": "{n} the server lacks are sent to it first.",
+        "list_drop_go": "Remove and delete {n} roms",
+        "cancel": "Cancel",
     },
 }
 
@@ -502,9 +520,11 @@ class App:
                 return None
             time.sleep(0.016)
 
-    def menu(self, title, items, info=(), refresh=None, refresh_index=None):
-        """REFRESH (optional) recomputes the label at REFRESH_INDEX on every frame, for values that arrive later."""
-        sel = 0
+    def menu(self, title, items, info=(), refresh=None, refresh_index=None, start=0):
+        """REFRESH (optional) recomputes the label at REFRESH_INDEX on every frame, for values that arrive later.
+        START is the item selected at first; items that do not fit scroll with the selection."""
+        sel = min(max(start, 0), len(items) - 1)
+        first = 0
         while True:
             if refresh is not None:
                 items[refresh_index] = refresh()
@@ -518,14 +538,27 @@ class App:
                     s.text(part, (x, y), s.small, DIM)
                     y += s.small.get_linesize()
             y += int(s.h * 0.04)
-            for i, label in enumerate(items):
+            step = int(s.font.get_linesize() * (1.4 if len(items) <= 5 else 1.12 if len(items) <= 7 else 1.0 if len(items) <= 8 else 0.92))
+            # As many as fit above the footer; the window follows the selection
+            fit = max(1, (int(s.h * 0.9) - y) // step)
+            first = min(max(first, sel - fit + 1), sel)
+            # Small triangles say there is more above or below (the default font may lack arrow glyphs)
+            tri = max(4, step // 6)
+            top_y = y
+            if first:
+                pygame.draw.polygon(s.surf, DIM, [(x - 8, top_y + tri), (x - 8 - tri, top_y + 3 * tri), (x - 8 + tri, top_y + 3 * tri)])
+            for i in range(first, min(len(items), first + fit)):
+                label = items[i]
                 color = ACCENT if i == sel else FG
                 while s.font.size(label)[0] > width and len(label) > 4:
                     label = label[:-2] + "…"
                 r = s.text(label, (x + 10, y), s.font, color)
                 if i == sel:
                     pygame.draw.rect(s.surf, ACCENT, r.inflate(20, 8), 2, border_radius=8)
-                y += int(s.font.get_linesize() * (1.4 if len(items) <= 5 else 1.12 if len(items) <= 7 else 1.0 if len(items) <= 8 else 0.92))
+                y += step
+            if first + fit < len(items):
+                b = y - step
+                pygame.draw.polygon(s.surf, DIM, [(x - 8 - tri, b + tri), (x - 8 + tri, b + tri), (x - 8, b + 3 * tri)])
             s.flip()
             a = self.next_action(timeout=0)
             if a is None:
@@ -919,6 +952,58 @@ class App:
             if choice is not None:
                 self.run_with_progress("resolve", T["syncing"], c[1], "device" if choice == 0 else "server")
 
+    # ---------- the console's lists ----------
+
+    def client(self, *args, timeout=30):
+        """A client command's output lines split by tabs, None when it failed"""
+        try:
+            r = subprocess.run(["sh", SCRIPT, *args], capture_output=True, text=True, timeout=timeout, env={**os.environ, "HTTP_MAX": str(timeout - 5)})
+        except subprocess.TimeoutExpired:
+            return None
+        return [line.split("\t") for line in r.stdout.splitlines()] if r.returncode == 0 else None
+
+    def lists(self):
+        """Each list ticked or not; A adds or removes one (a removal that deletes roms says how many first, a single
+        question). Leaving after a change brings the console in line with its lists at once, on screen."""
+        changed, at = False, None
+        while True:
+            self.message(T["checking"], wait=False)
+            out = self.client("lists")
+            if out is None:
+                self.message(T["lists_fail"])
+                break
+            prune = ["prune", "1"] in out
+            rows = [r for r in out if r[0] == "list" and len(r) >= 5]
+            if not rows:
+                self.message(T["no_lists"])
+                break
+            labels = [("[x] " if r[2] == "1" else "[  ] ") + r[4] + (f" @{r[5]}" if len(r) > 5 and r[5] else "") + f" ({r[3]})" for r in rows]
+            # The cursor stays on the list just changed (the console's own lists come first, so it moves)
+            start = next((i for i, r in enumerate(rows) if r[1] == at), 0)
+            pick = self.menu(T["lists"], labels + [T["back"]], info=[T["lists_info"].format(n=sum(r[2] == "1" for r in rows))], start=start)
+            if pick is None or pick >= len(rows):
+                break
+            r = rows[pick]
+            at = r[1]
+            keep = [x[1] for x in rows if x[2] == "1" and x[1] != r[1]] + ([] if r[2] == "1" else [r[1]])
+            if r[2] == "1" and prune:
+                self.message(T["p_server"], wait=False)
+                p = {x[0]: x[1:] for x in self.client("lists-preview", *keep, timeout=60) or [] if x}
+                gone = int((p.get("delete") or ["0"])[0] or 0)
+                up = int((p.get("upload") or ["0"])[0] or 0)
+                if gone + up:
+                    size = sum(int((p.get(k) or ["0", "0"])[1] or 0) for k in ("delete", "upload"))
+                    info = [T["list_drop"].format(name=r[4], n=gone + up, size=human(size))] + ([T["list_drop_up"].format(n=up)] if up else [])
+                    if self.menu(T["lists"], [T["list_drop_go"].format(n=gone + up), T["cancel"]], info=info) != 0:
+                        continue
+            self.message(T["p_server"], wait=False)
+            if self.client("lists-set", *keep) is None:
+                self.message(T["lists_fail"])
+            else:
+                changed = True
+        if changed:
+            self.sync_now()
+
     def status(self):
         try:
             with open(os.path.join(self.state, "log"), encoding="utf-8") as f:
@@ -965,13 +1050,13 @@ class App:
                 n = "…" if self.conflict_count is None else self.conflict_count
                 running = self.roms_status()
                 roms_label = T["roms_watch"].format(n=f"({running[0]}/{running[1]})" if running and running[1] else "") if running else T["sync_roms"]
-                items = [T["sync_now"], roms_label, T["allow_pull"].format(v=pull), T["allow_ssh"].format(v=ssh), T["prune"].format(v=prune), T["prune_clean"].format(n=self.cleanable), T["conflicts"].format(n=n), T["status"], T["logout"], T["quit"]]
+                items = [T["sync_now"], roms_label, T["lists"], T["allow_pull"].format(v=pull), T["allow_ssh"].format(v=ssh), T["prune"].format(v=prune), T["prune_clean"].format(n=self.cleanable), T["conflicts"].format(n=n), T["status"], T["logout"], T["quit"]]
                 # A copy the server asked for: an item to watch it while it lasts
                 pulling = self.pulls_status()
                 if pulling:
                     items.insert(-1, T["pulls_watch"].format(n=f"({pulling[0]}/{pulling[1]})"))
-                choice = self.menu(T["title"], items, info, refresh=lambda: T["conflicts"].format(n="…" if self.conflict_count is None else self.conflict_count), refresh_index=6)
-                actions = [self.sync_now, self.sync_roms, self.toggle_allow_pull, self.toggle_allow_ssh, self.toggle_prune, self.prune_clean, self.resolve_conflicts, self.status, self.logout] + ([self.watch_pulls] if pulling else [])
+                choice = self.menu(T["title"], items, info, refresh=lambda: T["conflicts"].format(n="…" if self.conflict_count is None else self.conflict_count), refresh_index=7)
+                actions = [self.sync_now, self.sync_roms, self.lists, self.toggle_allow_pull, self.toggle_allow_ssh, self.toggle_prune, self.prune_clean, self.resolve_conflicts, self.status, self.logout] + ([self.watch_pulls] if pulling else [])
             else:
                 choice = self.menu(T["title"], [f"{T['server']}: {self.server}", T["login"], T["signup"], T["quit"]])
                 actions = [self.edit_server, self.login, self.signup]

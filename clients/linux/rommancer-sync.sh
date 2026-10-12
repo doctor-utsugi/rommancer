@@ -22,7 +22,7 @@
 #                                   Menu++...) mounted on this computer; the link lives on the card itself,
 #                                   so any computer with this script can sync it. Without a command: sync.
 set -u
-CLIENT_VERSION=20261045
+CLIENT_VERSION=20261046
 # A clock before this date is surely wrong (no battery-backed clock); kept apart from the version, which may run ahead
 CLOCK_MIN=20261001
 # Onion keeps curl (with TLS) and friends outside the default PATH
@@ -1637,6 +1637,16 @@ cmd_pulls() {
 # conflict<TAB>id<TAB>game<TAB>kind<TAB>this device's date<TAB>server date<TAB>server's device
 cmd_conflicts() { need_link; http GET "$SERVER/api/v1/agent/conflicts" - -; }
 
+# The lists the console's owner may give it, as the server says: "prune<TAB>0|1", then
+# "list<TAB>id<TAB>on<TAB>items<TAB>name<TAB>owner" each (owner empty for one's own), the console's own first
+cmd_lists() { need_link; http GET "$SERVER/api/v1/agent/lists" - -; }
+# "lists-preview ID..." (what having just those lists would delete here) and "lists-set ID..." (having just those)
+lists_post() {
+  need_link; path="$1"; shift
+  printf '%s\n' "$@" > "$WORK/lists-body"
+  http POST "$SERVER/api/v1/agent/$path" "$WORK/lists-body" - "Content-Type: text/plain"
+}
+
 cmd_resolve() {
   need_link
   printf 'keep=%s' "$2" > "$WORK/resolve"
@@ -1694,6 +1704,10 @@ t() {
       clockask) echo "La consola no se pone en hora sola. Rommancer necesita la hora bien para conectar con el servidor y fechar las partidas. Activar la hora por internet (y esperarla al encender)?" ;;
       clockon) echo "Activar (recomendado)" ;; later) echo "Ahora no" ;;
       l_offline) echo "Rommancer (sin conexion)" ;; l_conflicts) echo "Rommancer ($2 conflictos)" ;;
+      lists) echo "Listas de esta consola" ;; listsinfo) echo "$2 listas en esta consola. A pone o quita una; al salir se descargan o borran sus roms." ;;
+      nolists) echo "No hay listas. Crealas en la web de Rommancer." ;; listsfail) echo "No se pudo hablar con el servidor" ;; back) echo "Volver" ;;
+      listdrop) echo "Quitar \"$2\" borrara $3 roms de esta consola ($4)." ;; listdropup) echo "$2 que el servidor no tiene se le envian antes." ;;
+      listdropgo) echo "Quitar y borrar $2 roms" ;; cancel) echo "Cancelar" ;;
       pruneon) echo "Si, borrarlas" ;; pruneoff) echo "No, desactivarlo" ;; prunelater) echo "Ahora no" ;; cleaned) echo "Saves borrados: $2" ;; *) echo "$1" ;;
     esac
   else
@@ -1724,6 +1738,10 @@ t() {
       clockask) echo "This console does not set its own clock. Rommancer needs the right time to reach the server and date your saves. Set the time from the internet (and wait for it at power-on)?" ;;
       clockon) echo "Turn on (recommended)" ;; later) echo "Not now" ;;
       l_offline) echo "Rommancer (offline)" ;; l_conflicts) echo "Rommancer ($2 conflicts)" ;;
+      lists) echo "This console's lists" ;; listsinfo) echo "$2 lists on this console. A adds or removes one; on leaving, their roms download or go." ;;
+      nolists) echo "No lists yet. Create them in Rommancer's web app." ;; listsfail) echo "Could not reach the server" ;; back) echo "Back" ;;
+      listdrop) echo "Removing \"$2\" deletes $3 roms from this console ($4)." ;; listdropup) echo "$2 the server lacks are sent to it first." ;;
+      listdropgo) echo "Remove and delete $2 roms" ;; cancel) echo "Cancel" ;;
       pruneon) echo "Yes, delete them" ;; pruneoff) echo "No, turn it off" ;; prunelater) echo "Not now" ;; cleaned) echo "Saves deleted: $2" ;; *) echo "$1" ;;
     esac
   fi
@@ -1898,6 +1916,60 @@ setup_conflicts() {
   done
 }
 
+# The console's lists: each ticked or not, A adds or removes one (a removal that deletes roms says how many first, a
+# single question); leaving after a change brings the console in line with its lists at once, on screen
+setup_lists() {
+  l_changed=0; l_at=""
+  while :; do
+    panel "Rommancer Sync" "$(t p_connecting)"
+    HTTP_MAX=20 cmd_lists > "$WORK/lists" 2>/dev/null; l_rc=$?
+    panel_close
+    [ "$l_rc" = 0 ] || { panel "$(t lists)" "$(t listsfail)" wait; break; }
+    # Onion's menu takes up to 100 entries: the back item among them
+    grep "^list$TAB" "$WORK/lists" | head -n 98 > "$WORK/lists.rows"
+    l_n="$(grep -c . "$WORK/lists.rows")"
+    [ "$l_n" -gt 0 ] || { panel "$(t lists)" "$(t nolists)" wait; break; }
+    l_on="$(awk -F"$TAB" '$3 == 1' "$WORK/lists.rows" | grep -c .)"
+    set --
+    while IFS="$TAB" read -r _ l_id l_o l_items l_name l_owner; do
+      if [ "$l_o" = 1 ]; then l_mark="[x]"; else l_mark="[ ]"; fi
+      # Someone else's list says whose
+      l_who=""; [ -n "$l_owner" ] && l_who=" @$(printf '%s' "$l_owner" | cut -c1-8)"
+      set -- "$@" "$l_mark $(printf '%s' "$l_name" | cut -c1-24)$l_who ($l_items)"
+    done < "$WORK/lists.rows"
+    # The cursor stays on the list just changed (the console's own lists come first, so it moves)
+    l_sel="$(awk -F"$TAB" -v id="$l_at" '$2 == id { print NR - 1; exit }' "$WORK/lists.rows")"
+    menu "$(t lists)" "$(t listsinfo "$l_on")" -s "${l_sel:-0}" "$@" "$(t back)"; l_pick=$?
+    [ "$l_pick" -lt "$l_n" ] || break
+    l_line="$(sed -n "$((l_pick + 1))p" "$WORK/lists.rows")"
+    l_id="$(printf '%s' "$l_line" | cut -f2)"; l_at="$l_id"; l_o="$(printf '%s' "$l_line" | cut -f3)"; l_name="$(printf '%s' "$l_line" | cut -f5)"
+    # The lists the console keeps after this choice
+    l_ids="$(awk -F"$TAB" -v id="$l_id" '$3 == 1 && $2 != id { print $2 }' "$WORK/lists.rows")"
+    [ "$l_o" = 1 ] || l_ids="$l_ids $l_id"
+    if [ "$l_o" = 1 ] && [ "$(sed -n "s/^prune$TAB//p" "$WORK/lists")" = 1 ]; then
+      panel "Rommancer Sync" "$(t p_server)"
+      # shellcheck disable=SC2086
+      HTTP_MAX=60 lists_post lists/preview $l_ids > "$WORK/lists-preview" 2>/dev/null
+      panel_close
+      l_del="$(sed -n "s/^delete$TAB//p" "$WORK/lists-preview" | cut -f1)"; l_bytes="$(sed -n "s/^delete$TAB//p" "$WORK/lists-preview" | cut -f2)"
+      l_up="$(sed -n "s/^upload$TAB//p" "$WORK/lists-preview" | cut -f1)"; l_upb="$(sed -n "s/^upload$TAB//p" "$WORK/lists-preview" | cut -f2)"
+      l_all=$(( ${l_del:-0} + ${l_up:-0} ))
+      if [ "$l_all" -gt 0 ]; then
+        l_msg="$(t listdrop "$l_name" "$l_all" "$(human $(( ${l_bytes:-0} + ${l_upb:-0} )))")"
+        [ "${l_up:-0}" -gt 0 ] && l_msg="$l_msg $(t listdropup "$l_up")"
+        menu "$(t lists)" "$l_msg" "$(t listdropgo "$l_all")" "$(t cancel)"
+        [ $? = 0 ] || continue
+      fi
+    fi
+    panel "Rommancer Sync" "$(t p_server)"
+    # shellcheck disable=SC2086
+    if HTTP_MAX=20 lists_post lists $l_ids > /dev/null 2>&1; then l_changed=1; panel_close
+    else panel_close; panel "$(t lists)" "$(t listsfail)" wait; fi
+  done
+  [ "$l_changed" = 1 ] && with_progress "$(t sync)" cmd_all
+  return 0
+}
+
 cmd_setup() {
   [ -x "$ONION_BIN/prompt" ] && [ -x "$ONION_BIN/kbinput" ] || { say "setup needs Onion's prompt and kbinput"; exit 2; }
   fix_clock
@@ -1924,21 +1996,22 @@ cmd_setup() {
       # A copy the server asked for shows in the menu's text while it lasts
       # and as an item to watch it
       pl=""; set --; pulls_running && { pl=" $(pulls_line)"; set -- "$(t pullswatch)"; }
-      menu "Rommancer Sync" "$(t connected). $(updated_line).$pl" "$(t sync)" "$romsitem" "$(t allowpull "$pull")" "$(t allowssh "$ssh")" "$(t prune "$prune")" "$(t pruneclean "$cleanable")" "$(t conflicts "$nconf")" "$(t status)" "$(t unlink)" "$@" "$(t quit)"; rc=$?
+      menu "Rommancer Sync" "$(t connected). $(updated_line).$pl" "$(t sync)" "$romsitem" "$(t lists)" "$(t allowpull "$pull")" "$(t allowssh "$ssh")" "$(t prune "$prune")" "$(t pruneclean "$cleanable")" "$(t conflicts "$nconf")" "$(t status)" "$(t unlink)" "$@" "$(t quit)"; rc=$?
       case $rc in
         # On screen with its progress until done; B stops the roms
         0) with_progress "$(t sync)" cmd_all ;;
         1) with_progress "$(t roms)" cmd_roms ;;
-        2) if [ "$ALLOW_PULL" = 1 ]; then ALLOW_PULL=0; else ALLOW_PULL=1; fi; set_setting ALLOW_PULL "$ALLOW_PULL" ;;
-        3) if [ "$ALLOW_SSH" = 1 ]; then ALLOW_SSH=0; else ALLOW_SSH=1; fi; set_setting ALLOW_SSH "$ALLOW_SSH" ;;
-        4) if [ "$PRUNE_ROMS" = 1 ]; then v=0; else v=1; fi
+        2) setup_lists ;;
+        3) if [ "$ALLOW_PULL" = 1 ]; then ALLOW_PULL=0; else ALLOW_PULL=1; fi; set_setting ALLOW_PULL "$ALLOW_PULL" ;;
+        4) if [ "$ALLOW_SSH" = 1 ]; then ALLOW_SSH=0; else ALLOW_SSH=1; fi; set_setting ALLOW_SSH "$ALLOW_SSH" ;;
+        5) if [ "$PRUNE_ROMS" = 1 ]; then v=0; else v=1; fi
            panel "Rommancer Sync" "$(t syncing)"; sh "$DIR/$(basename "$0")" prune set "$v" > /dev/null 2>&1; panel_close; PRUNE_ROMS="$v" ;;
-        5) with_progress "$(t pruneclean "$cleanable")" sh "$DIR/$(basename "$0")" prune clean ;;
-        6) panel "Rommancer Sync" "$(t p_connecting)"; cmd_conflicts > "$WORK/conflicts" 2>/dev/null || : > "$WORK/conflicts"; panel_close; setup_conflicts ;;
-        7) panel "$(t status)" "$(version_line). $(tail -n 4 "$LOG" 2>/dev/null | cut -c21- | tr '\n' ' ')" wait ;;
-        8) keep="$SERVER"; cmd_unlink > /dev/null; TOKEN=""; USER_NAME=""; SERVER="$keep" ;;
+        6) with_progress "$(t pruneclean "$cleanable")" sh "$DIR/$(basename "$0")" prune clean ;;
+        7) panel "Rommancer Sync" "$(t p_connecting)"; cmd_conflicts > "$WORK/conflicts" 2>/dev/null || : > "$WORK/conflicts"; panel_close; setup_conflicts ;;
+        8) panel "$(t status)" "$(version_line). $(tail -n 4 "$LOG" 2>/dev/null | cut -c21- | tr '\n' ' ')" wait ;;
+        9) keep="$SERVER"; cmd_unlink > /dev/null; TOKEN=""; USER_NAME=""; SERVER="$keep" ;;
         # The copy's item when it showed, Quit otherwise
-        9) [ "$#" -gt 0 ] || return 0; watch_pulls ;;
+        10) [ "$#" -gt 0 ] || return 0; watch_pulls ;;
         *) return 0 ;;
       esac
     else
@@ -2010,6 +2083,9 @@ case "${1:-}" in
   # After a game: copies for the server may go on, and the game's saves go up
   game-stop) rm -f "$WORK/playing"; cmd_sync; refresh_lists after-game ;;
   conflicts) cmd_conflicts ;;
+  lists) cmd_lists ;;
+  lists-preview) shift; lists_post lists/preview "$@" ;;
+  lists-set) shift; lists_post lists "$@" ;;
   resolve) cmd_resolve "${2:-}" "${3:-}" ;;
   set) set_setting "${2:-}" "${3:-}" ;;
   # Deleting roms in no list: "prune set 0|1" (a change on screen, or the answer to one made in the web app),

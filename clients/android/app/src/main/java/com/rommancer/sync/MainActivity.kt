@@ -116,6 +116,10 @@ private sealed interface Screen {
     data object Conflicts : Screen
     data class Conflict(val c: SyncEngine.Conflict) : Screen
     data object Status : Screen
+    /** The device's lists, each one added or removed with A */
+    data object Lists : Screen
+    /** Removing a list deletes roms here: said once, with how many, before it is done */
+    data class ListDrop(val list: SyncEngine.DeviceList, val keep: List<Int>, val drop: SyncEngine.ListsDrop) : Screen
     /** Deleting roms in no list: "intro" (the choice offered once), "ask" (turned on in the web app), "hold" (a big deletion) */
     data class Prune(val kind: String) : Screen
 }
@@ -357,10 +361,66 @@ private fun Linked(store: Store, onUnlinked: () -> Unit) {
         }
     }
 
+    // The lists screen: what the server offers, whether a change was made (leaving then syncs at once) and the list
+    // the cursor stays on (the device's own lists come first, so a changed one moves)
+    var lists by remember { mutableStateOf<SyncEngine.Lists?>(null) }
+    var listsError by remember { mutableStateOf<String?>(null) }
+    var listsBusy by remember { mutableStateOf(false) }
+    var listsChanged by remember { mutableStateOf(false) }
+    var listAt by remember { mutableStateOf<Int?>(null) }
+    val titleSyncLists = stringResource(R.string.syncing)
+    fun loadLists() {
+        listsBusy = true
+        scope.launch {
+            val r = withContext(Dispatchers.IO) { runCatching { SyncEngine(context, store).lists() } }
+            lists = r.getOrNull()
+            listsError = r.exceptionOrNull()?.let { Failure.describe(context, store, it).first }
+            listsBusy = false
+        }
+    }
+    fun setLists(ids: List<Int>) {
+        listsBusy = true
+        screen = Screen.Lists
+        scope.launch {
+            val r = withContext(Dispatchers.IO) { runCatching { SyncEngine(context, store).listsSet(ids) } }
+            if (r.isSuccess) listsChanged = true else listsError = r.exceptionOrNull()?.let { Failure.describe(context, store, it).first }
+            loadLists()
+        }
+    }
+    fun toggleList(l: SyncEngine.DeviceList) {
+        val current = lists ?: return
+        listAt = l.id
+        val keep = current.lists.filter { it.on && it.id != l.id }.map { it.id } + (if (l.on) emptyList() else listOf(l.id))
+        if (!l.on || !current.prune) return setLists(keep)
+        listsBusy = true
+        scope.launch {
+            val drop = withContext(Dispatchers.IO) { runCatching { SyncEngine(context, store).listsPreview(keep) } }
+            listsBusy = false
+            val d = drop.getOrNull()
+            when {
+                d == null -> listsError = drop.exceptionOrNull()?.let { Failure.describe(context, store, it).first }
+                d.files + d.upload > 0 -> screen = Screen.ListDrop(l, keep, d)
+                else -> setLists(keep)
+            }
+        }
+    }
+    // Leaving the lists after a change brings the device in line with them at once, on screen
+    fun leaveLists() {
+        if (listsChanged) {
+            listsChanged = false
+            run(titleSyncLists) { it.all(roms = true) }
+        } else screen = Screen.Menu
+    }
+
     // B / back returns to the menu from any inner screen; a running sync is left alone
     BackHandler(enabled = screen != Screen.Menu && screen !is Screen.Working) {
         if (screen == Screen.Prune("hold")) holdLater = true
-        screen = if (screen is Screen.Conflict) Screen.Conflicts else Screen.Menu
+        when (screen) {
+            Screen.Lists -> leaveLists()
+            is Screen.ListDrop -> screen = Screen.Lists
+            is Screen.Conflict -> screen = Screen.Conflicts
+            else -> screen = Screen.Menu
+        }
     }
 
     when (val s = screen) {
@@ -384,6 +444,7 @@ private fun Linked(store: Store, onUnlinked: () -> Unit) {
             // Asked on screen: the roms download again even after a stop
             MenuItem(stringResource(R.string.sync_now), firstItem) { run(titleSync) { it.all(roms = true) } }
             MenuItem(titleRoms) { run(titleRoms) { it.roms() } }
+            MenuItem(stringResource(R.string.lists)) { lists = null; listsError = null; listAt = null; screen = Screen.Lists; loadLists() }
             MenuItem(stringResource(R.string.watch, if (store.watch) yes else no)) {
                 store.watch = !store.watch
                 if (store.watch) WatchService.start(context) else WatchService.stop(context)
@@ -513,6 +574,36 @@ private fun Linked(store: Store, onUnlinked: () -> Unit) {
                     MenuItem(stringResource(R.string.prune_later)) { holdLater = true; screen = Screen.Menu }
                 }
             }
+            LaunchedEffect(s) { runCatching { firstItem.requestFocus() } }
+        }
+        Screen.Lists -> {
+            Text(stringResource(R.string.lists), fontSize = 22.sp)
+            val current = lists
+            val focus = remember { mutableMapOf<Int, FocusRequester>() }
+            when {
+                listsError != null -> Text(listsError!!, color = MaterialTheme.colorScheme.error)
+                current == null -> Text(stringResource(R.string.p_connecting), color = Dim)
+                current.lists.isEmpty() -> Text(stringResource(R.string.no_lists), color = Dim)
+                else -> Text(stringResource(R.string.lists_info, current.lists.count { it.on }), color = Dim)
+            }
+            current?.lists?.forEach { l ->
+                val label = (if (l.on) "☑ " else "☐ ") + l.name + (if (l.owner.isNotEmpty()) " @${l.owner}" else "") + " (${l.items})"
+                MenuItem(label, focus.getOrPut(l.id) { FocusRequester() }) { if (!listsBusy) toggleList(l) }
+            }
+            MenuItem(stringResource(R.string.press_back), firstItem) { leaveLists() }
+            // The cursor goes back to the list just changed, or to the first one
+            LaunchedEffect(current) {
+                val target = listAt?.let { focus[it] } ?: current?.lists?.firstOrNull()?.let { focus[it.id] } ?: firstItem
+                runCatching { target.requestFocus() }
+            }
+        }
+        is Screen.ListDrop -> {
+            val d = s.drop
+            val size = android.text.format.Formatter.formatShortFileSize(context, d.bytes)
+            Text(stringResource(R.string.list_drop, s.list.name, d.files + d.upload, size), fontSize = 20.sp)
+            if (d.upload > 0) Text(stringResource(R.string.list_drop_up, d.upload), color = Dim)
+            MenuItem(stringResource(R.string.list_drop_go, d.files + d.upload), firstItem) { setLists(s.keep) }
+            MenuItem(stringResource(R.string.cancel)) { screen = Screen.Lists }
             LaunchedEffect(s) { runCatching { firstItem.requestFocus() } }
         }
         Screen.Status -> {

@@ -237,6 +237,13 @@ clients need no JSON parser.
 | `GET /agent/file`, `POST /agent/upload` | device token | transfer one save |
 | `GET /agent/thumb`, `POST /agent/thumb` | device token | a savestate's screenshot (`?v=versionId`) |
 | `GET /agent/card` | device token | a memory card with the server's entries put in (`?expect=sha1` or `-`) |
+| `GET /agent/lists` | device token | the lists the device's owner may give it: `prune<TAB>0\|1`, then `list<TAB>id<TAB>on<TAB>items<TAB>name<TAB>owner` (owner empty for their own; the device's lists first) |
+| `POST /agent/lists/preview` | device token | ids in the body (one per line): what having only those lists would delete (`delete`, `upload`, `stuck` lines with files and bytes) |
+| `POST /agent/lists` | device token | ids in the body: the device gets exactly those lists (and is asked to look at them again) |
+
+The console screens (Onion's menu, the pygame app, the Android app) use the three list endpoints for "This console's
+lists": A adds or removes a list; a removal that would delete roms (deleting roms in no list is on) says how many,
+once, before it is made; leaving the screen after a change runs a full sync with the lists' roms on screen.
 
 `POST /agent/sync` receives one line per rom and per save file:
 
