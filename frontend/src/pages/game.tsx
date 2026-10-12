@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router'
 import { useQuery } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
-import { Check, Download, FilePlus, FileText, ImageOff, Pencil, Star, Trash2, Trophy, Upload, X } from 'lucide-react'
+import { Check, Download, FilePlus, FileText, ImageOff, Pencil, Play, Star, Trash2, Trophy, Upload, X } from 'lucide-react'
 import { toast } from 'sonner'
 import { api, authUrl, del, get, patch, post, upload } from '@/lib/api'
 import { useAuth } from '@/lib/auth'
@@ -15,6 +15,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Empty, Field, JobProgress, NativeSelect, errMsg, formatBytes, useJob } from '@/components/common'
 import { AddToListButton } from '@/components/add-to-list'
+import { WEB_SYSTEMS, openPlayer } from '@/lib/play'
 import { MySaves, SharedSaves, VersionsDialog } from './saves'
 
 const ALL_MEDIA = ['COVER', 'BOX_BACK', 'BOX_SIDE', 'BOX_3D', 'SUPPORT', 'SCREENSHOT', 'TITLE', 'FLYER', 'FANART', 'WHEEL', 'MARQUEE', 'MANUAL', 'VIDEO']
@@ -299,6 +300,11 @@ export function GamePage() {
                     ))}
                   </TableCell>
                   <TableCell className="space-x-1 whitespace-nowrap">
+                    {can('roms.download') && r.parts.length === 1 && r.parts[0].files.length > 0 && WEB_SYSTEMS.includes(g.system.slug) && (
+                      <Button variant="outline" size="icon-sm" title={t('more.game.tryHelp')} onClick={() => void openPlayer(`/roms/${r.id}/play`, t)}>
+                        <Play className="size-4" />
+                      </Button>
+                    )}
                     {can('roms.download') && r.parts.length === 1 && r.parts[0].files.length > 0 && (
                       <Button variant="outline" size="icon-sm" title={t('more.game.downloadRom')} nativeButton={false} render={<a href={authUrl(`/roms/${r.id}/download`)} />}>
                         <Download className="size-4" />
@@ -373,6 +379,11 @@ export function GamePage() {
                       ))}
                     </TableCell>
                     <TableCell className="space-x-1 whitespace-nowrap">
+                      {can('roms.download') && h.files.length > 0 && WEB_SYSTEMS.includes(g.system.slug) && (
+                        <Button variant="outline" size="icon-sm" title={t('more.game.tryHelp')} onClick={() => void openPlayer(`/hacks/${h.id}/play`, t)}>
+                          <Play className="size-4" />
+                        </Button>
+                      )}
                       {can('roms.download') && (h.files.length > 0 || h.canGenerate) && (
                         <Button
                           variant="outline"

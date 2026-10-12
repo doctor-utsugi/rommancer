@@ -13,6 +13,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Empty, Field, NativeSelect, PageHeader, errMsg, formatBytes, formatDate } from '@/components/common'
+import { WEB_SYSTEMS, openPlayer } from '@/lib/play'
 
 const family = (f: string) => (f.startsWith('ps1') ? 'ps1' : f)
 
@@ -779,15 +780,9 @@ function MemoryCards() {
   )
 }
 
-/** Systems the browser emulator plays (the server has the same list); a save of an unknown game may be one */
-const WEB_SYSTEMS = ['nes', 'fds', 'snes', 'gb', 'gbc', 'gba', 'md', 'sms', 'gg', 'sega32x', 'pcengine', 'ngp', 'ngpc', 'wswan', 'wswanc', 'lynx', 'a7800', 'atari2600', 'virtualboy', 'colecovision']
+// A save of an unknown game may be one of them
 const playable = (s: any) => s.kind !== 'ENTRY' && (!s.game || WEB_SYSTEMS.includes(s.game.system.slug))
 
-/**
- * Opens a version in the browser emulator, in a new tab: the server says which system, rom and file, and the page gets
- * them with their download links in its address's fragment. Nothing played there is kept. The tab opens at once
- * (a tab opened after waiting for the server would be blocked as a popup)
- */
 /** Plays the save's current version */
 function PlayButton({ save, versionId }: { save: any; versionId: number }) {
   const { t } = useTranslation()
@@ -799,19 +794,7 @@ function PlayButton({ save, versionId }: { save: any; versionId: number }) {
   )
 }
 
-async function play(saveId: number, versionId: number, t: (k: string) => string) {
-  const tab = window.open('about:blank', '_blank')
-  try {
-    const p = await get<any>(`/saves/${saveId}/versions/${versionId}/play`)
-    const cfg = { ...p, romUrl: authUrl(p.romUrl), fileUrl: authUrl(p.fileUrl) }
-    const url = `/emulatorjs/play.html#${encodeURIComponent(JSON.stringify(cfg))}`
-    if (tab) tab.location.href = url
-    else window.open(url, '_blank')
-  } catch (e) {
-    tab?.close()
-    toast.error(`${t('more.saves.playFailed')}: ${errMsg(e)}`)
-  }
-}
+const play = (saveId: number, versionId: number, t: (k: string) => string) => openPlayer(`/saves/${saveId}/versions/${versionId}/play`, t)
 
 function Conflicts() {
   const { t } = useTranslation()

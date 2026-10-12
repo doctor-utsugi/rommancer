@@ -16,6 +16,7 @@ import { convertSave, type SaveFormat } from './convert.js';
 import { identifyRom, parseSaveFile, readThumb, readVersion, looseRomFile, removeVersion, romForSave, storeThumb, storeVersion } from './service.js';
 import { cardFamily, mainCard, readSnapshot, splitWholeCard } from './cards.js';
 import { sendRomFile } from '../roms/routes.js';
+import { WEB_SYSTEMS } from '../../lib/websystems.js';
 import './sync.js';
 
 export const savesRouter = Router();
@@ -353,12 +354,6 @@ savesRouter.post('/upload', upload.single('file'), async (req, res) => {
 // Descarga una version, opcionalmente convertida al formato de otro emulador
 // ---------- playing a save in the browser (EmulatorJS, nothing kept) ----------
 
-/** EmulatorJS systems for ours: the cartridge ones its cores play well in a browser */
-const WEB_SYSTEMS: Record<string, string> = {
-  nes: 'nes', fds: 'nes', snes: 'snes', gb: 'gb', gbc: 'gb', gba: 'gba', md: 'segaMD', sms: 'segaMS', gg: 'segaGG', sega32x: 'sega32x',
-  pcengine: 'pce', ngp: 'ngp', ngpc: 'ngp', wswan: 'ws', wswanc: 'ws', lynx: 'lynx', a7800: 'atari7800', atari2600: 'atari2600',
-  virtualboy: 'vb', colecovision: 'coleco',
-};
 
 
 // What the play page needs for a version: the EmulatorJS system, the rom and the save or state to load

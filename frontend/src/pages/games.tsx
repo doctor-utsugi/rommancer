@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { Link, useSearchParams } from 'react-router'
 import { keepPreviousData, useQuery } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
-import { ImageOff, LayoutGrid, List, Star, Trophy } from 'lucide-react'
+import { ImageOff, LayoutGrid, List, Play, Star, Trophy } from 'lucide-react'
 import { authUrl, get, post, type Paged } from '@/lib/api'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -12,6 +12,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Empty, JobProgress, NativeSelect, PageHeader, Pagination, SystemSelect, useJob } from '@/components/common'
 import { AddToListButton } from '@/components/add-to-list'
 import { useAuth } from '@/lib/auth'
+import { WEB_SYSTEMS, openPlayer } from '@/lib/play'
 
 interface GameRow {
   id: number
@@ -55,6 +56,9 @@ const storedView = (): 'grid' | 'list' => {
     return 'grid'
   }
 }
+
+/** Playable in the browser emulator: a file on the server of a system it plays */
+const tryable = (g: { ownedCount: number; unverifiedCount: number; system: { slug: string } }) => g.ownedCount + g.unverifiedCount > 0 && WEB_SYSTEMS.includes(g.system.slug)
 
 export function GamesPage() {
   // Grid of covers or a compact list, remembered in this browser
@@ -214,6 +218,11 @@ export function GamesPage() {
                   )}
                   {g.hackCount > 0 && <Badge variant="secondary">{g.hackCount} hacks</Badge>}
                   {g.unverifiedCount > 0 && <Badge variant="destructive">{g.unverifiedCount}</Badge>}
+                  {can('roms.download') && tryable(g) && (
+                    <Button variant="ghost" size="icon-sm" title={t('more.game.tryHelp')} onClick={() => void openPlayer(`/games/${g.id}/play`, t)}>
+                      <Play className="size-4" />
+                    </Button>
+                  )}
                 </TableCell>
               </TableRow>
             ))}

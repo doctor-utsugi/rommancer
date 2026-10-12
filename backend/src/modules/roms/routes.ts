@@ -16,6 +16,7 @@ import { applyMeta } from '../scrape/meta.js';
 import { addPatch, makePatch, materializeHack } from '../patches/service.js';
 import { ownedGameIds, ownedRomIds, systemStats } from './service.js';
 import { progressFor } from '../ra/progress.js';
+import { WEB_SYSTEMS } from '../../lib/websystems.js';
 import { favoritesList } from '../lists/service.js';
 import { refreshChildren } from '../lists/routes.js';
 
@@ -579,6 +580,37 @@ collectionRouter.get('/roms/:id/download', requirePerm('roms.download'), async (
   const f = part?.files[0];
   if (!part || !f) throw notFound('Rom file');
   await sendRomFile(res, f, part.name);
+});
+
+// Trying a game in the browser emulator, with no save: the EmulatorJS system and the file to load (see play.js)
+const playFile = { status: { in: ['MATCHED' as const, 'UNVERIFIED' as const] } };
+async function romPlay(romId: number) {
+  const rom = await prisma.rom.findUnique({ where: { id: romId }, include: { game: { include: { system: true } }, parts: { include: { files: { where: playFile, take: 1 } } } } });
+  if (!rom || rom.parts.length !== 1 || !rom.parts[0].files.length) throw notFound('Rom file');
+  const system = WEB_SYSTEMS[rom.game.system.slug];
+  if (!system) throw badRequest(`${rom.game.system.name} cannot be played in the browser`);
+  return { system, title: rom.game.title, kind: 'ROM', romName: rom.parts[0].name, romUrl: `/api/v1/roms/${rom.id}/download` };
+}
+async function hackPlay(hackId: number) {
+  const hack = await prisma.romHack.findUnique({ where: { id: hackId }, include: { game: { include: { system: true } } } });
+  if (!hack) throw notFound('Hack');
+  const system = WEB_SYSTEMS[hack.game.system.slug];
+  if (!system) throw badRequest(`${hack.game.system.name} cannot be played in the browser`);
+  const file = await prisma.romFile.findFirst({ where: { romHackId: hack.id }, select: { relativePath: true } });
+  const name = file ? path.posix.basename(file.relativePath) : `${hack.title}.${hack.game.system.slug}`;
+  return { system, title: hack.title, kind: 'ROM', romName: name, romUrl: `/api/v1/hacks/${hack.id}/download` };
+}
+collectionRouter.get('/roms/:id/play', requirePerm('roms.download'), async (req, res) => res.json(await romPlay(intParam(req))));
+collectionRouter.get('/hacks/:id/play', requirePerm('roms.download'), async (req, res) => res.json(await hackPlay(intParam(req))));
+// A game: its first rom on the server (one the catalogue verified first), else a hack of it with a file
+collectionRouter.get('/games/:id/play', requirePerm('roms.download'), async (req, res) => {
+  const roms = await prisma.rom.findMany({ where: { gameId: intParam(req), parts: { some: { files: { some: playFile } } } }, select: { id: true, _count: { select: { parts: true } } }, orderBy: { id: 'asc' } });
+  const owned = await ownedRomIds({ romIds: roms.map((r) => r.id) });
+  const rom = roms.filter((r) => r._count.parts === 1).sort((a, b) => Number(owned.has(b.id)) - Number(owned.has(a.id)))[0];
+  if (rom) return res.json(await romPlay(rom.id));
+  const hack = await prisma.romHack.findFirst({ where: { gameId: intParam(req), files: { some: {} } }, select: { id: true } });
+  if (!hack) throw notFound('Game file');
+  res.json(await hackPlay(hack.id));
 });
 
 /** Favourite roms: per user, and a game with one shows as favourite */
