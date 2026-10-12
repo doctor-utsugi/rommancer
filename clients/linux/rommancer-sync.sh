@@ -22,7 +22,7 @@
 #                                   Menu++...) mounted on this computer; the link lives on the card itself,
 #                                   so any computer with this script can sync it. Without a command: sync.
 set -u
-CLIENT_VERSION=20261055
+CLIENT_VERSION=20261056
 # A clock before this date is surely wrong (no battery-backed clock); kept apart from the version, which may run ahead
 CLOCK_MIN=20261001
 # Onion keeps curl (with TLS) and friends outside the default PATH
@@ -752,8 +752,11 @@ cmd_sync() {
   prune_answer "$(grep "^prune$TAB" "$plan" | head -n 1)"
   ups=0; downs=0; errs=0; moved=0; sup=0; stup=0; sdown=0; stdown=0; total="$(grep -vc "^probe$TAB\|^backups$TAB\|^prune$TAB\|^clocksync$TAB" "$plan")"
   : > "$WORK/received"
+  # A running game keeps its save in memory and writes it back over whatever arrived: downloads wait for it to end
+  ingame=0; game_running && ingame=1
   while IFS="$TAB" read -r action p a b; do
     case "$action" in probe|backups|prune) continue ;; clocksync) clock_sync_on; continue ;; esac
+    case "$ingame$action" in 1get|1cget|1aside) log "after the game: $(basename "$p")"; continue ;; esac
     moved=$((moved + 1)); progress transfer "$moved" "$total"
     case "$action" in
       put)
@@ -1079,12 +1082,13 @@ cmd_daemon() {
       fi
     fi
     # A game starts: where its saves stand, on its screen
+    ended=0
     if game_running; then
       [ "${in_game:-0}" = 1 ] || { in_game=1; warned=0; if [ -f "$WORK/offline-since" ]; then ra_msg "Rommancer: $(state_text start-offline)"; else ra_msg "Rommancer: $(state_text start-ok)"; fi; }
-    else in_game=0; fi
+    else [ "${in_game:-0}" = 1 ] && ended=1; in_game=0; fi
     case "$asked" in *sync*) since=$FULL_SECONDS ;; esac
-    # Another device sent a save this one should have: a saves pass now, without settings or roms
-    nudged=0; case "$asked" in *saves*) nudged=1 ;; esac
+    # Another device sent a save this one should have, or a game ended (the saves held back during it): a saves pass now
+    nudged=$ended; case "$asked" in *saves*) nudged=1 ;; esac
     # Roms for the server go in the background: saves keep syncing while a long copy runs
     case "$asked" in *pull*) pulls_running || (nohup sh "$DIR/$(basename "$0")" pulls > /dev/null 2>&1 &) ;; esac
     fp="$(fingerprint)"
