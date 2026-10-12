@@ -241,6 +241,8 @@ function SimpleService({
   connectedLabel,
   fields,
   clear,
+  steps,
+  check,
 }: {
   icon: ReactNode
   name: string
@@ -249,8 +251,13 @@ function SimpleService({
   connectedLabel: string
   fields: { key: string; label: string; secret?: boolean }[]
   clear: Record<string, null>
+  /** How to get the account or key, with links */
+  steps: { text: string; href?: string }[]
+  /** Whether the saved credentials work, tried live by the server (undefined while it tries) */
+  check: { ok: boolean; error: string | null } | null | undefined
 }) {
   const { t } = useTranslation()
+  const qc = useQueryClient()
   const { reload } = useAuth()
   const { busy, run } = useRun()
   const [open, setOpen] = useState(false)
@@ -261,6 +268,7 @@ function SimpleService({
       setOpen(false)
       setV({})
       await reload()
+      void qc.invalidateQueries({ queryKey: ['services-check'] })
     }, t('common.saved'))
   return (
     <div className="grid gap-3">
@@ -268,7 +276,13 @@ function SimpleService({
         {icon}
         <div className="grow">
           <p className="font-medium">{name}</p>
-          <p className="text-xs text-muted-foreground">{connected ? connectedLabel : t('more.services.notConnected')}</p>
+          <p className="text-xs text-muted-foreground">
+            {connected ? connectedLabel : t('more.services.notConnected')}
+            {connected && check === undefined && ` · ${t('more.services.checking')}`}
+          </p>
+          {connected && check && (
+            <p className={`text-xs ${check.ok ? 'text-emerald-600' : 'text-destructive'}`}>{check.ok ? t('more.services.works') : t('more.services.fails', { error: check.error })}</p>
+          )}
         </div>
         {!open && (
           <Button size="sm" variant={connected ? 'outline' : 'default'} onClick={() => setOpen(true)}>
@@ -289,6 +303,20 @@ function SimpleService({
       {open && (
         <InlineForm busy={busy} canSave={fields.every((x) => (v[x.key] ?? '').trim())} saveLabel={t('common.save')} onCancel={() => (setOpen(false), setV({}))} onSave={() => void save()}>
           <p className="text-xs text-muted-foreground">{help}</p>
+          <ol className="list-decimal space-y-1 pl-5 text-xs text-muted-foreground">
+            {steps.map((s) => (
+              <li key={s.text}>
+                {s.href ? (
+                  <a className="inline-flex items-center gap-1 text-primary underline" href={s.href} target="_blank" rel="noreferrer">
+                    {s.text}
+                    <ExternalLink className="size-3" />
+                  </a>
+                ) : (
+                  s.text
+                )}
+              </li>
+            ))}
+          </ol>
           <div className="grid gap-3 md:grid-cols-2">
             {fields.map((x, i) => (
               <Field key={x.key} label={x.label}>
@@ -305,6 +333,8 @@ function SimpleService({
 export function ConnectedServicesCard() {
   const { t } = useTranslation()
   const { user } = useAuth()
+  const any = !!user?.hasScreenScraper || !!user?.hasTheGamesDb
+  const { data: check } = useQuery({ queryKey: ['services-check'], queryFn: () => get<any>('/users/me/services'), enabled: any, staleTime: 5 * 60_000 })
   return (
     <Card>
       <CardHeader>
@@ -324,6 +354,12 @@ export function ConnectedServicesCard() {
             { key: 'ssPassword', label: t('profile.ssPassword'), secret: true },
           ]}
           clear={{ ssUser: null, ssPassword: null }}
+          steps={[
+            { text: t('more.services.ssStep1'), href: 'https://www.screenscraper.fr/membreinscription.php' },
+            { text: t('more.services.ssStep2') },
+            { text: t('more.services.ssStep3') },
+          ]}
+          check={check ? check.screenscraper : undefined}
         />
         <SimpleService
           icon={<Gamepad2 className="size-5 text-violet-600" />}
@@ -333,6 +369,12 @@ export function ConnectedServicesCard() {
           connectedLabel={t('more.services.keySaved')}
           fields={[{ key: 'tgdbApiKey', label: t('more.profile.tgdbApiKey'), secret: true }]}
           clear={{ tgdbApiKey: null }}
+          steps={[
+            { text: t('more.services.tgdbStep1'), href: 'https://forums.thegamesdb.net/ucp.php?mode=register' },
+            { text: t('more.services.tgdbStep2'), href: 'https://api.thegamesdb.net/key.php' },
+            { text: t('more.services.tgdbStep3') },
+          ]}
+          check={check ? check.thegamesdb : undefined}
         />
       </CardContent>
     </Card>

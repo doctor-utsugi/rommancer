@@ -1057,22 +1057,7 @@ agentRouter.get('/roots', async (req, res) => {
 agentRouter.get('/manifest', async (req, res) => {
   const device = await deviceFromToken(req);
   const ctx = await romContext(device, b64(req.header('x-rom-b64')));
-  await noteOpened(device.id, ctx.baseName);
   res.type('text/plain').send(candidatePaths(ctx).map((f) => f.path).join('\n') + '\n');
-});
-
-/** The first time this rom was opened on this device (only the first is kept) */
-async function noteOpened(deviceId: number, baseName: string) {
-  await prisma.gameOpen.createMany({ data: [{ deviceId, baseName: baseName.slice(0, 255) }], skipDuplicates: true });
-}
-
-// A game was opened (consoles that only see it once it runs, like Onion's daemon): "X-Rom-B64" names the rom
-agentRouter.post('/opened', async (req, res) => {
-  const device = await deviceFromToken(req);
-  const rom = b64(req.header('x-rom-b64'));
-  if (!rom) throw badRequest('No rom');
-  await noteOpened(device.id, path.posix.basename(rom).replace(/\.[^.]+$/, ''));
-  res.type('text/plain').send('ok\n');
 });
 
 /**

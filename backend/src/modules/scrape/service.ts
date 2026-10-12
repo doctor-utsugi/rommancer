@@ -59,6 +59,33 @@ export class QuotaPaused extends Error {
   }
 }
 
+/** Tries a ScreenScraper account: null when it works, else why (in ScreenScraper's words when it gives them) */
+export async function checkScreenScraper(user: string, password: string): Promise<string | null> {
+  if (!env.screenscraper.devId) return 'this server has no ScreenScraper developer id (SCREENSCRAPER_DEV_ID)';
+  const q = new URLSearchParams({ devid: env.screenscraper.devId, devpassword: env.screenscraper.devPassword, softname: 'rommancer', output: 'json', ssid: user, sspassword: password });
+  try {
+    const r = await fetch(`${env.screenscraper.baseUrl}/ssuserInfos.php?${q}`, { headers: { 'User-Agent': env.userAgent }, signal: AbortSignal.timeout(15_000) });
+    const text = await r.text();
+    const json = (() => { try { return JSON.parse(text); } catch { return null; } })();
+    if (r.ok && json?.response?.ssuser?.id) return null;
+    return text.trim().slice(0, 200) || `HTTP ${r.status}`;
+  } catch (e) {
+    return `ScreenScraper did not answer (${e instanceof Error ? e.message : e})`;
+  }
+}
+
+/** Tries a TheGamesDB API key: null when it works, else why */
+export async function checkTheGamesDb(apiKey: string): Promise<string | null> {
+  try {
+    const r = await fetch(`${env.tgdb.baseUrl}/v1/Genres?${new URLSearchParams({ apikey: apiKey })}`, { headers: { 'User-Agent': env.userAgent }, signal: AbortSignal.timeout(15_000) });
+    const json = await r.json().catch(() => null);
+    if (r.ok && json?.code === 200) return null;
+    return json?.status ?? `HTTP ${r.status}`;
+  } catch (e) {
+    return `TheGamesDB did not answer (${e instanceof Error ? e.message : e})`;
+  }
+}
+
 export interface Credentials {
   ss: { devId: string; devPassword: string; user: string; password: string } | null;
   tgdb: string | null;

@@ -553,7 +553,6 @@ model Device {
   probes          DeviceProbe[]
   // Extra keys: SD cards of this device synced from a computer (the console keeps its own tokenHash)
   cardTokens      DeviceToken[]
-  gameOpens       GameOpen[]
   // Linked from the desktop companion: only known when its card is connected to a computer
   offline         Boolean               @default(false)
   // Which systems and games of its lists are copied: { newAuto, excluded, known, excludedGames } (devices/sink.ts)
@@ -1136,15 +1135,4 @@ model RaUserProgress {
   user            User      @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@id([userId, raGameId])
-}
-
-// The first time a rom was opened on a device (game start events), by its base name: a save written then and never
-// again is the file the game creates on starting, not play
-model GameOpen {
-  deviceId Int
-  baseName String   @db.VarChar(255)
-  firstAt  DateTime @default(now())
-  device   Device   @relation(fields: [deviceId], references: [id], onDelete: Cascade)
-
-  @@id([deviceId, baseName])
 }

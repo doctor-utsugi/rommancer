@@ -6,6 +6,7 @@ import { env } from '../../config/env.js';
 import { prisma } from '../../lib/prisma.js';
 import { forceSync } from '../sync/service.js';
 import { checkKey, refreshProgress } from '../ra/progress.js';
+import { checkScreenScraper, checkTheGamesDb } from '../scrape/service.js';
 import { decrypt, encrypt } from '../../lib/crypto.js';
 import { HttpError, intParam } from '../../lib/http.js';
 import { DEFAULT_PERMISSIONS, PERMISSIONS, normalizePermissions } from '../../lib/permissions.js';
@@ -52,6 +53,24 @@ usersRouter.get('/me', async (req, res) => {
   });
 });
 
+/** Whether the user's ScreenScraper account and TheGamesDB key work right now (tried live, kept five minutes) */
+const servicesSeen = new Map<number, { at: number; out: Record<string, { ok: boolean; error: string | null } | null> }>();
+usersRouter.get('/me/services', async (req, res) => {
+  const id = me(req).id;
+  const hit = servicesSeen.get(id);
+  if (hit && Date.now() - hit.at < 5 * 60_000) return res.json(hit.out);
+  const u = await prisma.user.findUniqueOrThrow({ where: { id } });
+  const ssUser = decrypt(u.ssUser);
+  const tgdb = decrypt(u.tgdbApiKey);
+  const [ss, tg] = await Promise.all([ssUser ? checkScreenScraper(ssUser, decrypt(u.ssPassword) ?? '') : undefined, tgdb ? checkTheGamesDb(tgdb) : undefined]);
+  const out = {
+    screenscraper: ss === undefined ? null : { ok: ss === null, error: ss },
+    thegamesdb: tg === undefined ? null : { ok: tg === null, error: tg },
+  };
+  servicesSeen.set(id, { at: Date.now(), out });
+  res.json(out);
+});
+
 usersRouter.patch('/me', async (req, res) => {
   const body = z
     .object({
@@ -83,6 +102,16 @@ usersRouter.patch('/me', async (req, res) => {
     if (!raUser) throw new HttpError(400, 'Set your RetroAchievements user first');
     await checkKey(raUser, body.raApiKey);
   }
+  // ScreenScraper accounts and TheGamesDB keys are tried before they are kept: a wrong one says why
+  if (body.ssUser || body.ssPassword) {
+    const why = await checkScreenScraper(body.ssUser ?? decrypt(u.ssUser) ?? '', body.ssPassword ?? decrypt(u.ssPassword) ?? '');
+    if (why) throw new HttpError(400, `ScreenScraper: ${why}`);
+  }
+  if (body.tgdbApiKey) {
+    const why = await checkTheGamesDb(body.tgdbApiKey);
+    if (why) throw new HttpError(400, `TheGamesDB: ${why}`);
+  }
+  servicesSeen.delete(u.id);
   for (const k of ['ssUser', 'ssPassword', 'raUser', 'raApiKey', 'tgdbApiKey'] as const) {
     if (body[k] !== undefined) data[k] = encrypt(body[k]);
   }
