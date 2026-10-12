@@ -377,7 +377,7 @@ known_lines() {
       f = $2; n = tolower(f)
       if (kind == "file") {
         if (!is_save(n)) next
-        if ((f FS $1) in c) print "file", f, c[f FS $1]; else print $1, 0, f > miss
+        if ((f FS $1) in c) { split($1, m, " "); print "file", f, c[f FS $1], m[2] } else print $1, 0, f > miss
         next
       }
       if (index(f, dir) == 1) next
@@ -423,11 +423,11 @@ build_request() {
   total="$(wc -l < "$WORK/saves")"; i=0
   while IFS="$TAB" read -r meta hs f; do
     i=$((i + 1)); progress_file hashing "$i" "$total" "$f"
-    s="$(fresh_sha1 "$f" "$meta")" && printf 'file\t%s\t%s\n' "$f" "$s" >> "$out"
+    mt="${meta#* }"; mt="${mt%% *}"
+    s="$(fresh_sha1 "$f" "$meta")" && printf 'file\t%s\t%s\t%s\n' "$f" "$s" "$mt" >> "$out"
   done < "$WORK/saves"
   nested_lines "$out" > "$WORK/nested" && cat "$WORK/nested" >> "$out"
   core_lines >> "$out" 2>/dev/null
-  emu_lines >> "$out" 2>/dev/null
   save_cache
 }
 
@@ -474,18 +474,6 @@ core_lines() {
       /^[[:space:]]*display_version[[:space:]]*=/ { v = $2 }
       END { if (n != "" && v != "") printf "core\t%s\t%s\n", n, v }' "$@"
   done | awk -F"$TAB" '!seen[$2]++'
-}
-
-# "emu<TAB>rom folder<TAB>core file": the core each of Onion's emulator folders launches (Emu/SFC/launch.sh runs
-# mednafen_supafaust_libretro.so), so the server puts saves in that core's folder
-emu_lines() {
-  [ -z "$SD" ] || return 0
-  for l in "${ROOT%/}"/Emu/*/launch.sh; do
-    [ -f "$l" ] || continue
-    so="$(grep -o '[A-Za-z0-9_+-]*_libretro\.so' "$l" | head -n 1)"
-    rp="$(sed -n 's/.*"rompath"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "${l%/*}/config.json" 2>/dev/null | head -n 1)"
-    [ -n "$so" ] && [ -n "$rp" ] && printf 'emu\t%s\t%s\n' "${rp##*/}" "${so%_libretro.so}"
-  done
 }
 
 save_cache() {
