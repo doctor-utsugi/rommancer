@@ -22,7 +22,7 @@
 #                                   Menu++...) mounted on this computer; the link lives on the card itself,
 #                                   so any computer with this script can sync it. Without a command: sync.
 set -u
-CLIENT_VERSION=20261049
+CLIENT_VERSION=20261050
 # A clock before this date is surely wrong (no battery-backed clock); kept apart from the version, which may run ahead
 CLOCK_MIN=20261001
 # Onion keeps curl (with TLS) and friends outside the default PATH
@@ -1457,7 +1457,8 @@ roms_fetch() {
   } > "$WORK/romcfg.head"
   # Each finished transfer prints its line: whether each file arrived whole (read once curl ends: it writes these
   # lines out in one go at the end, so they cannot tell how far the run is)
-  curl -K "$WORK/romcfg.head" -K "$WORK/romcfg" -f -s -S --globoff --create-dirs -C - --connect-timeout 10 --speed-limit 1024 --speed-time 60 \
+  # A server restarting (502/503 for a minute) is waited for, instead of failing every file left
+  curl -K "$WORK/romcfg.head" -K "$WORK/romcfg" -f -s -S --globoff --create-dirs -C - --connect-timeout 10 --speed-limit 1024 --speed-time 60 --retry 6 --retry-delay 15 --retry-connrefused \
     -w '%{http_code}\n' > "$WORK/romdone" 2>> "$LOG" &
   cpid=$!; echo "$cpid" > "$WORK/roms-lock/curl"
   cur=1
