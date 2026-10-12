@@ -22,7 +22,7 @@
 #                                   Menu++...) mounted on this computer; the link lives on the card itself,
 #                                   so any computer with this script can sync it. Without a command: sync.
 set -u
-CLIENT_VERSION=20261057
+CLIENT_VERSION=20261058
 # A clock before this date is surely wrong (no battery-backed clock); kept apart from the version, which may run ahead
 CLOCK_MIN=20261001
 # Onion keeps curl (with TLS) and friends outside the default PATH
@@ -1140,11 +1140,15 @@ es_picture() {
 # Game Switcher) fetches the game's saves right before it starts. Put back at every daemon start, as Onion's updates
 # replace that file; Onion reads it at power-on, so it works from the next one
 onion_hook() {
-  rt=/mnt/SDCARD/.tmp_update/runtime.sh; at='^        playActivity start "\$rompath"$'
-  [ -f "$rt" ] && ! grep -qF 'rommancer-sync.sh" game-start' "$rt" || return 0
-  grep -q "$at" "$rt" || { log "game-start hook: Onion's runtime.sh has no launch line we know, not hooked"; return 0; }
-  awk -v at="$at" -v l="        [ -f \"$1\" ] && sh \"$1\" game-start \"\$rompath\" >/dev/null 2>&1" '{ print } $0 ~ at && !done { print l; done = 1 }' "$rt" > "$rt.rommancer" &&
+  rt=/mnt/SDCARD/.tmp_update/runtime.sh
+  AT='        playActivity start "$rompath"'
+  L="        [ -f \"$1\" ] && sh \"$1\" game-start \"\$rompath\" >/dev/null 2>&1"
+  [ -f "$rt" ] && ! grep -qxF "$L" "$rt" || return 0
+  grep -qxF "$AT" "$rt" || { log "game-start hook: Onion's runtime.sh has no launch line we know, not hooked"; return 0; }
+  AT="$AT" L="$L" awk '{ print } $0 == ENVIRON["AT"] && !done { print ENVIRON["L"]; done = 1 }' "$rt" > "$rt.rommancer"
+  if grep -qxF "$L" "$rt.rommancer" && sh -n "$rt.rommancer"; then
     chmod +x "$rt.rommancer" && mv "$rt.rommancer" "$rt" && log "game-start hook added to Onion's runtime.sh"
+  else rm -f "$rt.rommancer"; log "game-start hook: could not add it to Onion's runtime.sh"; fi
 }
 
 cmd_install() {
