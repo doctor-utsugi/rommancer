@@ -22,7 +22,7 @@
 #                                   Menu++...) mounted on this computer; the link lives on the card itself,
 #                                   so any computer with this script can sync it. Without a command: sync.
 set -u
-CLIENT_VERSION=20261033
+CLIENT_VERSION=20261034
 # A clock before this date is surely wrong (no battery-backed clock); kept apart from the version, which may run ahead
 CLOCK_MIN=20261001
 # Onion keeps curl (with TLS) and friends outside the default PATH
@@ -1012,6 +1012,11 @@ roms_changed() { printf '%s\n' "$@" >> "$WORK/lists-changed"; }
 # restarts right after a game or the Rommancer app closes (AFTER-GAME), never under the user's feet. MinUI/NextUI
 # list their folders as they are; for the others (muOS) no list cache is known
 refresh_lists() {
+  # Once: roms copied before the lists were refreshed by themselves, every system folder read again
+  if [ ! -f "$STATE/lists-refreshed" ] && [ -n "${ROMS:-}" ] && [ -d "$ROMS" ]; then
+    find "$ROMS" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | sed 's#$#/-#' >> "$WORK/lists-changed"
+    touch "$STATE/lists-refreshed"
+  fi
   if [ -s "$WORK/lists-changed" ]; then
     sed 's#/[^/]*$##' "$WORK/lists-changed" | sort -u | while IFS= read -r d; do
       while [ -n "$d" ] && [ "$d" != / ] && [ "$d" != . ]; do
