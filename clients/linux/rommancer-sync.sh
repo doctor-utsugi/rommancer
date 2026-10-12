@@ -22,7 +22,7 @@
 #                                   Menu++...) mounted on this computer; the link lives on the card itself,
 #                                   so any computer with this script can sync it. Without a command: sync.
 set -u
-CLIENT_VERSION=20261056
+CLIENT_VERSION=20261057
 # A clock before this date is surely wrong (no battery-backed clock); kept apart from the version, which may run ahead
 CLOCK_MIN=20261001
 # Onion keeps curl (with TLS) and friends outside the default PATH
@@ -1136,6 +1136,17 @@ es_picture() {
 }
 
 # Boot and game-end hooks where the firmware offers them
+# Onion has no game start event: a line in launch_game of its runtime.sh (every launch passes there: menu, recents,
+# Game Switcher) fetches the game's saves right before it starts. Put back at every daemon start, as Onion's updates
+# replace that file; Onion reads it at power-on, so it works from the next one
+onion_hook() {
+  rt=/mnt/SDCARD/.tmp_update/runtime.sh; at='^        playActivity start "\$rompath"$'
+  [ -f "$rt" ] && ! grep -qF 'rommancer-sync.sh" game-start' "$rt" || return 0
+  grep -q "$at" "$rt" || { log "game-start hook: Onion's runtime.sh has no launch line we know, not hooked"; return 0; }
+  awk -v at="$at" -v l="        [ -f \"$1\" ] && sh \"$1\" game-start \"\$rompath\" >/dev/null 2>&1" '{ print } $0 ~ at && !done { print l; done = 1 }' "$rt" > "$rt.rommancer" &&
+    chmod +x "$rt.rommancer" && mv "$rt.rommancer" "$rt" && log "game-start hook added to Onion's runtime.sh"
+}
+
 cmd_install() {
   detect
   self="$DIR/$(basename "$0")"
@@ -1164,7 +1175,8 @@ cmd_install() {
       # Onion runs startup scripts one after another before its menu: "boot" waits for the first sync
       printf '#!/bin/sh\n[ -f "%s" ] && (cd "%s" && sh "%s" boot >/dev/null 2>&1)\n' "$self" "$DIR" "$self" > "$WORK/boot.sh"
       cmp -s "$WORK/boot.sh" "$boot" || cat "$WORK/boot.sh" > "$boot"
-      say "Installed: daemon at boot ($boot)" ;;
+      onion_hook "$self"
+      say "Installed: daemon at boot ($boot), save fetched before each game" ;;
     arkos)
       # Everything runs as root (passwordless sudo): NetworkManager's files need it, and the game events share one lock
       su=""; [ "$(id -u)" = 0 ] || su="sudo -n"
@@ -1647,6 +1659,8 @@ cmd_collections() {
 cmd_game_start() {
   touch "$WORK/playing"
   rom="$1"; [ -n "$TOKEN" ] && [ -f "$rom" ] || return 0
+  # Known to be offline: the game starts at once with its local save
+  [ -f "$WORK/offline-since" ] && { log "game-start: offline, playing local save"; return 0; }
   fix_clock
   HTTP_MAX=10
   rh="X-Rom-B64: $(b64 "$rom")"
