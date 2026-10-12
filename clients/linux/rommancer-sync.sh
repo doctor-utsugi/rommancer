@@ -22,7 +22,7 @@
 #                                   Menu++...) mounted on this computer; the link lives on the card itself,
 #                                   so any computer with this script can sync it. Without a command: sync.
 set -u
-CLIENT_VERSION=20261051
+CLIENT_VERSION=20261052
 # A clock before this date is surely wrong (no battery-backed clock); kept apart from the version, which may run ahead
 CLOCK_MIN=20261001
 # Onion keeps curl (with TLS) and friends outside the default PATH
@@ -1855,7 +1855,7 @@ t() {
       clockask) echo "La consola no se pone en hora sola. Rommancer necesita la hora bien para conectar con el servidor y fechar las partidas. ¿Activar la hora por internet (y esperarla al encender)?" ;;
       clockon) echo "Activar (recomendado)" ;; later) echo "Ahora no" ;;
       l_offline) echo "Rommancer (sin conexión)" ;; l_conflicts) echo "Rommancer ($2 conflictos)" ;;
-      lists) echo "Listas de esta consola" ;; listsinfo) echo "$2 listas en esta consola. A pone o quita una; al salir se descargan o borran sus juegos." ;;
+      lists) echo "Listas de juegos" ;; listsinfo) echo "$2 listas en esta consola. A pone o quita una; al salir se descargan o borran sus juegos." ;;
       nolists) echo "No hay listas. Créalas en la web de Rommancer." ;; listsfail) echo "No se pudo hablar con el servidor" ;; back) echo "Volver" ;;
       listdrop) echo "Quitar «$2» borrará $3 juegos de esta consola ($4)." ;; listdropup) echo "$2 que el servidor no tiene se le envían antes." ;;
       listdropgo) echo "Quitar y borrar $2 juegos" ;; cancel) echo "Cancelar" ;;
@@ -1916,7 +1916,7 @@ t() {
       clockask) echo "This console does not set its own clock. Rommancer needs the right time to reach the server and date your saves. Set the time from the internet (and wait for it at power-on)?" ;;
       clockon) echo "Turn on (recommended)" ;; later) echo "Not now" ;;
       l_offline) echo "Rommancer (offline)" ;; l_conflicts) echo "Rommancer ($2 conflicts)" ;;
-      lists) echo "This console's lists" ;; listsinfo) echo "$2 lists on this console. A adds or removes one; on leaving, their games download or go." ;;
+      lists) echo "Game lists" ;; listsinfo) echo "$2 lists on this console. A adds or removes one; on leaving, their games download or go." ;;
       nolists) echo "No lists yet. Create them in Rommancer's web app." ;; listsfail) echo "Could not reach the server" ;; back) echo "Back" ;;
       listdrop) echo "Removing \"$2\" deletes $3 games from this console ($4)." ;; listdropup) echo "$2 the server lacks are sent to it first." ;;
       listdropgo) echo "Remove and delete $2 games" ;; cancel) echo "Cancel" ;;

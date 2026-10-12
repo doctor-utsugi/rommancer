@@ -34,7 +34,7 @@
     <string name="conflicts">Conflictos (%1$d)</string>
     <string name="watch_download">Ver descarga de juegos</string>
     <string name="watch_pulls">Ver envío de juegos al servidor</string>
-    <string name="lists">Listas de este dispositivo</string>
+    <string name="lists">Listas de juegos</string>
     <string name="settings">Ajustes</string>
     <string name="status">Estado</string>
     <string name="press_back">Volver</string>
