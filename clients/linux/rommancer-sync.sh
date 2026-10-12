@@ -22,7 +22,7 @@
 #                                   Menu++...) mounted on this computer; the link lives on the card itself,
 #                                   so any computer with this script can sync it. Without a command: sync.
 set -u
-CLIENT_VERSION=20261042
+CLIENT_VERSION=20261044
 # A clock before this date is surely wrong (no battery-backed clock); kept apart from the version, which may run ahead
 CLOCK_MIN=20261001
 # Onion keeps curl (with TLS) and friends outside the default PATH
@@ -783,7 +783,7 @@ log_tail() {
 lists_report() {
   [ "${FW:-}" = onion ] || return 0
   echo "--- lists"
-  [ -f "$STATE/lists-refreshed3" ] && echo "catch-up done"
+  [ -f "$STATE/lists-refreshed4" ] && echo "catch-up done"
   [ -s "$STATE/lists-changed" ] && echo "pending: $(sed -n 's#^\(.*/Roms/[^/]*\)/.*#\1#p' "$STATE/lists-changed" | sort -u | sed 's#.*/##' | tr '\n' ' ')"
   ps 2>/dev/null | grep -q '[M]ainUI' && echo "menu running"
   for d in "$ROOT"/Roms/*/; do
@@ -792,6 +792,7 @@ lists_report() {
     c="$(stat -c '%s@%y' "$d/${b}_cache6.db" 2>/dev/null | cut -c1-28)"
     x="$(ls -Ap "$d" 2>/dev/null | grep -E '/$|^\.|\.(db|xml|json|txt|journal)$|-journal$' | head -n 8 | tr '\n' ' ')"
     printf '%s: %s files, cache %s%s\n' "$b" "$n" "${c:-none}" "${x:+, other: $x}"
+    onion_list_paths "$d" | grep -q . || echo "  no emulator installed for $b"
     onion_list_paths "$d" | while IFS= read -r lp; do grep -A3 -F "$lp" /appconfigs/romwinidx.json 2>/dev/null | tr -d ' \t\n' | cut -c1-160; echo; done
   done | grep -v '^$' | head -n 40
 }
@@ -1245,6 +1246,60 @@ lists_scan() {
   fi
   cat "$WORK/romdirs" > "$STATE/romdirs"
 }
+# Onion's menu lists the systems whose emulator is installed (from its Package Manager, App/PackageManager/data/Emu:
+# each package is a tree copied onto the card). As its Package Manager does in its "auto" selection, for the folders
+# Rommancer changed: a folder with roms gets its emulator installed, one Rommancer emptied has it removed
+ONION_PM="${ROMMANCER_ONION_PM:-/mnt/SDCARD/App/PackageManager/data/Emu}"
+ONION_PACMAN="${ROMMANCER_ONION_PACMAN:-/mnt/SDCARD/.tmp_update/script/pacman_install.sh}"
+
+# Packages whose emulator lists a rom folder: "package<TAB>emulator folder name<TAB>extensions", one per line
+onion_packages() {
+  for pkg in "$ONION_PM"/*/; do
+    cfg="$(ls "$pkg"Emu/*/config.json 2>/dev/null | head -n 1)"; [ -n "$cfg" ] || continue
+    rp="$(sed -n 's/.*"rompath"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$cfg" | head -n 1)"
+    case "$rp" in ../../*) ;; *) continue ;; esac
+    [ "$ROOT/${rp#../../}" = "$1" ] || continue
+    ext="$(sed -n 's/.*"extlist"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$cfg" | head -n 1)"
+    printf '%s\t%s\t%s\n' "$(basename "$pkg")" "$(basename "$(dirname "$cfg")")" "$ext"
+  done
+}
+
+# Onion's own test (its Package Manager's cartridge icon): a file with one of the emulator's extensions in the
+# folder or one folder down, hidden names left out
+onion_has_roms() {
+  find "$1" -mindepth 1 -maxdepth 2 -type f 2>/dev/null | awk -v root="$1" -v ext="$2" '
+    BEGIN { n = split(tolower(ext), e, "|"); for (i = 1; i <= n; i++) ok[e[i]] = 1 }
+    { rel = substr($0, length(root) + 2); if (rel ~ /(^|\/)\./) next
+      f = rel; sub(/.*\//, "", f); x = tolower(f); if (x !~ /\./) next; sub(/.*\./, "", x)
+      if (x == "miyoocmd") next
+      if (ext == "" || (x in ok)) { found = 1; exit } }
+    END { exit !found }'
+}
+
+# D: a rom folder; EMPTIED: Rommancer deleted roms there
+onion_emulator() {
+  onion_packages "$1" > "$WORK/pkgs"; [ -s "$WORK/pkgs" ] || return 0
+  installed=""; while IFS="$TAB" read -r pkg name ext; do [ -f "$ROOT/Emu/$name/config.json" ] && installed="$installed$pkg$TAB$name$TAB$ext
+"; done < "$WORK/pkgs"
+  IFS="$TAB" read -r pkg name ext < "$WORK/pkgs"
+  if onion_has_roms "$1" "$ext"; then
+    [ -z "$installed" ] || return 0
+    [ -f "$ONION_PACMAN" ] || return 0
+    sh "$ONION_PACMAN" "$ONION_PM" "$pkg" >/dev/null 2>&1
+    [ -f "$ROOT/Emu/$name/install.sh" ] && (cd "$ROOT/Emu/$name" && sh ./install.sh >/dev/null 2>&1)
+    log "onion: emulator $pkg installed for $(basename "$1")"
+  elif [ "$2" = 1 ] && [ -n "$installed" ]; then
+    printf '%s' "$installed" | while IFS="$TAB" read -r pkg name ext; do
+      [ -n "$pkg" ] || continue
+      [ -f "$ROOT/Emu/$name/uninstall.sh" ] && (cd "$ROOT/Emu/$name" && sh ./uninstall.sh >/dev/null 2>&1)
+      # The package's files leave the card, then its folders when nothing else is in them (deepest first)
+      (cd "$ONION_PM/$pkg" && find . -type f) | while IFS= read -r f; do rm -f "$ROOT/${f#./}"; done
+      (cd "$ONION_PM/$pkg" && find . -mindepth 1 -type d) | sort -r | while IFS= read -r f; do rmdir "$ROOT/${f#./}" 2>/dev/null; done
+      log "onion: emulator $pkg removed, $(basename "$1") has no roms left"
+    done
+  fi
+}
+
 # A rom folder as Onion's menu names its list: each emulator (or app) whose config.json "rompath" leads there,
 # as "<emulator folder>/<rompath>"
 onion_list_paths() {
@@ -1261,9 +1316,9 @@ refresh_lists() {
   [ -n "${FW:-}" ] || detect
   # Once: roms copied before lists were refreshed this way, every system folder read again
   r="${ROMS:-}"; [ -z "$r" ] && [ "$FW" = onion ] && r="$ROOT/Roms"
-  if [ ! -f "$STATE/lists-refreshed3" ] && [ -n "$r" ] && [ -d "$r" ]; then
+  if [ ! -f "$STATE/lists-refreshed4" ] && [ -n "$r" ] && [ -d "$r" ]; then
     find "$r" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | sed 's#$#/-#' >> "$STATE/lists-changed"
-    touch "$STATE/lists-refreshed3"
+    touch "$STATE/lists-refreshed4"
   fi
   [ -s "$STATE/lists-changed" ] || return 0
   case "$FW" in
@@ -1271,6 +1326,10 @@ refresh_lists() {
       ps 2>/dev/null | grep -q '[M]ainUI' && return 0
       sed -n 's#^\(.*/Roms/[^/]*\)/.*#\1#p' "$STATE/lists-changed" | sort -u | while IFS= read -r d; do
         [ -d "$d" ] || continue
+        # Emptied by Rommancer: a rom of it deleted here (a deletion pass, or a change naming a file of it)
+        emptied=0
+        { grep -qF "$d/" "$STATE/pruned" 2>/dev/null || grep -v '/[-+]$' "$STATE/lists-changed" | grep -qF "$d/"; } && emptied=1
+        onion_emulator "$d" "$emptied"
         # The menu keeps a list's window under its emulator's path ("/mnt/SDCARD/Emu/GB/../../Roms/GB"), the one
         # Onion's own options hand to reset_list.sh: with the plain path the cache went but the old window stayed
         onion_list_paths "$d" > "$WORK/list-paths"; [ -s "$WORK/list-paths" ] || echo "$d" > "$WORK/list-paths"
@@ -1316,7 +1375,7 @@ roms_fetch() {
   while IFS="$TAB" read -r kind dest size ref; do
     [ "$kind" = rom ] || continue
     if [ -f "$dest" ] && { [ "$size" = 0 ] || [ "$(stat -c %s "$dest" 2>/dev/null)" = "$size" ]; }; then have=$((have + 1)); continue; fi
-    part="$dest.part"; ps=0
+    part="$dest.part"; ps=0; ip=-1
     if [ -f "$part" ]; then
       ps="$(stat -c %s "$part" 2>/dev/null || echo 0)"
       if [ "$size" = 0 ] || [ "$ps" -gt "$size" ]; then rm -f "$part"; ps=0; fi
@@ -1329,7 +1388,8 @@ roms_fetch() {
       log "roms: not enough space for $(basename "$dest")"; fail=$((fail + 1)); break
     fi
     free=$((free - size + ps))
-    printf '%s\t%s\n' "$dest" "$size" >> "$WORK/romget"
+    [ -f "$part" ] && ip="$ps"
+    printf '%s\t%s\t%s\n' "$dest" "$size" "$ip" >> "$WORK/romget"
     { printf 'url = %s\n' "$(curl_quote "$SERVER/api/v1/agent/rom?f=$ref")"; printf 'output = %s\n' "$(curl_quote "$part")"; } >> "$WORK/romcfg"
   done < "$WORK/romplan"
   n="$(grep -c . "$WORK/romget")"
@@ -1339,13 +1399,24 @@ roms_fetch() {
     [ -n "$SD" ] && printf 'header = %s\n' "$(curl_quote "X-Device-Root-B64: $(b64 "$SD")")"
     [ -f "$DIR/cacert.pem" ] && printf 'cacert = %s\n' "$(curl_quote "$DIR/cacert.pem")"
   } > "$WORK/romcfg.head"
-  # Each finished transfer prints its line: how far the run is, and whether each file arrived whole
+  # Each finished transfer prints its line: whether each file arrived whole (read once curl ends: it writes these
+  # lines out in one go at the end, so they cannot tell how far the run is)
   curl -K "$WORK/romcfg.head" -K "$WORK/romcfg" -f -s -S --globoff --create-dirs -C - --connect-timeout 10 --speed-limit 1024 --speed-time 60 \
     -w '%{http_code}\n' > "$WORK/romdone" 2>> "$LOG" &
   cpid=$!; echo "$cpid" > "$WORK/roms-lock/curl"
+  cur=1
   while kill -0 "$cpid" 2>/dev/null; do
-    d="$(grep -c . "$WORK/romdone" 2>/dev/null)"; cur=$(( ${d:-0} + 1 )); [ "$cur" -gt "$n" ] && cur="$n"
-    IFS="$TAB" read -r dest size <<EOR
+    # How far the run is: curl takes the files in order and opens each one's .part as its data starts, so the file
+    # under way is the furthest of the next few whose .part is there (a part left by an earlier cut run counts once
+    # it grows; a file the server refused leaves none, hence a few ahead)
+    sed -n "$((cur + 1)),$((cur + 5))p" "$WORK/romget" > "$WORK/romnext"
+    j=$cur
+    while IFS="$TAB" read -r dest size ip; do
+      j=$((j + 1))
+      ps="$(stat -c %s "$dest.part" 2>/dev/null || echo -1)"
+      [ "$ps" -ge 0 ] && { [ "$ip" -lt 0 ] || [ "$ps" -gt "$ip" ]; } && cur=$j
+    done < "$WORK/romnext"
+    IFS="$TAB" read -r dest size _ <<EOR
 $(sed -n "${cur}p" "$WORK/romget")
 EOR
     printf 'roms-download\t%s\t%s\t%s\t%s\t%s\n' "$((have + got + cur))" "$total" "$size" "$dest.part" "$(basename "$dest")" > "$WORK/progress.tmp" && mv "$WORK/progress.tmp" "$WORK/progress"
@@ -1355,7 +1426,7 @@ EOR
   wait "$cpid" 2>/dev/null
   rm -f "$WORK/roms-lock/curl"
   k=0
-  while IFS="$TAB" read -r dest size; do
+  while IFS="$TAB" read -r dest size _; do
     k=$((k + 1))
     code="$(sed -n "${k}p" "$WORK/romdone")"
     ps="$(stat -c %s "$dest.part" 2>/dev/null || echo -1)"
