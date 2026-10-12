@@ -22,7 +22,7 @@
 #                                   Menu++...) mounted on this computer; the link lives on the card itself,
 #                                   so any computer with this script can sync it. Without a command: sync.
 set -u
-CLIENT_VERSION=20261041
+CLIENT_VERSION=20261042
 # A clock before this date is surely wrong (no battery-backed clock); kept apart from the version, which may run ahead
 CLOCK_MIN=20261001
 # Onion keeps curl (with TLS) and friends outside the default PATH
@@ -1051,6 +1051,7 @@ cmd_daemon() {
         # Saved with no connection: once per game, where the save stays
         warned=1; ra_msg "Rommancer: $(state_text kept)"
       fi
+      [ "$full_pass" = 1 ] && lists_scan
       [ "$full_pass" = 1 ] && cmd_config > /dev/null 2>&1
       [ "$full_pass" = 1 ] && cmd_prune > /dev/null 2>&1
       cmd_collections > /dev/null 2>&1
@@ -1228,6 +1229,22 @@ roms_changed() { printf '%s\n' "$@" >> "$STATE/lists-changed"; }
 #   Rommancer app closes (AFTER-GAME), never under the user's feet
 # - MinUI/NextUI list their folders as they are; for the others (muOS) no list cache is known
 ONION_RESET=/mnt/SDCARD/.tmp_update/script/reset_list.sh
+# Onion: rom folders changed by anyone else (the server over SSH, the desktop app on the card, files copied by
+# hand) are seen here too: a print of each folder (entries and their name lengths, the menu's own caches left out)
+# compared with the last one; a folder that changed has its list refreshed. Its first run only records.
+lists_scan() {
+  [ "${FW:-}" = onion ] && [ -d "$ROOT/Roms" ] || return 0
+  find "$ROOT/Roms" -mindepth 2 -maxdepth 2 ! -name '*_cache[0-9].db' ! -name '*.db-journal' 2>/dev/null |
+    awk -F/ '{ d = substr($0, 1, length($0) - length($NF) - 1); c[d]++; l[d] += length($NF) } END { for (d in c) print c[d] " " l[d] " " d }' |
+    sort -k3 > "$WORK/romdirs"
+  if [ -f "$STATE/romdirs" ]; then
+    # Lines new or different since the last print: their folders (a folder emptied drops out, and is refreshed too)
+    { sort "$WORK/romdirs" "$STATE/romdirs" | uniq -u | cut -d' ' -f3-; } | sort -u | while IFS= read -r d; do
+      [ -d "$d" ] && printf '%s/-\n' "$d" >> "$STATE/lists-changed"
+    done
+  fi
+  cat "$WORK/romdirs" > "$STATE/romdirs"
+}
 # A rom folder as Onion's menu names its list: each emulator (or app) whose config.json "rompath" leads there,
 # as "<emulator folder>/<rompath>"
 onion_list_paths() {
@@ -1956,8 +1973,9 @@ case "${1:-}" in
       grep -q '^finished' "$WORK/progress" 2>/dev/null && break
       sleep 1; n=$((n + 1))
     done
-    # Before the menu starts: game lists still to refresh (Onion's could not while its menu was open)
-    refresh_lists ;;
+    # Before the menu starts: game lists still to refresh (Onion's could not while its menu was open), and the
+    # folders changed while the console was off
+    lists_scan; refresh_lists ;;
   status) cmd_status ;;
   unlink) cmd_unlink ;;
   "")
