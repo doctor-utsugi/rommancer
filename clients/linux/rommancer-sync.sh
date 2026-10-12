@@ -22,7 +22,7 @@
 #                                   Menu++...) mounted on this computer; the link lives on the card itself,
 #                                   so any computer with this script can sync it. Without a command: sync.
 set -u
-CLIENT_VERSION=20261058
+CLIENT_VERSION=20261060
 # A clock before this date is surely wrong (no battery-backed clock); kept apart from the version, which may run ahead
 CLOCK_MIN=20261001
 # Onion keeps curl (with TLS) and friends outside the default PATH
@@ -888,6 +888,25 @@ cfg_send() {
   if [ -f "$cf" ]; then http POST "$SERVER/api/v1/agent/config/file/$1" "$cf" - "X-Path-B64: $(b64 "$2")" "Content-Type: application/octet-stream" >/dev/null
   else http POST "$SERVER/api/v1/agent/config/file/$1" - - "X-Path-B64: $(b64 "$2")" "X-Missing: 1" >/dev/null; fi
 }
+# RetroArch writes a game's save only when the game closes while its autosave is off (Onion ships it so): a save made
+# in the game then waits in memory, is lost if the console powers off, and reaches other consoles late. Turned to 10
+# seconds once per device, while no game runs (RetroArch rewrites its file on exit); Batocera/Knulli set it themselves
+autosave_on() {
+  [ -f "$STATE/autosave-set" ] && return 0
+  game_running && return 0
+  [ -n "${ROOT:-}" ] || detect
+  for c in "${ROOT%/}/RetroArch/.retroarch/retroarch.cfg" /storage/.config/retroarch/retroarch.cfg /opt/muos/share/info/config/retroarch.cfg \
+    /home/ark/.config/retroarch/retroarch.cfg "${HOME:-/root}/.config/retroarch/retroarch.cfg"; do
+    [ -f "$c" ] || continue
+    if grep -q '^[[:space:]]*autosave_interval[[:space:]]*=' "$c"; then
+      grep -q '^[[:space:]]*autosave_interval[[:space:]]*=[[:space:]]*"\{0,1\}0"\{0,1\}[[:space:]]*$' "$c" || continue
+      sed 's/^[[:space:]]*autosave_interval[[:space:]]*=.*/autosave_interval = "10"/' "$c" > "$c.rommancer" && mv "$c.rommancer" "$c"
+    else printf 'autosave_interval = "10"\n' >> "$c"; fi
+    log "RetroArch saves games every 10 seconds ($c)"
+  done
+  touch "$STATE/autosave-set"
+}
+
 cmd_config() {
   need_link
   if playing; then log "config: a game is running, later"; return 0; fi
@@ -1110,6 +1129,7 @@ cmd_daemon() {
       fi
       [ "$full_pass" = 1 ] && lists_scan
       [ "$full_pass" = 1 ] && cmd_config > /dev/null 2>&1
+      [ "$full_pass" = 1 ] && autosave_on
       [ "$full_pass" = 1 ] && cmd_prune > /dev/null 2>&1
       cmd_collections > /dev/null 2>&1
     fi
@@ -1147,7 +1167,7 @@ onion_hook() {
   grep -qxF "$AT" "$rt" || { log "game-start hook: Onion's runtime.sh has no launch line we know, not hooked"; return 0; }
   AT="$AT" L="$L" awk '{ print } $0 == ENVIRON["AT"] && !done { print ENVIRON["L"]; done = 1 }' "$rt" > "$rt.rommancer"
   if grep -qxF "$L" "$rt.rommancer" && sh -n "$rt.rommancer"; then
-    chmod +x "$rt.rommancer" && mv "$rt.rommancer" "$rt" && log "game-start hook added to Onion's runtime.sh"
+    chmod +x "$rt.rommancer" && mv "$rt.rommancer" "$rt" && log "game-start hook added to Onion's runtime.sh" && touch "$STATE/hook-restart"
   else rm -f "$rt.rommancer"; log "game-start hook: could not add it to Onion's runtime.sh"; fi
 }
 
@@ -1828,6 +1848,8 @@ t() {
       prune) echo "Delete games in no list: $2" ;; pruneclean) echo "Delete saves of deleted games ($2)" ;;
       settingsinfo) echo "Request games: the server copies the ones it lacks. SSH: syncs even while the app is closed. No list: deletes the games that are in none." ;;
       unlinkask) echo "Disconnect this console from $2? Its saves stay on it, but it stops syncing." ;; unlinkgo) echo "Disconnect" ;;
+      restarttitle) echo "Restart to finish" ;; restartnow) echo "Restart now" ;; restarting) echo "Restarting..." ;;
+      restartask) echo "Rommancer fetches each game's save right before the game starts. Onion turns this on after a restart." ;;
       yes) echo "yes" ;; no) echo "no" ;; conflicts) echo "Conflicts ($2)" ;; noconflicts) echo "No conflicts" ;;
       keepdevice) echo "Keep this console's save" ;; keepserver) echo "Use the server's save" ;;
       conflictinfo) echo "$2: this console $3, server $4 ($5)" ;;
@@ -2115,6 +2137,16 @@ setup_after_link() {
   menu "Rommancer Sync" "$(t finished)
 $(summary_text "$WORK/first-sync")" "OK"
   setup_prune
+  ask_restart
+}
+
+# The game-start hook works once Onion reads its runtime.sh again, at power-on: asked until the console restarts
+ask_restart() {
+  [ -f "$STATE/hook-restart" ] || return 0
+  menu "$(t restarttitle)" "$(t restartask)" "$(t restartnow)" "$(t later)"
+  [ $? = 0 ] || return 0
+  panel "Rommancer Sync" "$(t restarting)"
+  sync; reboot
 }
 
 # Conflicts menu: pick one, then keep this console's save or the server's
@@ -2273,6 +2305,7 @@ cmd_setup() {
   [ -n "$SERVER" ] || SERVER="https://"
   # Opened while the server fetches roms from this console: that copy's progress first
   [ -n "$TOKEN" ] && watch_pulls
+  [ -n "$TOKEN" ] && ask_restart
   while :; do
     if [ -n "$TOKEN" ]; then
       # The menu never waits for the network: the conflicts are the last ones fetched (a fetch runs meanwhile for
@@ -2399,7 +2432,8 @@ case "${1:-}" in
     # At power-on: start syncing and give the first pass up to BOOT_WAIT seconds, so saves are
     # current before a game can be opened; never asks anything
     [ -n "$TOKEN" ] || cmd_enroll > /dev/null 2>&1 || exit 0
-    rm -f "$WORK/progress"
+    # Onion read its runtime.sh before this: a hook already there works now (one the daemon adds next waits again)
+    rm -f "$WORK/progress" "$STATE/hook-restart"
     nohup sh "$DIR/$(basename "$0")" daemon >/dev/null 2>&1 &
     n=0; while [ "$n" -lt "${BOOT_WAIT:-25}" ]; do
       grep -q '^finished' "$WORK/progress" 2>/dev/null && break
