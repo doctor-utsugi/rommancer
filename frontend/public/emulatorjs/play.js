@@ -1,8 +1,8 @@
 // Plays a game, a save or a savestate from Rommancer in the browser with EmulatorJS. The page gets what to play in its
 // address's fragment (never sent to the server): the system, the rom and, for a save, its file, with their download
-// links; a game alone ("ROM") starts with no save. Nothing made
-// here is kept: the emulator's save folder lives in memory (see the Containerfile), its own save buttons are hidden
-// and nothing goes back to the server.
+// links; a game alone ("ROM") starts with no save. No game progress is kept: the emulator's save folder lives in
+// memory (see the Containerfile), its own save buttons are hidden and nothing goes back to the server; only the
+// emulator's settings stay in the browser.
 (async function () {
   const fail = (msg) => {
     const el = document.getElementById('error');
@@ -46,11 +46,12 @@
   window.EJS_DEBUG_XX = true;
   // A File keeps the rom's name, whose extension some cores read
   window.EJS_gameUrl = new File([game], cfg.romName);
-  window.EJS_gameName = `rommancer-${Date.now()}`;
+  // One name per system: the emulator's own settings (controls, video, volume) are kept in this browser for every game
+  // of the system; saves are not (the save folder lives in memory)
+  window.EJS_gameName = `rommancer-${cfg.system}`;
   window.EJS_language = es ? 'es-ES' : 'en-US';
   window.EJS_startOnLoaded = true;
   window.EJS_disableDatabases = true;
-  window.EJS_disableLocalStorage = true;
   window.EJS_Buttons = { saveState: false, loadState: false, saveSavFiles: false, loadSavFiles: false, netplay: false, cacheManager: false };
   window.EJS_onGameStart = () => {
     if (rom) return;
