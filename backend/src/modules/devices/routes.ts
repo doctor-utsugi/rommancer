@@ -645,6 +645,35 @@ devicesRouter.post('/:id/prune/confirm', requirePerm('roms.download'), async (re
   res.json({ ok: true });
 });
 
+// What giving the device these lists would delete from it: nothing unless it deletes roms in no list; then the
+// files that would go now, those that go once the server has them, and those that stay (the server cannot get them)
+devicesRouter.post('/:id/lists/preview', async (req, res) => {
+  const d = await ownDevice(intParam(req), me(req));
+  const { listIds } = z.object({ listIds: z.array(z.number().int()).max(100) }).parse(req.body);
+  for (const id of listIds) await loadList(id, me(req));
+  if (!d.pruneRoms || !d.inventoryAt) return res.json({ prune: d.pruneRoms, inventory: !!d.inventoryAt });
+  const now = await prunePlan(d);
+  const next = await prunePlan(d, d.rootPath, [...new Set(listIds)]);
+  // Only what this change adds to what would go anyway
+  const before = new Set([...now.del, ...now.upload].map((f) => f.path));
+  const fresh = (files: { path: string; size: number }[]) => files.filter((f) => !before.has(f.path));
+  const del = fresh(next.del);
+  const upload = fresh(next.upload);
+  const bytes = (files: { size: number }[]) => files.reduce((n, f) => n + f.size, 0);
+  res.json({
+    prune: true,
+    inventory: true,
+    del: del.length,
+    delBytes: bytes(del),
+    upload: upload.length,
+    uploadBytes: bytes(upload),
+    stuck: Math.max(0, next.stuck - now.stuck),
+    total: next.total,
+    held: next.held !== null,
+    sample: [...del, ...upload].slice(0, 50).map((f) => path.posix.basename(f.path)),
+  });
+});
+
 devicesRouter.get('/:id/lists', async (req, res) => {
   const d = await ownDevice(intParam(req), me(req));
   const rows = await prisma.deviceList.findMany({ where: { deviceId: d.id }, include: { list: { select: { id: true, name: true } } } });

@@ -38,8 +38,9 @@ export interface Plan {
 
 const pathKey = (p: string) => crypto.createHash('sha1').update(p).digest('hex');
 
-/** ROOT: where the device is seen for this plan (a computer may see a console's card under its own mount) */
-export async function devicePlan(device: Device & { firmware: Firmware }, root = device.rootPath, homeRoot = device.rootPath): Promise<Plan> {
+/** ROOT: where the device is seen for this plan (a computer may see a console's card under its own mount);
+ * LISTIDS: the lists to plan for instead of the device's own (what a change of its lists would do) */
+export async function devicePlan(device: Device & { firmware: Firmware }, root = device.rootPath, homeRoot = device.rootPath, listIds?: number[]): Promise<Plan> {
   const layout = layoutOf(device);
   const filter = systemFilterOf(device);
   const excludedGames = new Set(filter.excludedGames);
@@ -48,7 +49,8 @@ export async function devicePlan(device: Device & { firmware: Firmware }, root =
   const haveGames = new Set(inv.flatMap((r) => (r.gameId ? [r.gameId] : [])));
   const files: PlanFile[] = [];
   const seen = new Set<string>();
-  for (const { listId } of await prisma.deviceList.findMany({ where: { deviceId: device.id }, select: { listId: true } })) {
+  const lists = listIds ?? (await prisma.deviceList.findMany({ where: { deviceId: device.id }, select: { listId: true } })).map((r) => r.listId);
+  for (const listId of lists) {
     const { items } = await resolveListFiles(listId);
     const romIds = items.flatMap((i) => (i.romId ? [i.romId] : []));
     const hackIds = items.flatMap((i) => (i.hackId ? [i.hackId] : []));

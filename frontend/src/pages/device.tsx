@@ -85,6 +85,7 @@ export function DevicePage() {
   const [show, setShow] = useState<'all' | 'new' | 'unidentified' | 'onServer'>('all')
   const [sending, setSending] = useState(false)
   const [choosing, setChoosing] = useState(false)
+  const [confirming, setConfirming] = useState<number[] | null>(null)
   const [copying, setCopying] = useState(false)
 
   const items = inventory.data?.items ?? []
@@ -108,6 +109,16 @@ export function DevicePage() {
     } catch (e) {
       toast.error(errMsg(e))
     }
+  }
+  // A change of the device's lists: removing one asks first, saying what it would delete from the console
+  const saveLists = async (listIds: number[]) => {
+    await put(`/devices/${id}/lists`, { listIds })
+    void qc.invalidateQueries({ queryKey: ['device-lists', id] })
+    void qc.invalidateQueries({ queryKey: ['device-prune', id] })
+  }
+  const changeLists = (listIds: number[]) => {
+    if ((lists.data ?? []).some((l) => !listIds.includes(l.id))) setConfirming(listIds)
+    else void act(() => saveLists(listIds))
   }
   const pull = (body: object) => act(() => post(`/devices/${id}/pull`, body), (r) => t('more.device.queued', { count: r.queued }))
 
@@ -288,10 +299,7 @@ export function DevicePage() {
                           variant="ghost"
                           title={t('more.device.removeList')}
                           aria-label={t('more.device.removeList')}
-                          onClick={() => act(async () => {
-                            await put(`/devices/${id}/lists`, { listIds: lists.data!.filter((x) => x.id !== l.id).map((x) => x.id) })
-                            void qc.invalidateQueries({ queryKey: ['device-lists', id] })
-                          })}
+                          onClick={() => changeLists(lists.data!.filter((x) => x.id !== l.id).map((x) => x.id))}
                         >
                           <X />
                         </Button>
@@ -350,10 +358,25 @@ export function DevicePage() {
       </Tabs>
       {choosing && (
         <ChooseListsDialog
-          deviceId={String(id)}
           current={(lists.data ?? []).map((l) => l.id)}
           onClose={() => setChoosing(false)}
-          onSaved={() => void qc.invalidateQueries({ queryKey: ['device-lists', id] })}
+          onSubmit={(ids) => {
+            setChoosing(false)
+            changeLists(ids)
+          }}
+        />
+      )}
+      {confirming && (
+        <ConfirmListsDialog
+          deviceId={String(id)}
+          listIds={confirming}
+          removed={(lists.data ?? []).filter((l) => !confirming.includes(l.id)).map((l) => l.name)}
+          onClose={() => setConfirming(null)}
+          onConfirm={async () => {
+            await saveLists(confirming)
+            setConfirming(null)
+            toast.success(t('common.saved'))
+          }}
         />
       )}
       {sending && <SendDialog deviceId={Number(id)} onClose={() => setSending(false)} onSent={() => void qc.invalidateQueries({ queryKey: ['device-lists', id] })} />}
@@ -1182,26 +1205,13 @@ function SyncState({ deviceId }: { deviceId: string }) {
 }
 
 /** The lists copied to a device: every list the user can see (own, shared, public), ticked when assigned */
-function ChooseListsDialog({ deviceId, current, onClose, onSaved }: { deviceId: string; current: number[]; onClose(): void; onSaved(): void }) {
+function ChooseListsDialog({ current, onClose, onSubmit }: { current: number[]; onClose(): void; onSubmit(listIds: number[]): void }) {
   const { t } = useTranslation()
   const all = useQuery({ queryKey: ['lists', 'all'], queryFn: () => get<any[]>('/lists?scope=all') })
   const [picked, setPicked] = useState(() => new Set(current))
   const [q, setQ] = useState('')
-  const [busy, setBusy] = useState(false)
   const shown = (all.data ?? []).filter((l) => !q || l.name.toLowerCase().includes(q.toLowerCase()))
-  const save = async () => {
-    setBusy(true)
-    try {
-      await put(`/devices/${deviceId}/lists`, { listIds: [...picked] })
-      onSaved()
-      onClose()
-      toast.success(t('common.saved'))
-    } catch (e) {
-      toast.error(errMsg(e))
-    } finally {
-      setBusy(false)
-    }
-  }
+  const same = picked.size === current.length && current.every((x) => picked.has(x))
   return (
     <Dialog open onOpenChange={(o) => !o && onClose()}>
       <DialogContent className="max-w-lg">
@@ -1234,8 +1244,68 @@ function ChooseListsDialog({ deviceId, current, onClose, onSaved }: { deviceId: 
           <Button variant="outline" onClick={onClose}>
             {t('common.cancel')}
           </Button>
-          <Button onClick={save} disabled={busy}>
+          <Button onClick={() => onSubmit([...picked])} disabled={same}>
             {t('common.save')}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
+/** Removing lists from a device: what it means for the roms already on it, from the server's own deletion plan */
+function ConfirmListsDialog(props: { deviceId: string; listIds: number[]; removed: string[]; onClose(): void; onConfirm(): Promise<void> }) {
+  const { t } = useTranslation()
+  const [busy, setBusy] = useState(false)
+  const preview = useQuery({
+    queryKey: ['device-lists-preview', props.deviceId, props.listIds],
+    queryFn: () => post<any>(`/devices/${props.deviceId}/lists/preview`, { listIds: props.listIds }),
+  })
+  const p = preview.data
+  const deletes = !!p?.prune && p.del + p.upload > 0
+  const go = async () => {
+    setBusy(true)
+    try {
+      await props.onConfirm()
+    } catch (e) {
+      toast.error(errMsg(e))
+    } finally {
+      setBusy(false)
+    }
+  }
+  return (
+    <Dialog open onOpenChange={(o) => !o && props.onClose()}>
+      <DialogContent className="max-w-lg">
+        <DialogHeader>
+          <DialogTitle>{t('more.device.removeListsTitle', { count: props.removed.length, names: props.removed.join(', ') })}</DialogTitle>
+        </DialogHeader>
+        <div className="space-y-2 text-sm">
+          {preview.isLoading && <p className="text-muted-foreground">{t('common.loading')}</p>}
+          {preview.isError && <p className="text-destructive">{errMsg(preview.error)}</p>}
+          {p && !p.prune && <p>{t('more.device.removeKeeps')}</p>}
+          {p?.prune && !p.inventory && <p className="text-amber-600">{t('more.device.removeNoInventory')}</p>}
+          {p?.prune && p.inventory && !deletes && <p>{t('more.device.removeNothing')}</p>}
+          {deletes && (
+            <>
+              {p.del > 0 && <p className="font-medium text-destructive">{t('more.device.removeDeletes', { count: p.del, size: formatBytes(p.delBytes) })}</p>}
+              {p.upload > 0 && <p className="font-medium text-destructive">{t('more.device.removeDeletesLater', { count: p.upload, size: formatBytes(p.uploadBytes) })}</p>}
+              {p.held && <p className="text-amber-600">{t('more.device.removeHeld')}</p>}
+              <ul className="max-h-40 overflow-y-auto rounded border p-2 text-xs text-muted-foreground">
+                {p.sample.map((f: string) => (
+                  <li key={f} className="truncate">{f}</li>
+                ))}
+                {p.del + p.upload > p.sample.length && <li>…</li>}
+              </ul>
+            </>
+          )}
+          {p?.prune && p.stuck > 0 && <p className="text-muted-foreground">{t('more.device.removeStuck', { count: p.stuck })}</p>}
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={props.onClose}>
+            {t('common.cancel')}
+          </Button>
+          <Button variant={deletes ? 'destructive' : 'default'} onClick={go} disabled={busy || !p}>
+            {deletes ? t('more.device.removeAndDelete', { count: p.del + p.upload }) : t('more.device.removeConfirm')}
           </Button>
         </DialogFooter>
       </DialogContent>

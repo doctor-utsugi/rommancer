@@ -3186,6 +3186,12 @@ test('device prune: roms in no list leave the console once the server has them; 
   await run('prune', 'set', '1');
   st = await prune();
   assert.deepEqual([st.on, st.remote], [true, false]);
+  // Removing lists from the web first says what that would delete on top (the current lists: nothing more)
+  const current = (await api('GET', `/devices/${id}/lists`)).json.map((l: any) => l.id);
+  const same = (await api('POST', `/devices/${id}/lists/preview`, { listIds: current })).json;
+  assert.deepEqual([same.prune, same.del, same.upload], [true, 0, 0], JSON.stringify(same));
+  const none = (await api('POST', `/devices/${id}/lists/preview`, { listIds: [] })).json;
+  assert.ok(none.del >= 1 && none.sample.includes(smb3) && !none.sample.includes(other), JSON.stringify(none));
   assert.match((await run('prune', 'run')).stdout, /deleted: 1 roms/);
   assert.ok(!there(other) && there(smb3) && there(track) && there(homebrew));
   assert.ok(fs.existsSync(path.join(root, 'roms/ports', 'Some Port.zip')), 'files of no system are never touched');

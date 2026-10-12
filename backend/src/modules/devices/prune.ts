@@ -45,9 +45,9 @@ function companionOf(file: string, kept: Map<string, string[]>) {
   return stems.some((s) => name === s || name.startsWith(`${s}.`) || name.startsWith(`${s} (`));
 }
 
-/** HOME: the device's own root (inventory paths are kept in its terms) */
-export async function prunePlan(device: Device & { firmware: Firmware }, home = device.rootPath): Promise<PrunePlan> {
-  const plan = await devicePlan(device, home, home);
+/** HOME: the device's own root (inventory paths are kept in its terms); LISTIDS: other lists than the device's */
+export async function prunePlan(device: Device & { firmware: Firmware }, home = device.rootPath, listIds?: number[]): Promise<PrunePlan> {
+  const plan = await devicePlan(device, home, home, listIds);
   const listPaths = new Set(plan.files.map((f) => f.dest));
   const listGames = new Set(plan.files.flatMap((f) => (f.gameId ? [f.gameId] : [])));
   const rows = await prisma.deviceRom.findMany({ where: { deviceId: device.id } });
