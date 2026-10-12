@@ -571,6 +571,8 @@ model Device {
   coreVersions    Json?
   // The core each system saves with on this device ({ "snes": "Supafaust" }), learnt from where its emulator writes
   systemCores     Json?
+  // The core each game was last seen saving with on this device ({ "<rom name>": "Snes9x" })
+  romCores        Json?
   // The user's settings (RetroAchievements, WiFi) are kept applied on it; what was last applied and when
   keepSettings    Boolean               @default(true)
   settingsHash    String?               @db.Char(40)
