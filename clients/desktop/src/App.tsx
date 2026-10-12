@@ -6,7 +6,7 @@ import { open } from '@tauri-apps/plugin-dialog'
 import { openUrl } from '@tauri-apps/plugin-opener'
 import { disable, enable, isEnabled } from '@tauri-apps/plugin-autostart'
 import { isPermissionGranted, requestPermission, sendNotification } from '@tauri-apps/plugin-notification'
-import { bytes, locale, setLang, t, tn, type Key, type Lang } from './i18n'
+import { bytes, locale, t, tn, type Key } from './i18n'
 import { SavePoint } from './SavePoint'
 
 interface PcInfo {
@@ -65,6 +65,8 @@ interface Outcome {
   games_down: number
   games_failed: number
   games_sent: number
+  games_deleted?: number
+  saves_cleaned?: number
   errors: number
   config: number
   conflicts: number
@@ -79,6 +81,17 @@ interface Finished {
   at: number
   ok_at: number
   mode: string
+}
+
+/** The deletion of games in no list of a device whose setting is kept here */
+interface PruneInfo {
+  on: boolean
+  /** Turned on from the web app: [games, bytes] it would delete, waiting for the user's answer */
+  ask: [number, number] | null
+  /** A deletion of more than half of the games, waiting: [games, games on the device] */
+  hold: [number, number] | null
+  intro: boolean
+  cleanable: number
 }
 
 interface Conflict {
@@ -96,15 +109,6 @@ const PC = 'pc'
 const GUIDES = '__guides'
 const CONSOLE_SETTINGS = '__consoles'
 const APP_SETTINGS = '__settings'
-
-const LANG_KEY = 'rommancer-lang'
-const savedLang = (): Lang | '' => {
-  try {
-    return (localStorage.getItem(LANG_KEY) as Lang | null) ?? ''
-  } catch {
-    return ''
-  }
-}
 
 const time = (ms: number) => new Date(ms).toLocaleTimeString(locale(), { hour: '2-digit', minute: '2-digit' })
 
@@ -136,6 +140,8 @@ function summaryLines(o: Outcome) {
     ['sum_states_down', o.states_down],
     ['sum_games_down', o.games_down],
     ['sum_games_sent', o.games_sent],
+    ['sum_games_deleted', o.games_deleted ?? 0],
+    ['sum_saves_cleaned', o.saves_cleaned ?? 0],
     ['sum_conflicts', o.conflicts],
   ]
   return facts.filter(([, n]) => n > 0).map(([k, n]) => tn(k, n))
@@ -143,21 +149,9 @@ function summaryLines(o: Outcome) {
 
 export function App() {
   const [status, setStatus] = useState<Status | null>(null)
-  const [ready, setReady] = useState(false)
   const refresh = useCallback(() => void invoke<Status>('status').then(setStatus), [])
   useEffect(refresh, [refresh])
-  // The user's choice, otherwise Spanish when any locale variable of the system says so
-  useEffect(() => {
-    const chosen = savedLang()
-    if (chosen) {
-      setLang(chosen)
-      setReady(true)
-    } else
-      void invoke<string>('system_lang')
-        .then((l) => l === 'es' && setLang('es'))
-        .finally(() => setReady(true))
-  }, [])
-  if (!status || !ready) return null
+  if (!status) return null
   return status.signed_in ? <Main status={status} onChange={refresh} /> : <Login server={status.server} onDone={refresh} />
 }
 
@@ -295,7 +289,7 @@ function Main({ status, onChange }: { status: Status; onChange: () => void }) {
   const card = cards.find((c) => c.root === selected) ?? null
   const syncing = new Set([...status.syncing, ...Object.keys(progress)])
 
-  // The tray speaks the interface language and shows this PC's state line
+  // The tray shows this PC's state line
   const pcLine = status.pc
     ? syncing.has(PC)
       ? t('syncing')
@@ -419,7 +413,7 @@ function Main({ status, onChange }: { status: Status; onChange: () => void }) {
   )
 }
 
-/** Settings of this app: when to sync, what the server may ask, language and account */
+/** Settings of this app: when to sync, what the server may ask, and the account */
 function AppSettings({ status, onChange }: { status: Status; onChange: () => void }) {
   const [auto, setAuto] = useState(false)
   useEffect(() => void isEnabled().then(setAuto).catch(() => {}), [])
@@ -452,25 +446,6 @@ function AppSettings({ status, onChange }: { status: Status; onChange: () => voi
           'autostart',
           'autostartHelp',
         )}
-        <label>
-          {t('language')}
-          <select
-            value={savedLang()}
-            onChange={(e) => {
-              try {
-                if (e.target.value) localStorage.setItem(LANG_KEY, e.target.value)
-                else localStorage.removeItem(LANG_KEY)
-              } catch {
-                /* not stored: this session only */
-              }
-              location.reload()
-            }}
-          >
-            <option value="">{t('langAuto')}</option>
-            <option value="es">Español</option>
-            <option value="en">English</option>
-          </select>
-        </label>
       </div>
       <div className="panel">
         <h2>{t('account')}</h2>
@@ -618,7 +593,7 @@ function PcSetup({ onDone }: { onDone: () => void }) {
   )
 }
 
-type View = 'home' | 'conflicts' | 'lists' | 'games' | 'add' | 'status'
+type View = 'home' | 'conflicts' | 'lists' | 'games' | 'add' | 'settings' | 'status'
 
 /**
  * The home screen of a device, the same for this PC and for a card: header, state line, live work, then
@@ -661,6 +636,43 @@ function DeviceHome({
   useEffect(() => {
     if (view === 'conflicts' && conflicts === 0) setView('home')
   }, [view, conflicts])
+  // Deleting games in no list: none for a console's card (its own client keeps the setting)
+  const [prune, setPrune] = useState<PruneInfo | null>(null)
+  const loadPrune = useCallback(() => void invoke<PruneInfo | null>('prune_state', { key: syncKey }).then(setPrune, () => setPrune(null)), [syncKey])
+  useEffect(loadPrune, [loadPrune, result, syncing])
+  const [holdLater, setHoldLater] = useState(false)
+  const pruneSet = (on: boolean) =>
+    void invoke('prune_set', { key: syncKey, on })
+      .catch((e) => setError(String(e)))
+      .finally(loadPrune)
+  const pruneConfirm = () =>
+    void invoke('prune_confirm', { key: syncKey })
+      .catch((e) => setError(String(e)))
+      .finally(loadPrune)
+  const device = t(pc ? 'devicePc' : 'deviceCard')
+  // What the deletion needs from the user, one question at a time; leaving one takes the answer that deletes nothing
+  const question: Question | null = !prune
+    ? null
+    : !prune.intro
+      ? { text: t('pruneIntro', { device }), yes: t('pruneYes'), no: t('pruneNo'), onYes: () => pruneSet(true), onNo: () => pruneSet(false) }
+      : prune.ask
+        ? {
+            text: t('pruneAsk', { n: prune.ask[0], size: bytes(prune.ask[1]) }),
+            yes: t('pruneKeep'),
+            no: t('pruneOff'),
+            onYes: () => pruneSet(true),
+            onNo: () => pruneSet(false),
+          }
+        : prune.hold && prune.on && !holdLater
+          ? {
+              text: t('pruneHold', { n: prune.hold[0], total: prune.hold[1], device }),
+              yes: t('pruneDelete'),
+              no: t('pruneLater'),
+              onYes: pruneConfirm,
+              onNo: () => setHoldLater(true),
+              extra: { label: t('pruneOff'), run: () => pruneSet(false) },
+            }
+          : null
   const live =
     progress?.phase === 'roms-download' ? t('liveGames', { done: progress.done, total: progress.total }) : progress?.phase === 'pulls' ? t('liveSending', { done: progress.done, total: progress.total }) : ''
   const tabs: [View, string][] = [
@@ -669,6 +681,7 @@ function DeviceHome({
     ['lists', t('tabLists')],
     ['games', t('tabGames')],
     ['add', t('tabAdd')],
+    ...(prune ? [['settings', t('settingsNav')] as [View, string]] : []),
     ['status', t('tabStatus')],
   ]
   return (
@@ -704,6 +717,7 @@ function DeviceHome({
       )}
       {view === 'home' && (
         <>
+          {question && !syncing && <PruneQuestion q={question} />}
           {syncing && <ProgressBox p={progress} />}
           {result && <LastSync result={result} onDetails={() => setView('status')} />}
           {deviceId && <Summary deviceId={deviceId} onSend={() => sync('pulls')} refreshKey={result} />}
@@ -714,7 +728,61 @@ function DeviceHome({
       {view === 'lists' && deviceId && <Lists deviceId={deviceId} name={title} onCopy={() => sync('full', true)} />}
       {view === 'games' && deviceId && <Games deviceId={deviceId} refreshKey={result} onSend={() => sync('pulls')} />}
       {view === 'add' && deviceId && <AddGames deviceId={deviceId} onAdded={() => sync('full', true)} />}
+      {view === 'settings' && prune && (
+        <div className="panel">
+          <label className="check top">
+            <input type="checkbox" checked={prune.on} onChange={(e) => pruneSet(e.target.checked)} />
+            <span>
+              {t('pruneSetting')}
+              <span className="muted small block">{t('pruneSettingHelp', { device })}</span>
+            </span>
+          </label>
+          <div style={{ borderTop: '1px solid var(--border)', paddingTop: 10, marginTop: 10 }}>
+            <button disabled={syncing || prune.cleanable === 0} onClick={() => sync('clean')}>
+              {t('pruneClean', { n: prune.cleanable })}
+            </button>
+            <span className="muted small block">{t('pruneCleanHelp', { device })}</span>
+          </div>
+        </div>
+      )}
       {view === 'status' && <StatusView syncKey={syncKey} deviceId={deviceId} name={title} result={result} pc={pc} card={card} version={version} status={status} />}
+    </div>
+  )
+}
+
+interface Question {
+  text: string
+  yes: string
+  no: string
+  onYes: () => void
+  onNo: () => void
+  extra?: { label: string; run: () => void }
+}
+
+/** A question about deleting games; Escape or a click outside takes the answer that deletes nothing */
+function PruneQuestion({ q }: { q: Question }) {
+  const no = useRef(q.onNo)
+  no.current = q.onNo
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && no.current()
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [])
+  return (
+    <div className="overlay" onClick={q.onNo}>
+      <div className="panel dialog" role="alertdialog" onClick={(e) => e.stopPropagation()}>
+        <h2>{t('pruneTitle')}</h2>
+        <p>{q.text}</p>
+        <div className="row end wrap">
+          <button autoFocus onClick={q.onNo}>
+            {q.no}
+          </button>
+          {q.extra && <button onClick={q.extra.run}>{q.extra.label}</button>}
+          <button className="primary" onClick={q.onYes}>
+            {q.yes}
+          </button>
+        </div>
+      </div>
     </div>
   )
 }

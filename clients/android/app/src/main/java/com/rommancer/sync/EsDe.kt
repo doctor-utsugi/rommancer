@@ -22,9 +22,8 @@ object EsDe {
     fun write(context: Context, api: Api, root: File) {
         val dir = File(root, "ES-DE/collections")
         if (!dir.isDirectory) return
-        val es = Locale.getDefault().language == "es"
-        val savesName = if (es) "Rommancer - Con partida" else "Rommancer - With saves"
-        val newName = if (es) "Rommancer - Nuevos" else "Rommancer - New"
+        val savesName = "Rommancer - With saves"
+        val newName = "Rommancer - New"
         val romsDir = api.text("/agent/roots").lines().firstOrNull { it.startsWith("roms\t") }?.substringAfter('\t')
         val saves = api.text("/agent/collections").lines().filter { it.startsWith("saves\t") }.map { it.substringAfter('\t') }.distinct().sorted()
         // The last two weeks' arrivals that are still there, the newest first; older lines are dropped from the record

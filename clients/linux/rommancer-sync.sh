@@ -22,7 +22,7 @@
 #                                   Menu++...) mounted on this computer; the link lives on the card itself,
 #                                   so any computer with this script can sync it. Without a command: sync.
 set -u
-CLIENT_VERSION=20261052
+CLIENT_VERSION=20261053
 # A clock before this date is surely wrong (no battery-backed clock); kept apart from the version, which may run ahead
 CLOCK_MIN=20261001
 # Onion keeps curl (with TLS) and friends outside the default PATH
@@ -545,23 +545,13 @@ card_get() {
   http_once POST "$SERVER/api/v1/agent/card/ack?sha=$(sha1 "$cp_")" - - "X-Path-B64: $(b64 "$cp_")" >/dev/null 2>&1 || log "card: $(basename "$cp_") written, server not told yet"
 }
 
-# The system's language, as Knulli/Batocera, Onion or the desktop say it
-lang_es() {
-  grep -qs '^system\.language=es' /userdata/system/knulli.conf /userdata/system/batocera.conf && return 0
-  tr_es && return 0
-  case "${LANG:-}" in es*) return 0 ;; esac
-  return 1
-}
-
 # A short note on screen when saves arrived: EmulationStation's popup (Knulli, Batocera), the desktop's
 # notifications (PCs). Onion, muOS, ArkOS and NextUI have nothing to show it with; never during a game
 notify_received() {
   [ -z "$SD" ] && [ -z "${ROMMANCER_NO_NOTIFY:-}" ] && [ -s "$WORK/received" ] || return 0
   playing && return 0
   n="$(grep -c . "$WORK/received")"; first="$(head -n 1 "$WORK/received")"
-  if lang_es; then
-    if [ "$n" -eq 1 ]; then msg="Partida recibida: $first"; else msg="$n partidas recibidas: $first y más"; fi
-  elif [ "$n" -eq 1 ]; then msg="Save received: $first"; else msg="$n saves received: $first and more"; fi
+  if [ "$n" -eq 1 ]; then msg="Save received: $first"; else msg="$n saves received: $first and more"; fi
   notify "$msg"
 }
 
@@ -584,7 +574,7 @@ mark_version() {
   printf '%s\t%s\n' "$CLIENT_VERSION" "$when" > "$VERSION_FILE" 2>/dev/null
   # Said on screen when it updated itself (not on a first install, the setup already shows it)
   [ -n "$was" ] && [ -z "$SD" ] && [ -z "${ROMMANCER_NO_NOTIFY:-}" ] && ! playing || return 0
-  if lang_es; then notify "Actualizado a la versión $CLIENT_VERSION"; else notify "Updated to version $CLIENT_VERSION"; fi
+  notify "Updated to version $CLIENT_VERSION"
 }
 # When the last sync went through, as seconds since 1970 (time zones differ between the daemon and the menus): in RAM
 # at every sync, on the card at most every ten minutes (it survives a reboot without a write per sync)
@@ -595,10 +585,10 @@ synced_now() {
   return 0
 }
 synced_at() { cat "$WORK/last-sync" 2>/dev/null || cat "$STATE/last-sync" 2>/dev/null; }
-# "Sincronizado: hoy, 18:52" / "Sincronizado: 12 oct, 18:52" (the last sync that went through), on the home screen
+# "Synced: today, 18:52" / "Synced: 12 Oct, 18:52" (the last sync that went through), on the home screen
 synced_line() {
   at="$(synced_at)"
-  if lang_es; then m="ene feb mar abr may jun jul ago sep oct nov dic"; w="Sincronizado:"; td="hoy"; never="Sin sincronizar todavía"; else m="Jan Feb Mar Apr May Jun Jul Aug Sep Oct Nov Dec"; w="Synced:"; td="today"; never="Not synced yet"; fi
+  m="Jan Feb Mar Apr May Jun Jul Aug Sep Oct Nov Dec"; w="Synced:"; td="today"; never="Not synced yet"
   [ -n "$at" ] || { printf '%s' "$never"; return 0; }
   date -d "@$at" '+%m %d %H:%M %Y%m%d' 2>/dev/null | awk -v m="$m" -v w="$w" -v td="$td" -v today="$(date +%Y%m%d)" '{ split(m, n, " "); if ($4 == today) printf "%s %s, %s", w, td, $3; else printf "%s %d %s, %s", w, $2, n[$1 + 0], $3 }'
 }
@@ -606,13 +596,12 @@ synced_line() {
 updated_line() {
   since="$(cut -f2 "$VERSION_FILE" 2>/dev/null)"
   [ -n "$since" ] || return 0
-  if lang_es; then m="ene feb mar abr may jun jul ago sep oct nov dic"; w="Actualizado el"; else m="Jan Feb Mar Apr May Jun Jul Aug Sep Oct Nov Dec"; w="Updated"; fi
+  m="Jan Feb Mar Apr May Jun Jul Aug Sep Oct Nov Dec"; w="Updated"
   printf '%s\n' "$since" | awk -v m="$m" -v w="$w" '{ split($1, d, "-"); split(m, n, " "); printf "%s %d %s %s, %s", w, d[3], n[d[2] + 0], d[1], $2 }'
 }
 version_line() {
   since="$(cut -f2 "$VERSION_FILE" 2>/dev/null)"
-  if lang_es; then printf 'Versión %s%s' "$CLIENT_VERSION" "${since:+, instalada el $since}"
-  else printf 'Version %s%s' "$CLIENT_VERSION" "${since:+, installed $since}"; fi
+  printf 'Version %s%s' "$CLIENT_VERSION" "${since:+, installed $since}"
 }
 
 # Why a sync asked for on screen failed: one line in words, and the details behind it in fail-details (the network,
@@ -620,16 +609,15 @@ version_line() {
 sync_failed() {
   host="${SERVER#*://}"; host="${host%%/*}"
   IFS="$TAB" read -r code url err < "$WORK/last-error" 2>/dev/null
-  es=0; lang_es && es=1
   if ! ip route 2>/dev/null | grep -q '^default'; then
-    if [ "$es" = 1 ]; then why="Sin red: conecta el WiFi"; else why="No network: connect the WiFi"; fi
+    why="No network: connect the WiFi"
   else
     case "${code:-}" in
-      6) if [ "$es" = 1 ]; then why="No encuentra $host (DNS): revisa la red WiFi"; else why="Cannot find $host (DNS): check the WiFi network"; fi ;;
-      35|60) if [ "$es" = 1 ]; then why="Conexión segura rechazada: suele ser la hora de la consola ($(date '+%d/%m/%Y %H:%M'))"; else why="Secure connection refused: usually the console's clock ($(date '+%Y-%m-%d %H:%M'))"; fi ;;
-      22) if [ "$es" = 1 ]; then why="$host respondió con un error: $(printf '%s' "$err" | sed 's/.*error: //')"; else why="$host answered with an error: $(printf '%s' "$err" | sed 's/.*error: //')"; fi ;;
-      28) if [ "$es" = 1 ]; then why="$host no contesta a tiempo: revisa la red WiFi"; else why="$host does not answer in time: check the WiFi network"; fi ;;
-      *) if [ "$es" = 1 ]; then why="No llega a $host: revisa la red WiFi"; else why="Cannot reach $host: check the WiFi network"; fi ;;
+      6) why="Cannot find $host (DNS): check the WiFi network" ;;
+      35|60) why="Secure connection refused: usually the console's clock ($(date '+%Y-%m-%d %H:%M'))" ;;
+      22) why="$host answered with an error: $(printf '%s' "$err" | sed 's/.*error: //')" ;;
+      28) why="$host does not answer in time: check the WiFi network" ;;
+      *) why="Cannot reach $host: check the WiFi network" ;;
     esac
   fi
   # The same failure is logged once; the details (a name lookup can take seconds) only when asked on screen
@@ -1633,7 +1621,7 @@ cmd_collections() {
   case "$FW" in knulli|batocera) ;; *) return 0 ;; esac
   dir="${ROMMANCER_SYSROOT:-}/userdata/system/configs/emulationstation/collections"
   mkdir -p "$dir" || return 1
-  if lang_es; then saves_name="Rommancer - Con partida"; new_name="Rommancer - Nuevos"; else saves_name="Rommancer - With saves"; new_name="Rommancer - New"; fi
+  saves_name="Rommancer - With saves"; new_name="Rommancer - New"
   http GET "$SERVER/api/v1/agent/collections" - "$WORK/collections" || return 1
   sed -n "s/^saves$TAB//p" "$WORK/collections" | sort -u > "$WORK/coll-saves"
   # The last two weeks' arrivals that are still there, the newest first; older lines are dropped from the record
@@ -1802,72 +1790,9 @@ ask() {
   tail -n 1 "$WORK/kb"
 }
 
-tr_es() { grep -qs '"language"[^,]*es' /appconfigs/system.json; }
-# Every text the console shows, in English and Spanish (vocabulary in docs/clients-ux.md: save/partida,
-# savestate, game/juego); counts of one take the singular
+# Every text the console shows (vocabulary in docs/clients-ux.md: save,
+# savestate, game); counts of one take the singular
 t() {
-  if tr_es; then
-    case "$1" in
-      server) echo "Servidor" ;; login) echo "Entrar" ;; signup) echo "Crear cuenta" ;; quit) echo "Salir" ;;
-      user) echo "USUARIO O EMAIL" ;; username) echo "USUARIO" ;; email) echo "EMAIL" ;; password) echo "CONTRASEÑA" ;;
-      sync) echo "Sincronizar ahora" ;; status) echo "Estado" ;; settings) echo "Ajustes" ;; unlink) echo "Desconectar esta consola" ;;
-      account) echo "Cuenta: $2 @ $3" ;; notlinked) echo "Esta consola no está vinculada" ;;
-      badserver) echo "No hay un Rommancer en esa dirección" ;; badlogin) echo "Usuario o contraseña incorrectos" ;;
-      exists) echo "Ese usuario o email ya existe" ;; signupfail) echo "No se pudo crear la cuenta: revisa los datos" ;; closed) echo "Este servidor no permite crear cuentas" ;;
-      finished) echo "Listo. La sincronización automática está activada." ;; syncing) echo "Sincronizando..." ;;
-      allowpull) echo "El servidor puede pedir juegos: $2" ;; allowssh) echo "Acceso SSH del servidor: $2" ;;
-      prune) echo "Borrar juegos fuera de listas: $2" ;; pruneclean) echo "Borrar partidas de juegos borrados ($2)" ;;
-      settingsinfo) echo "Pedir juegos: el servidor copia los que le faltan. SSH: sincroniza aunque la app esté cerrada. Fuera de listas: borra los juegos que no estén en ninguna." ;;
-      unlinkask) echo "¿Desconectar esta consola de $2? Sus partidas se quedan en ella, pero deja de sincronizar." ;; unlinkgo) echo "Desconectar" ;;
-      yes) echo "sí" ;; no) echo "no" ;; conflicts) echo "Conflictos ($2)" ;; noconflicts) echo "No hay conflictos" ;;
-      keepdevice) echo "Quedarme con la de esta consola" ;; keepserver) echo "Usar la del servidor" ;;
-      conflictinfo) echo "$2: esta consola $3, servidor $4 ($5)" ;;
-      conflictsline) if [ "$2" = 1 ]; then echo "1 partida en conflicto"; else echo "$2 partidas en conflicto"; fi ;;
-      offlinesince) echo "Sin conexión desde las $2" ;;
-      w_roms) echo "Descargando juegos $2" ;; w_pulls) echo "Enviando juegos al servidor $2" ;;
-      romswatch) echo "Ver descarga de juegos" ;; pullswatch) echo "Ver envío de juegos al servidor" ;;
-      romsnow) echo "Descargar ahora los juegos de las listas" ;;
-      step) echo "Paso $2 de $3 · $4" ;; of) echo "de" ;;
-      st_saves) echo "Partidas" ;; st_settings) echo "Ajustes" ;; st_prune) echo "Juegos que sobran" ;; st_roms) echo "Juegos de las listas" ;; st_pulls) echo "Envío al servidor" ;;
-      p_waiting) echo "Esperando a la sincronización en curso" ;; p_connecting) echo "Conectando con el servidor" ;;
-      p_roms) echo "Mirando los juegos" ;; p_saves) echo "Mirando las partidas" ;; p_hashing) echo "Leyendo ficheros nuevos o cambiados" ;;
-      p_server) echo "Preguntando al servidor" ;; p_transfer) echo "Pasando partidas" ;; p_identify) echo "Identificando juegos por su cabecera" ;;
-      p_finished) echo "Partidas al día" ;; p_settings) echo "Aplicando los ajustes del servidor" ;; p_prune) echo "Borrando juegos fuera de listas" ;;
-      p_roms-plan) echo "Preguntando qué juegos tocan" ;; p_roms-download) echo "Descargando juegos" ;; p_roms-finished) echo "Juegos al día" ;;
-      p_pulls) echo "Enviando juegos al servidor" ;; p_*) echo "Trabajando..." ;;
-      stophint) echo "B para parar" ;; backhint) echo "B vuelve al menú; el envío sigue" ;; stopping) echo "Parando la descarga..." ;;
-      details) echo "Ver detalles" ;; uptodate) echo "Todo al día" ;; lastresult) echo "Último resultado:" ;; log) echo "Registro:" ;;
-      f_saves-up) if [ "$2" = 1 ]; then echo "${UP}1 partida subida al servidor"; else echo "$UP$2 partidas subidas al servidor"; fi ;;
-      f_saves-down) if [ "$2" = 1 ]; then echo "${DOWN}1 partida recibida"; else echo "$DOWN$2 partidas recibidas"; fi ;;
-      f_states-up) if [ "$2" = 1 ]; then echo "${UP}1 savestate subido al servidor"; else echo "$UP$2 savestates subidos al servidor"; fi ;;
-      f_states-down) if [ "$2" = 1 ]; then echo "${DOWN}1 savestate recibido"; else echo "$DOWN$2 savestates recibidos"; fi ;;
-      f_games-down) if [ "$2" = 1 ]; then echo "${DOWN}1 juego descargado"; else echo "$DOWN$2 juegos descargados"; fi ;;
-      f_games-sent) if [ "$2" = 1 ]; then echo "${UP}1 juego enviado al servidor"; else echo "$UP$2 juegos enviados al servidor"; fi ;;
-      f_games-deleted) if [ "$2" = 1 ]; then echo "1 juego borrado (fuera de listas)"; else echo "$2 juegos borrados (fuera de listas)"; fi ;;
-      f_saves-cleaned) if [ "$2" = 1 ]; then echo "1 partida de juegos borrados quitada"; else echo "$2 partidas de juegos borrados quitadas"; fi ;;
-      f_games-stopped) echo "Descarga de juegos parada" ;; f_games-nospace) echo "No cabe «$3»: falta espacio" ;;
-      f_conflicts) if [ "$2" = 1 ]; then echo "${WARN}1 partida en conflicto"; else echo "$WARN$2 partidas en conflicto"; fi ;;
-      f_errors) if [ "$2" = 1 ]; then echo "${WARN}1 error"; else echo "$WARN$2 errores"; fi ;;
-      s_start_ok) echo "partidas al día" ;; s_start_offline) echo "sin conexión desde las $2. Esta partida puede no ser la última" ;;
-      s_offline) echo "sin conexión con el servidor desde las $2. Las partidas se guardan en la consola y se subirán al volver la red" ;;
-      s_online) echo "conectado de nuevo, partidas sincronizadas" ;; s_conflicts) echo "$2 partidas en conflicto: elige cuál vale en la app" ;;
-      s_uploaded) echo "partida guardada en el servidor" ;; s_kept) echo "sin conexión: la partida queda en la consola y se subirá al volver la red" ;;
-      clockask) echo "La consola no se pone en hora sola. Rommancer necesita la hora bien para conectar con el servidor y fechar las partidas. ¿Activar la hora por internet (y esperarla al encender)?" ;;
-      clockon) echo "Activar (recomendado)" ;; later) echo "Ahora no" ;;
-      l_offline) echo "Rommancer (sin conexión)" ;; l_conflicts) echo "Rommancer ($2 conflictos)" ;;
-      lists) echo "Listas de juegos" ;; listsinfo) echo "$2 listas en esta consola. A pone o quita una; al salir se descargan o borran sus juegos." ;;
-      nolists) echo "No hay listas. Créalas en la web de Rommancer." ;; listsfail) echo "No se pudo hablar con el servidor" ;; back) echo "Volver" ;;
-      listdrop) echo "Quitar «$2» borrará $3 juegos de esta consola ($4)." ;; listdropup) echo "$2 que el servidor no tiene se le envían antes." ;;
-      listdropgo) echo "Quitar y borrar $2 juegos" ;; cancel) echo "Cancelar" ;;
-      pruneintro) echo "Rommancer puede borrar de esta consola los juegos que no estén en ninguna de sus listas (los que el servidor no tenga se le envían antes). Las partidas se quedan. Puedes cambiarlo luego en Ajustes o en la web. ¿Lo activas?" ;;
-      pruneyes) echo "Sí, activarlo" ;; pruneno) echo "No, dejarlo desactivado" ;;
-      pruneask) echo "Se ha activado desde el servidor el borrado de juegos fuera de listas. Si lo mantienes se borrarán $2 juegos ($3). ¿Mantener esta opción?" ;;
-      prunekeep) echo "Sí, mantenerlo" ;; pruneoff) echo "No, desactivarlo" ;;
-      prunehold) echo "Se van a borrar $2 de los $3 juegos de esta consola (más de la mitad) por no estar en ninguna lista. Puede que una lista se haya vaciado. ¿Los borro?" ;;
-      prunedelete) echo "Sí, borrarlos" ;; prunelater) echo "Ahora no" ;;
-      *) echo "$1" ;;
-    esac
-  else
     case "$1" in
       server) echo "Server" ;; login) echo "Log in" ;; signup) echo "Create account" ;; quit) echo "Exit" ;;
       user) echo "USERNAME OR EMAIL" ;; username) echo "USERNAME" ;; email) echo "EMAIL" ;; password) echo "PASSWORD" ;;
@@ -1928,10 +1853,9 @@ t() {
       prunedelete) echo "Yes, delete them" ;; prunelater) echo "Not now" ;;
       *) echo "$1" ;;
     esac
-  fi
 }
-# The summary's marks on Onion's screens: its theme fonts are not known to carry arrows or a warning sign (Latin-1
-# accents, ñ, « » and · they do), so no arrows and a plain "!"
+# The summary's marks on Onion's screens: its theme fonts are not known to carry arrows or a warning sign, so no
+# arrows and a plain "!"
 UP=""; DOWN=""; WARN="! "
 
 # POST a device form to /link/login or /link/signup and keep the token
@@ -1968,10 +1892,10 @@ key_watch_end() {
   for c in /proc/[0-9]*/cmdline; do grep -q 'if=/dev/input/event0' "$c" 2>/dev/null && { p="${c#/proc/}"; kill "${p%/cmdline}" 2>/dev/null; }; done
 }
 
-# Human size of a byte count (a decimal comma in Spanish)
+# Human size of a byte count
 human() {
   h="$(awk -v b="${1:-0}" 'BEGIN { split("B KB MB GB TB", u, " "); i = 1; while (b >= 1024 && i < 5) { b /= 1024; i++ } printf (i > 2 ? "%.1f %s" : "%d %s"), b, u[i] }')"
-  if tr_es; then printf '%s' "$h" | tr . ,; else printf '%s' "$h"; fi
+  printf '%s' "$h"
 }
 
 # A file name cut to fit one line of a panel

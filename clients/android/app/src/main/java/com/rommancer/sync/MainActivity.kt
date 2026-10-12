@@ -290,7 +290,7 @@ private fun syncedText(context: android.content.Context, at: Long): String {
     return when {
         DateUtils.isToday(at) -> context.getString(R.string.synced_today, time)
         DateUtils.isToday(at + DateUtils.DAY_IN_MILLIS) -> context.getString(R.string.synced_yesterday, time)
-        else -> context.getString(R.string.synced_at, java.text.SimpleDateFormat("d MMM", java.util.Locale.getDefault()).format(java.util.Date(at)) + ", " + time)
+        else -> context.getString(R.string.synced_at, java.text.SimpleDateFormat("d MMM", java.util.Locale.ENGLISH).format(java.util.Date(at)) + ", " + time)
     }
 }
 

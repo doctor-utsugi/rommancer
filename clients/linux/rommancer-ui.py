@@ -29,142 +29,9 @@ SPRITE = os.path.join(HERE, "savepoint.png")
 SPRITE_FPS = 60
 ES_INPUT = ["/userdata/system/configs/emulationstation/es_input.cfg", "/usr/share/emulationstation/es_input.cfg"]
 
-# Every text on screen, English and Spanish, with the vocabulary of docs/clients-ux.md (save/partida, savestate,
-# game/juego). Keys ending in "1" are the singular of the key without it (one save, one game); the summary's arrows
+# Every text on screen, with the vocabulary of docs/clients-ux.md (save, savestate, game). Keys ending in "1" are the singular of the key without it (one save, one game); the summary's arrows
 # and warning sign are drawn (the default font has no glyph for them)
 TEXTS = {
-    "es": {
-        "title": "Rommancer Sync",
-        "server": "Servidor",
-        "login": "Entrar",
-        "signup": "Crear cuenta",
-        "quit": "Salir",
-        "user": "Usuario o email",
-        "username": "Usuario",
-        "email": "Email",
-        "password": "Contraseña",
-        "sync_now": "Sincronizar ahora",
-        "status": "Estado",
-        "settings": "Ajustes",
-        "logout": "Desconectar esta consola…",
-        "logout_title": "Desconectar esta consola",
-        "logout_ask": "¿Desconectar esta consola de {host}? Sus partidas se quedan en ella, pero deja de sincronizar.",
-        "logout_go": "Desconectar",
-        "account": "Cuenta: {user} @ {host}",
-        "syncing": "Sincronizando...",
-        "checking": "Conectando con el servidor...",
-        "no_server": "Primero escribe la dirección del servidor",
-        "bad_server": "No hay un Rommancer en esa dirección",
-        "bad_login": "Usuario o contraseña incorrectos",
-        "signup_closed": "Este servidor no permite crear cuentas",
-        "exists": "Ese usuario o email ya existe",
-        "error": "Error: {msg}",
-        "done": "Listo. La sincronización automática está activada.",
-        "logged_out": "Consola desconectada",
-        "keys": "A tecla  B borrar  X mayús  Y espacio  START aceptar  SELECT cancelar",
-        "menu_keys": "A elegir   B atrás",
-        "press": "Pulsa A para continuar",
-        "nolog": "Todavía no hay registro",
-        "version": "Versión {v}",
-        "synced": "Sincronizado: {d}",
-        "today": "hoy",
-        "never_synced": "Sin sincronizar todavía",
-        "offline_since": "Sin conexión desde las {t}",
-        "conflicts_line": "{n} partidas en conflicto",
-        "conflicts_line1": "1 partida en conflicto",
-        "months": "ene feb mar abr may jun jul ago sep oct nov dic",
-        "installed": "instalada el {d}",
-        "step": "Paso {n} de {m} · {title}",
-        "st_saves": "Partidas",
-        "st_settings": "Ajustes",
-        "st_prune": "Juegos que sobran",
-        "st_roms": "Juegos de las listas",
-        "st_pulls": "Envío al servidor",
-        "p_connecting": "Conectando con el servidor",
-        "p_waiting": "Esperando a la sincronización en curso",
-        "p_roms": "Mirando los juegos",
-        "p_saves": "Mirando las partidas",
-        "p_hashing": "Leyendo ficheros nuevos o cambiados",
-        "p_server": "Preguntando al servidor",
-        "p_identify": "Identificando juegos por su cabecera",
-        "p_transfer": "Pasando partidas",
-        "p_finished": "Partidas al día",
-        "p_settings": "Aplicando los ajustes del servidor",
-        "p_prune": "Borrando juegos fuera de listas",
-        "p_roms-plan": "Preguntando qué juegos tocan",
-        "p_roms-download": "Descargando juegos",
-        "p_roms-finished": "Juegos al día",
-        "p_pulls": "Enviando juegos al servidor",
-        "p_working": "Trabajando...",
-        "of": "{pct}% de {size}",
-        "allow_pull": "El servidor puede pedir juegos: {v}",
-        "allow_pull_note": "Copia de esta consola los juegos que le faltan.",
-        "allow_ssh": "Acceso SSH del servidor: {v}",
-        "allow_ssh_note": "Sincroniza la consola aunque la app esté cerrada.",
-        "prune": "Borrar juegos fuera de listas: {v}",
-        "prune_note": "Borra los juegos que no estén en ninguna lista.",
-        "prune_clean": "Borrar partidas de juegos borrados ({n})",
-        "prune_clean_note": "Quita sus partidas; siguen en el servidor.",
-        "yes": "sí",
-        "no": "no",
-        "conflicts": "Conflictos ({n})",
-        "no_conflicts": "No hay conflictos",
-        "conflict_info": "{game}: esta consola guardó el {mine}; el servidor tiene una versión del {theirs} ({dev}).",
-        "keep_device": "Quedarme con la de esta consola",
-        "keep_server": "Usar la del servidor",
-        "prune_intro": "Rommancer puede borrar de esta consola los juegos que no estén en ninguna de sus listas. Los que el servidor no tenga se le envían antes de borrarlos. Las partidas se quedan. Puedes cambiarlo luego en Ajustes o en la web. ¿Lo activas?",
-        "prune_ask": "Se ha activado desde el servidor el borrado de juegos fuera de listas. Si lo mantienes se borrarán {n} juegos ({size}). ¿Quieres mantener esta opción?",
-        "prune_hold": "Se van a borrar {n} de los {total} juegos de esta consola (más de la mitad) por no estar en ninguna lista. Puede que una lista se haya vaciado. ¿Los borro?",
-        "prune_yes": "Sí, activarlo",
-        "prune_no": "No, dejarlo desactivado",
-        "prune_keep": "Sí, mantenerlo",
-        "prune_off": "No, desactivarlo",
-        "prune_delete": "Sí, borrarlos",
-        "prune_later": "Ahora no",
-        "roms_watch": "Ver descarga de juegos",
-        "pulls_watch": "Ver envío de juegos al servidor",
-        "w_roms": "Descargando juegos {n}",
-        "w_pulls": "Enviando juegos al servidor {n}",
-        "details": "Ver detalles",
-        "back_keys": "B vuelve al menú (el envío sigue)",
-        "stop_keys": "B para parar",
-        "stopping": "Parando la descarga...",
-        "lists": "Listas de juegos",
-        "lists_info": "{n} listas en esta consola. A pone o quita una; al salir se descargan o borran sus juegos.",
-        "roms_now": "Descargar ahora los juegos de las listas",
-        "no_lists": "No hay listas. Créalas en la web de Rommancer.",
-        "lists_fail": "No se pudo hablar con el servidor",
-        "back": "Volver",
-        "list_drop": "Quitar «{name}» borrará {n} juegos de esta consola ({size}).",
-        "list_drop_up": "{n} que el servidor no tiene se le envían antes.",
-        "list_drop_go": "Quitar y borrar {n} juegos",
-        "cancel": "Cancelar",
-        "up_to_date": "Todo al día",
-        "last_result": "Último resultado:",
-        "log": "Registro:",
-        "f_saves-up": "{n} partidas subidas al servidor",
-        "f_saves-up1": "1 partida subida al servidor",
-        "f_saves-down": "{n} partidas recibidas",
-        "f_saves-down1": "1 partida recibida",
-        "f_states-up": "{n} savestates subidos al servidor",
-        "f_states-up1": "1 savestate subido al servidor",
-        "f_states-down": "{n} savestates recibidos",
-        "f_states-down1": "1 savestate recibido",
-        "f_games-down": "{n} juegos descargados",
-        "f_games-down1": "1 juego descargado",
-        "f_games-sent": "{n} juegos enviados al servidor",
-        "f_games-sent1": "1 juego enviado al servidor",
-        "f_games-deleted": "{n} juegos borrados (fuera de listas)",
-        "f_games-deleted1": "1 juego borrado (fuera de listas)",
-        "f_saves-cleaned": "{n} partidas de juegos borrados quitadas",
-        "f_saves-cleaned1": "1 partida de juegos borrados quitada",
-        "f_games-stopped": "Descarga de juegos parada",
-        "f_games-nospace": "No cabe «{x}»: falta espacio",
-        "f_conflicts": "{n} partidas en conflicto",
-        "f_conflicts1": "1 partida en conflicto",
-        "f_errors": "{n} errores",
-        "f_errors1": "1 error",
-    },
     "en": {
         "title": "Rommancer Sync",
         "server": "Server",
@@ -299,20 +166,7 @@ TEXTS = {
     },
 }
 
-def system_language():
-    # Newer Knulli renamed batocera.conf to knulli.conf
-    for conf in ("/userdata/system/knulli.conf", "/userdata/system/batocera.conf"):
-        try:
-            with open(conf, encoding="utf-8") as f:
-                m = re.search(r"^system\.language=(\w\w)", f.read(), re.M)
-                if m:
-                    return m.group(1)
-        except OSError:
-            pass
-    return (os.environ.get("LANG") or "en")[:2]
-
-
-T = TEXTS.get(system_language(), TEXTS["en"])
+T = TEXTS["en"]
 
 # ---------- device state, shared with rommancer-sync.sh ----------
 
@@ -447,11 +301,11 @@ WARN = (255, 190, 90)
 
 
 def human(n):
-    """A byte count for people: 1.2 GB (1,2 GB in Spanish)"""
+    """A byte count for people: 1.2 GB"""
     for unit in ("B", "KB", "MB", "GB", "TB"):
         if n < 1024 or unit == "TB":
             s = f"{n:.1f} {unit}" if unit not in ("B", "KB") else f"{int(n)} {unit}"
-            return s.replace(".", ",") if T is TEXTS["es"] else s
+            return s
         n /= 1024
 
 

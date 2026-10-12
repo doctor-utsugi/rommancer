@@ -4,6 +4,7 @@
 mod api;
 mod card;
 mod pc;
+mod prune;
 mod sync;
 mod wifi;
 
@@ -290,18 +291,6 @@ async fn local_wifi() -> Result<Vec<wifi::LocalWifi>, String> {
     tauri::async_runtime::spawn_blocking(wifi::known_networks).await.map_err(|e| e.to_string())?
 }
 
-/// Interface language from the system: the first of the locale variables that says one
-#[tauri::command]
-fn system_lang() -> String {
-    ["LANGUAGE", "LC_ALL", "LC_MESSAGES", "LANG", "LC_TIME"]
-        .iter()
-        .filter_map(|k| std::env::var(k).ok())
-        .filter(|v| !v.is_empty())
-        .find(|v| v.starts_with("es"))
-        .map(|_| "es".to_string())
-        .unwrap_or_default()
-}
-
 #[tauri::command]
 fn unlink_card(app: AppHandle, root: String) -> Result<(), String> {
     card::remove_own_link(Path::new(&root)).map_err(|e| e.to_string())?;
@@ -382,6 +371,22 @@ impl Target {
             Target::Pc(p) => DeviceApi::new(&p.server, &p.token, RootHeader::Moves(p.root.clone())),
         }
     }
+    /// Where the deletion of games in no list keeps its state: this PC's in the app's data, a card's on the card
+    /// (as the shell client does in sd mode). None for the card of a console, whose own client owns the setting
+    fn prune_store(&self, app: &AppHandle) -> Option<prune::PruneStore> {
+        match self {
+            Target::Pc(p) => Some(prune::PruneStore::new(data_dir(app).join(format!("pc-{}", p.device_id)))),
+            Target::Card { link, .. } if link.console => None,
+            Target::Card { root, .. } => Some(prune::PruneStore::new(Path::new(root).join(".rommancer"))),
+        }
+    }
+    /// The roms folder this device knows for itself
+    fn roms_dir(&self) -> Option<String> {
+        match self {
+            Target::Pc(p) => Some(p.roms_dir.clone()),
+            Target::Card { .. } => None,
+        }
+    }
 }
 
 fn target(state: &AppState, key: &str) -> Result<Target, String> {
@@ -394,12 +399,16 @@ fn target(state: &AppState, key: &str) -> Result<Target, String> {
 
 #[derive(Clone, Copy, PartialEq, Debug)]
 enum Mode {
-    /// Everything: saves, settings (cards), games the server asked for, list games
+    /// Everything: saves, settings (cards), games in no list, games the server asked for, list games
     Full,
     /// Saves and states only (a save written here, or one waiting on the server)
     Saves,
     /// Only the games the server asked for
     Pulls,
+    /// Only the deletion of games in no list (a held one the user confirmed)
+    Prune,
+    /// Saves, then the saves of the games deleted for being in no list
+    Clean,
 }
 
 impl Mode {
@@ -407,6 +416,8 @@ impl Mode {
         match s {
             "saves" => Mode::Saves,
             "pulls" => Mode::Pulls,
+            "prune" => Mode::Prune,
+            "clean" => Mode::Clean,
             _ => Mode::Full,
         }
     }
@@ -415,6 +426,8 @@ impl Mode {
             Mode::Full => "full",
             Mode::Saves => "saves",
             Mode::Pulls => "pulls",
+            Mode::Prune => "prune",
+            Mode::Clean => "clean",
         }
     }
 }
@@ -468,6 +481,9 @@ fn start_sync(app: &AppHandle, state: &AppState, key: String, mode: Mode, roms: 
         let cache = data_dir(&app).join(format!("hashes-{}.tsv", t.token().chars().take(12).collect::<String>()));
         let mut engine = sync::Engine::new(t.api(), key.clone(), t.root(), cache, &report, &cancelled, &log);
         engine.allow_pull = allow_pull;
+        engine.prune = t.prune_store(&app);
+        engine.roms_dir = t.roms_dir();
+        let pruning = engine.prune.as_ref().is_some_and(|p| p.active());
         engine.steps = match mode {
             Mode::Full => {
                 let mut v = vec!["saves"];
@@ -475,23 +491,43 @@ fn start_sync(app: &AppHandle, state: &AppState, key: String, mode: Mode, roms: 
                 if !is_pc {
                     v.push("settings");
                 }
+                if pruning {
+                    v.push("prune");
+                }
                 v.push("sending");
                 if with_roms {
                     v.push("games");
                 }
                 v
             }
-            Mode::Saves => vec!["saves"],
+            Mode::Saves | Mode::Clean => vec!["saves"],
             Mode::Pulls => vec!["sending"],
+            Mode::Prune => vec!["prune"],
         };
         let mut out = sync::Outcome::default();
         let mut run = || -> anyhow::Result<()> {
-            if mode != Mode::Pulls {
+            if mode != Mode::Pulls && mode != Mode::Prune {
                 engine.sync(&mut out)?;
                 out.conflicts = engine.conflicts().map(|c| c.len() as u32).unwrap_or(0);
             }
+            if mode == Mode::Clean {
+                return engine.prune_clean(&mut out);
+            }
             if mode == Mode::Full && !is_pc {
                 engine.config(&mut out)?;
+            }
+            // Games in no list go before the sending step: the ones the server lacks are asked for there
+            if mode == Mode::Full || mode == Mode::Prune {
+                if let Err(e) = engine.prune(&mut out) {
+                    if e.to_string() == "cancelled" {
+                        return Err(e);
+                    }
+                    out.errors += 1;
+                    log(format!("error: delete games in no list: {e:#}"));
+                }
+            }
+            if mode == Mode::Prune {
+                return Ok(());
             }
             if mode != Mode::Saves {
                 engine.pulls(&mut out)?;
@@ -505,7 +541,7 @@ fn start_sync(app: &AppHandle, state: &AppState, key: String, mode: Mode, roms: 
         let was_cancelled = matches!(&result, Err(e) if e.to_string() == "cancelled");
         if is_pc {
             set_offline(&app, matches!(&result, Err(e) if unreachable(e)));
-            if mode != Mode::Pulls && (result.is_ok() || out.conflicts > 0) {
+            if mode != Mode::Pulls && mode != Mode::Prune && (result.is_ok() || out.conflicts > 0) {
                 *app.state::<AppState>().pc_conflicts.lock().unwrap() = out.conflicts;
             }
         }
@@ -591,6 +627,36 @@ async fn resolve_conflict(app: AppHandle, state: State<'_, AppState>, key: Strin
         *n = n.saturating_sub(1);
     }
     start_sync(&app, &state, key, Mode::Saves, None)
+}
+
+/// The deletion of games in no list of a device: none where this app does not own it (a console's card)
+#[tauri::command]
+fn prune_state(app: AppHandle, state: State<AppState>, key: String) -> Result<Option<prune::PruneInfo>, String> {
+    Ok(target(&state, &key)?.prune_store(&app).map(|p| p.info()))
+}
+
+/// Turns the deletion of games in no list on or off (a change on screen, or the answer to one made in the web app);
+/// the server hears it at a saves sync started at once, or at the sync running now
+#[tauri::command]
+fn prune_set(app: AppHandle, state: State<AppState>, key: String, on: bool) -> Result<(), String> {
+    let store = target(&state, &key)?.prune_store(&app).ok_or("this device's own client keeps this setting")?;
+    store.set(on);
+    push_log(&app, &key, format!("prune: turned {}", if on { "on" } else { "off" }));
+    start_sync(&app, &state, key, Mode::Saves, None)
+}
+
+/// The user confirmed a held deletion of more than half of the games: the server is told, then the deletion runs
+#[tauri::command]
+async fn prune_confirm(app: AppHandle, state: State<'_, AppState>, key: String) -> Result<(), String> {
+    let t = target(&state, &key)?;
+    let store = t.prune_store(&app).ok_or("this device's own client keeps this setting")?;
+    let Some((count, _)) = store.hold() else { return Ok(()) };
+    tauri::async_runtime::spawn_blocking(move || t.api().post_text("/agent/prune/confirm", Vec::new(), &[("X-Count", count.to_string())]).map_err(|e| e.to_string()))
+        .await
+        .map_err(|e| e.to_string())??;
+    store.set_hold(None);
+    push_log(&app, &key, format!("prune: {count} roms confirmed"));
+    start_sync(&app, &state, key, Mode::Prune, None)
 }
 
 /// RetroArch installs found on this computer, the suggested games folder and the computer's name
@@ -693,7 +759,7 @@ fn pc_forget(app: AppHandle, state: State<AppState>) {
     let _ = app.emit("pc-state", ());
 }
 
-/// The tray's texts in the interface language, and its tooltip (the state line)
+/// The tray's texts and its tooltip (the state line)
 #[tauri::command]
 fn set_tray(app: AppHandle, tooltip: String, open: String, sync: String, quit: String) -> Result<(), String> {
     let tray = app.tray_by_id("tray").ok_or("no tray")?;
@@ -901,7 +967,6 @@ pub fn run() {
                 pc_offline: Mutex::new(None),
             });
 
-            // The window puts the texts in the interface language as soon as it loads
             let open = MenuItem::with_id(app, "open", "Rommancer", true, None::<&str>)?;
             let sync_all = MenuItem::with_id(app, "sync", "Sync now", true, None::<&str>)?;
             let quit = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
@@ -947,7 +1012,6 @@ pub fn run() {
             remove_folder,
             link_card,
             attach_card,
-            system_lang,
             restart_app,
             unlink_card,
             device_id,
@@ -961,6 +1025,9 @@ pub fn run() {
             retroarch_read,
             pc_setup,
             pc_forget,
+            prune_state,
+            prune_set,
+            prune_confirm,
             set_tray,
             local_wifi
         ])

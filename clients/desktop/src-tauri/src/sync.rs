@@ -2,6 +2,7 @@
 //! server decide, move the files it says; then the roms the server asked for and the roms of the lists.
 
 use crate::api::{b64, pairs, DeviceApi};
+use crate::prune::{self, PruneStore};
 use anyhow::{bail, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -21,9 +22,9 @@ const NOT_ROMS: &[&str] = &[
 pub struct Progress {
     /// The card's root, or "pc" for this PC
     pub root: String,
-    /// connecting, roms, saves, server, transfer, config, pulls, roms-plan, roms-download
+    /// connecting, roms, saves, server, transfer, config, prune, pulls, roms-plan, roms-download
     pub phase: String,
-    /// Numbered steps, so the bar never seems to go back: saves, settings, sending, games
+    /// Numbered steps, so the bar never seems to go back: saves, settings, prune, sending, games
     pub step: u32,
     pub steps: u32,
     pub step_name: String,
@@ -36,6 +37,7 @@ pub struct Progress {
 
 /// What a sync did, one fact per field (the UI shows the ones that are not zero)
 #[derive(Serialize, Deserialize, Clone, Default)]
+#[serde(default)]
 pub struct Outcome {
     pub saves_up: u32,
     pub saves_down: u32,
@@ -46,6 +48,10 @@ pub struct Outcome {
     pub games_failed: u32,
     /// Games the server asked for, sent
     pub games_sent: u32,
+    /// Games deleted for being in no list
+    pub games_deleted: u32,
+    /// Save and state files of those games removed
+    pub saves_cleaned: u32,
     pub errors: u32,
     /// Configuration work done on the card (copies, the user's settings, restores)
     pub config: u32,
@@ -63,6 +69,8 @@ impl Outcome {
             ("states-down", self.states_down),
             ("games-down", self.games_down),
             ("games-sent", self.games_sent),
+            ("games-deleted", self.games_deleted),
+            ("saves-cleaned", self.saves_cleaned),
             ("conflicts", self.conflicts),
             ("errors", self.errors + self.games_failed),
         ]
@@ -94,10 +102,14 @@ pub struct Engine<'a> {
     pub report: &'a dyn Fn(Progress),
     pub cancelled: &'a dyn Fn() -> bool,
     pub log: &'a dyn Fn(String),
-    /// The steps of this run, in order: saves, settings, sending, games
+    /// The steps of this run, in order: saves, settings, prune, sending, games
     pub steps: Vec<&'static str>,
     /// Whether the server may ask this device for games (X-Allow-Pull)
     pub allow_pull: bool,
+    /// Deleting games in no list, for a device whose setting is kept here (X-Prune); none: the server is not told
+    pub prune: Option<PruneStore>,
+    /// The roms folder this device knows for itself (this PC): deletions stay inside it whatever the server says
+    pub roms_dir: Option<String>,
     cache: HashMap<String, (u64, u64, String)>,
 }
 
@@ -105,6 +117,7 @@ pub struct Engine<'a> {
 fn step_of(phase: &str) -> &'static str {
     match phase {
         "config" => "settings",
+        "prune" => "prune",
         "pulls" => "sending",
         "roms-plan" | "roms-download" => "games",
         _ => "saves",
@@ -188,7 +201,7 @@ impl<'a> Engine<'a> {
                 }
             }
         }
-        Self { api, key, root, cache_file, report, cancelled, log, steps: vec!["saves"], allow_pull: true, cache }
+        Self { api, key, root, cache_file, report, cancelled, log, steps: vec!["saves"], allow_pull: true, prune: None, roms_dir: None, cache }
     }
 
     /// A progress event with its step filled in
@@ -332,7 +345,20 @@ impl<'a> Engine<'a> {
         let space = crate::card::space_of(&space_at).map(|(f, t)| format!("{f} {t}")).unwrap_or_default();
         let allow = if self.allow_pull { "1" } else { "0" };
         (self.log)(format!("sync: {} roms, {} save files", roms.len(), saves.len()));
-        let plan = pairs(&self.api.post_text("/agent/sync", request.into_bytes(), &[("X-Allow-Pull", allow.into()), ("X-Space", space)])?);
+        let mut headers = vec![("X-Allow-Pull", allow.to_string()), ("X-Space", space)];
+        // The setting as this device has it, and whether its user changed it (or answered) since the server last heard
+        let prune_sent = self.prune.as_ref().map(|p| p.pending());
+        if let (Some(p), Some(set)) = (&self.prune, prune_sent) {
+            headers.push(("X-Prune", if p.on() { "1" } else { "0" }.into()));
+            headers.push(("X-Prune-Set", if set { "1" } else { "0" }.into()));
+        }
+        let plan = pairs(&self.api.post_text("/agent/sync", request.into_bytes(), &headers)?);
+        if let Some(p) = &self.prune {
+            if prune_sent == Some(true) {
+                p.heard();
+            }
+            p.answer(plan.iter().find(|l| l[0] == "prune").map(Vec::as_slice));
+        }
         let steps: Vec<_> = plan.into_iter().filter(|s| s.len() >= 3 && ["put", "get", "tput", "tget", "cget"].contains(&s[0].as_str())).collect();
         for (n, s) in steps.iter().enumerate() {
             self.check()?;
@@ -510,6 +536,108 @@ impl<'a> Engine<'a> {
             }
         }
         clear_list_caches(Path::new(&self.root), &arrived);
+        Ok(())
+    }
+
+    /// The roms folder deletions are kept inside: this device's own when it has one, otherwise the server's (only
+    /// when it lies within the device root)
+    fn prune_roms(&self) -> Result<Option<String>> {
+        if let Some(r) = &self.roms_dir {
+            return Ok(Some(r.clone()));
+        }
+        let roots = pairs(&self.api.get_text("/agent/roots")?);
+        Ok(roots.iter().find(|r| r.len() >= 2 && r[0] == "roms").map(|r| r[1].clone()).filter(|r| prune::within(r, &self.root)))
+    }
+
+    /// Deletes the games the server names as in no list of this device (only with the setting on, only files of
+    /// the roms folder). Files the server lacks are not named: it asks for them first (the sending step) and names
+    /// them at a later pass. A deletion of more than half of the games waits in prune-hold for the user.
+    pub fn prune(&mut self, out: &mut Outcome) -> Result<()> {
+        let Some(store) = self.prune.clone() else { return Ok(()) };
+        if !store.active() {
+            return Ok(());
+        }
+        self.progress("prune", 0, 0);
+        let Some(roms) = self.prune_roms()? else {
+            (self.log)("prune: no roms folder".into());
+            return Ok(());
+        };
+        let plan = pairs(&self.api.get_text("/agent/prune")?);
+        if let Some(h) = plan.iter().find(|l| l.len() >= 3 && l[0] == "hold") {
+            let n = h[1].parse().unwrap_or(0);
+            store.set_hold(Some((n, h[2].parse().unwrap_or(0))));
+            (self.log)(format!("prune: {n} roms to delete, waiting for confirmation"));
+            return Ok(());
+        }
+        store.set_hold(None);
+        let del: Vec<&Vec<String>> = plan.iter().filter(|l| l.len() >= 2 && l[0] == "del").collect();
+        let mut gone = Vec::new();
+        for (i, l) in del.iter().enumerate() {
+            self.check()?;
+            let path = &l[1];
+            let file = PathBuf::from(path);
+            self.emit(Progress {
+                phase: "prune".into(),
+                done: i as u64 + 1,
+                total: del.len() as u64,
+                file: file.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default(),
+                ..Default::default()
+            });
+            if !prune::deletable(path, &roms) {
+                (self.log)(format!("prune: {path} is outside the roms folder, kept"));
+                continue;
+            }
+            if !prune::is_plain_file(&file) {
+                continue;
+            }
+            match fs::remove_file(&file) {
+                Ok(()) => {
+                    (self.log)(format!("prune: {path}"));
+                    gone.push(path.clone());
+                }
+                Err(e) => {
+                    out.errors += 1;
+                    (self.log)(format!("error: prune {path}: {e}"));
+                }
+            }
+        }
+        store.add_pruned(&gone);
+        let files: Vec<PathBuf> = gone.iter().map(PathBuf::from).collect();
+        clear_list_caches(Path::new(&self.root), &files);
+        if !gone.is_empty() {
+            (self.log)(format!("prune: {} roms in no list deleted", gone.len()));
+        }
+        out.games_deleted += gone.len() as u32;
+        Ok(())
+    }
+
+    /// Saves and states of the games deleted for being in no list, once a sync went through without errors (they
+    /// are on the server): only save files the server names, inside the device root
+    pub fn prune_clean(&mut self, out: &mut Outcome) -> Result<()> {
+        let Some(store) = self.prune.clone() else { return Ok(()) };
+        let gone = store.pruned();
+        if gone.is_empty() || out.errors > 0 {
+            return Ok(());
+        }
+        self.progress("prune-clean", 0, 0);
+        let roots = pairs(&self.api.get_text("/agent/roots")?);
+        let exts: Vec<String> = roots.iter().find(|r| r.len() >= 2 && r[0] == "exts").map(|r| r[1].split(' ').filter(|x| !x.is_empty()).map(str::to_string).collect()).unwrap_or_default();
+        let reply = pairs(&self.api.post_text("/agent/prune/saves", gone.join("\n").into_bytes(), &[])?);
+        let mut n = 0;
+        for l in reply.iter().filter(|l| l.len() >= 2 && l[0] == "file") {
+            let file = PathBuf::from(&l[1]);
+            let is_save_file = file.file_name().is_some_and(|f| is_save(&f.to_string_lossy(), &exts));
+            if !is_save_file || !prune::below(&l[1], &self.root, 0) || !prune::is_plain_file(&file) {
+                continue;
+            }
+            if fs::remove_file(&file).is_ok() {
+                n += 1;
+                (self.log)(format!("prune: removed {}", l[1]));
+            }
+        }
+        store.clear_pruned();
+        (self.log)(format!("prune: {n} save files of deleted roms removed"));
+        out.saves_cleaned += n;
         Ok(())
     }
 
