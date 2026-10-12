@@ -22,7 +22,7 @@
 #                                   Menu++...) mounted on this computer; the link lives on the card itself,
 #                                   so any computer with this script can sync it. Without a command: sync.
 set -u
-CLIENT_VERSION=20261040
+CLIENT_VERSION=20261041
 # A clock before this date is surely wrong (no battery-backed clock); kept apart from the version, which may run ahead
 CLOCK_MIN=20261001
 # Onion keeps curl (with TLS) and friends outside the default PATH
@@ -781,9 +781,9 @@ log_tail() {
 # files: how many, its list cache, what else is in it (not a rom: caches, lists, folders, hidden files) and the
 # list window the menu keeps for it
 lists_report() {
-  [ "$FW" = onion ] || return 0
+  [ "${FW:-}" = onion ] || return 0
   echo "--- lists"
-  [ -f "$STATE/lists-refreshed2" ] && echo "catch-up done"
+  [ -f "$STATE/lists-refreshed3" ] && echo "catch-up done"
   [ -s "$STATE/lists-changed" ] && echo "pending: $(sed -n 's#^\(.*/Roms/[^/]*\)/.*#\1#p' "$STATE/lists-changed" | sort -u | sed 's#.*/##' | tr '\n' ' ')"
   ps 2>/dev/null | grep -q '[M]ainUI' && echo "menu running"
   for d in "$ROOT"/Roms/*/; do
@@ -792,7 +792,7 @@ lists_report() {
     c="$(stat -c '%s@%y' "$d/${b}_cache6.db" 2>/dev/null | cut -c1-28)"
     x="$(ls -Ap "$d" 2>/dev/null | grep -E '/$|^\.|\.(db|xml|json|txt|journal)$|-journal$' | head -n 8 | tr '\n' ' ')"
     printf '%s: %s files, cache %s%s\n' "$b" "$n" "${c:-none}" "${x:+, other: $x}"
-    grep -A3 -F "$d" /appconfigs/romwinidx.json 2>/dev/null | tr -d ' \t\n' | cut -c1-160; echo
+    onion_list_paths "$d" | while IFS= read -r lp; do grep -A3 -F "$lp" /appconfigs/romwinidx.json 2>/dev/null | tr -d ' \t\n' | cut -c1-160; echo; done
   done | grep -v '^$' | head -n 40
 }
 
@@ -1228,13 +1228,25 @@ roms_changed() { printf '%s\n' "$@" >> "$STATE/lists-changed"; }
 #   Rommancer app closes (AFTER-GAME), never under the user's feet
 # - MinUI/NextUI list their folders as they are; for the others (muOS) no list cache is known
 ONION_RESET=/mnt/SDCARD/.tmp_update/script/reset_list.sh
+# A rom folder as Onion's menu names its list: each emulator (or app) whose config.json "rompath" leads there,
+# as "<emulator folder>/<rompath>"
+onion_list_paths() {
+  real="$(cd "$1" 2>/dev/null && pwd -P)" || return 0
+  for cfg in "$ROOT"/Emu/*/config.json "$ROOT"/RApp/*/config.json; do
+    [ -f "$cfg" ] || continue
+    rp="$(sed -n 's/.*"rompath"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$cfg" | head -n 1)"
+    [ -n "$rp" ] || continue
+    e="$(dirname "$cfg")"
+    [ "$(cd "$e/$rp" 2>/dev/null && pwd -P)" = "$real" ] && printf '%s/%s\n' "$e" "$rp"
+  done
+}
 refresh_lists() {
   [ -n "${FW:-}" ] || detect
   # Once: roms copied before lists were refreshed this way, every system folder read again
   r="${ROMS:-}"; [ -z "$r" ] && [ "$FW" = onion ] && r="$ROOT/Roms"
-  if [ ! -f "$STATE/lists-refreshed2" ] && [ -n "$r" ] && [ -d "$r" ]; then
+  if [ ! -f "$STATE/lists-refreshed3" ] && [ -n "$r" ] && [ -d "$r" ]; then
     find "$r" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | sed 's#$#/-#' >> "$STATE/lists-changed"
-    touch "$STATE/lists-refreshed2"
+    touch "$STATE/lists-refreshed3"
   fi
   [ -s "$STATE/lists-changed" ] || return 0
   case "$FW" in
@@ -1242,13 +1254,18 @@ refresh_lists() {
       ps 2>/dev/null | grep -q '[M]ainUI' && return 0
       sed -n 's#^\(.*/Roms/[^/]*\)/.*#\1#p' "$STATE/lists-changed" | sort -u | while IFS= read -r d; do
         [ -d "$d" ] || continue
-        if [ -f "$ONION_RESET" ] && [ -f /tmp/state.json ]; then sh "$ONION_RESET" "$d" >/dev/null 2>&1
-        else
-          # Before the menu ever ran (boot): no window state yet, only the saved index and the caches
-          [ -f /appconfigs/romwinidx.json ] && awk -v search="$d" '$0 ~ search { n = 4 }; n { n--; next }; 1' /appconfigs/romwinidx.json > "$WORK/romwinidx" && cat "$WORK/romwinidx" > /appconfigs/romwinidx.json
-          rm -f "$d/$(basename "$d")_cache2.db" "$d/$(basename "$d")_cache6.db"
-        fi
-        log "game list of $(basename "$d") refreshed"
+        # The menu keeps a list's window under its emulator's path ("/mnt/SDCARD/Emu/GB/../../Roms/GB"), the one
+        # Onion's own options hand to reset_list.sh: with the plain path the cache went but the old window stayed
+        onion_list_paths "$d" > "$WORK/list-paths"; [ -s "$WORK/list-paths" ] || echo "$d" > "$WORK/list-paths"
+        while IFS= read -r lp; do
+          if [ -f "$ONION_RESET" ] && [ -f /tmp/state.json ]; then sh "$ONION_RESET" "$lp" >/dev/null 2>&1
+          else
+            # Before the menu ever ran (boot): no window state yet, only the saved index and the caches
+            [ -f /appconfigs/romwinidx.json ] && awk -v search="$lp" '$0 ~ search { n = 4 }; n { n--; next }; 1' /appconfigs/romwinidx.json > "$WORK/romwinidx" && cat "$WORK/romwinidx" > /appconfigs/romwinidx.json
+            rm -f "$d/$(basename "$d")_cache2.db" "$d/$(basename "$d")_cache6.db"
+          fi
+        done < "$WORK/list-paths"
+        log "game list of $(basename "$d") refreshed ($(head -n 1 "$WORK/list-paths"))"
       done ;;
     knulli|batocera|rocknix)
       playing && return 0
