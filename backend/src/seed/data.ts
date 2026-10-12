@@ -293,10 +293,16 @@ const nextuiSystems: Record<string, [string, string]> = {
   msx1: ['Microsoft MSX (MSX)', 'bluemsx'], colecovision: ['Colecovision (COLECO)', 'gearcoleco'],
 };
 const nextuiMap = Object.fromEntries(Object.entries(nextuiSystems).map(([slug, [folder, core]]) => [slug, { folder, emulator: `minui-${core}` }]));
+// Onion: the rom folders its Package Manager's emulators read ("rompath" of App/PackageManager/data/*/*/Emu/*/config.json).
+// One folder may serve two systems (NGP holds both Neo Geo Pockets, WS both WonderSwans, MSX both MSX)
 const onionFolders = {
   nes: 'FC', fds: 'FDS', snes: 'SFC', gb: 'GB', gbc: 'GBC', gba: 'GBA', n64: 'N64', nds: 'NDS', sms: 'MS', gg: 'GG', md: 'MD',
-  psx: 'PS', fbneo: 'FBNEO', lynx: 'LYNX', a7800: 'SEVEN',
-  atari2600: 'ATARI', wswan: 'WS', colecovision: 'COLECO', vectrex: 'VECTREX', msx1: 'MSX', pcengine: 'PCE', pokemini: 'POKE', virtualboy: 'VB', ngp: 'NGP', sega32x: 'THIRTYTWOX', segacd: 'SEGACD', pcenginecd: 'PCECD',
+  psx: 'PS', fbneo: 'FBNEO', lynx: 'LYNX', a7800: 'SEVENTYEIGHTHUNDRED', atari2600: 'ATARI', atari5200: 'FIFTYTWOHUNDRED', atari800: 'EIGHTHUNDRED',
+  jaguar: 'JAGUAR', atarist: 'ATARIST', wswan: 'WS', wswanc: 'WS', colecovision: 'COLECO', c64: 'COMMODORE', amiga500: 'AMIGA', amigacd32: 'AMIGACD',
+  channelf: 'FAIRCHILD', vectrex: 'VECTREX', o2em: 'ODYSSEY', intellivision: 'INTELLIVISION', msx1: 'MSX', msx2: 'MSX', pcengine: 'PCE', supergrafx: 'SGFX',
+  pokemini: 'POKE', satellaview: 'SATELLAVIEW', sufami: 'SUFAMI', virtualboy: 'VB', ngp: 'NGP', ngpc: 'NGP', sega32x: 'THIRTYTWOX', sg1000: 'SEGASGONE',
+  x68000: 'X68000', zxspectrum: 'ZXS', supervision: 'SUPERVISION', arduboy: 'ARDUBOY', segacd: 'SEGACD', pcenginecd: 'PCECD', pc98: 'PCNINETYEIGHT', pcfx: 'PCFX',
+  neogeocd: 'NEOCD', '3do': 'PANASONIC', videopacplus: 'VIDEOPAC',
 };
 
 export interface FirmwareSeed {
