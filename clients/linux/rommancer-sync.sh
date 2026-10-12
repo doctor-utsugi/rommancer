@@ -22,7 +22,7 @@
 #                                   Menu++...) mounted on this computer; the link lives on the card itself,
 #                                   so any computer with this script can sync it. Without a command: sync.
 set -u
-CLIENT_VERSION=20261035
+CLIENT_VERSION=20261036
 # A clock before this date is surely wrong (no battery-backed clock); kept apart from the version, which may run ahead
 CLOCK_MIN=20261001
 # Onion keeps curl (with TLS) and friends outside the default PATH
@@ -769,6 +769,23 @@ fingerprint() {
     }' | cksum
 }
 
+# The console's clock set from the server's ("epoch<TAB>YYYY-MM-DD HH:MM:SS", UTC) when they differ by more than two
+# minutes: a handheld whose clock does not keep time, or drifted, dates saves wrongly. Consoles only (a computer, or a
+# card synced from one, keeps its own); the hardware clock too where there is one
+set_clock() {
+  epoch="${1%%"$TAB"*}"; utc="${1#*"$TAB"}"
+  [ -n "$epoch" ] && [ "$epoch" -gt 0 ] 2>/dev/null && [ "$utc" != "$1" ] || return 0
+  [ -z "$SD" ] || return 0
+  [ -n "${FW:-}" ] || detect
+  case "$FW" in retroarch-desktop) return 0 ;; esac
+  off=$(( $(date +%s) - epoch )); [ "$off" -lt 0 ] && off=$(( -off ))
+  [ "$off" -gt 120 ] || return 0
+  su=""; [ "$(id -u)" = 0 ] || su="sudo -n"
+  $su date -u -s "$utc" >/dev/null 2>&1 || { log "clock is ${off}s off, could not set it"; return 0; }
+  command -v hwclock >/dev/null 2>&1 && $su hwclock -w -u >/dev/null 2>&1
+  log "clock was ${off}s off, set from the server: $(date)"
+}
+
 # Self-update from the server: files whose sha1 differs from the server's copy are replaced.
 # rename() keeps the running shell on the old inode; prints "restart" when this script changed.
 cmd_update() {
@@ -777,6 +794,7 @@ cmd_update() {
   # The server's clock ("YYYY-MM-DD HH:MM", its time zone): handhelds without a clock that keeps time say when
   # they were updated by it
   printf '%s\n' "$man" | sed -n "s/^now$TAB//p" > "$WORK/server-now"
+  set_clock "$(printf '%s\n' "$man" | sed -n "s/^clock$TAB//p")"
   # Onion apps installed before the app had its own icon point at one of Onion's
   if [ -f "$DIR/config.json" ] && ! grep -q '"icon" *: *"icon.png"' "$DIR/config.json"; then
     sed 's#"icon" *: *"[^"]*"#"icon": "icon.png"#' "$DIR/config.json" > "$DIR/config.json.new" && mv "$DIR/config.json.new" "$DIR/config.json"
