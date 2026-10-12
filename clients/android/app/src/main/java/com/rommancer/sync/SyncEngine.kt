@@ -397,7 +397,10 @@ class SyncEngine(private val context: Context, private val store: Store, private
     }
 
     /** What the web app asked for since the last time: "sync" and/or "pull" */
-    fun poll(): Set<String> = runCatching { Api(store.server, store.token ?: return emptySet()).text("/agent/poll").lines().filter { it.isNotBlank() }.toSet() }.getOrDefault(emptySet())
+    fun poll(): Set<String> = pollOrNull() ?: emptySet()
+
+    /** The same, null when the server could not be reached */
+    fun pollOrNull(): Set<String>? = runCatching { Api(store.server, store.token ?: return emptySet()).text("/agent/poll").lines().filter { it.isNotBlank() }.toSet() }.getOrNull()
 
     fun conflicts(): List<Conflict> = Api(store.server, store.token ?: error("Not linked")).text("/agent/conflicts").lines()
         .mapNotNull { l -> l.split('\t').takeIf { it.size >= 7 && it[0] == "conflict" }?.let { Conflict(it[1].toInt(), it[2], it[3], it[4], it[5], it[6]) } }

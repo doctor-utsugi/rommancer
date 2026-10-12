@@ -70,12 +70,13 @@ export async function desiredFor(device: Device & { console?: Console | null }):
           .map((w) => ({ ssid: w.ssid, password: decrypt(w.password), hidden: w.hidden }));
   const ra = username && (password || token) ? { username, password, token } : null;
   const stateThumbs = true;
-  const hash = crypto.createHmac('sha1', env.encryptionKey).update(JSON.stringify({ ra, wifi, stateThumbs })).digest('hex');
+  const raMessages = true;
+  const hash = crypto.createHmac('sha1', env.encryptionKey).update(JSON.stringify({ ra, wifi, stateThumbs, raMessages })).digest('hex');
   // Networks written by an earlier application count as Rommancer's even after the user removed them
   const last = await prisma.deviceConfigOp.findFirst({ where: { deviceId: device.id, kind: 'settings', status: 'done' }, orderBy: { id: 'desc' } });
   const written = ((last?.payload ?? {}) as Payload).wifiSsids ?? [];
   const managed = [...new Set([...user.wifiNetworks.map((w) => w.ssid), ...written])];
-  const want: DesiredSettings = { ra, wifi, managed, stateThumbs };
+  const want: DesiredSettings = { ra, wifi, managed, stateThumbs, raMessages };
   return { want, hash, empty: !ra && !wifi.length && !written.length };
 }
 
@@ -92,7 +93,7 @@ export async function settingsPending(device: FullDevice) {
   if (!device.keepSettings || !adapter) return false;
   const d = await desiredFor(device);
   // Savestate screenshots are wanted even when the user set nothing else
-  return (!d.empty || !!adapter.stateThumbs) && d.hash !== device.settingsHash;
+  return (!d.empty || !!adapter.stateThumbs || !!adapter.raMessages) && d.hash !== device.settingsHash;
 }
 
 /** A file to write (with its mode when it matters), or one of Rommancer's own files to remove */

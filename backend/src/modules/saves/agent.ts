@@ -611,6 +611,13 @@ agentRouter.post('/sync', express.text({ limit: '16mb', type: '*/*' }), async (r
   }
   const prune = await pruneLine(device, req);
   if (prune) out.unshift(prune);
+  // "X-Clock-Sync: 0|1": whether the device sets its clock from the internet; turned on when the user asked for it
+  const clock = req.header('x-clock-sync');
+  if (clock === '0' || clock === '1') {
+    const on = clock === '1';
+    if (device.clockSyncWant && !on) out.unshift('clocksync\t1');
+    if (device.clockSync !== on || (on && device.clockSyncWant)) await prisma.device.update({ where: { id: device.id }, data: { clockSync: on, ...(on ? { clockSyncWant: false } : {}) } });
+  }
   await prisma.device.update({ where: { id: device.id }, data: { lastSyncAt: new Date() } });
   res.type('text/plain').send(out.join('\n') + (out.length ? '\n' : ''));
 });
@@ -834,6 +841,9 @@ agentRouter.get('/poll', async (req, res) => {
   if (await prisma.devicePull.count({ where: { deviceId: device.id, status: { in: OPEN_PULL } } })) out.push('pull');
   // A save from another device is waiting: sync saves only (no settings, no roms)
   if (takeNudge(device.id)) out.push('saves');
+  // Saves waiting for the user's choice on this device: the consoles say so on screen
+  const conflicts = await prisma.saveConflict.count({ where: { deviceId: device.id, resolvedAt: null } });
+  if (conflicts) out.push(`conflicts\t${conflicts}`);
   res.type('text/plain').send(out.join('\n') + (out.length ? '\n' : ''));
 });
 

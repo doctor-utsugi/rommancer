@@ -22,7 +22,7 @@
 #                                   Menu++...) mounted on this computer; the link lives on the card itself,
 #                                   so any computer with this script can sync it. Without a command: sync.
 set -u
-CLIENT_VERSION=20261036
+CLIENT_VERSION=20261037
 # A clock before this date is surely wrong (no battery-backed clock); kept apart from the version, which may run ahead
 CLOCK_MIN=20261001
 # Onion keeps curl (with TLS) and friends outside the default PATH
@@ -96,12 +96,23 @@ set_setting() { grep -v "^$1=" "$SETTINGS" 2>/dev/null > "$WORK/settings"; echo 
 
 # http METHOD URL BODYFILE OUTFILE [HEADER...]; BODYFILE "-" = no body, OUTFILE "-" = stdout.
 # One retry: home routers drop the odd DNS lookup and a whole sync should not fail for it
+# A certificate refused (curl 60, or a TLS handshake that failed: 35) is most often the console's clock: set from the
+# server's and tried again at once
 http() {
   http_once "$@" && return 0
   # A rom download stopped on screen is not tried again
   [ -f "$WORK/roms-stop" ] && return 1
-  sleep 2
+  case "$(cut -f1 "$WORK/last-error" 2>/dev/null)" in 35|60) clock_from_server ;; *) sleep 2 ;; esac
   http_once "$@"
+}
+
+# The server's clock without checking its certificate (a clock far off is what makes the check fail; only the time is
+# read from it, nothing is sent): the console's clock set by it
+clock_from_server() {
+  command -v curl >/dev/null 2>&1 || return 0
+  c="$(curl -fsSk --connect-timeout 5 --max-time 15 "$SERVER/api/v1/link/client/manifest" 2>/dev/null | sed -n "s/^clock$TAB//p")"
+  [ -n "$c" ] && set_clock "$c"
+  return 0
 }
 
 http_once() {
@@ -115,8 +126,12 @@ http_once() {
     # Some firmwares (Onion) ship curl without root certificates: use the bundle next to the script
     [ -f "$DIR/cacert.pem" ] && set -- "$@" --cacert "$DIR/cacert.pem"
     [ "$body" != "-" ] && set -- "$@" --data-binary "@$body"
-    if [ "$out" = "-" ]; then curl -fsS --globoff --connect-timeout 5 --max-time "${HTTP_MAX:-120}" -X "$m" "$@" "$u"
-    else curl -fsS --globoff --connect-timeout 5 --max-time "${HTTP_MAX:-1800}" -X "$m" "$@" -o "$out" "$u"; fi
+    # A failure leaves why in last-error ("curl code<TAB>url<TAB>message"), for the screens' details
+    if [ "$out" = "-" ]; then curl -fsS --globoff --connect-timeout 5 --max-time "${HTTP_MAX:-120}" -X "$m" "$@" "$u" 2> "$WORK/http-err"
+    else curl -fsS --globoff --connect-timeout 5 --max-time "${HTTP_MAX:-1800}" -X "$m" "$@" -o "$out" "$u" 2> "$WORK/http-err"; fi
+    rc=$?
+    [ "$rc" = 0 ] || printf '%s\t%s\t%s\n' "$rc" "${u%%\?*}" "$(head -n 1 "$WORK/http-err" 2>/dev/null)" > "$WORK/last-error"
+    return "$rc"
   else
     # busybox wget: POST when there is a body, GET otherwise
     while [ "$n" -gt 0 ]; do set -- "$@" "--header=$1"; shift; n=$((n - 1)); done
@@ -552,13 +567,118 @@ version_line() {
   else printf 'Version %s%s' "$CLIENT_VERSION" "${since:+, installed $since}"; fi
 }
 
-# Why a sync asked for on screen failed, in words: no network at all, or a network that does not reach the server
+# Why a sync asked for on screen failed: one line in words, and the details behind it in fail-details (the network,
+# the name lookup, the clock and the error itself), which the screens offer with a "details" button
 sync_failed() {
-  [ -n "${VERBOSE:-}" ] || return 0
   host="${SERVER#*://}"; host="${host%%/*}"
+  IFS="$TAB" read -r code url err < "$WORK/last-error" 2>/dev/null
+  es=0; lang_es && es=1
   if ! ip route 2>/dev/null | grep -q '^default'; then
-    if lang_es; then echo "Sin red: conecta el WiFi"; else echo "No network: connect the WiFi"; fi
-  elif lang_es; then echo "No llega a $host: revisa la red WiFi"; else echo "Cannot reach $host: check the WiFi network"; fi
+    if [ "$es" = 1 ]; then why="Sin red: conecta el WiFi"; else why="No network: connect the WiFi"; fi
+  else
+    case "${code:-}" in
+      6) if [ "$es" = 1 ]; then why="No encuentra $host (DNS): revisa la red WiFi"; else why="Cannot find $host (DNS): check the WiFi network"; fi ;;
+      35|60) if [ "$es" = 1 ]; then why="Conexion segura rechazada: suele ser la hora de la consola ($(date '+%d/%m/%Y %H:%M'))"; else why="Secure connection refused: usually the console's clock ($(date '+%Y-%m-%d %H:%M'))"; fi ;;
+      22) if [ "$es" = 1 ]; then why="$host respondio con un error: $(printf '%s' "$err" | sed 's/.*error: //')"; else why="$host answered with an error: $(printf '%s' "$err" | sed 's/.*error: //')"; fi ;;
+      28) if [ "$es" = 1 ]; then why="$host no contesta a tiempo: revisa la red WiFi"; else why="$host does not answer in time: check the WiFi network"; fi ;;
+      *) if [ "$es" = 1 ]; then why="No llega a $host: revisa la red WiFi"; else why="Cannot reach $host: check the WiFi network"; fi ;;
+    esac
+  fi
+  # The same failure is logged once; the details (a name lookup can take seconds) only when asked on screen
+  if [ "$why" != "$(cat "$WORK/last-why" 2>/dev/null)" ]; then log "failed: $why"; printf '%s\n' "$why" > "$WORK/last-why"; fi
+  [ -n "${VERBOSE:-}" ] || return 0
+  {
+    echo "$why"
+    echo "Server: $SERVER"
+    echo "Error: ${code:+curl $code: }${err:-?} (${url:-?})"
+    echo "Clock (UTC): $(date -u '+%Y-%m-%d %H:%M:%S')"
+    echo "Route: $(ip route 2>/dev/null | sed -n 's/^default via \([^ ]*\).*/\1/p' | head -n 1)"
+    echo "Address: $(ip -4 addr 2>/dev/null | sed -n 's/.*inet \([0-9.]*\).*/\1/p' | grep -v '^127\.' | tr '\n' ' ')"
+    echo "WiFi: $( (iw dev wlan0 link 2>/dev/null || iwconfig wlan0 2>/dev/null) | sed -n 's/.*SSID[:=] *"\{0,1\}\([^"]*\)"\{0,1\}.*/\1/p; s/.*signal: *\(.*\)/signal \1/p' | tr '\n' ' ')"
+    echo "DNS $host: $(nslookup "$host" 2>/dev/null | sed -n 's/^Address[^:]*: *\([0-9.]*\).*/\1/p' | tail -n +2 | tr '\n' ' ')"
+    echo "Client: $CLIENT_VERSION (${FW:-?})"
+  } > "$WORK/fail-details" 2>/dev/null
+  echo "$why"
+  return 0
+}
+
+# ---- Sync state on the console's screens: in the game (RetroArch's on-screen messages), in the menus (EmulationStation's
+# popups on Knulli/Batocera, the app's name in Onion's Apps) ----
+
+# A game is on screen, whatever started it (Onion has no game events)
+game_running() { ps 2>/dev/null | grep -q '[r]etroarch\|[m]inarch\|[d]rastic\|[p]pssppSDL\|[m]upen64plus\|[d]uckstation\|[r]etrorun'; }
+
+# One command to RetroArch's network command port; REPLY: wait for its answer (fails when it does not answer)
+ra_send() {
+  if [ -x /mnt/SDCARD/.tmp_update/bin/sendUDP ]; then
+    if [ "${2:-}" = reply ]; then [ -n "$(timeout 2 /mnt/SDCARD/.tmp_update/bin/sendUDP -r 64 "$1" 2>/dev/null)" ]
+    else /mnt/SDCARD/.tmp_update/bin/sendUDP "$1" >/dev/null 2>&1; fi
+  elif command -v python3 >/dev/null 2>&1; then
+    python3 - "$1" "${2:-}" <<'PY' 2>/dev/null
+import socket, sys
+s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+s.settimeout(1.5)
+s.sendto(sys.argv[1].encode(), ("127.0.0.1", 55355))
+if sys.argv[2] == "reply":
+    try:
+        s.recv(64)
+    except Exception:
+        sys.exit(1)
+PY
+  else return 1; fi
+}
+
+# A message on the game's screen, once RetroArch answers (it may still be starting); gone quietly when it never does
+ra_msg() {
+  ( n=0
+    while [ "$n" -lt 15 ]; do
+      if ra_send VERSION reply; then ra_send "SHOW_MSG $1"; exit 0; fi
+      sleep 2; n=$((n + 1))
+    done ) >/dev/null 2>&1 &
+}
+
+# HH:MM of an epoch (busybox date takes @epoch)
+hhmm() { date -d "@$1" '+%H:%M' 2>/dev/null || echo "?"; }
+
+# What the screens show now: "ok", "offline" (since offline-since) or "conflicts" (N in conflicts-open)
+sync_state() {
+  if [ -f "$WORK/offline-since" ]; then echo offline
+  elif [ "$(cat "$WORK/conflicts-open" 2>/dev/null || echo 0)" -gt 0 ] 2>/dev/null; then echo conflicts
+  else echo ok; fi
+}
+state_text() {
+  n="$(cat "$WORK/conflicts-open" 2>/dev/null || echo 0)"; since="$(hhmm "$(cat "$WORK/offline-since" 2>/dev/null || echo 0)")"
+  case "$1" in
+    start-ok) t s_start_ok ;;
+    start-offline) t s_start_offline "$since" ;;
+    offline) t s_offline "$since" ;;
+    online) t s_online ;;
+    conflicts) t s_conflicts "$n" ;;
+    uploaded) t s_uploaded ;;
+    kept) t s_kept ;;
+  esac
+}
+
+# The state changed (EVENT: offline, online, conflicts): said in the game when one is on screen, else in the menu
+state_changed() {
+  [ -n "${FW:-}" ] || detect
+  msg="Rommancer: $(state_text "$1")"
+  if game_running; then ra_msg "$msg"
+  else case "$FW" in knulli|batocera) notify "$(state_text "$1")" ;; esac; fi
+  app_label
+  log "state: $1"
+}
+
+# Onion lists the app by its config.json label: it says when the console is offline or has conflicts to settle
+app_label() {
+  [ -f "$DIR/config.json" ] || return 0
+  case "$(sync_state)" in
+    offline) label="$(t l_offline)" ;;
+    conflicts) label="$(t l_conflicts "$(cat "$WORK/conflicts-open")")" ;;
+    *) label="Rommancer Sync" ;;
+  esac
+  grep -qF "\"label\": \"$label\"" "$DIR/config.json" && return 0
+  sed "s#\"label\" *: *\"[^\"]*\"#\"label\": \"$label\"#" "$DIR/config.json" > "$DIR/config.json.new" && mv "$DIR/config.json.new" "$DIR/config.json"
 }
 
 cmd_sync() {
@@ -586,15 +706,15 @@ cmd_sync() {
   # Free and total bytes of the roms' storage: the server copies list roms only while a reserve is kept
   space="$(df -k "$ROMS" 2>/dev/null | awk 'NR == 2 { printf "%.0f %.0f", $4 * 1024, $2 * 1024 }')"
   pset=0; [ -f "$STATE/prune-set" ] && pset=1
-  http POST "$SERVER/api/v1/agent/sync" "$req" "$plan" "X-Prune: $PRUNE_ROMS" "X-Prune-Set: $pset" "X-Allow-Pull: $ALLOW_PULL" "X-Ssh: $(ssh_offer)" "X-Client-Path-B64: $(b64 "$DIR/$(basename "$0")")" "X-Space: ${space:-}" "X-Wifi-Bands: $(wifi_bands)" "X-Probe: 1" || { log "sync request failed"; sync_failed; drop_lock; return 1; }
+  http POST "$SERVER/api/v1/agent/sync" "$req" "$plan" "X-Prune: $PRUNE_ROMS" "X-Prune-Set: $pset" "X-Allow-Pull: $ALLOW_PULL" "X-Ssh: $(ssh_offer)" "X-Client-Path-B64: $(b64 "$DIR/$(basename "$0")")" "X-Space: ${space:-}" "X-Wifi-Bands: $(wifi_bands)" "X-Clock-Sync: $(clock_sync_state)" "X-Probe: 1" || { log "sync request failed"; sync_failed; drop_lock; return 1; }
   # How many copies of overwritten saves to keep
   sed -n "s/^backups$TAB//p" "$plan" > "$WORK/keep" && [ -s "$WORK/keep" ] && mv "$WORK/keep" "$STATE/backups-keep"
   [ "$pset" = 1 ] && rm -f "$STATE/prune-set"
   prune_answer "$(grep "^prune$TAB" "$plan" | head -n 1)"
-  ups=0; downs=0; errs=0; moved=0; total="$(grep -vc "^probe$TAB\|^backups$TAB\|^prune$TAB" "$plan")"
+  ups=0; downs=0; errs=0; moved=0; total="$(grep -vc "^probe$TAB\|^backups$TAB\|^prune$TAB\|^clocksync$TAB" "$plan")"
   : > "$WORK/received"
   while IFS="$TAB" read -r action p a b; do
-    case "$action" in probe|backups|prune) continue ;; esac
+    case "$action" in probe|backups|prune) continue ;; clocksync) clock_sync_on; continue ;; esac
     moved=$((moved + 1)); progress transfer "$moved" "$total"
     case "$action" in
       put)
@@ -769,6 +889,19 @@ fingerprint() {
     }' | cksum
 }
 
+# Onion sets its clock from the internet when its Tweaks say so (.ntpState), and waits for it at power-on (.ntpWait):
+# "1" or "0" for the web app, which suggests turning it on; nothing on other firmwares (they keep their own time)
+ONION_CONFIG=/mnt/SDCARD/.tmp_update/config
+clock_sync_state() {
+  [ -n "${FW:-}" ] || detect
+  [ "$FW" = onion ] && [ -d "$ONION_CONFIG" ] || return 0
+  if [ -f "$ONION_CONFIG/.ntpState" ]; then echo 1; else echo 0; fi
+}
+clock_sync_on() {
+  [ -d "$ONION_CONFIG" ] || return 0
+  touch "$ONION_CONFIG/.ntpState" "$ONION_CONFIG/.ntpWait" && log "clock: Onion sets it from the internet, waited for at power-on"
+}
+
 # The console's clock set from the server's ("epoch<TAB>YYYY-MM-DD HH:MM:SS", UTC) when they differ by more than two
 # minutes: a handheld whose clock does not keep time, or drifted, dates saves wrongly. Consoles only (a computer, or a
 # card synced from one, keeps its own); the hardware clock too where there is one
@@ -830,7 +963,8 @@ cmd_daemon() {
   fi
   echo $$ > "$STATE/pid"
   cmd_install > /dev/null 2>&1
-  last=""; since=$FULL_SECONDS; update_due=1
+  last=""; since=$FULL_SECONDS; update_due=1; started="$(date +%s)"
+  rm -f "$WORK/offline-since"
   while :; do
     # Each full pass also checks for a newer client and restarts into it. At power-on the WiFi may not be up yet:
     # a check that could not reach the server is tried again at the next tick, not a full pass later
@@ -842,7 +976,26 @@ cmd_daemon() {
       roots="$(http GET "$SERVER/api/v1/agent/roots" - -)" && { SAVE_DIRS="$(printf '%s\n' "$roots" | sed -n "s/^saves$TAB//p")"; EXTS="$(field exts "$roots")"; }
     fi
     # The web app can ask for a sync now or for roms: a tiny request on every watch tick
-    asked="$(HTTP_MAX=5 http_once GET "$SERVER/api/v1/agent/poll" - - 2>/dev/null)"
+    if asked="$(HTTP_MAX=5 http_once GET "$SERVER/api/v1/agent/poll" - - 2>/dev/null)"; then
+      date +%s > "$WORK/last-ok"; nfail=0
+      [ -f "$WORK/offline-since" ] && { rm -f "$WORK/offline-since"; state_changed online; }
+      n="$(printf '%s\n' "$asked" | sed -n "s/^conflicts$TAB//p")"; n="${n:-0}"
+      old="$(cat "$WORK/conflicts-open" 2>/dev/null || echo 0)"
+      echo "$n" > "$WORK/conflicts-open"
+      if [ "$n" -gt "$old" ]; then state_changed conflicts; elif [ "$n" != "$old" ]; then app_label; fi
+    else
+      # Offline once two polls in a row failed (a lost packet is not news), dated from the first; not in the first
+      # minute and a half after power-on, while the WiFi comes up
+      nfail=$((${nfail:-0} + 1))
+      [ "$nfail" = 1 ] && date +%s > "$WORK/fail-first"
+      if [ "$nfail" -ge 2 ] && [ ! -f "$WORK/offline-since" ] && [ $(( $(date +%s) - started )) -ge 90 ]; then
+        mv "$WORK/fail-first" "$WORK/offline-since"; state_changed offline
+      fi
+    fi
+    # A game starts: where its saves stand, on its screen
+    if game_running; then
+      [ "${in_game:-0}" = 1 ] || { in_game=1; warned=0; if [ -f "$WORK/offline-since" ]; then ra_msg "Rommancer: $(state_text start-offline)"; else ra_msg "Rommancer: $(state_text start-ok)"; fi; }
+    else in_game=0; fi
     case "$asked" in *sync*) since=$FULL_SECONDS ;; esac
     # Another device sent a save this one should have: a saves pass now, without settings or roms
     nudged=0; case "$asked" in *saves*) nudged=1 ;; esac
@@ -857,7 +1010,14 @@ cmd_daemon() {
     if [ "$fp" != "$last" ] || [ "$since" -ge "$FULL_SECONDS" ] || [ "$nudged" = 1 ]; then
       # Not "full": rom_line (inside cmd_sync) uses that name for a hash
       full_pass=0; [ "$since" -ge "$FULL_SECONDS" ] && full_pass=1
-      cmd_sync && { last="$(fingerprint)"; since=0; }
+      if cmd_sync; then
+        last="$(fingerprint)"; since=0
+        # A save made during the game reached the server
+        [ "${in_game:-0}" = 1 ] && [ "${ups:-0}" -gt 0 ] && ra_msg "Rommancer: $(state_text uploaded)"
+      elif [ "${in_game:-0}" = 1 ] && [ "${warned:-0}" = 0 ] && [ "$fp" != "$last" ]; then
+        # Saved with no connection: once per game, where the save stays
+        warned=1; ra_msg "Rommancer: $(state_text kept)"
+      fi
       [ "$full_pass" = 1 ] && cmd_config > /dev/null 2>&1
       [ "$full_pass" = 1 ] && cmd_prune > /dev/null 2>&1
       cmd_collections > /dev/null 2>&1
@@ -1389,7 +1549,14 @@ t() {
       pruneintro) echo "Rommancer puede borrar de esta consola las roms que no esten en ninguna de sus listas (las que el servidor no tenga se suben antes). Los saves se quedan. Se puede cambiar luego aqui o en la web. Activarlo?" ;;
       pruneask) echo "Se ha activado desde el servidor el borrado de roms que no estan en ninguna lista. Se borraran $2 roms ($3). Mantener esta opcion?" ;;
       prunehold) echo "Se van a borrar $2 de las $3 roms de esta consola (mas de la mitad) por no estar en ninguna lista. Puede que una lista se haya vaciado. Borrarlas?" ;;
-      romswatch) echo "Ver descarga de roms $2" ;; stophint) echo "(B para parar)" ;; backhint) echo "(B para volver al menu; el envio sigue)" ;; pullswatch) echo "Ver envio de juegos al servidor" ;;
+      romswatch) echo "Ver descarga de roms $2" ;; stophint) echo "(B para parar)" ;; backhint) echo "(B para volver al menu; el envio sigue)" ;; pullswatch) echo "Ver envio de juegos al servidor" ;; details) echo "Ver detalles" ;;
+      s_start_ok) echo "partidas al dia" ;; s_start_offline) echo "sin conexion desde las $2. Esta partida puede no ser la ultima" ;;
+      s_offline) echo "sin conexion con el servidor desde las $2. Las partidas se guardan en la consola y se subiran al volver la red" ;;
+      s_online) echo "conectado de nuevo, partidas sincronizadas" ;; s_conflicts) echo "$2 partidas en conflicto: elige cual vale en la app" ;;
+      s_uploaded) echo "partida guardada en el servidor" ;; s_kept) echo "sin conexion: la partida queda en la consola y se subira al volver la red" ;;
+      clockask) echo "La consola no se pone en hora sola. Rommancer necesita la hora bien para conectar con el servidor y fechar las partidas. Activar la hora por internet (y esperarla al encender)?" ;;
+      clockon) echo "Activar (recomendado)" ;; later) echo "Ahora no" ;;
+      l_offline) echo "Rommancer (sin conexion)" ;; l_conflicts) echo "Rommancer ($2 conflictos)" ;;
       pruneon) echo "Si, borrarlas" ;; pruneoff) echo "No, desactivarlo" ;; prunelater) echo "Ahora no" ;; cleaned) echo "Saves borrados: $2" ;; *) echo "$1" ;;
     esac
   else
@@ -1412,7 +1579,14 @@ t() {
       pruneintro) echo "Rommancer can delete from this console the roms that are in none of its lists (the ones the server lacks are uploaded first). Saves stay. You can change it later here or on the web. Turn it on?" ;;
       pruneask) echo "Deleting roms that are not in any list was turned on from the server. $2 roms ($3) will be deleted. Keep this option?" ;;
       prunehold) echo "$2 of the $3 roms on this console (more than half) would be deleted for being in no list. A list may have been emptied. Delete them?" ;;
-      romswatch) echo "Watch rom download $2" ;; stophint) echo "(B to stop)" ;; backhint) echo "(B for the menu; the copy goes on)" ;; pullswatch) echo "Watch games being sent to the server" ;;
+      romswatch) echo "Watch rom download $2" ;; stophint) echo "(B to stop)" ;; backhint) echo "(B for the menu; the copy goes on)" ;; pullswatch) echo "Watch games being sent to the server" ;; details) echo "Show details" ;;
+      s_start_ok) echo "saves up to date" ;; s_start_offline) echo "offline since $2. This save may not be the latest" ;;
+      s_offline) echo "no connection to the server since $2. Saves stay on the console and go up when the network is back" ;;
+      s_online) echo "connected again, saves synced" ;; s_conflicts) echo "$2 saves in conflict: choose which one counts in the app" ;;
+      s_uploaded) echo "save stored on the server" ;; s_kept) echo "offline: the save stays on the console and goes up when the network is back" ;;
+      clockask) echo "This console does not set its own clock. Rommancer needs the right time to reach the server and date your saves. Set the time from the internet (and wait for it at power-on)?" ;;
+      clockon) echo "Turn on (recommended)" ;; later) echo "Not now" ;;
+      l_offline) echo "Rommancer (offline)" ;; l_conflicts) echo "Rommancer ($2 conflicts)" ;;
       pruneon) echo "Yes, delete them" ;; pruneoff) echo "No, turn it off" ;; prunelater) echo "Not now" ;; cleaned) echo "Saves deleted: $2" ;; *) echo "$1" ;;
     esac
   fi
@@ -1449,6 +1623,7 @@ with_progress() {
   title="$1"; shift
   # A download under way keeps its progress on screen from the start
   roms_running || rm -f "$WORK/progress"
+  rm -f "$WORK/fail-details"
   ( VERBOSE=1; "$@" > "$WORK/run-out" 2>&1 ) &
   job=$!
   rm -f "$WORK/key-b"; key_watch & kw=$!
@@ -1476,6 +1651,12 @@ with_progress() {
   wait "$job" 2>/dev/null
   key_watch_end "$kw"
   panel_close
+  # A failure offers what is behind it
+  if [ -s "$WORK/fail-details" ]; then
+    menu "$title" "$(head -n 1 "$WORK/fail-details")" "OK" "$(t details)"
+    [ $? = 1 ] && panel "$(t details)" "$(tail -n +2 "$WORK/fail-details" | awk 'NR > 1 { printf " · " } { printf "%s", $0 }')" wait
+    return 0
+  fi
   panel "$title" "$(tail -n 1 "$WORK/run-out")" wait
 }
 
@@ -1484,6 +1665,16 @@ human() { awk -v b="${1:-0}" 'BEGIN { split("B KB MB GB TB", u, " "); i = 1; whi
 
 # What the deletion of roms in no list needs from the user: the choice offered once after linking, a change made
 # in the web app (keep it or turn it off) and a deletion held for being more than half of the roms
+# Once, on Onion: its clock set from the internet is suggested (a wrong clock refuses the server's certificate and
+# dates saves wrongly); the web app suggests it too while it is off
+setup_clock() {
+  [ "$(clock_sync_state)" = 0 ] && [ ! -f "$STATE/clock-asked" ] || return 0
+  touch "$STATE/clock-asked"
+  menu "Rommancer Sync" "$(t clockask)" "$(t clockon)" "$(t later)"
+  [ $? = 0 ] && clock_sync_on
+  return 0
+}
+
 setup_prune() {
   if [ ! -f "$STATE/prune-intro" ]; then
     menu "Rommancer Sync" "$(t pruneintro)" "$(t no)" "$(t yes)"; rc=$?
@@ -1586,6 +1777,7 @@ cmd_setup() {
       ( HTTP_MAX=10 cmd_conflicts > "$WORK/conflicts.new" 2>/dev/null && mv "$WORK/conflicts.new" "$WORK/conflicts" ) &
       if [ "$ALLOW_PULL" = 1 ]; then pull="$(t yes)"; else pull="$(t no)"; fi
       if [ "$ALLOW_SSH" = 1 ]; then ssh="$(t yes)"; else ssh="$(t no)"; fi
+      setup_clock
       setup_prune
       if [ "$PRUNE_ROMS" = 1 ]; then prune="$(t yes)"; else prune="$(t no)"; fi
       cleanable="$(cat "$STATE/pruned" 2>/dev/null | grep -c .)"
@@ -1666,6 +1858,7 @@ case "${1:-}" in
   # when asked for on the console's screen
   background) cmd_sync; cmd_config; cmd_prune; cmd_collections > /dev/null 2>&1 ;;
   roms-status) roms_status ;;
+  fail-details) cat "$WORK/fail-details" 2>/dev/null ;;
   pulls-status) pulls_status ;;
   collections) cmd_collections ;;
   config) VERBOSE=1 cmd_config ;;

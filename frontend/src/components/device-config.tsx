@@ -214,6 +214,8 @@ interface DeviceConfig {
   supported: boolean
   firmware: string
   keepSettings: boolean
+  clockSync: boolean | null
+  clockSyncWant: boolean
   wifiBands: 'none' | '2.4' | 'dual' | null
   wifiBandsSource: 'manual' | 'device' | 'model' | null
   wifiLeftOut: string[]
@@ -283,6 +285,18 @@ export function DeviceConfigTab({ deviceId, canEdit }: { deviceId: number; canEd
             </NativeSelect>
           </div>
           {!!c.wifiLeftOut.length && <p className="text-amber-600">{t('more.config.leftOut', { list: c.wifiLeftOut.join(', ') })}</p>}
+          {c.clockSync === false && (
+            <div className="space-y-2 rounded-md border border-amber-500/40 p-3">
+              <p className="text-amber-600">{t('more.config.clockOff')}</p>
+              {c.clockSyncWant ? (
+                <p className="text-muted-foreground">{t('more.config.clockPending')}</p>
+              ) : (
+                <Button size="sm" disabled={!canEdit} onClick={() => void run(() => patch(`/devices/${deviceId}/config`, { clockSyncWant: true }))}>
+                  {t('more.config.clockOn')}
+                </Button>
+              )}
+            </div>
+          )}
           <div className="flex flex-wrap gap-2">
             <Button size="sm" variant="outline" disabled={!canEdit} onClick={() => void run(() => post(`/devices/${deviceId}/config/apply`), t('more.config.queued'))}>
               {t('more.config.applyNow')}

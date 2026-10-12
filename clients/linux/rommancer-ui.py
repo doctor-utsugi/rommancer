@@ -98,6 +98,7 @@ TEXTS = {
         "p_prune": "Borrando roms fuera de listas",
         "roms_watch": "Ver descarga de roms {n}",
         "pulls_watch": "Ver envio de juegos al servidor {n}",
+        "details": "Ver detalles",
         "back_keys": "B volver al menu (el envio sigue)",
         "stop_keys": "B parar la descarga de roms",
         "stopping": "Parando la descarga...",
@@ -171,6 +172,7 @@ TEXTS = {
         "p_prune": "Deleting roms not in lists",
         "roms_watch": "Watch rom download {n}",
         "pulls_watch": "Watch games being sent to the server {n}",
+        "details": "Show details",
         "back_keys": "B back to the menu (the copy goes on)",
         "stop_keys": "B stop the rom download",
         "stopping": "Stopping the download...",
@@ -697,6 +699,10 @@ class App:
                 os.remove(self.progress_file())
             except OSError:
                 pass
+        try:
+            os.remove(self.details_file())
+        except OSError:
+            pass
         proc = subprocess.Popen(["sh", SCRIPT, command, *args], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
         s = self.screen
         stopping = False
@@ -751,7 +757,20 @@ class App:
                     subprocess.Popen(["sh", SCRIPT, "roms-stop"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             self.clock.tick(SPRITE_FPS)
         out = (proc.stdout.read() if proc.stdout else "").strip()
+        # A failure offers what is behind it: the network, the name lookup, the clock and the error itself
+        try:
+            with open(self.details_file(), encoding="utf-8") as f:
+                details = f.read().strip().splitlines()
+        except OSError:
+            details = []
+        if details:
+            if self.menu(T["title"], ["OK", T["details"]], info=[details[0]]) == 1:
+                self.menu(T["details"], ["OK"], info=details[1:])
+            return
         self.message(" · ".join(out.splitlines()[-2:]) if out else T["error"].format(msg="sync"))
+
+    def details_file(self):
+        return os.path.join(os.path.dirname(self.progress_file()), "fail-details")
 
     def settings(self):
         cfg = {}

@@ -11,6 +11,8 @@ export interface DesiredSettings {
   managed: string[];
   /** RetroArch saves a screenshot with each savestate, which Rommancer keeps with the state */
   stateThumbs?: boolean;
+  /** RetroArch listens for commands on localhost, so the console client can show sync messages during a game */
+  raMessages?: boolean;
 }
 
 export interface Applied {
@@ -32,6 +34,8 @@ export interface Adapter {
   settingsFiles: string[];
   /** Writes RetroArch's savestate screenshots setting (Batocera and Knulli already turn it on at each launch) */
   stateThumbs?: boolean;
+  /** Writes RetroArch's network commands setting (sync messages shown during a game) */
+  raMessages?: boolean;
   /** REACH: whether the channel at work reaches a path (the card does not reach internal memory) */
   apply(want: DesiredSettings, files: Map<string, string | null>, reach: (path: string) => boolean): Applied;
 }
@@ -86,6 +90,7 @@ function keyOf(text: string, key: string): string | null {
 const batocera = (confs: string[], backup: string[]): Adapter => ({
   backup: [...confs, ...backup],
   settingsFiles: confs,
+  raMessages: true,
   apply(want, files) {
     const notes: string[] = [];
     const writes = new Map<string, string>();
@@ -93,6 +98,8 @@ const batocera = (confs: string[], backup: string[]): Adapter => ({
     if (!conf) return { writes, notes: [note('missing', confs[0])] };
     const text = files.get(conf)!;
     const set: Record<string, string | null> = {};
+    // Copied into RetroArch's config at each launch, like every global.retroarch.* key
+    if (want.raMessages) set['global.retroarch.network_cmd_enable'] = 'true';
     if (want.ra) {
       set['global.retroachievements'] = '1';
       set['global.retroachievements.username'] = want.ra.username;
@@ -238,7 +245,11 @@ const raKeys = (ra: NonNullable<DesiredSettings['ra']>): Record<string, string> 
 
 /** Everything Rommancer keeps set in a retroarch.cfg */
 function raSettings(want: DesiredSettings): Record<string, string> {
-  return { ...(want.ra ? raKeys(want.ra) : {}), ...(want.stateThumbs ? { savestate_thumbnail_enable: 'true' } : {}) };
+  return {
+    ...(want.ra ? raKeys(want.ra) : {}),
+    ...(want.stateThumbs ? { savestate_thumbnail_enable: 'true' } : {}),
+    ...(want.raMessages ? { network_cmd_enable: 'true' } : {}),
+  };
 }
 
 /** muOS: RetroArch's config and the cheevos file it appends at each launch (internal), WiFi profiles on the card */
@@ -249,6 +260,7 @@ const muos: Adapter = {
   backup: [MUOS_NET, MUOS_RA, MUOS_CHEEVOS],
   settingsFiles: [MUOS_RA, MUOS_CHEEVOS, MUOS_NET],
   stateThumbs: true,
+  raMessages: true,
   apply(want, files, reach) {
     const notes: string[] = [];
     const writes = new Map<string, string>();
@@ -397,6 +409,7 @@ const arkos: Adapter = {
   backup: [...ARK_RA, ARK_NM, '/home/ark/.emulationstation/es_settings.cfg'],
   settingsFiles: [...ARK_RA, ARK_NM],
   stateThumbs: true,
+  raMessages: true,
   apply(want, files, reach) {
     const notes: string[] = [];
     const writes = new Map<string, string>();

@@ -112,7 +112,7 @@ class MainActivity : ComponentActivity() {
 private sealed interface Screen {
     data object Menu : Screen
     data class Working(val title: String) : Screen
-    data class Message(val text: String) : Screen
+    data class Message(val text: String, val details: String? = null) : Screen
     data object Conflicts : Screen
     data class Conflict(val c: SyncEngine.Conflict) : Screen
     data object Status : Screen
@@ -334,10 +334,11 @@ private fun Linked(store: Store, onUnlinked: () -> Unit) {
     fun run(title: String, work: (SyncEngine) -> String) {
         screen = Screen.Working(title)
         scope.launch {
-            val text = withContext(Dispatchers.IO) {
-                runCatching { work(SyncEngine(context, store) { progress = it }) }.getOrElse { it.message ?: "error" }
+            val result = withContext(Dispatchers.IO) {
+                runCatching { work(SyncEngine(context, store) { progress = it }) to null }
+                    .getOrElse { e -> Failure.describe(context, store, e) }
             }
-            screen = Screen.Message(text)
+            screen = Screen.Message(result.first, result.second)
         }
     }
 
@@ -465,8 +466,12 @@ private fun Linked(store: Store, onUnlinked: () -> Unit) {
             }
         }
         is Screen.Message -> {
+            var open by remember(s) { mutableStateOf(false) }
             Text(s.text, fontSize = 20.sp)
+            // A failure offers what is behind it
+            if (open && s.details != null) Text(s.details, color = Dim, fontSize = 14.sp)
             MenuItem(stringResource(R.string.press_back), firstItem) { screen = Screen.Menu }
+            if (s.details != null && !open) MenuItem(stringResource(R.string.details)) { open = true }
             LaunchedEffect(s) { runCatching { firstItem.requestFocus() } }
         }
         Screen.Conflicts -> {

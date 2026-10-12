@@ -2202,8 +2202,8 @@ test('device config: your settings reach Knulli and Onion through the shell clie
   const oId = await pair('onion', 'onion', onion, 'Miyoo Mini Plus');
   const { prisma } = await import('../src/lib/prisma.js');
 
-  // Nothing to apply before the user has settings
-  assert.equal((await api('GET', `/devices/${kId}/config`)).json.settingsPending, false);
+  // Before the user has settings only RetroArch's command port is to apply (sync messages during a game)
+  assert.equal((await api('GET', `/devices/${kId}/config`)).json.settingsPending, true);
   assert.equal((await api('PUT', '/settings/consoles/ra', { username: 'raplayer', password: 'wrong' })).status, 400);
   const ra = await api('PUT', '/settings/consoles/ra', { username: 'raplayer', password: 'ra-secret-pass' });
   assert.equal(ra.status, 200, JSON.stringify(ra.json));
@@ -2234,6 +2234,7 @@ test('device config: your settings reach Knulli and Onion through the shell clie
   assert.match(text, /^wifi\.hidden\.ssid=Oculta$/m);
   assert.match(text, /^audio\.volume=80$/m, 'other settings stay');
   assert.match(text, /^#wifi\.ssid=example$/m, 'comments stay');
+  assert.match(text, /^global\.retroarch\.network_cmd_enable=true$/m, 'RetroArch takes commands: sync messages during a game');
   let cfg = (await api('GET', `/devices/${kId}/config`)).json;
   assert.equal(cfg.settingsPending, false);
   assert.equal(cfg.settingsError, null);
@@ -3299,4 +3300,58 @@ test('sync client: one rom download at a time, and it can be stopped', async () 
   fs.writeFileSync(path.join(lockDir, 'roms-lock/pid'), `${holder2.pid}\n`);
   assert.match((await run('roms-stop')).stdout, /roms: stopped/);
   assert.equal((await run('roms-status')).stdout, '');
+});
+
+test('sync state: the console says when it cannot reach the server and why, Onion is asked to set its clock, the web app shows where the sync stands', async () => {
+  const client = path.join(ROOT, 'clients/linux/rommancer-sync.sh');
+  const dir = path.join(DATA, 'sync-state');
+  fs.rmSync(dir, { recursive: true, force: true });
+  const root = path.join(dir, 'console');
+  fs.mkdirSync(path.join(root, 'roms/nes'), { recursive: true });
+  const claim = await api('POST', '/link/claim', { name: 'sync-state', firmware: 'knulli', root });
+  const id = claim.json.deviceId as number;
+  const token = claim.json.token as string;
+  const state = path.join(dir, 'state');
+  const work = path.join(dir, 'work');
+  fs.mkdirSync(state, { recursive: true });
+  fs.mkdirSync(work, { recursive: true });
+  // A server that cannot be reached: the failure is said in words, with its details for the "details" button
+  fs.writeFileSync(path.join(state, 'config'), `SERVER=http://127.0.0.1:9\nTOKEN=${token}\n`);
+  const env = { ...process.env, ROMMANCER_STATE: state, TMPDIR: work };
+  const run = (...args: string[]) => execFileP('sh', [client, ...args], { env });
+  const failed = await run('sync').then((r) => r.stdout, (e) => (e as { stdout: string }).stdout);
+  assert.match(failed, /Cannot reach 127\.0\.0\.1:9|No llega a 127\.0\.0\.1:9|No network/);
+  const details = (await run('fail-details')).stdout;
+  assert.match(details, /Server: http:\/\/127\.0\.0\.1:9/);
+  assert.match(details, /Error: curl 7/);
+  assert.match(details, /Clock \(UTC\): \d{4}-/);
+
+  // The web app: no contact yet, the last failure the console reported once it is back
+  let st = (await api('GET', `/devices/${id}/sync-state`)).json;
+  assert.equal(st.agent, true);
+  assert.equal(st.quiet, true);
+  assert.equal(st.conflicts, 0);
+  const agentPost = (url: string, body: string, headers: Record<string, string> = {}) =>
+    fetch(`${base}/api/v1/agent${url}`, { method: 'POST', headers: { 'X-Device-Token': token, 'Content-Type': 'text/plain', ...headers }, body });
+  await agentPost('/log', '2026-10-12 10:00:00 sync: 0 up, 0 down, 0 errors\n2026-10-12 10:05:00 failed: Cannot reach x: check the WiFi network\n');
+  st = (await api('GET', `/devices/${id}/sync-state`)).json;
+  assert.equal(st.lastError, 'Cannot reach x: check the WiFi network');
+  assert.equal(st.quiet, false, 'it was seen just now');
+  await agentPost('/log', '2026-10-12 10:05:00 failed: Cannot reach x: check the WiFi network\n2026-10-12 10:06:00 sync: 0 up, 0 down, 0 errors\n');
+  assert.equal((await api('GET', `/devices/${id}/sync-state`)).json.lastError, null, 'a sync went through since');
+
+  // Onion's clock from the internet: reported by the console, turned on from the web app at its next sync
+  const sync = async (clock: string) => (await (await agentPost('/sync', '', { 'X-Clock-Sync': clock })).text());
+  assert.doesNotMatch(await sync('0'), /clocksync/);
+  let cfg = (await api('GET', `/devices/${id}/config`)).json;
+  assert.equal(cfg.clockSync, false);
+  assert.equal((await api('PATCH', `/devices/${id}/config`, { clockSyncWant: true })).status, 204);
+  assert.match(await sync('0'), /^clocksync\t1$/m);
+  assert.doesNotMatch(await sync('1'), /clocksync/);
+  cfg = (await api('GET', `/devices/${id}/config`)).json;
+  assert.equal(cfg.clockSync, true);
+  assert.equal(cfg.clockSyncWant, false);
+  // Saves waiting for a choice reach the consoles through their poll
+  const poll = await (await fetch(`${base}/api/v1/agent/poll`, { headers: { 'X-Device-Token': token } })).text();
+  assert.doesNotMatch(poll, /conflicts/);
 });

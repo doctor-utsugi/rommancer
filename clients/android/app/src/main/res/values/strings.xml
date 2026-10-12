@@ -84,4 +84,16 @@
     <string name="p_prune">Deleting roms not in lists</string>
     <string name="roms_stop">Stop the rom download</string>
     <string name="stopping">Stopping…</string>
+    <string name="details">Show details</string>
+    <string name="fail_offline">No network: connect the WiFi</string>
+    <string name="fail_dns">Cannot find %1$s (DNS): check the network</string>
+    <string name="fail_tls">Secure connection refused: check the device\'s date and time</string>
+    <string name="fail_timeout">%1$s does not answer in time: check the network</string>
+    <string name="fail_reach">Cannot reach %1$s: check the network</string>
+    <string name="fail_server">%1$s answered with an error: %2$s</string>
+    <string name="state_offline">No connection to the server since %1$s: saves stay here and go up when the network is back</string>
+    <plurals name="state_conflicts">
+        <item quantity="one">%d save in conflict: open the app to choose which one counts</item>
+        <item quantity="other">%d saves in conflict: open the app to choose which one counts</item>
+    </plurals>
 </resources>

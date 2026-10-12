@@ -138,6 +138,7 @@ export function DevicePage() {
         {d.offline && ` · ${t('more.offline.help')}`}
         {inventory.data?.inventoryAt && ` · ${t('more.device.inventoryAt')}: ${formatDate(inventory.data.inventoryAt)}`}
       </p>
+      <SyncState deviceId={id!} />
       {d.sshHost && (
         <p className="text-sm text-muted-foreground">
           {t('more.device.ssh', { address: `${d.sshUser ?? 'root'}@${d.sshHost}:${d.sshPort ?? 22}` })} · {t('more.device.sshAt')}: {formatDate(d.sshAt)}
@@ -1108,5 +1109,44 @@ function SpaceTree({ deviceId, plan, onClose }: { deviceId: string; plan: Device
         </DialogFooter>
       </DialogContent>
     </Dialog>
+  )
+}
+
+interface SyncStateData {
+  agent: boolean
+  online: boolean
+  quiet: boolean
+  lastSeenAt: string | null
+  lastSyncAt: string | null
+  lastError: string | null
+  conflicts: number
+  clockSync: boolean | null
+}
+
+/** Where the console's sync stands: in touch or not since when, the last failure it reported, conflicts to settle */
+function SyncState({ deviceId }: { deviceId: string }) {
+  const { t } = useTranslation()
+  const q = useQuery({ queryKey: ['device-sync-state', deviceId], queryFn: () => get<SyncStateData>(`/devices/${deviceId}/sync-state`), refetchInterval: 30_000 })
+  const s = q.data
+  if (!s?.agent) return null
+  const warn = s.quiet || s.conflicts > 0 || !!s.lastError
+  return (
+    <div className={`space-y-1 rounded-md border p-3 text-sm ${warn ? 'border-amber-500/50' : 'border-emerald-500/40'}`}>
+      {s.quiet ? (
+        <p className="text-amber-600">{t('more.syncState.quiet', { when: formatDate(s.lastSeenAt) })}</p>
+      ) : (
+        <p className="text-emerald-700 dark:text-emerald-400">{t('more.syncState.ok', { when: formatDate(s.lastSyncAt) })}</p>
+      )}
+      {s.lastError && <p className="text-amber-600">{t('more.syncState.lastError', { why: s.lastError })}</p>}
+      {s.conflicts > 0 && (
+        <p className="text-amber-600">
+          {t('more.syncState.conflicts', { count: s.conflicts })}{' '}
+          <Link to="/saves" className="underline">
+            {t('more.syncState.resolve')}
+          </Link>
+        </p>
+      )}
+      {s.clockSync === false && <p className="text-muted-foreground">{t('more.syncState.clock')}</p>}
+    </div>
   )
 }

@@ -535,6 +535,10 @@ model Device {
   inventoryAt     DateTime?
   /// sha1 of the last inventory the device sent: an unchanged one is not stored again
   inventoryHash   String?   @db.VarChar(40)
+  /// Whether the device sets its clock from the internet (Onion's Tweaks), as it reports; null: unknown or not its call
+  clockSync       Boolean?
+  /// The user asked from the web app to turn that on: the device does it at its next sync
+  clockSyncWant   Boolean   @default(false)
   // Where the client script lives on the device, so the server can run it over SSH when the device is quiet
   clientPath      String?               @db.VarChar(512)
   // The SSH address was typed in the web app: the one the console reports about itself does not replace it

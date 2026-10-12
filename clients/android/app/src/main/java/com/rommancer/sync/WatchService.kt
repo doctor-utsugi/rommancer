@@ -74,9 +74,31 @@ class WatchService : Service() {
         pending = worker.schedule({ runCatching { engine().sync() } }, QUIET_SECONDS, TimeUnit.SECONDS)
     }
 
+    private var fails = 0
+    private var failFirst = 0L
+    private var offlineSince = 0L
+    private var conflicts = 0
+    private val started = System.currentTimeMillis()
+
     private fun poll() {
         if (!store.linked) return stopSelf()
-        val asked = engine().poll()
+        val asked = engine().pollOrNull()
+        if (asked == null) {
+            // Offline once two polls in a row failed, dated from the first; not while the network comes up after start
+            if (++fails == 1) failFirst = System.currentTimeMillis()
+            if (fails >= 2 && offlineSince == 0L && System.currentTimeMillis() - started > 90_000) {
+                offlineSince = failFirst
+                showState()
+            }
+            return
+        }
+        fails = 0
+        val n = asked.firstOrNull { it.startsWith("conflicts\t") }?.substringAfter('\t')?.toIntOrNull() ?: 0
+        if (offlineSince != 0L || n != conflicts) {
+            offlineSince = 0L
+            conflicts = n
+            showState()
+        }
         if ("sync" in asked) runCatching { engine().sync(); engine().prune() }
         // Another device sent a save this one should have: saves only
         else if ("saves" in asked) runCatching { engine().sync() }
@@ -84,17 +106,32 @@ class WatchService : Service() {
         if ("pull" in asked) Thread { runCatching { engine().pulls() } }.start()
     }
 
-    private fun startInForeground() {
-        val nm = getSystemService(NotificationManager::class.java)
-        if (Build.VERSION.SDK_INT >= 26) nm.createNotificationChannel(NotificationChannel(CHANNEL, getString(R.string.watch_channel), NotificationManager.IMPORTANCE_MIN))
+    /** The ongoing notification says where the sync stands: fine, offline since when, or saves in conflict */
+    private fun stateNotification(): Notification {
         val open = PendingIntent.getActivity(this, 0, Intent(this, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE)
-        val notification = Notification.Builder(this, CHANNEL)
-            .setSmallIcon(android.R.drawable.stat_notify_sync)
+        val text = when {
+            offlineSince != 0L -> getString(R.string.state_offline, java.text.DateFormat.getTimeInstance(java.text.DateFormat.SHORT).format(java.util.Date(offlineSince)))
+            conflicts > 0 -> resources.getQuantityString(R.plurals.state_conflicts, conflicts, conflicts)
+            else -> getString(R.string.watch_text)
+        }
+        return Notification.Builder(this, CHANNEL)
+            .setSmallIcon(if (offlineSince != 0L || conflicts > 0) android.R.drawable.stat_notify_error else android.R.drawable.stat_notify_sync)
             .setContentTitle(getString(R.string.watch_title))
-            .setContentText(getString(R.string.watch_text))
+            .setContentText(text)
+            .setStyle(Notification.BigTextStyle().bigText(text))
             .setContentIntent(open)
             .setOngoing(true)
             .build()
+    }
+
+    private fun showState() {
+        runCatching { getSystemService(NotificationManager::class.java).notify(ID, stateNotification()) }
+    }
+
+    private fun startInForeground() {
+        val nm = getSystemService(NotificationManager::class.java)
+        if (Build.VERSION.SDK_INT >= 26) nm.createNotificationChannel(NotificationChannel(CHANNEL, getString(R.string.watch_channel), NotificationManager.IMPORTANCE_MIN))
+        val notification = stateNotification()
         when {
             // A long-running watcher is "special use" on Android 14+; dataSync would be stopped after 6 hours
             Build.VERSION.SDK_INT >= 34 -> startForeground(ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE)

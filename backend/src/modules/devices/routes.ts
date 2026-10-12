@@ -194,6 +194,30 @@ devicesRouter.get('/:id', async (req, res) => {
   res.json({ ...rest, hasPassword: !!sshPassword, hasKey: !!sshKey, layout: layoutOf(d), games: await prisma.deviceRom.count({ where: { deviceId: d.id } }) });
 });
 
+/**
+ * Where a device's sync stands, for its page: in touch or not (the daemon polls every 15 s), its last sync, the last
+ * failure its client reported (the newest "failed:" line of its log with no successful sync after it) and the saves
+ * waiting for the user's choice
+ */
+devicesRouter.get('/:id/sync-state', async (req, res) => {
+  const d = await ownDevice(intParam(req), me(req));
+  const lines = (d.lastLog ?? '').split('\n');
+  const lastFail = lines.map((l, i) => ({ l, i })).filter(({ l }) => /^\S+ \S+ failed: /.test(l)).pop();
+  const okAfter = lastFail ? lines.slice(lastFail.i + 1).some((l) => /^\S+ \S+ sync: /.test(l)) : true;
+  const seenAgo = d.lastSeenAt ? Date.now() - d.lastSeenAt.getTime() : null;
+  res.json({
+    agent: d.connType === 'AGENT',
+    online: seenAgo !== null && seenAgo < 60_000,
+    // Quiet for a while: switched off, asleep, or on but unable to reach the server
+    quiet: seenAgo === null || seenAgo > 15 * 60_000,
+    lastSeenAt: d.lastSeenAt,
+    lastSyncAt: d.lastSyncAt,
+    lastError: lastFail && !okAfter ? lastFail.l.replace(/^\S+ \S+ failed: /, '') : null,
+    conflicts: await prisma.saveConflict.count({ where: { deviceId: d.id, resolvedAt: null } }),
+    clockSync: d.clockSync,
+  });
+});
+
 devicesRouter.patch('/:id', async (req, res) => {
   const d = await ownDevice(intParam(req), me(req));
   const body = deviceBody.partial().parse(req.body);

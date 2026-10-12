@@ -84,4 +84,16 @@
     <string name="p_prune">Borrando roms fuera de listas</string>
     <string name="roms_stop">Parar la descarga de roms</string>
     <string name="stopping">Parando…</string>
+    <string name="details">Ver detalles</string>
+    <string name="fail_offline">Sin red: conecta el WiFi</string>
+    <string name="fail_dns">No encuentra %1$s (DNS): revisa la red</string>
+    <string name="fail_tls">Conexión segura rechazada: revisa la fecha y hora del dispositivo</string>
+    <string name="fail_timeout">%1$s no contesta a tiempo: revisa la red</string>
+    <string name="fail_reach">No llega a %1$s: revisa la red</string>
+    <string name="fail_server">%1$s respondió con un error: %2$s</string>
+    <string name="state_offline">Sin conexión con el servidor desde las %1$s: los saves se quedan aquí y se subirán al volver la red</string>
+    <plurals name="state_conflicts">
+        <item quantity="one">%d partida en conflicto: abre la app para elegir cuál vale</item>
+        <item quantity="other">%d partidas en conflicto: abre la app para elegir cuál vale</item>
+    </plurals>
 </resources>

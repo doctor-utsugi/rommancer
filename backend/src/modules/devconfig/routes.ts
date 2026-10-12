@@ -126,6 +126,8 @@ dev.get('/', async (req, res) => {
     supported: !!adapterFor(d.firmware.slug),
     firmware: d.firmware.slug,
     keepSettings: d.keepSettings,
+    clockSync: d.clockSync,
+    clockSyncWant: d.clockSyncWant,
     wifiBands: bandsOf(d),
     wifiBandsSource: d.wifiBandsManual ? 'manual' : d.wifiBands ? 'device' : d.console?.wifiBands ? 'model' : null,
     wifiLeftOut: await wifiLeftOut(d),
@@ -139,11 +141,13 @@ dev.get('/', async (req, res) => {
 
 dev.patch('/', async (req, res) => {
   const d = await ownDevice(intParam(req), me(req));
-  const body = z.object({ keepSettings: z.boolean().optional(), wifiBands: z.enum(['none', '2.4', 'dual']).nullable().optional() }).parse(req.body);
+  const body = z.object({ keepSettings: z.boolean().optional(), wifiBands: z.enum(['none', '2.4', 'dual']).nullable().optional(), clockSyncWant: z.boolean().optional() }).parse(req.body);
   await prisma.device.update({
     where: { id: d.id },
     data: {
       ...(body.keepSettings !== undefined ? { keepSettings: body.keepSettings } : {}),
+      // Asked to set its clock from the internet: the device does it at its next sync, asked for now
+      ...(body.clockSyncWant !== undefined ? { clockSyncWant: body.clockSyncWant, ...(body.clockSyncWant ? { wantSyncAt: new Date() } : {}) } : {}),
       // null: back to what the device reports (or its model)
       ...(body.wifiBands !== undefined ? { wifiBands: body.wifiBands, wifiBandsManual: body.wifiBands !== null } : {}),
     },
