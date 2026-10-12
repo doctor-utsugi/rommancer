@@ -175,3 +175,16 @@ export async function romForSave(s: { romId: number | null; gameId: number | nul
   }
   return prisma.rom.findFirst({ where: { name: s.baseName, ...withFile }, include });
 }
+
+/**
+ * A file on the server named like the save that belongs to no rom of the catalogue (a translation only
+ * RetroAchievements knows, fetched from a console for its saves)
+ */
+export async function looseRomFile(baseName: string) {
+  const files = await prisma.romFile.findMany({
+    where: { romPartId: null, romHackId: null, status: 'UNVERIFIED', relativePath: { contains: `${baseName}.` } },
+    include: { romPath: true },
+  });
+  const f = files.find((f) => path.posix.basename(f.relativePath).replace(/\.[^.]+$/, '') === baseName && f.systemId);
+  return f ? { ...f, system: await prisma.system.findUniqueOrThrow({ where: { id: f.systemId! } }) } : null;
+}

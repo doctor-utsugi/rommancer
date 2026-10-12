@@ -13,8 +13,9 @@ import { coreVersionOf, resolveConflict } from './core.js';
 import { layoutOf } from '../devices/sink.js';
 import { raDefaults } from '../../seed/data.js';
 import { convertSave, type SaveFormat } from './convert.js';
-import { identifyRom, parseSaveFile, readThumb, readVersion, removeVersion, romForSave, storeThumb, storeVersion } from './service.js';
+import { identifyRom, parseSaveFile, readThumb, readVersion, looseRomFile, removeVersion, romForSave, storeThumb, storeVersion } from './service.js';
 import { cardFamily, mainCard, readSnapshot, splitWholeCard } from './cards.js';
+import { sendRomFile } from '../roms/routes.js';
 import './sync.js';
 
 export const savesRouter = Router();
@@ -366,6 +367,22 @@ savesRouter.get('/:id/versions/:versionId/play', requirePerm('roms.download'), a
   const v = await prisma.saveVersion.findFirstOrThrow({ where: { id: intParam(req, 'versionId'), saveId: s.id } });
   if (s.kind === 'ENTRY') throw badRequest('Memory card entries cannot be played in the browser');
   const rom = await romForSave(s);
+  const loose = rom ? null : await looseRomFile(s.baseName);
+  if (loose?.system) {
+    const system = WEB_SYSTEMS[loose.system.slug];
+    if (!system) throw badRequest(`${loose.system.name} cannot be played in the browser`);
+    const asRa = s.kind === 'SAVE' && raDefaults[loose.system.slug] ? `?emulator=${raDefaults[loose.system.slug]}` : '';
+    res.json({
+      system,
+      title: s.baseName,
+      kind: s.kind,
+      romName: path.posix.basename(loose.relativePath),
+      romUrl: `/api/v1/saves/${s.id}/rom`,
+      fileUrl: `/api/v1/saves/${s.id}/versions/${v.id}/download${asRa}`,
+      core: s.emulator.name,
+    });
+    return;
+  }
   if (!rom) {
     // Where it is: the consoles that sent this save, and whether the rom was asked from one of them
     const from = await prisma.saveVersion.findMany({ where: { saveId: s.id, sourceDeviceId: { not: null } }, distinct: ['sourceDeviceId'], select: { sourceDevice: { select: { id: true, name: true } } } });
@@ -397,6 +414,14 @@ savesRouter.get('/:id/versions/:versionId/play', requirePerm('roms.download'), a
     fileUrl: `/api/v1/saves/${s.id}/versions/${v.id}/download${asRa}`,
     core: s.emulator.name,
   });
+});
+
+// The save's rom when it is a file of no catalogue rom (see looseRomFile)
+savesRouter.get('/:id/rom', requirePerm('roms.download'), async (req, res) => {
+  const s = await ownSave(intParam(req), me(req));
+  const f = await looseRomFile(s.baseName);
+  if (!f) throw new HttpError(404, 'Rom file');
+  await sendRomFile(res, f, path.posix.basename(f.relativePath));
 });
 
 savesRouter.get('/:id/versions/:versionId/download', async (req, res) => {

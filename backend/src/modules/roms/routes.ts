@@ -559,7 +559,7 @@ collectionRouter.delete('/patches/:id', requireAdmin, async (req, res) => {
   res.status(204).end();
 });
 
-async function sendRomFile(res: import('express').Response, f: { relativePath: string; archiveEntry: string | null; romPath: { path: string } }, name: string) {
+export async function sendRomFile(res: import('express').Response, f: { relativePath: string; archiveEntry: string | null; romPath: { path: string } }, name: string) {
   const abs = path.join(f.romPath.path, f.relativePath);
   res.setHeader('Content-Disposition', `attachment; filename*=UTF-8''${encodeURIComponent(name)}`);
   if (f.archiveEntry) extractEntryStream(abs, f.archiveEntry).pipe(res);

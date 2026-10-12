@@ -13,7 +13,7 @@ import { HttpError, badRequest } from '../../lib/http.js';
 import { copiesSystem, folderFor, layoutOf, systemFilterOf, type DeviceLayout } from '../devices/sink.js';
 import { raDefaults } from '../../seed/data.js';
 import { contentFor, decide, deviceFileName, deviceThumbPath, findLogicalSave, receiveFromDevice, saveDirs, setBase, sha1 } from './core.js';
-import { THUMB_MAX, identifyRom, parseSaveFile, readThumb, saveHistory, storeThumb, romForSave } from './service.js';
+import { THUMB_MAX, identifyRom, parseSaveFile, readThumb, saveHistory, storeThumb, looseRomFile, romForSave } from './service.js';
 import fs from 'node:fs';
 import crypto from 'node:crypto';
 import { env } from '../../config/env.js';
@@ -660,7 +660,7 @@ async function pullRomsOfSaves(device: AgentDevice, roms: { path: string; baseNa
   const missing: string[] = [];
   for (const r of roms) {
     if (asked.has(home(r.path))) continue;
-    if (!(await romForSave({ romId: null, gameId: r.gameId, baseName: r.baseName }))) missing.push(home(r.path));
+    if (!(await romForSave({ romId: null, gameId: r.gameId, baseName: r.baseName })) && !(await looseRomFile(r.baseName))) missing.push(home(r.path));
   }
   if (missing.length) await prisma.devicePull.createMany({ data: missing.map((p) => ({ deviceId: device.id, path: p })) });
 }
