@@ -68,7 +68,8 @@
     <string name="dolphin_linked">Partidas de GameCube (Dolphin): conectado</string>
     <string name="dolphin_done">Dolphin conectado: las partidas de GameCube se sincronizan desde ahora.</string>
     <string name="dolphin_wrong">Esa no es la carpeta de Dolphin. En el selector abre el menú (☰), elige «Dolphin Emulator» y pulsa «Usar esta carpeta».</string>
-    <string name="updated_at">Actualizado el %1$s</string>
+    <string name="synced_at">Sincronizado: %1$s</string>
+    <string name="never_synced">Sin sincronizar todavía</string>
     <string name="prune">Borrar roms fuera de listas: %1$s</string>
     <string name="prune_clean">Borrar saves de roms borradas (%1$d)</string>
     <string name="prune_cleaned">Saves borrados: %1$d</string>

@@ -84,6 +84,14 @@ class SyncEngine(private val context: Context, private val store: Store, private
                 if (listed.add(save.path)) request.append("file\t").append(save.path).append('\t').append(sha1(save, 0)).append('\n')
             }
         }
+        // Roms kept in a folder of their own under their system (ROMs/snes/CURADA/game.smc): sent as "srom" when a save
+        // of the same name is here, so those saves sync; the server leaves them out of the inventory (and any deletion)
+        val saveNames = listed.mapTo(HashSet()) { File(it).name.replace(Regex("\\.state\\d*(\\.auto)?$", RegexOption.IGNORE_CASE), "").let { n -> if (n == File(it).name) n.substringBeforeLast('.') else n } }
+        romsDir?.listFiles()?.filter { it.isDirectory && !it.name.startsWith(".") }?.forEach { system ->
+            system.walkTopDown().maxDepth(3).onEnter { !it.name.startsWith(".") }
+                .filter { it.isFile && it.parentFile != system && isRom(it.name, exts) && it.name.substringBeforeLast('.') in saveNames }
+                .forEach { request.append("srom\t").append(it.path).append('\n') }
+        }
         // Dolphin's GameCube saves: one .gci per save, in its own folder (shared with us) or an old shared-storage
         // one. Only to servers that know them (they list .gci among the save extensions)
         if (".gci" in exts) {
@@ -175,6 +183,7 @@ class SyncEngine(private val context: Context, private val store: Store, private
         runCatching { EsDe.write(context, api, root) }
         return Result(up, down, errors).also {
             store.lastResult = "${java.text.DateFormat.getDateTimeInstance().format(java.util.Date())}: $it"
+            store.lastSyncAt = System.currentTimeMillis()
             store.addLog("sync: $it")
         }
     }

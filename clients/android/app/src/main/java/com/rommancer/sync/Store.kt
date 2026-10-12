@@ -19,6 +19,10 @@ class Store(context: Context) {
         get() = prefs.getInt("backupsKeep", 20)
         set(v) = prefs.edit().putInt("backupsKeep", v).apply()
 
+    /** When the last sync went through (ms), for the header */
+    var lastSyncAt: Long
+        get() = prefs.getLong("lastSyncAt", 0L)
+        set(v) = prefs.edit().putLong("lastSyncAt", v).apply()
     var lastResult: String
         get() = prefs.getString("lastResult", "") ?: ""
         set(v) = prefs.edit().putString("lastResult", v).apply()

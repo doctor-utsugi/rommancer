@@ -512,11 +512,15 @@ agentRouter.post('/sync', express.text({ limit: '16mb', type: '*/*' }), async (r
   const device = await deviceFromToken(req);
   // "rom<TAB>path[<TAB>sha1[<TAB>headerless sha1[<TAB>size]]]": the hashes identify roms with non-DAT names
   const roms: { path: string; hashes: string[]; size: number }[] = [];
+  // "srom<TAB>path": a rom in a folder of its own under its system that has saves here; its saves sync, but it is not
+  // part of the inventory (so never deleted for being in no list)
+  const nested: { path: string; hashes: string[]; size: number }[] = [];
   const present = new Map<string, string>();
   const cores = new Map<string, string>();
   for (const line of String(req.body ?? '').split('\n')) {
     const [kind, p, h, h2, size] = line.replace(/\r$/, '').split('\t');
     if (kind === 'rom' && p) roms.push({ path: p, hashes: [h ?? '', h2 ?? ''].filter(Boolean), size: Number(size) || 0 });
+    else if (kind === 'srom' && p) nested.push({ path: p, hashes: [], size: 0 });
     else if (kind === 'file' && p && SHA1.test(h ?? '')) present.set(p, h);
     else if (kind === 'core' && p && h) cores.set(p, h);
   }
@@ -545,7 +549,8 @@ agentRouter.post('/sync', express.text({ limit: '16mb', type: '*/*' }), async (r
   const cardFiles = new Set<string>();
   // Games by name and by content for every rom at once (a query per rom took most of a sync)
   const lookups = savedGames.size > 0 || present.size > 0;
-  const byName = lookups ? await nameIndex(roms.map((r) => romName(r.path))) : new Map<string, { id: number; gameId: number; systemId: number }[]>();
+  const withSaves = [...roms, ...nested];
+  const byName = lookups ? await nameIndex(withSaves.map((r) => romName(r.path))) : new Map<string, { id: number; gameId: number; systemId: number }[]>();
   const byHash = lookups ? await hashIndex(roms.flatMap((r) => r.hashes)) : { parts: new Map(), hacks: new Map() };
   // Resume states another console made, copied here before they stopped travelling: put aside, so this console
   // opens its games with their synced save instead of another console's memory
@@ -557,7 +562,7 @@ agentRouter.post('/sync', express.text({ limit: '16mb', type: '*/*' }), async (r
       })
     ).map((v) => v.sha1),
   );
-  for (const { path: rom, hashes } of roms) {
+  for (const { path: rom, hashes } of withSaves) {
     const ctx = await romContext(device, rom).catch(() => null);
     if (!ctx) continue;
     // Emulators whose save folder already holds files for this rom; the firmware default otherwise

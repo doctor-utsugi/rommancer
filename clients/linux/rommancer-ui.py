@@ -4,6 +4,7 @@
 Everything is done with the gamepad: server address, log in or create an account, sync now,
 status and sign out. Syncing itself is done by rommancer-sync.sh next to this file.
 """
+import functools
 import json
 import os
 import re
@@ -59,7 +60,8 @@ TEXTS = {
         "press": "Pulsa A para continuar",
         "nolog": "Todavía no hay registro",
         "version": "Versión {v}",
-        "updated": "Actualizado el {d}",
+        "synced": "Sincronizado: {d}",
+        "never_synced": "Sin sincronizar todavía",
         "months": "ene feb mar abr may jun jul ago sep oct nov dic",
         "installed": "instalada el {d}",
         "p_connecting": "Conectando con el servidor",
@@ -142,7 +144,8 @@ TEXTS = {
         "press": "Press A to continue",
         "nolog": "No log yet",
         "version": "Version {v}",
-        "updated": "Updated {d}",
+        "synced": "Synced: {d}",
+        "never_synced": "Not synced yet",
         "months": "Jan Feb Mar Apr May Jun Jul Aug Sep Oct Nov Dec",
         "installed": "installed {d}",
         "p_connecting": "Contacting the server",
@@ -353,8 +356,9 @@ def human(n):
     return f"{n:.1f} TB"
 
 
+@functools.lru_cache(maxsize=1)
 def client_version():
-    """CLIENT_VERSION of the sync script beside this app"""
+    """CLIENT_VERSION of the sync script beside this app (read once: every frame shows it)"""
     try:
         with open(os.path.join(HERE, "rommancer-sync.sh"), encoding="utf-8") as f:
             return next((l.split("=", 1)[1].strip() for l in f if l.startswith("CLIENT_VERSION=")), "?")
@@ -366,19 +370,28 @@ def client_version():
 STATE_DIR = None
 
 
-def updated_at():
-    """When this console last got a new client, as: Actualizado el 11 oct 2026, 18:40"""
-    try:
-        with open(os.path.join(STATE_DIR or "", "version"), encoding="utf-8") as f:
-            day, hour = f.read().strip().split("\t")[1].split(" ")
-        y, mo, d = (int(x) for x in day.split("-"))
-    except (OSError, ValueError, IndexError):
+_synced = [0.0, ""]
+
+
+def synced_at():
+    """When the last sync went through, as: Sincronizado: 12 oct, 18:52 (the client keeps it in RAM, and on the card
+    every ten minutes); read again every two seconds, not every frame"""
+    if time.time() - _synced[0] < 2:
+        return _synced[1]
+    _synced[:] = [time.time(), _synced_text()]
+    return _synced[1]
+
+
+def _synced_text():
+    work = os.path.join(os.environ.get("TMPDIR") or "/tmp", f"rommancer-{os.getuid()}", "last-sync")
+    for path in (work, os.path.join(STATE_DIR or "", "last-sync")):
         try:
-            t = time.localtime(os.path.getmtime(os.path.join(HERE, "rommancer-sync.sh")))
-        except OSError:
-            return ""
-        y, mo, d, hour = t.tm_year, t.tm_mon, t.tm_mday, f"{t.tm_hour:02d}:{t.tm_min:02d}"
-    return T["updated"].format(d=f"{d} {T['months'].split()[mo - 1]} {y}, {hour}")
+            with open(path, encoding="utf-8") as f:
+                t = time.localtime(int(f.read().strip()))
+            return T["synced"].format(d=f"{t.tm_mday} {T['months'].split()[t.tm_mon - 1]}, {t.tm_hour:02d}:{t.tm_min:02d}")
+        except (OSError, ValueError):
+            continue
+    return T["never_synced"]
 
 
 class Screen:
@@ -430,15 +443,11 @@ class Screen:
     def frame(self, title, footer=""):
         self.surf.fill(BG)
         r = self.text(title, (self.w // 2, int(self.h * 0.04)), self.big, ACCENT, center=True)
-        # Every screen says when the client was last updated: top right, or under the title when it does not fit
-        when = updated_at()
-        if when:
-            img = self.small.render(when, True, DIM)
-            x = self.w - img.get_width() - int(self.w * 0.02)
-            if x > r.right + int(self.w * 0.02):
-                self.surf.blit(img, (x, int(self.h * 0.015)))
-            else:
-                self.text(when, (self.w // 2, r.bottom), self.small, DIM, center=True)
+        # The client's version next to the app's name, and on every screen when the last sync went through
+        if title == T["title"]:
+            v = self.small.render(client_version(), True, DIM)
+            self.surf.blit(v, (r.right + int(self.w * 0.012), r.bottom - v.get_height() - 2))
+        self.text(synced_at(), (self.w // 2, r.bottom), self.small, DIM, center=True)
         if footer:
             self.text(footer, (self.w // 2, self.h - int(self.h * 0.07)), self.small, DIM, center=True)
 

@@ -253,6 +253,10 @@ file<TAB>/path/to/save<TAB>sha1
 core<TAB>mGBA<TAB>0.10.3
 ```
 
+`srom<TAB>/path` is a rom kept in a folder of its own under its system (`roms/snes/CURADA/game.smc`) that has a save
+or state of the same name: its saves sync like any other rom's, but it is not stored in the device's inventory, so
+the deletion of roms in no list never touches it.
+
 and answers what to move:
 
 ```

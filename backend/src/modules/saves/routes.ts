@@ -122,6 +122,17 @@ async function withCoreWarnings<T extends WithVersions>(userId: number, saves: T
   }));
 }
 
+/** Whether a save's file is all one byte (0x00 or 0xFF): the SRAM a game writes on its first start, before any play */
+const blankCache = new Map<string, boolean>();
+async function isBlank(v: { id: number; sha1: string }) {
+  const hit = blankCache.get(v.sha1);
+  if (hit !== undefined) return hit;
+  const buf = await readVersion(v.id).catch(() => null);
+  const blank = !!buf && buf.length > 0 && (buf[0] === 0 || buf[0] === 0xff) && buf.every((b) => b === buf[0]);
+  blankCache.set(v.sha1, blank);
+  return blank;
+}
+
 savesRouter.get('/', async (req, res) => {
   const u = me(req);
   const q = z.object({ gameId: z.coerce.number().int().optional(), kind: z.enum(['SAVE', 'STATE', 'ENTRY']).optional() }).parse(req.query);
@@ -135,7 +146,11 @@ savesRouter.get('/', async (req, res) => {
       versions: { orderBy: { fileMtime: 'desc' }, include: { sourceDevice: { select: { id: true, name: true } } } },
     },
   });
-  res.json(await withCoreWarnings(u.id, saves));
+  // "unplayed": a save with only the blank file a game writes when started; savestates and memory card entries are
+  // only written when the player saves, so they always count
+  const out = await withCoreWarnings(u.id, saves);
+  for (const s of out) (s as typeof s & { unplayed: boolean }).unplayed = s.kind === 'SAVE' && s.versions.length === 1 && (await isBlank(s.versions[0]));
+  res.json(out);
 });
 
 /** A save's file name: memory card entries download as single saves (.mcs for PS1, .gci for GameCube) */

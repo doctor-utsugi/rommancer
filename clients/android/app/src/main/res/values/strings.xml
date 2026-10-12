@@ -68,7 +68,8 @@
     <string name="dolphin_linked">GameCube saves (Dolphin): connected</string>
     <string name="dolphin_done">Dolphin shared: GameCube saves sync from now on.</string>
     <string name="dolphin_wrong">That is not Dolphin\'s folder. Open the menu (☰) in the picker, choose “Dolphin Emulator” and tap “Use this folder”.</string>
-    <string name="updated_at">Updated %1$s</string>
+    <string name="synced_at">Synced: %1$s</string>
+    <string name="never_synced">Not synced yet</string>
     <string name="prune">Delete roms not in lists: %1$s</string>
     <string name="prune_clean">Delete saves of deleted roms (%1$d)</string>
     <string name="prune_cleaned">Saves deleted: %1$d</string>

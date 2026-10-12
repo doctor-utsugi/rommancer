@@ -43,12 +43,12 @@ export function SavesPage() {
       return true
     }
   })
-  // A save never changed after it was created (one version: identical files make no new one) is a game only started
+  // A game only started: its save is the blank file it wrote at its first start (the server tells); savestates and
+  // memory card entries are only written when the player saves, so they always show
   const [q, setQ] = useState('')
   const needle = q.trim().toLowerCase()
   const found = needle ? data?.filter((s) => `${s.game?.title ?? ''} ${s.baseName} ${s.label ?? ''} ${s.game?.system.name ?? ''}`.toLowerCase().includes(needle)) : data
-  // A memory card save is only written when the player saves: one version already counts
-  const shown = onlyPlayed ? found?.filter((s) => s.kind === 'ENTRY' || s.versions.length > 1) : found
+  const shown = onlyPlayed ? found?.filter((s) => !s.unplayed) : found
   const hidden = (found?.length ?? 0) - (shown?.length ?? 0)
   return (
     <div>

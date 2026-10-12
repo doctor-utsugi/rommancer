@@ -1958,6 +1958,37 @@ test('sync client: the console chooses its own lists', async () => {
   await prisma.device.update({ where: { id }, data: { pruneRoms: false } });
 });
 
+test('sync client: saves of a rom kept in a subfolder of its system sync, and the rom stays out of the inventory', async () => {
+  const client = path.join(ROOT, 'clients/linux/rommancer-sync.sh');
+  const dir = path.join(DATA, 'nested-rom');
+  fs.rmSync(dir, { recursive: true, force: true });
+  const root = path.join(dir, 'root');
+  const r = await api('POST', '/link/claim', { name: 'nested-console', firmware: 'knulli', root });
+  const id = r.json.deviceId as number;
+  const state = path.join(dir, 'state');
+  fs.mkdirSync(state, { recursive: true });
+  fs.writeFileSync(path.join(state, 'config'), `SERVER=${base}\nTOKEN=${r.json.token}\n`);
+  const run = (...args: string[]) => execFileP('sh', [client, ...args], { env: { ...process.env, ROMMANCER_STATE: state } });
+  const rom = path.join(root, 'roms/snes/CURADA/Nested Quest 2.SMC');
+  fs.mkdirSync(path.dirname(rom), { recursive: true });
+  fs.writeFileSync(rom, crypto.randomBytes(2048));
+  const saves = path.join(root, 'saves/snes');
+  fs.mkdirSync(saves, { recursive: true });
+  fs.writeFileSync(path.join(saves, 'Nested Quest 2.srm'), crypto.randomBytes(8192));
+  fs.writeFileSync(path.join(saves, 'Nested Quest 2.state1'), crypto.randomBytes(4096));
+  // A game only started: the blank SRAM it writes at once
+  fs.writeFileSync(path.join(root, 'roms/snes/Blank Start.sfc'), crypto.randomBytes(2048));
+  fs.writeFileSync(path.join(saves, 'Blank Start.srm'), Buffer.alloc(8192, 0xff));
+  assert.match((await run('sync')).stdout, /sync: 3 up, 0 down, 0 errors/);
+  // The web hides only the blank one; a savestate saved once and a save with content show
+  const listed = (await api('GET', '/saves')).json.filter((x: any) => ['Nested Quest 2', 'Blank Start'].includes(x.baseName));
+  assert.deepEqual(listed.map((x: any) => `${x.baseName}:${x.kind}:${x.unplayed}`).sort(), ['Blank Start:SAVE:true', 'Nested Quest 2:SAVE:false', 'Nested Quest 2:STATE:false']);
+  const { prisma } = await import('../src/lib/prisma.js');
+  const stored = await prisma.save.findMany({ where: { baseName: 'Nested Quest 2' }, select: { kind: true } });
+  assert.deepEqual(stored.map((x) => x.kind).sort(), ['SAVE', 'STATE']);
+  assert.equal(await prisma.deviceRom.count({ where: { deviceId: id, path: { contains: 'CURADA' } } }), 0, 'not in the inventory');
+});
+
 test('collection: removing a hand-uploaded game deletes its file, list entries and records', async () => {
   const { prisma } = await import('../src/lib/prisma.js');
   const game = await prisma.game.findFirstOrThrow({ where: { title: 'Juego Snes' }, include: { hacks: { include: { files: { include: { romPath: true } } } }, roms: { include: { parts: { include: { files: { include: { romPath: true } } } } } } } });

@@ -22,7 +22,7 @@
 #                                   Menu++...) mounted on this computer; the link lives on the card itself,
 #                                   so any computer with this script can sync it. Without a command: sync.
 set -u
-CLIENT_VERSION=20261046
+CLIENT_VERSION=20261047
 # A clock before this date is surely wrong (no battery-backed clock); kept apart from the version, which may run ahead
 CLOCK_MIN=20261001
 # Onion keeps curl (with TLS) and friends outside the default PATH
@@ -413,8 +413,28 @@ build_request() {
     i=$((i + 1)); progress_file hashing "$i" "$total" "$f"
     s="$(fresh_sha1 "$f" "$meta")" && printf 'file\t%s\t%s\n' "$f" "$s" >> "$out"
   done < "$WORK/saves"
+  nested_lines "$out" > "$WORK/nested" && cat "$WORK/nested" >> "$out"
   core_lines >> "$out" 2>/dev/null
   save_cache
+}
+
+# Roms kept in a folder of their own under their system (roms/snes/CURADA/game.smc): sent as "srom<TAB>path" when a
+# save or state of the same name is in the request (REQ), so those saves sync. They stay out of the device's
+# inventory, and so out of any deletion of roms in no list
+nested_lines() {
+  stat_files '%s' "$ROMS" -mindepth 3 -maxdepth 4 | awk -F"$TAB" -v OFS="$TAB" '
+    function base(p, b) { b = p; sub(/.*\//, "", b); return b }
+    FNR == NR {
+      if ($1 == "file") { b = base($2); if (!sub(/\.[Ss][Tt][Aa][Tt][Ee][0-9]*(\.auto)?$/, "", b)) sub(/\.[^.]*$/, "", b); want[b] = 1 }
+      next
+    }
+    NF != 2 || index($2, "/.") { next }
+    {
+      f = $2; n = tolower(f)
+      if (n ~ /\.(png|jpg|jpeg|mp4|xml|txt|json|cfg|db|ini|pdf|srm|sav|mcd|mcr|dsv|cht|log|sh|lpl|pem)$/ || n ~ /\.state/) next
+      b = base(f); sub(/\.[^.]*$/, "", b)
+      if (b in want) print "srom", f
+    }' "$1" -
 }
 
 # Folders with RetroArch's core info files: the one its config names, then the usual ones
@@ -554,7 +574,23 @@ mark_version() {
   [ -n "$was" ] && [ -z "$SD" ] && [ -z "${ROMMANCER_NO_NOTIFY:-}" ] && ! playing || return 0
   if lang_es; then notify "Actualizado a la versión $CLIENT_VERSION"; else notify "Updated to version $CLIENT_VERSION"; fi
 }
-# "Actualizado el 11 oct 2026, 19:07": when this client arrived, on every setup screen
+# When the last sync went through, as seconds since 1970 (time zones differ between the daemon and the menus): in RAM
+# at every sync, on the card at most every ten minutes (it survives a reboot without a write per sync)
+synced_now() {
+  now="$(date +%s)"; echo "$now" > "$WORK/last-sync"
+  kept="$(cat "$STATE/last-sync" 2>/dev/null || echo 0)"
+  [ $((now - ${kept:-0})) -ge 600 ] 2>/dev/null && echo "$now" > "$STATE/last-sync"
+  return 0
+}
+synced_at() { cat "$WORK/last-sync" 2>/dev/null || cat "$STATE/last-sync" 2>/dev/null; }
+# "Sincronizado: 12 oct, 18:52" (the last sync that went through), on every setup screen
+synced_line() {
+  at="$(synced_at)"
+  if lang_es; then m="ene feb mar abr may jun jul ago sep oct nov dic"; w="Sincronizado:"; never="Sin sincronizar todavia"; else m="Jan Feb Mar Apr May Jun Jul Aug Sep Oct Nov Dec"; w="Synced:"; never="Not synced yet"; fi
+  [ -n "$at" ] || { printf '%s' "$never"; return 0; }
+  date -d "@$at" '+%m %d %H:%M' 2>/dev/null | awk -v m="$m" -v w="$w" '{ split(m, n, " "); printf "%s %d %s, %s", w, $2, n[$1 + 0], $3 }'
+}
+# "Actualizado el 11 oct 2026, 19:07": when this client arrived (the status screen)
 updated_line() {
   since="$(cut -f2 "$VERSION_FILE" 2>/dev/null)"
   [ -n "$since" ] || return 0
@@ -669,7 +705,9 @@ state_changed() {
   log "state: $1"
 }
 
-# Onion lists the app by its config.json label: it says when the console is offline or has conflicts to settle
+# Onion lists the app by its config.json label: it says when the console is offline or has conflicts to settle. The
+# label lives on the card and the state in RAM: it is set again from the state at every daemon start and every tick
+# (a write only when it differs), so it never outlives the state it tells
 app_label() {
   [ -f "$DIR/config.json" ] || return 0
   case "$(sync_state)" in
@@ -754,6 +792,7 @@ cmd_sync() {
   sort -u "$WORK/received" -o "$WORK/received" 2>/dev/null
   notify_received
   log "sync: $ups up, $downs down, $errs errors"
+  synced_now
   # The last log lines go to the server so problems can be seen without access to the device (a line repeated
   # in a row counted once, so a run of failures does not push everything else out)
   { log_tail; lists_report; [ -f "$DIR/last-run.txt" ] && { echo "--- last-run.txt"; tail -n 20 "$DIR/last-run.txt"; }; } > "$WORK/report" 2>/dev/null
@@ -999,6 +1038,7 @@ cmd_daemon() {
   cmd_install > /dev/null 2>&1
   last=""; since=$FULL_SECONDS; update_due=1; started="$(date +%s)"
   rm -f "$WORK/offline-since"
+  app_label
   while :; do
     # Each full pass also checks for a newer client and restarts into it. At power-on the WiFi may not be up yet:
     # a check that could not reach the server is tried again at the next tick, not a full pass later
@@ -1016,7 +1056,7 @@ cmd_daemon() {
       n="$(printf '%s\n' "$asked" | sed -n "s/^conflicts$TAB//p")"; n="${n:-0}"
       old="$(cat "$WORK/conflicts-open" 2>/dev/null || echo 0)"
       echo "$n" > "$WORK/conflicts-open"
-      if [ "$n" -gt "$old" ]; then state_changed conflicts; elif [ "$n" != "$old" ]; then app_label; fi
+      if [ "$n" -gt "$old" ]; then state_changed conflicts; else app_label; fi
     else
       # Offline once two polls in a row failed (a lost packet is not news), dated from the first; not in the first
       # minute and a half after power-on, while the WiFi comes up
@@ -1166,10 +1206,27 @@ prune_set() { PRUNE_ROMS="$1"; set_setting PRUNE_ROMS "$1"; touch "$STATE/prune-
 # Deletes the roms the server names as in no list of this console (only with PRUNE_ROMS=1, never during a game,
 # only inside the roms folder). A deletion of more than half of the roms waits in $STATE/prune-hold for the user
 # ("prune confirm"). Deleted paths are kept in $STATE/pruned for the saves clean-up ("prune clean").
+# A lock of its own for NAME: a directory holding its owner's pid (one left by a process that died is taken over)
+own_lock() {
+  l="$WORK/$1-lock"
+  if mkdir "$l" 2>/dev/null; then echo $$ > "$l/pid"; return 0; fi
+  o="$(cat "$l/pid" 2>/dev/null)"
+  if [ -n "$o" ] && ! kill -0 "$o" 2>/dev/null; then rm -rf "$l"; mkdir "$l" 2>/dev/null && echo $$ > "$l/pid" && return 0; fi
+  return 1
+}
+
+# One deletion at a time: the daemon's pass and a sync started at power-on or on screen can meet, and the second one
+# leaves it to the first
 cmd_prune() {
   need_link
   [ "$PRUNE_ROMS" = 1 ] && [ ! -f "$STATE/prune-ask" ] || return 0
   playing && return 0
+  own_lock prune || return 0
+  prune_run; rc=$?
+  rm -rf "$WORK/prune-lock"
+  return $rc
+}
+prune_run() {
   if [ -z "${ROMS:-}" ]; then roots="$(http GET "$SERVER/api/v1/agent/roots" - -)" || return 1; ROMS="$(field roms "$roots")"; fi
   [ -n "$ROMS" ] || return 1
   http GET "$SERVER/api/v1/agent/prune" - "$WORK/pruneplan" || { log "prune: server unreachable"; return 1; }
@@ -1560,7 +1617,14 @@ cmd_game_start() {
   fix_clock
   HTTP_MAX=10
   rh="X-Rom-B64: $(b64 "$rom")"
-  http GET "$SERVER/api/v1/agent/manifest" - "$WORK/gs-manifest" "$rh" || { log "game-start: offline, playing local save"; return 0; }
+  # Offline only when the server could not be reached: a refusal (a game it cannot place) says so
+  if ! http GET "$SERVER/api/v1/agent/manifest" - "$WORK/gs-manifest" "$rh"; then
+    case "$(cut -f1 "$WORK/last-error" 2>/dev/null)" in
+      22) log "game-start: the server does not sync saves for $(basename "$rom") ($(cut -f3 "$WORK/last-error" | sed 's/.*returned error: //'))" ;;
+      *) log "game-start: offline, playing local save" ;;
+    esac
+    return 0
+  fi
   : > "$WORK/gs-present"
   while IFS= read -r p; do [ -f "$p" ] && printf '%s\t%s\n' "$p" "$(sha1 "$p")" >> "$WORK/gs-present"; done < "$WORK/gs-manifest"
   http POST "$SERVER/api/v1/agent/start" "$WORK/gs-present" "$WORK/gs-plan" "$rh" || return 0
@@ -1996,7 +2060,7 @@ cmd_setup() {
       # A copy the server asked for shows in the menu's text while it lasts
       # and as an item to watch it
       pl=""; set --; pulls_running && { pl=" $(pulls_line)"; set -- "$(t pullswatch)"; }
-      menu "Rommancer Sync" "$(t connected). $(updated_line).$pl" "$(t sync)" "$romsitem" "$(t lists)" "$(t allowpull "$pull")" "$(t allowssh "$ssh")" "$(t prune "$prune")" "$(t pruneclean "$cleanable")" "$(t conflicts "$nconf")" "$(t status)" "$(t unlink)" "$@" "$(t quit)"; rc=$?
+      menu "Rommancer Sync $CLIENT_VERSION" "$(t connected). $(synced_line).$pl" "$(t sync)" "$romsitem" "$(t lists)" "$(t allowpull "$pull")" "$(t allowssh "$ssh")" "$(t prune "$prune")" "$(t pruneclean "$cleanable")" "$(t conflicts "$nconf")" "$(t status)" "$(t unlink)" "$@" "$(t quit)"; rc=$?
       case $rc in
         # On screen with its progress until done; B stops the roms
         0) with_progress "$(t sync)" cmd_all ;;
@@ -2008,14 +2072,14 @@ cmd_setup() {
            panel "Rommancer Sync" "$(t syncing)"; sh "$DIR/$(basename "$0")" prune set "$v" > /dev/null 2>&1; panel_close; PRUNE_ROMS="$v" ;;
         6) with_progress "$(t pruneclean "$cleanable")" sh "$DIR/$(basename "$0")" prune clean ;;
         7) panel "Rommancer Sync" "$(t p_connecting)"; cmd_conflicts > "$WORK/conflicts" 2>/dev/null || : > "$WORK/conflicts"; panel_close; setup_conflicts ;;
-        8) panel "$(t status)" "$(version_line). $(tail -n 4 "$LOG" 2>/dev/null | cut -c21- | tr '\n' ' ')" wait ;;
+        8) panel "$(t status)" "$(version_line). $(synced_line). $(tail -n 4 "$LOG" 2>/dev/null | cut -c21- | tr '\n' ' ')" wait ;;
         9) keep="$SERVER"; cmd_unlink > /dev/null; TOKEN=""; USER_NAME=""; SERVER="$keep" ;;
         # The copy's item when it showed, Quit otherwise
         10) [ "$#" -gt 0 ] || return 0; watch_pulls ;;
         *) return 0 ;;
       esac
     else
-      menu "Rommancer Sync" "$(t notlinked). $(updated_line)" "$(t server): $SERVER" "$(t login)" "$(t signup)" "$(t quit)"; rc=$?
+      menu "Rommancer Sync $CLIENT_VERSION" "$(t notlinked)." "$(t server): $SERVER" "$(t login)" "$(t signup)" "$(t quit)"; rc=$?
       case $rc in
         0) v="$(ask "$(t server)" "$SERVER")" && SERVER="${v%/}" ;;
         1|2)
@@ -2050,6 +2114,7 @@ cmd_unlink() {
   # Another account's lists are not this one's: the deletion of roms in no list starts off and is offered again
   set_setting PRUNE_ROMS 0
   rm -f "$STATE/prune-set" "$STATE/prune-ask" "$STATE/prune-hold" "$STATE/prune-intro" "$STATE/pruned"
+  rm -f "$WORK/offline-since" "$WORK/conflicts-open"; app_label
   echo "Unlinked"
 }
 

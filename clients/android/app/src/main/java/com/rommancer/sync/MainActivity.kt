@@ -133,15 +133,18 @@ private fun App(resumes: Int) {
     // Two columns like the handheld setup app: content on the left, the spinning save point on the right
     Row(Modifier.fillMaxSize().padding(horizontal = 24.dp, vertical = 12.dp)) {
         Column(Modifier.weight(0.6f).fillMaxHeight().verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-            // When the app was last updated, always in sight under the name
-            val updated = remember {
-                runCatching {
-                    val t = context.packageManager.getPackageInfo(context.packageName, 0).lastUpdateTime
-                    java.text.SimpleDateFormat("d MMM yyyy, HH:mm", java.util.Locale.getDefault()).format(java.util.Date(t))
-                }.getOrNull().orEmpty()
+            // The app's version next to its name, and when the last sync went through, always in sight under it
+            val version = remember { runCatching { context.packageManager.getPackageInfo(context.packageName, 0).versionName }.getOrNull().orEmpty() }
+            val syncedAt by produceState(store.lastSyncAt) { while (true) { value = store.lastSyncAt; delay(2_000) } }
+            Row(verticalAlignment = Alignment.Bottom) {
+                Text("Rommancer Sync", fontSize = 26.sp, fontWeight = FontWeight.SemiBold, color = Accent)
+                Text("  $version", fontSize = 14.sp, color = Dim, modifier = Modifier.padding(bottom = 4.dp))
             }
-            Text("Rommancer Sync", fontSize = 26.sp, fontWeight = FontWeight.SemiBold, color = Accent)
-            if (updated.isNotEmpty()) Text(stringResource(R.string.updated_at, updated), fontSize = 14.sp, color = Dim)
+            Text(
+                if (syncedAt > 0) stringResource(R.string.synced_at, java.text.SimpleDateFormat("d MMM, HH:mm", java.util.Locale.getDefault()).format(java.util.Date(syncedAt)))
+                else stringResource(R.string.never_synced),
+                fontSize = 14.sp, color = Dim,
+            )
             when {
                 !canRead -> StoragePermission()
                 linked -> Linked(store) { linked = false }
