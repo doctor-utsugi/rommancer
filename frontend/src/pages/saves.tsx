@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { Link } from 'react-router'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
-import { Ban, Check, ChevronDown, ChevronRight, Clock, Download, History, ImageOff, LayoutList, Rows3, Share2, Trash2, TriangleAlert } from 'lucide-react'
+import { Ban, Check, ChevronDown, ChevronRight, Clock, Download, History, ImageOff, LayoutList, Play, Rows3, Share2, Trash2, TriangleAlert } from 'lucide-react'
 import { toast } from 'sonner'
 import { authUrl, del, get, patch, post, put, upload } from '@/lib/api'
 import { Badge } from '@/components/ui/badge'
@@ -450,6 +450,12 @@ export function VersionsDialog({ saveId, onClose }: { saveId: number; onClose():
                 <TableCell>{formatBytes(v.size)}</TableCell>
                 <TableCell>{v.sourceDevice?.name ?? t('saves.web')}</TableCell>
                 <TableCell className="space-x-1 text-right">
+                  {playable(s) && (
+                    <Button variant="outline" size="sm" title={t(s.kind === 'STATE' ? 'more.saves.playStateHelp' : 'more.saves.playHelp')} onClick={() => void play(s.id, v.id, t)}>
+                      <Play className="size-4" />
+                      {t('more.saves.play')}
+                    </Button>
+                  )}
                   <Button variant="outline" size="sm" nativeButton={false} render={<a href={authUrl(`/saves/${s.id}/versions/${v.id}/download${as ? `?emulator=${as}` : ''}`)} />}>
                     {t('common.download')}
                   </Button>
@@ -765,6 +771,29 @@ function MemoryCards() {
       </Table>
     </div>
   )
+}
+
+/** Systems the browser emulator plays (the server has the same list); a save of an unknown game may be one */
+const WEB_SYSTEMS = ['nes', 'fds', 'snes', 'gb', 'gbc', 'gba', 'md', 'sms', 'gg', 'sega32x', 'pcengine', 'ngp', 'ngpc', 'wswan', 'wswanc', 'lynx', 'a7800', 'atari2600', 'virtualboy', 'colecovision']
+const playable = (s: any) => s.kind !== 'ENTRY' && (!s.game || WEB_SYSTEMS.includes(s.game.system.slug))
+
+/**
+ * Opens a version in the browser emulator, in a new tab: the server says which system, rom and file, and the page gets
+ * them with their download links in its address's fragment. Nothing played there is kept. The tab opens at once
+ * (a tab opened after waiting for the server would be blocked as a popup)
+ */
+async function play(saveId: number, versionId: number, t: (k: string) => string) {
+  const tab = window.open('about:blank', '_blank')
+  try {
+    const p = await get<any>(`/saves/${saveId}/versions/${versionId}/play`)
+    const cfg = { ...p, romUrl: authUrl(p.romUrl), fileUrl: authUrl(p.fileUrl) }
+    const url = `/emulatorjs/play.html#${encodeURIComponent(JSON.stringify(cfg))}`
+    if (tab) tab.location.href = url
+    else window.open(url, '_blank')
+  } catch (e) {
+    tab?.close()
+    toast.error(`${t('more.saves.playFailed')}: ${errMsg(e)}`)
+  }
 }
 
 function Conflicts() {

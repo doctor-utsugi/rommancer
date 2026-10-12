@@ -380,6 +380,54 @@ savesRouter.post('/upload', upload.single('file'), async (req, res) => {
 });
 
 // Descarga una version, opcionalmente convertida al formato de otro emulador
+// ---------- playing a save in the browser (EmulatorJS, nothing kept) ----------
+
+/** EmulatorJS systems for ours: the cartridge ones its cores play well in a browser */
+const WEB_SYSTEMS: Record<string, string> = {
+  nes: 'nes', fds: 'nes', snes: 'snes', gb: 'gb', gbc: 'gb', gba: 'gba', md: 'segaMD', sms: 'segaMS', gg: 'segaGG', sega32x: 'sega32x',
+  pcengine: 'pce', ngp: 'ngp', ngpc: 'ngp', wswan: 'ws', wswanc: 'ws', lynx: 'lynx', a7800: 'atari7800', atari2600: 'atari2600',
+  virtualboy: 'vb', colecovision: 'coleco',
+};
+
+/** The server's rom a save belongs to: its own, one of its game's (the one named like the save first), or by name */
+async function romForSave(s: { romId: number | null; gameId: number | null; baseName: string }) {
+  const withFile = { parts: { some: { files: { some: { status: { in: ['MATCHED' as const, 'UNVERIFIED' as const] } } } } } };
+  const include = { game: { include: { system: true } } };
+  if (s.romId) {
+    const r = await prisma.rom.findFirst({ where: { id: s.romId, ...withFile }, include });
+    if (r) return r;
+  }
+  if (s.gameId) {
+    const roms = await prisma.rom.findMany({ where: { gameId: s.gameId, ...withFile }, include });
+    const named = roms.find((r) => r.name.toLowerCase() === s.baseName.toLowerCase());
+    if (named ?? roms[0]) return named ?? roms[0];
+  }
+  return prisma.rom.findFirst({ where: { name: s.baseName, ...withFile }, include });
+}
+
+// What the play page needs for a version: the EmulatorJS system, the rom and the save or state to load
+savesRouter.get('/:id/versions/:versionId/play', requirePerm('roms.download'), async (req, res) => {
+  const s = await ownSave(intParam(req), me(req));
+  const v = await prisma.saveVersion.findFirstOrThrow({ where: { id: intParam(req, 'versionId'), saveId: s.id } });
+  if (s.kind === 'ENTRY') throw badRequest('Memory card entries cannot be played in the browser');
+  const rom = await romForSave(s);
+  if (!rom) throw new HttpError(404, 'The rom of this save is not on the server');
+  const system = WEB_SYSTEMS[rom.game.system.slug];
+  if (!system) throw badRequest(`${rom.game.system.name} cannot be played in the browser`);
+  // Saves go as RetroArch writes them (the browser runs RetroArch cores); states as they are
+  const asRa = s.kind === 'SAVE' && raDefaults[rom.game.system.slug] ? `?emulator=${raDefaults[rom.game.system.slug]}` : '';
+  res.json({
+    system,
+    title: rom.game.title,
+    kind: s.kind,
+    // The file's own name: its extension tells some cores the system (a Game Gear rom in a Master System core)
+    romName: (await prisma.romPart.findFirst({ where: { romId: rom.id }, select: { name: true } }))?.name ?? rom.name,
+    romUrl: `/api/v1/roms/${rom.id}/download`,
+    fileUrl: `/api/v1/saves/${s.id}/versions/${v.id}/download${asRa}`,
+    core: s.emulator.name,
+  });
+});
+
 savesRouter.get('/:id/versions/:versionId/download', async (req, res) => {
   const s = await ownSave(intParam(req), me(req));
   const v = await prisma.saveVersion.findFirstOrThrow({ where: { id: intParam(req, 'versionId'), saveId: s.id } });

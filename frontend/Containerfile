@@ -7,8 +7,19 @@ COPY clients/desktop/package.json clients/desktop/
 RUN npm ci -w frontend --include-workspace-root=false --no-audit --no-fund
 COPY frontend frontend
 RUN npm run build -w frontend
+# EmulatorJS and the cores of the systems the browser plays (the play button of saves), from npm. Saves made in the
+# browser live in memory only: its save folder is mounted in RAM instead of the browser's database
+ARG EJS=4.2.3
+RUN mkdir -p /ejs && cd /ejs \
+  && npm pack --silent @emulatorjs/emulatorjs@$EJS $(for c in fceumm snes9x gambatte mgba genesis_plus_gx picodrive mednafen_pce mednafen_ngp mednafen_wswan handy prosystem stella2014 beetle_vb gearcoleco; do echo @emulatorjs/core-$c@$EJS; done) > /dev/null \
+  && tar xzf emulatorjs-emulatorjs-$EJS.tgz && mv package/data data && rm -rf package \
+  && mkdir -p data/cores/reports && for t in emulatorjs-core-*.tgz; do tar xzf $t && mv package/*.data data/cores/ && mv package/reports/*.json data/cores/reports/ && rm -rf package; done \
+  && rm -f *.tgz \
+  && sed -i 's/this.FS.filesystems.IDBFS, { autoPersist: true }/this.FS.filesystems.MEMFS, {}/' data/src/GameManager.js \
+  && grep -q 'filesystems.MEMFS' data/src/GameManager.js
 
 FROM docker.io/library/nginx:1.27-alpine
 COPY frontend/nginx.conf /etc/nginx/conf.d/default.conf
 COPY --from=build /app/frontend/dist /usr/share/nginx/html
+COPY --from=build /ejs/data /usr/share/nginx/html/emulatorjs/data
 EXPOSE 80
