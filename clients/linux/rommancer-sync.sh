@@ -22,7 +22,7 @@
 #                                   Menu++...) mounted on this computer; the link lives on the card itself,
 #                                   so any computer with this script can sync it. Without a command: sync.
 set -u
-CLIENT_VERSION=20261044
+CLIENT_VERSION=20261045
 # A clock before this date is surely wrong (no battery-backed clock); kept apart from the version, which may run ahead
 CLOCK_MIN=20261001
 # Onion keeps curl (with TLS) and friends outside the default PATH
@@ -1154,13 +1154,12 @@ cmd_install() {
 
 # ---------- roms of the lists assigned to this device ----------
 
-# The web app changed the deletion of roms in no list ("prune<TAB>value<TAB>files<TAB>bytes"): turning it off
-# applies at once; turning it on waits in $STATE/prune-ask for the user's answer on screen ("prune set")
+# The web app changed the deletion of roms in no list ("prune<TAB>value<TAB>files<TAB>bytes"): the same switch on
+# both sides, applied at once either way (the user already said so there)
 prune_answer() {
-  [ -n "$1" ] || { rm -f "$STATE/prune-ask"; return 0; }
-  v="$(printf '%s' "$1" | cut -f2)"
-  if [ "$v" = 1 ]; then printf '%s\t%s\n' "$(printf '%s' "$1" | cut -f3)" "$(printf '%s' "$1" | cut -f4)" > "$STATE/prune-ask"
-  else prune_set 0; rm -f "$STATE/prune-ask"; fi
+  rm -f "$STATE/prune-ask"
+  [ -n "$1" ] || return 0
+  prune_set "$(printf '%s' "$1" | cut -f2)"
 }
 prune_set() { PRUNE_ROMS="$1"; set_setting PRUNE_ROMS "$1"; touch "$STATE/prune-set"; [ "$1" = 1 ] || rm -f "$STATE/prune-hold"; }
 

@@ -4,7 +4,7 @@
  * version counts, as for copying) or when it goes with a file that stays (a cue sheet's tracks). Files of no
  * system (ports, apps, BIOS folders) never go. A file the server does not have yet is first fetched from the
  * device (only where the device lets the server fetch roms and the user may upload them) and deleted once it is
- * stored; without that it stays. A deletion of more than half of the device's roms waits for the user's word.
+ * stored; without that it stays. Turned on is the user's word: no deletion waits for another.
  */
 import path from 'node:path';
 import type { Device, Firmware } from '@prisma/client';
@@ -27,13 +27,9 @@ export interface PrunePlan {
   stuck: number;
   /** Roms with a system on the device */
   total: number;
-  /** The deletion is big enough to wait for the user's word (null: it goes ahead) */
+  /** Always null: kept for clients that still read it */
   held: number | null;
 }
-
-/** Above this share of the device's roms (and this many files), a deletion is held for confirmation */
-const HOLD_SHARE = 0.5;
-const HOLD_MIN = 10;
 
 const stem = (name: string) => name.replace(/\.[^.]+$/, '');
 
@@ -82,9 +78,9 @@ export async function prunePlan(device: Device & { firmware: Firmware }, home = 
     else if (canFetch && pullOf.get(r.path) !== 'failed') upload.push(file);
     else stuck++;
   }
-  const big = del.length >= HOLD_MIN && del.length > roms.length * HOLD_SHARE;
-  const held = big && !(device.pruneAllow !== null && del.length <= device.pruneAllow) ? del.length : null;
-  return { del, upload, stuck, total: roms.length, held };
+  // Turned on (here or on the console) is the user's word: nothing waits for a second one. Only files the server
+  // holds are deleted, so nothing is lost whatever the size of the deletion
+  return { del, upload, stuck, total: roms.length, held: null };
 }
 
 /** Asks the device for the files still to fetch before they can be deleted (once per file) */

@@ -4,7 +4,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
 import { AlertTriangle, ChevronDown, ChevronUp, Cog, Download, Loader2, Pause, RefreshCw, Settings2, Upload, X } from 'lucide-react'
 import { toast } from 'sonner'
-import { del, get, post } from '@/lib/api'
+import { del, get, post, put } from '@/lib/api'
 import { useAuth } from '@/lib/auth'
 import { Button } from '@/components/ui/button'
 import { Progress } from '@/components/ui/progress'
@@ -194,12 +194,32 @@ function Row({ item: i, admin }: { item: Item; admin: boolean }) {
         <Note>{offline ? t('more.activity.offline') : t('more.activity.waiting')}</Note>
       </Entry>
     )
-  if (i.kind === 'prune')
+  if (i.kind === 'prune') {
+    const answer = async (go: boolean) => {
+      if (go && !confirm(t('more.prune.heldConfirm', { count: i.held }))) return
+      try {
+        if (go) await post(`/devices/${i.deviceId}/prune/confirm`)
+        else await put(`/devices/${i.deviceId}/prune`, { on: false })
+      } catch (e) {
+        toast.error(errMsg(e))
+      }
+      void qc.invalidateQueries({ queryKey: ['activity'] })
+      void qc.invalidateQueries({ queryKey: ['device-prune', String(i.deviceId)] })
+    }
     return (
-      <Entry icon={AlertTriangle} title={t('more.activity.pruneTitle', { name: i.name })} to={`/devices/${i.deviceId}`} warn>
+      <Entry icon={AlertTriangle} title={t('more.activity.pruneTitle', { name: i.name })} to={`/devices/${i.deviceId}?tab=lists#prune`} warn>
         <Note>{t('more.activity.pruneHeld', { count: i.held })}</Note>
+        <div className="flex gap-2">
+          <Button size="sm" variant="destructive" className="h-7" onClick={() => void answer(true)}>
+            {t('more.activity.pruneGo')}
+          </Button>
+          <Button size="sm" variant="outline" className="h-7" onClick={() => void answer(false)}>
+            {t('more.activity.pruneKeep')}
+          </Button>
+        </div>
       </Entry>
     )
+  }
   return (
     <Entry icon={Cog} title={t(`jobs.types.${i.type}`, { defaultValue: i.type })} to={admin ? '/admin/jobs' : undefined} onStop={stop}>
       {i.status === 'RUNNING' && i.total > 0 && <Progress value={(i.processed / i.total) * 100} />}

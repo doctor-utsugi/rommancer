@@ -728,7 +728,6 @@ devicesRouter.post('/:id/lists/preview', async (req, res) => {
     uploadBytes: bytes(upload),
     stuck: Math.max(0, next.stuck - now.stuck),
     total: next.total,
-    held: next.held !== null,
     sample: [...del, ...upload].slice(0, 50).map((f) => path.posix.basename(f.path)),
   });
 });

@@ -1,5 +1,5 @@
-import { useMemo, useState } from 'react'
-import { Link, useParams } from 'react-router'
+import { useEffect, useMemo, useState } from 'react'
+import { Link, useLocation, useParams, useSearchParams } from 'react-router'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
 import { Check, Download, ListPlus, Pause, Play, RefreshCw, Send, Terminal, X } from 'lucide-react'
@@ -65,6 +65,10 @@ interface PullProgress {
 export function DevicePage() {
   const { id } = useParams()
   const { t } = useTranslation()
+  // The tab can be named in the address (?tab=lists), and a block of it (#prune) is scrolled to
+  const [params, setParams] = useSearchParams()
+  const tab = params.get('tab') ?? 'games'
+  const { hash } = useLocation()
   const { can, user } = useAuth()
   const qc = useQueryClient()
   const device = useQuery({ queryKey: ['device', id], queryFn: () => get<any>(`/devices/${id}`) })
@@ -123,6 +127,11 @@ export function DevicePage() {
   const pull = (body: object) => act(() => post(`/devices/${id}/pull`, body), (r) => t('more.device.queued', { count: r.queued }))
 
   if (!device.data) return <p className="text-sm text-muted-foreground">{t('common.loading')}</p>
+  useEffect(() => {
+    if (!hash) return
+    const t = setTimeout(() => document.getElementById(hash.slice(1))?.scrollIntoView({ behavior: 'smooth', block: 'center' }), 300)
+    return () => clearTimeout(t)
+  }, [hash, tab, device.data])
   const d = device.data
   return (
     <div className="space-y-6">
@@ -184,7 +193,7 @@ export function DevicePage() {
         />
       )}
 
-      <Tabs defaultValue="games">
+      <Tabs value={tab} onValueChange={(v) => setParams((p) => { p.set('tab', String(v)); return p }, { replace: true })}>
         <TabsList>
           <TabsTrigger value="games">{t('more.device.tabGames', { count: items.length })}</TabsTrigger>
           <TabsTrigger value="lists">{t('more.device.tabLists', { count: lists.data?.length ?? 0 })}</TabsTrigger>
@@ -1036,7 +1045,7 @@ function DevicePrune({ deviceId, canEdit }: { deviceId: string; canEdit: boolean
   }
   const plan = p.plan
   return (
-    <Card className="mt-4">
+    <Card className="mt-4" id="prune">
       <CardHeader>
         <CardTitle className="text-base">{t('more.prune.title')}</CardTitle>
       </CardHeader>
@@ -1072,6 +1081,9 @@ function DevicePrune({ deviceId, canEdit }: { deviceId: string; canEdit: boolean
             <span className="text-destructive">{t('more.prune.held', { count: p.held, total: plan?.total ?? 0 })}</span>
             <Button size="sm" variant="destructive" disabled={!canEdit || busy} onClick={() => confirm(t('more.prune.heldConfirm', { count: p.held! })) && void act(() => post(`/devices/${deviceId}/prune/confirm`))}>
               {t('more.prune.heldGo')}
+            </Button>
+            <Button size="sm" variant="outline" disabled={!canEdit || busy} onClick={() => void act(() => put(`/devices/${deviceId}/prune`, { on: false }))}>
+              {t('more.prune.heldKeep')}
             </Button>
           </div>
         )}
@@ -1241,9 +1253,6 @@ function ChooseListsDialog({ current, onClose, onSubmit }: { current: number[]; 
           ))}
         </div>
         <DialogFooter>
-          <Button variant="outline" onClick={onClose}>
-            {t('common.cancel')}
-          </Button>
           <Button onClick={() => onSubmit([...picked])} disabled={same}>
             {t('common.save')}
           </Button>
@@ -1289,7 +1298,6 @@ function ConfirmListsDialog(props: { deviceId: string; listIds: number[]; remove
             <>
               {p.del > 0 && <p className="font-medium text-destructive">{t('more.device.removeDeletes', { count: p.del, size: formatBytes(p.delBytes) })}</p>}
               {p.upload > 0 && <p className="font-medium text-destructive">{t('more.device.removeDeletesLater', { count: p.upload, size: formatBytes(p.uploadBytes) })}</p>}
-              {p.held && <p className="text-amber-600">{t('more.device.removeHeld')}</p>}
               <ul className="max-h-40 overflow-y-auto rounded border p-2 text-xs text-muted-foreground">
                 {p.sample.map((f: string) => (
                   <li key={f} className="truncate">{f}</li>
@@ -1301,9 +1309,6 @@ function ConfirmListsDialog(props: { deviceId: string; listIds: number[]; remove
           {p?.prune && p.stuck > 0 && <p className="text-muted-foreground">{t('more.device.removeStuck', { count: p.stuck })}</p>}
         </div>
         <DialogFooter>
-          <Button variant="outline" onClick={props.onClose}>
-            {t('common.cancel')}
-          </Button>
           <Button variant={deletes ? 'destructive' : 'default'} onClick={go} disabled={busy || !p}>
             {deletes ? t('more.device.removeAndDelete', { count: p.del + p.upload }) : t('more.device.removeConfirm')}
           </Button>

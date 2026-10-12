@@ -3187,15 +3187,14 @@ test('device prune: roms in no list leave the console once the server has them; 
   assert.ok(st.plan.sample.includes(other) && st.plan.sample.includes(homebrew) && !st.plan.sample.includes(track), 'a track of a kept game stays');
   assert.match((await run('prune')).stdout, /^on\t0\n(.|\n)*intro\t0/);
 
-  // Turned on from the web: the console asks its user, and deletes nothing meanwhile
+  // Turned on from the web: the same switch, the console applies it at its next sync without asking again;
+  // the server hears it back; the owned rom goes, the homebrew is fetched first
   await api('PUT', `/devices/${id}/prune`, { on: true });
   assert.equal((await prune()).remote, true);
   await run('sync');
-  assert.match((await run('prune')).stdout, /ask\t2\t\d+/);
-  await run('prune', 'run');
-  assert.ok(there(other), 'nothing deleted before the answer');
-  // The user keeps it: the server hears the answer; the owned rom goes, the homebrew is fetched first
-  await run('prune', 'set', '1');
+  assert.match((await run('prune')).stdout, /^on\t1/);
+  assert.doesNotMatch((await run('prune')).stdout, /ask/);
+  await run('sync');
   st = await prune();
   assert.deepEqual([st.on, st.remote], [true, false]);
   // Removing lists from the web first says what that would delete on top (the current lists: nothing more)
@@ -3218,17 +3217,15 @@ test('device prune: roms in no list leave the console once the server has them; 
   assert.ok(saves.includes(`saves/nes/Arkanoid (USA).srm`), saves);
   assert.ok(!saves.includes(SMB3), 'SMB3 is still there');
 
-  // A list emptied by mistake: deleting more than half of the console's roms waits for a confirmation
+  // However big, a deletion goes ahead once turned on (only files the server holds are deleted)
   await prisma.deviceList.deleteMany({ where: { deviceId: id } });
   const smbPath = path.join(nesDir, smb3);
   const sha = crypto.createHash('sha1').update(fs.readFileSync(smbPath)).digest('hex');
   const fake = Array.from({ length: 12 }, (_, i) => `rom\t${nesDir}/Copy ${i}.nes\t${sha}\t\t1`).join('\n');
   await fetch(`${base}/api/v1/agent/sync`, { method: 'POST', headers: { 'X-Device-Token': token, 'Content-Type': 'text/plain', 'X-Prune': '1' }, body: fake + '\n' });
   const agent = (p: string) => fetch(`${base}/api/v1/agent${p}`, { headers: { 'X-Device-Token': token } }).then((r) => r.text());
-  assert.equal((await agent('/prune')).trim(), 'hold\t12\t12');
-  assert.equal((await prune()).held, 12);
-  assert.equal((await api('POST', `/devices/${id}/prune/confirm`)).status, 200);
-  assert.equal((await agent('/prune')).trim().split('\n').filter((l) => l.startsWith('del\t')).length, 12, 'confirmed: it goes ahead');
+  assert.equal((await agent('/prune')).trim().split('\n').filter((l) => l.startsWith('del\t')).length, 12, 'not held for a second confirmation');
+  assert.equal((await prune()).held, null);
 
   // Turned off from the web: the console applies it at its next sync and tells the server back
   await api('PUT', `/devices/${id}/prune`, { on: false });
