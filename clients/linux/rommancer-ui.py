@@ -29,6 +29,9 @@ SPRITE = os.path.join(HERE, "savepoint.png")
 SPRITE_FPS = 60
 ES_INPUT = ["/userdata/system/configs/emulationstation/es_input.cfg", "/usr/share/emulationstation/es_input.cfg"]
 
+# Every text on screen, English and Spanish, with the vocabulary of docs/clients-ux.md (save/partida, savestate,
+# game/juego). Keys ending in "1" are the singular of the key without it (one save, one game); the summary's arrows
+# and warning sign are drawn (the default font has no glyph for them)
 TEXTS = {
     "es": {
         "title": "Rommancer Sync",
@@ -40,11 +43,14 @@ TEXTS = {
         "username": "Usuario",
         "email": "Email",
         "password": "Contraseña",
-        "connected": "Conectado a {server}",
-        "as": "como {user}",
         "sync_now": "Sincronizar ahora",
         "status": "Estado",
-        "logout": "Desconectar esta consola",
+        "settings": "Ajustes",
+        "logout": "Desconectar esta consola…",
+        "logout_title": "Desconectar esta consola",
+        "logout_ask": "¿Desconectar esta consola de {host}? Sus partidas se quedan en ella, pero deja de sincronizar.",
+        "logout_go": "Desconectar",
+        "account": "Cuenta: {user} @ {host}",
         "syncing": "Sincronizando...",
         "checking": "Conectando con el servidor...",
         "no_server": "Primero escribe la dirección del servidor",
@@ -53,7 +59,7 @@ TEXTS = {
         "signup_closed": "Este servidor no permite crear cuentas",
         "exists": "Ese usuario o email ya existe",
         "error": "Error: {msg}",
-        "done": "Listo. Los saves se sincronizan solos en segundo plano.",
+        "done": "Listo. La sincronización automática está activada.",
         "logged_out": "Consola desconectada",
         "keys": "A tecla  B borrar  X mayús  Y espacio  START aceptar  SELECT cancelar",
         "menu_keys": "A elegir   B atrás",
@@ -61,58 +67,103 @@ TEXTS = {
         "nolog": "Todavía no hay registro",
         "version": "Versión {v}",
         "synced": "Sincronizado: {d}",
+        "today": "hoy",
         "never_synced": "Sin sincronizar todavía",
+        "offline_since": "Sin conexión desde las {t}",
+        "conflicts_line": "{n} partidas en conflicto",
+        "conflicts_line1": "1 partida en conflicto",
         "months": "ene feb mar abr may jun jul ago sep oct nov dic",
         "installed": "instalada el {d}",
+        "step": "Paso {n} de {m} · {title}",
+        "st_saves": "Partidas",
+        "st_settings": "Ajustes",
+        "st_prune": "Juegos que sobran",
+        "st_roms": "Juegos de las listas",
+        "st_pulls": "Envío al servidor",
         "p_connecting": "Conectando con el servidor",
         "p_waiting": "Esperando a la sincronización en curso",
-        "p_roms": "Comprobando roms",
-        "p_saves": "Comprobando saves",
+        "p_roms": "Mirando los juegos",
+        "p_saves": "Mirando las partidas",
         "p_hashing": "Leyendo ficheros nuevos o cambiados",
         "p_server": "Preguntando al servidor",
-        "p_identify": "Identificando roms por su cabecera",
-        "p_transfer": "Transfiriendo saves",
-        "p_roms-plan": "Preguntando qué roms tocan",
-        "p_roms-download": "Descargando roms",
-        "sync_roms": "Sincronizar roms",
-        "auto_roms": "Roms automáticas: {v}",
-        "allow_pull": "El servidor puede traer juegos: {v}",
-        "allow_ssh": "Acceso SSH del servidor: {v}",
+        "p_identify": "Identificando juegos por su cabecera",
+        "p_transfer": "Pasando partidas",
+        "p_finished": "Partidas al día",
+        "p_settings": "Aplicando los ajustes del servidor",
+        "p_prune": "Borrando juegos fuera de listas",
+        "p_roms-plan": "Preguntando qué juegos tocan",
+        "p_roms-download": "Descargando juegos",
+        "p_roms-finished": "Juegos al día",
         "p_pulls": "Enviando juegos al servidor",
+        "p_working": "Trabajando...",
+        "of": "{pct}% de {size}",
+        "allow_pull": "El servidor puede pedir juegos: {v}",
+        "allow_pull_note": "Copia de esta consola los juegos que le faltan.",
+        "allow_ssh": "Acceso SSH del servidor: {v}",
+        "allow_ssh_note": "Sincroniza la consola aunque la app esté cerrada.",
+        "prune": "Borrar juegos fuera de listas: {v}",
+        "prune_note": "Borra los juegos que no estén en ninguna lista.",
+        "prune_clean": "Borrar partidas de juegos borrados ({n})",
+        "prune_clean_note": "Quita sus partidas; siguen en el servidor.",
         "yes": "sí",
         "no": "no",
         "conflicts": "Conflictos ({n})",
         "no_conflicts": "No hay conflictos",
         "conflict_info": "{game}: esta consola guardó el {mine}; el servidor tiene una versión del {theirs} ({dev}).",
-        "keep_device": "Quedarme con el de esta consola",
-        "keep_server": "Usar el del servidor",
-        "prune": "Borrar roms fuera de listas: {v}",
-        "prune_clean": "Borrar saves de roms borradas ({n})",
-        "prune_intro": "Rommancer puede borrar de esta consola las roms que no estén en ninguna de sus listas. Las que el servidor no tenga se suben antes de borrarlas. Los saves se quedan. Puedes cambiarlo luego aquí o en la web. ¿Lo activas?",
-        "prune_ask": "Se ha activado desde el servidor el borrado de roms que no están en ninguna lista. Si lo mantienes se borrarán {n} roms ({size}). ¿Quieres mantener esta opción?",
-        "prune_hold": "Se van a borrar {n} de las {total} roms de esta consola (más de la mitad) por no estar en ninguna lista. Puede que una lista se haya vaciado. ¿Las borro?",
+        "keep_device": "Quedarme con la de esta consola",
+        "keep_server": "Usar la del servidor",
+        "prune_intro": "Rommancer puede borrar de esta consola los juegos que no estén en ninguna de sus listas. Los que el servidor no tenga se le envían antes de borrarlos. Las partidas se quedan. Puedes cambiarlo luego en Ajustes o en la web. ¿Lo activas?",
+        "prune_ask": "Se ha activado desde el servidor el borrado de juegos fuera de listas. Si lo mantienes se borrarán {n} juegos ({size}). ¿Quieres mantener esta opción?",
+        "prune_hold": "Se van a borrar {n} de los {total} juegos de esta consola (más de la mitad) por no estar en ninguna lista. Puede que una lista se haya vaciado. ¿Los borro?",
         "prune_yes": "Sí, activarlo",
         "prune_no": "No, dejarlo desactivado",
         "prune_keep": "Sí, mantenerlo",
         "prune_off": "No, desactivarlo",
-        "prune_delete": "Sí, borrarlas",
+        "prune_delete": "Sí, borrarlos",
         "prune_later": "Ahora no",
-        "p_prune": "Borrando roms fuera de listas",
-        "roms_watch": "Ver descarga de roms {n}",
-        "pulls_watch": "Ver envio de juegos al servidor {n}",
+        "roms_watch": "Ver descarga de juegos",
+        "pulls_watch": "Ver envío de juegos al servidor",
+        "w_roms": "Descargando juegos {n}",
+        "w_pulls": "Enviando juegos al servidor {n}",
         "details": "Ver detalles",
-        "back_keys": "B volver al menu (el envio sigue)",
-        "stop_keys": "B parar la descarga de roms",
+        "back_keys": "B vuelve al menú (el envío sigue)",
+        "stop_keys": "B para parar",
         "stopping": "Parando la descarga...",
         "lists": "Listas de esta consola",
-        "lists_info": "{n} listas en esta consola. A pone o quita una; al salir se descargan o borran sus roms.",
+        "lists_info": "{n} listas en esta consola. A pone o quita una; al salir se descargan o borran sus juegos.",
+        "roms_now": "Descargar ahora los juegos de las listas",
         "no_lists": "No hay listas. Créalas en la web de Rommancer.",
         "lists_fail": "No se pudo hablar con el servidor",
         "back": "Volver",
-        "list_drop": "Quitar «{name}» borrará {n} roms de esta consola ({size}).",
+        "list_drop": "Quitar «{name}» borrará {n} juegos de esta consola ({size}).",
         "list_drop_up": "{n} que el servidor no tiene se le envían antes.",
-        "list_drop_go": "Quitar y borrar {n} roms",
+        "list_drop_go": "Quitar y borrar {n} juegos",
         "cancel": "Cancelar",
+        "up_to_date": "Todo al día",
+        "last_result": "Último resultado:",
+        "log": "Registro:",
+        "f_saves-up": "{n} partidas subidas al servidor",
+        "f_saves-up1": "1 partida subida al servidor",
+        "f_saves-down": "{n} partidas recibidas",
+        "f_saves-down1": "1 partida recibida",
+        "f_states-up": "{n} savestates subidos al servidor",
+        "f_states-up1": "1 savestate subido al servidor",
+        "f_states-down": "{n} savestates recibidos",
+        "f_states-down1": "1 savestate recibido",
+        "f_games-down": "{n} juegos descargados",
+        "f_games-down1": "1 juego descargado",
+        "f_games-sent": "{n} juegos enviados al servidor",
+        "f_games-sent1": "1 juego enviado al servidor",
+        "f_games-deleted": "{n} juegos borrados (fuera de listas)",
+        "f_games-deleted1": "1 juego borrado (fuera de listas)",
+        "f_saves-cleaned": "{n} partidas de juegos borrados quitadas",
+        "f_saves-cleaned1": "1 partida de juegos borrados quitada",
+        "f_games-stopped": "Descarga de juegos parada",
+        "f_games-nospace": "No cabe «{x}»: falta espacio",
+        "f_conflicts": "{n} partidas en conflicto",
+        "f_conflicts1": "1 partida en conflicto",
+        "f_errors": "{n} errores",
+        "f_errors1": "1 error",
     },
     "en": {
         "title": "Rommancer Sync",
@@ -124,11 +175,14 @@ TEXTS = {
         "username": "Username",
         "email": "Email",
         "password": "Password",
-        "connected": "Connected to {server}",
-        "as": "as {user}",
         "sync_now": "Sync now",
         "status": "Status",
-        "logout": "Unlink this console",
+        "settings": "Settings",
+        "logout": "Disconnect this console…",
+        "logout_title": "Disconnect this console",
+        "logout_ask": "Disconnect this console from {host}? Its saves stay on it, but it stops syncing.",
+        "logout_go": "Disconnect",
+        "account": "Account: {user} @ {host}",
         "syncing": "Syncing...",
         "checking": "Contacting the server...",
         "no_server": "Enter the server address first",
@@ -137,32 +191,52 @@ TEXTS = {
         "signup_closed": "This server does not allow new accounts",
         "exists": "That username or email already exists",
         "error": "Error: {msg}",
-        "done": "Done. Saves now sync in the background.",
-        "logged_out": "Console unlinked",
+        "done": "Done. Automatic sync is on.",
+        "logged_out": "Console disconnected",
         "keys": "A key  B delete  X shift  Y space  START accept  SELECT cancel",
         "menu_keys": "A choose   B back",
         "press": "Press A to continue",
         "nolog": "No log yet",
         "version": "Version {v}",
         "synced": "Synced: {d}",
+        "today": "today",
         "never_synced": "Not synced yet",
+        "offline_since": "Offline since {t}",
+        "conflicts_line": "{n} saves in conflict",
+        "conflicts_line1": "1 save in conflict",
         "months": "Jan Feb Mar Apr May Jun Jul Aug Sep Oct Nov Dec",
         "installed": "installed {d}",
+        "step": "Step {n} of {m} · {title}",
+        "st_saves": "Saves",
+        "st_settings": "Settings",
+        "st_prune": "Games in no list",
+        "st_roms": "List games",
+        "st_pulls": "Sending to the server",
         "p_connecting": "Contacting the server",
-        "p_waiting": "Waiting for the running sync",
-        "p_roms": "Checking roms",
+        "p_waiting": "Waiting for the sync under way",
+        "p_roms": "Checking games",
         "p_saves": "Checking saves",
         "p_hashing": "Reading new or changed files",
         "p_server": "Asking the server",
-        "p_identify": "Identifying roms by their header",
-        "p_transfer": "Transferring saves",
-        "p_roms-plan": "Asking which roms belong here",
-        "p_roms-download": "Downloading roms",
-        "sync_roms": "Sync roms",
-        "auto_roms": "Automatic roms: {v}",
-        "allow_pull": "Server may fetch games: {v}",
-        "allow_ssh": "Server SSH access: {v}",
+        "p_identify": "Identifying games by their header",
+        "p_transfer": "Passing saves",
+        "p_finished": "Saves up to date",
+        "p_settings": "Applying the server's settings",
+        "p_prune": "Deleting games in no list",
+        "p_roms-plan": "Asking which games belong here",
+        "p_roms-download": "Downloading games",
+        "p_roms-finished": "Games up to date",
         "p_pulls": "Sending games to the server",
+        "p_working": "Working...",
+        "of": "{pct}% of {size}",
+        "allow_pull": "The server may request games: {v}",
+        "allow_pull_note": "It copies the games it lacks from this console.",
+        "allow_ssh": "Server SSH access: {v}",
+        "allow_ssh_note": "It syncs this console even while the app is closed.",
+        "prune": "Delete games in no list: {v}",
+        "prune_note": "Deletes the games that are in none of the lists.",
+        "prune_clean": "Delete saves of deleted games ({n})",
+        "prune_clean_note": "Removes their saves; they stay on the server.",
         "yes": "yes",
         "no": "no",
         "conflicts": "Conflicts ({n})",
@@ -170,36 +244,60 @@ TEXTS = {
         "conflict_info": "{game}: this console saved on {mine}; the server has a version from {theirs} ({dev}).",
         "keep_device": "Keep this console's save",
         "keep_server": "Use the server's save",
-        "prune": "Delete roms not in lists: {v}",
-        "prune_clean": "Delete saves of deleted roms ({n})",
-        "prune_intro": "Rommancer can delete from this console the roms that are in none of its lists. The ones the server lacks are uploaded before they are deleted. Saves stay. You can change it later here or on the web. Turn it on?",
-        "prune_ask": "Deleting roms that are not in any list was turned on from the server. If you keep it, {n} roms ({size}) will be deleted. Do you want to keep this option?",
-        "prune_hold": "{n} of the {total} roms on this console (more than half) would be deleted for being in no list. A list may have been emptied. Delete them?",
+        "prune_intro": "Rommancer can delete from this console the games that are in none of its lists. The ones the server lacks are sent to it before they are deleted. Saves stay. You can change it later in Settings or on the web. Turn it on?",
+        "prune_ask": "Deleting games in no list was turned on from the server. If you keep it, {n} games ({size}) will be deleted. Do you want to keep this option?",
+        "prune_hold": "{n} of the {total} games on this console (more than half) would be deleted for being in no list. A list may have been emptied. Delete them?",
         "prune_yes": "Yes, turn it on",
         "prune_no": "No, leave it off",
         "prune_keep": "Yes, keep it",
         "prune_off": "No, turn it off",
         "prune_delete": "Yes, delete them",
         "prune_later": "Not now",
-        "p_prune": "Deleting roms not in lists",
-        "roms_watch": "Watch rom download {n}",
-        "pulls_watch": "Watch games being sent to the server {n}",
+        "roms_watch": "Watch game download",
+        "pulls_watch": "Watch games being sent to the server",
+        "w_roms": "Downloading games {n}",
+        "w_pulls": "Sending games to the server {n}",
         "details": "Show details",
-        "back_keys": "B back to the menu (the copy goes on)",
-        "stop_keys": "B stop the rom download",
+        "back_keys": "B back to the menu (sending goes on)",
+        "stop_keys": "B to stop",
         "stopping": "Stopping the download...",
         "lists": "This console's lists",
-        "lists_info": "{n} lists on this console. A adds or removes one; on leaving, their roms download or go.",
+        "lists_info": "{n} lists on this console. A adds or removes one; on leaving, their games download or go.",
+        "roms_now": "Download the lists' games now",
         "no_lists": "No lists yet. Create them in Rommancer's web app.",
         "lists_fail": "Could not reach the server",
         "back": "Back",
-        "list_drop": "Removing \u201c{name}\u201d deletes {n} roms from this console ({size}).",
+        "list_drop": "Removing “{name}” deletes {n} games from this console ({size}).",
         "list_drop_up": "{n} the server lacks are sent to it first.",
-        "list_drop_go": "Remove and delete {n} roms",
+        "list_drop_go": "Remove and delete {n} games",
         "cancel": "Cancel",
+        "up_to_date": "All up to date",
+        "last_result": "Last result:",
+        "log": "Log:",
+        "f_saves-up": "{n} saves uploaded to the server",
+        "f_saves-up1": "1 save uploaded to the server",
+        "f_saves-down": "{n} saves received",
+        "f_saves-down1": "1 save received",
+        "f_states-up": "{n} savestates uploaded to the server",
+        "f_states-up1": "1 savestate uploaded to the server",
+        "f_states-down": "{n} savestates received",
+        "f_states-down1": "1 savestate received",
+        "f_games-down": "{n} games downloaded",
+        "f_games-down1": "1 game downloaded",
+        "f_games-sent": "{n} games sent to the server",
+        "f_games-sent1": "1 game sent to the server",
+        "f_games-deleted": "{n} games deleted (in no list)",
+        "f_games-deleted1": "1 game deleted (in no list)",
+        "f_saves-cleaned": "{n} saves of deleted games removed",
+        "f_saves-cleaned1": "1 save of deleted games removed",
+        "f_games-stopped": "Game download stopped",
+        "f_games-nospace": "No room for “{x}”: not enough space",
+        "f_conflicts": "{n} saves in conflict",
+        "f_conflicts1": "1 save in conflict",
+        "f_errors": "{n} errors",
+        "f_errors1": "1 error",
     },
 }
-
 
 def system_language():
     # Newer Knulli renamed batocera.conf to knulli.conf
@@ -345,15 +443,29 @@ FG = (235, 235, 240)
 DIM = (140, 145, 160)
 ACCENT = (110, 170, 255)
 BAD = (255, 120, 120)
+WARN = (255, 190, 90)
 
 
 def human(n):
-    """A byte count for people: 1.2 GB"""
-    for unit in ("B", "KB", "MB", "GB"):
-        if n < 1024 or unit == "GB":
-            return f"{n:.1f} {unit}" if unit in ("MB", "GB") else f"{int(n)} {unit}"
+    """A byte count for people: 1.2 GB (1,2 GB in Spanish)"""
+    for unit in ("B", "KB", "MB", "GB", "TB"):
+        if n < 1024 or unit == "TB":
+            s = f"{n:.1f} {unit}" if unit not in ("B", "KB") else f"{int(n)} {unit}"
+            return s.replace(".", ",") if T is TEXTS["es"] else s
         n /= 1024
-    return f"{n:.1f} TB"
+
+
+def work_dir():
+    """The client's folder in RAM (progress, last sync, failure details), as rommancer-sync.sh names it"""
+    return os.path.join(os.environ.get("TMPDIR") or "/tmp", f"rommancer-{os.getuid()}")
+
+
+def read_text(path):
+    try:
+        with open(path, encoding="utf-8") as f:
+            return f.read()
+    except OSError:
+        return ""
 
 
 @functools.lru_cache(maxsize=1)
@@ -374,7 +486,7 @@ _synced = [0.0, ""]
 
 
 def synced_at():
-    """When the last sync went through, as: Sincronizado: 12 oct, 18:52 (the client keeps it in RAM, and on the card
+    """When the last sync went through, as: Sincronizado: hoy, 18:52 (the client keeps it in RAM, and on the card
     every ten minutes); read again every two seconds, not every frame"""
     if time.time() - _synced[0] < 2:
         return _synced[1]
@@ -383,15 +495,54 @@ def synced_at():
 
 
 def _synced_text():
-    work = os.path.join(os.environ.get("TMPDIR") or "/tmp", f"rommancer-{os.getuid()}", "last-sync")
-    for path in (work, os.path.join(STATE_DIR or "", "last-sync")):
+    for path in (os.path.join(work_dir(), "last-sync"), os.path.join(STATE_DIR or "", "last-sync")):
         try:
-            with open(path, encoding="utf-8") as f:
-                t = time.localtime(int(f.read().strip()))
-            return T["synced"].format(d=f"{t.tm_mday} {T['months'].split()[t.tm_mon - 1]}, {t.tm_hour:02d}:{t.tm_min:02d}")
-        except (OSError, ValueError):
+            t = time.localtime(int(read_text(path).strip()))
+        except ValueError:
             continue
+        if time.strftime("%Y%m%d", t) == time.strftime("%Y%m%d"):
+            day = T["today"]
+        else:
+            day = f"{t.tm_mday} {T['months'].split()[t.tm_mon - 1]}"
+        return T["synced"].format(d=f"{day}, {t.tm_hour:02d}:{t.tm_min:02d}")
     return T["never_synced"]
+
+
+# ---------- the summary of an action: the client's "sum<TAB>key<TAB>n[<TAB>extra]" lines (docs/clients-ux.md) ----------
+
+SUM_ORDER = ["saves-up", "saves-down", "states-up", "states-down", "games-down", "games-sent", "games-deleted",
+             "saves-cleaned", "games-stopped", "games-nospace", "conflicts", "errors"]
+SUM_ICONS = {"saves-up": "up", "states-up": "up", "games-sent": "up", "saves-down": "down", "states-down": "down",
+             "games-down": "down", "conflicts": "warn", "errors": "warn", "games-nospace": "warn"}
+
+
+def summary_facts(lines):
+    """One (icon, text, colour) per fact that is not zero, in the guide's order; the same keys added up (conflicts:
+    the last count; a game with no room: each one)"""
+    vals, conflicts, nospace, stopped = {}, 0, [], False
+    for line in lines:
+        p = line.rstrip("\n").split("\t")
+        if len(p) < 3 or p[0] != "sum" or not p[2].isdigit():
+            continue
+        if p[1] == "conflicts":
+            conflicts = int(p[2])
+        elif p[1] == "games-nospace":
+            nospace.append(p[3] if len(p) > 3 else "?")
+        elif p[1] == "games-stopped":
+            stopped = True
+        else:
+            vals[p[1]] = vals.get(p[1], 0) + int(p[2])
+    vals.update({"conflicts": conflicts, "games-stopped": int(stopped)})
+    facts = []
+    for k in SUM_ORDER:
+        color = WARN if SUM_ICONS.get(k) == "warn" else FG
+        if k == "games-nospace":
+            facts += [("warn", T["f_games-nospace"].format(x=x), color) for x in nospace]
+        elif vals.get(k):
+            n = vals[k]
+            text = T[f"f_{k}1"] if n == 1 and f"f_{k}1" in T else T[f"f_{k}"].format(n=n)
+            facts.append((SUM_ICONS.get(k), text, color))
+    return facts
 
 
 class Screen:
@@ -421,8 +572,9 @@ class Screen:
     def left(self):
         return int(self.w * 0.06)
 
-    def column(self):
-        return int(self.w * 0.58) if self.frames else self.w - 2 * self.left()
+    def column(self, wide=False):
+        """The text's width: beside the save point, or the whole screen (WIDE: no save point)"""
+        return int(self.w * 0.58) if self.frames and not wide else self.w - 2 * self.left()
 
     def sprite(self):
         if not self.frames:
@@ -440,14 +592,16 @@ class Screen:
         self.surf.blit(img, r)
         return r
 
-    def frame(self, title, footer=""):
+    def frame(self, title, footer="", sub=None):
+        """Title (with the client's version next to the app's name), a line under it (SUB: text and colour; when
+        the last sync went through otherwise) and the footer's button hints"""
         self.surf.fill(BG)
         r = self.text(title, (self.w // 2, int(self.h * 0.04)), self.big, ACCENT, center=True)
-        # The client's version next to the app's name, and on every screen when the last sync went through
         if title == T["title"]:
             v = self.small.render(client_version(), True, DIM)
             self.surf.blit(v, (r.right + int(self.w * 0.012), r.bottom - v.get_height() - 2))
-        self.text(synced_at(), (self.w // 2, r.bottom), self.small, DIM, center=True)
+        text, color = sub or (synced_at(), DIM)
+        self.text(text, (self.w // 2, r.bottom), self.small, color, center=True)
         if footer:
             self.text(footer, (self.w // 2, self.h - int(self.h * 0.07)), self.small, DIM, center=True)
 
@@ -461,6 +615,39 @@ class Screen:
             else:
                 line = test
         return lines + ([line] if line else [])
+
+    def clip(self, s, font, width):
+        """S cut with an ellipsis to fit WIDTH"""
+        if font.size(s)[0] <= width:
+            return s
+        while len(s) > 1 and font.size(s + "…")[0] > width:
+            s = s[:-1]
+        return s + "…"
+
+    def icon(self, kind, x, y, size, color):
+        """The summary's marks, drawn (the default font has no arrows): up, down, a warning triangle"""
+        if kind == "up":
+            pygame.draw.polygon(self.surf, ACCENT, [(x + size // 2, y), (x, y + size), (x + size, y + size)])
+        elif kind == "down":
+            pygame.draw.polygon(self.surf, ACCENT, [(x, y), (x + size, y), (x + size // 2, y + size)])
+        elif kind == "warn":
+            pygame.draw.polygon(self.surf, color, [(x + size // 2, y), (x, y + size), (x + size, y + size)])
+            pygame.draw.line(self.surf, BG, (x + size // 2, y + size // 3), (x + size // 2, y + size * 2 // 3), 2)
+            pygame.draw.rect(self.surf, BG, (x + size // 2 - 1, y + size * 3 // 4, 2, 2))
+
+    def lines(self, entries, x, y, width, font=None):
+        """Lines from Y down: plain texts (dim) or facts (icon, text, colour), each wrapped to WIDTH; the Y after them"""
+        font = font or self.small
+        size = int(font.get_height() * 0.55)
+        for e in entries:
+            icon, text, color = e if isinstance(e, tuple) else (None, e, DIM)
+            indent = size + int(size * 0.7) if icon else 0
+            for i, part in enumerate(self.wrap(text, font, width - indent)):
+                if i == 0 and icon:
+                    self.icon(icon, x, y + (font.get_height() - size) // 2, size, color)
+                self.text(part, (x + indent, y), font, color)
+                y += font.get_linesize()
+        return y
 
     def flip(self):
         pygame.display.flip()
@@ -498,6 +685,10 @@ class App:
         self.conflict_count = None
         self.cleanable = "0"
         self.refresh_conflicts()
+        # Work under way (a game download, games sent to the server), read in the background while the home
+        # screen shows
+        self.live, self.live_on = {}, False
+        threading.Thread(target=self.poll_live, daemon=True).start()
         pygame.key.set_repeat(300, 60)
 
     @staticmethod
@@ -529,44 +720,57 @@ class App:
                 return None
             time.sleep(0.016)
 
-    def menu(self, title, items, info=(), refresh=None, refresh_index=None, start=0):
-        """REFRESH (optional) recomputes the label at REFRESH_INDEX on every frame, for values that arrive later.
-        START is the item selected at first; items that do not fit scroll with the selection."""
-        sel = min(max(start, 0), len(items) - 1)
+    def menu(self, title, items, info=(), start=0, notes=None, sub=None, wide=False, big_info=False):
+        """ITEMS: labels, or a function giving them (called again every second, for what arrives later or changes:
+        the conflicts, a download under way); the selection stays on its label. INFO: lines above them, texts or
+        facts (icon, text, colour), or a function giving them. NOTES: per item, a line under the selected one saying
+        what it does. SUB: the line under the title (text, colour), or a function giving it. START is the item
+        selected at first; items that do not fit scroll with the selection. WIDE: the whole width, without the save
+        point (long labels); BIG_INFO: the info in the items' size (a summary)."""
+        def get():
+            return (items() if callable(items) else items, info() if callable(info) else info, sub() if callable(sub) else sub)
+
+        labels, lines, head = get()
+        fetched = time.time()
+        sel = min(max(start, 0), len(labels) - 1)
         first = 0
         while True:
-            if refresh is not None:
-                items[refresh_index] = refresh()
+            if (callable(items) or callable(info) or callable(sub)) and time.time() - fetched >= 1:
+                was = labels[sel]
+                labels, lines, head = get()
+                fetched = time.time()
+                sel = labels.index(was) if was in labels else min(sel, len(labels) - 1)
             s = self.screen
-            s.frame(title, T["menu_keys"])
-            s.sprite()
-            x, width = s.left(), s.column()
-            y = int(s.h * 0.2)
-            for line in info:
-                for part in s.wrap(line, s.small, width):
-                    s.text(part, (x, y), s.small, DIM)
-                    y += s.small.get_linesize()
+            s.frame(title, T["menu_keys"], head)
+            if not wide:
+                s.sprite()
+            x, width = s.left(), s.column(wide)
+            y = s.lines(lines, x, int(s.h * 0.2), width, s.font if big_info else s.small)
             y += int(s.h * 0.04)
-            step = int(s.font.get_linesize() * (1.4 if len(items) <= 5 else 1.12 if len(items) <= 7 else 1.0 if len(items) <= 8 else 0.92))
+            n = len(labels)
+            step = int(s.font.get_linesize() * (1.4 if n <= 5 else 1.12 if n <= 7 else 1.0 if n <= 8 else 0.92))
+            note = notes[sel] if notes and sel < len(notes) else ""
+            note_h = s.small.get_linesize() if note else 0
             # As many as fit above the footer; the window follows the selection
-            fit = max(1, (int(s.h * 0.9) - y) // step)
+            fit = max(1, (int(s.h * 0.9) - y - note_h) // step)
             first = min(max(first, sel - fit + 1), sel)
             # Small triangles say there is more above or below (the default font may lack arrow glyphs)
             tri = max(4, step // 6)
             top_y = y
             if first:
                 pygame.draw.polygon(s.surf, DIM, [(x - 8, top_y + tri), (x - 8 - tri, top_y + 3 * tri), (x - 8 + tri, top_y + 3 * tri)])
-            for i in range(first, min(len(items), first + fit)):
-                label = items[i]
+            for i in range(first, min(n, first + fit)):
                 color = ACCENT if i == sel else FG
-                while s.font.size(label)[0] > width and len(label) > 4:
-                    label = label[:-2] + "…"
-                r = s.text(label, (x + 10, y), s.font, color)
+                r = s.text(s.clip(labels[i], s.font, width), (x + 10, y), s.font, color)
                 if i == sel:
                     pygame.draw.rect(s.surf, ACCENT, r.inflate(20, 8), 2, border_radius=8)
                 y += step
-            if first + fit < len(items):
-                b = y - step
+                if i == sel and note:
+                    # Under the selection's frame, the next item pushed down
+                    s.text(s.clip(note, s.small, width - 10), (x + 10, r.bottom + 6), s.small, DIM)
+                    y = max(y, r.bottom + 6 + note_h + (step - s.font.get_height()) // 2)
+            if first + fit < n:
+                b = y - step - (note_h if sel == first + fit - 1 else 0)
                 pygame.draw.polygon(s.surf, DIM, [(x - 8 - tri, b + tri), (x - 8 + tri, b + tri), (x - 8, b + 3 * tri)])
             s.flip()
             a = self.next_action(timeout=0)
@@ -574,9 +778,9 @@ class App:
                 self.clock.tick(SPRITE_FPS)
                 continue
             if a == "up":
-                sel = (sel - 1) % len(items)
+                sel = (sel - 1) % n
             elif a == "down":
-                sel = (sel + 1) % len(items)
+                sel = (sel + 1) % n
             elif a in ("a", "start"):
                 return sel
             elif a in ("b", "quit"):
@@ -629,15 +833,16 @@ class App:
             elif a in ("select", "quit"):
                 return None
 
-    def message(self, text, color=FG, wait=True):
+    def message(self, text, color=FG, wait=True, title=None, lines=None):
+        """TEXT on its own screen (or LINES: texts and facts, one per line), until A or B when WAIT"""
         s = self.screen
         while True:
-            s.frame(T["title"], T["press"] if wait else "")
+            s.frame(title or T["title"], T["press"] if wait else "")
             s.sprite()
-            y = int(s.h * 0.3)
-            for line in s.wrap(text, s.font, s.column()):
-                s.text(line, (s.left(), y), s.font, color)
-                y += s.font.get_linesize()
+            if lines is not None:
+                s.lines(lines, s.left(), int(s.h * 0.24), s.column(), s.font)
+            else:
+                s.lines([(None, text, color)], s.left(), int(s.h * 0.3), s.column(), s.font)
             s.flip()
             if not wait:
                 return
@@ -651,6 +856,10 @@ class App:
 
     def linked(self):
         return bool(self.cfg.get("TOKEN"))
+
+    def host(self):
+        server = self.cfg.get("SERVER", "")
+        return urllib.parse.urlparse(server).netloc or server
 
     def device_form(self):
         h = self.hints
@@ -725,94 +934,137 @@ class App:
             self.message(T["error"].format(msg=e), BAD)
 
     def progress_file(self):
-        return os.path.join(os.environ.get("TMPDIR", "/tmp"), f"rommancer-{os.getuid()}", "progress")
+        return os.path.join(work_dir(), "progress")
+
+    def details_file(self):
+        return os.path.join(work_dir(), "fail-details")
 
     def sync_now(self):
-        self.run_with_progress("all", T["syncing"])
+        self.run_with_progress("all", T["sync_now"])
 
     def sync_roms(self):
-        self.run_with_progress("roms", T["sync_roms"])
+        self.run_with_progress("roms", T["st_roms"])
+
+    def progress_lines(self, parts):
+        """What a "progress" line says: (what it does now with its count, share of the whole or None, the current
+        file, that file's percent and size)"""
+        phase = parts[0] if parts and parts[0] else "connecting"
+        try:
+            done, total = int(parts[1]), int(parts[2])
+        except (IndexError, ValueError):
+            done, total = 0, 0
+        if phase.endswith("finished"):
+            total = 0
+        label = T.get(f"p_{phase}", T["p_working"])
+        if not total:
+            return label, None, "", ""
+        label += f"  {done}/{total}"
+        share, name, extra = done / total, parts[5] if len(parts) >= 6 else "", ""
+        size = int(parts[3]) if len(parts) >= 4 and parts[3].isdigit() else 0
+        if phase == "roms-download":
+            # Finished games plus what the current file has written so far
+            cur = os.path.getsize(parts[4]) if len(parts) >= 5 and os.path.exists(parts[4]) else 0
+            file_share = min(cur / size, 1) if size else 0
+            share = ((done - 1) + file_share) / total
+            extra = T["of"].format(pct=int(file_share * 100), size=human(size)) if size else human(cur)
+        elif phase == "pulls":
+            # The file's share: the last figure of curl's progress bar
+            figures = re.findall(r"([0-9]+)(?:\.[0-9]+)?%", read_text(os.path.join(work_dir(), "pull-curl")).replace("\r", "\n"))
+            file_share = int(figures[-1]) / 100 if figures else 0
+            share = ((done - 1) + file_share) / total
+            extra = T["of"].format(pct=int(file_share * 100), size=human(size))
+        return label, max(0.0, min(share, 1.0)), name, extra
+
+    def draw_progress(self, title, step, parts, footer):
+        """A progress screen: the step of "Sync now", what it does now with its count, the bar with its percent, the
+        current file on its own line with its percent and size; the button's hint in the footer"""
+        s = self.screen
+        label, share, name, extra = self.progress_lines(parts)
+        s.frame(title, footer)
+        s.sprite()
+        x, width, y = s.left(), s.column(), int(s.h * 0.26)
+        if step:
+            s.text(s.clip(step, s.font, width), (x, y), s.font)
+            y += int(s.font.get_linesize() * 1.4)
+        s.text(s.clip(label, s.small, width), (x, y), s.small, DIM)
+        y += int(s.small.get_linesize() * 1.3)
+        pct_w = s.small.size("100%")[0] + 10
+        bar = pygame.Rect(x, y + 2, width - pct_w, 14)
+        pygame.draw.rect(s.surf, (40, 44, 60), bar, border_radius=7)
+        if share is not None:
+            fill = bar.copy()
+            fill.w = max(14, int(bar.w * share))
+            pygame.draw.rect(s.surf, ACCENT, fill, border_radius=7)
+            s.text(f"{int(100 * share)}%", (bar.right + 10, y), s.small, DIM)
+        else:
+            # No total yet: a stretch of the bar sweeps back and forth, so it never looks stuck
+            seg = bar.copy()
+            seg.w = bar.w // 4
+            t = (pygame.time.get_ticks() / 1400) % 2
+            seg.x = bar.x + int((bar.w - seg.w) * (t if t < 1 else 2 - t))
+            pygame.draw.rect(s.surf, ACCENT, seg, border_radius=7)
+        y = bar.bottom + int(s.small.get_linesize() * 0.9)
+        if name:
+            s.text(s.clip(name, s.small, width), (x, y), s.small, FG)
+            y += s.small.get_linesize()
+        if extra:
+            s.text(extra, (x, y), s.small, DIM)
+        s.flip()
 
     def run_with_progress(self, command, title, *args):
-        """Runs a client command in the background, showing its phase and percentage while it works."""
+        """Runs a client command in the background with its progress on screen, then its summary. TITLE is the
+        action's name, the title of both."""
         # A download under way keeps its progress on screen from the start
         if not self.roms_status():
-            try:
-                os.remove(self.progress_file())
-            except OSError:
-                pass
+            for f in (self.progress_file(), os.path.join(work_dir(), "step")):
+                try:
+                    os.remove(f)
+                except OSError:
+                    pass
         try:
             os.remove(self.details_file())
         except OSError:
             pass
         proc = subprocess.Popen(["sh", SCRIPT, command, *args], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
-        s = self.screen
         stopping = False
         while proc.poll() is None:
-            phase, done, total, parts = "connecting", 0, 0, []
-            try:
-                with open(self.progress_file(), encoding="utf-8") as f:
-                    parts = f.read().strip().split("\t")
-                phase, done, total = parts[0], int(parts[1]), int(parts[2])
-            except (OSError, ValueError, IndexError):
-                pass
-            detail, share = "", (done / total if total else 0)
-            if phase == "roms-download" and len(parts) >= 6 and total:
-                # Finished roms plus what the current file has written so far
-                size = int(parts[3] or 0)
-                cur = os.path.getsize(parts[4]) if os.path.exists(parts[4]) else 0
-                file_share = min(cur / size, 1) if size else 0
-                share = ((done - 1) + file_share) / total
-                detail = f"{parts[5][:42]}  {int(file_share * 100)}%"
-            elif len(parts) >= 6:
-                detail = parts[5] if len(parts[5]) <= 34 else parts[5][:33] + "…"
-            # Roms downloading: B stops them (the transfer under way is cut)
+            parts = read_text(self.progress_file()).strip().split("\t")
+            phase = parts[0]
+            st = read_text(os.path.join(work_dir(), "step")).strip().split("\t")
+            step = T["step"].format(n=st[0], m=st[1], title=T.get(f"st_{st[2]}", st[2])) if len(st) == 3 else ""
+            # Games downloading: B stops them (the transfer under way is cut); games sent to the server: B leaves
+            # them going on behind the menu
             downloading = phase in ("roms-plan", "roms-download")
-            s.frame(T["title"], T["stopping"] if stopping else T["stop_keys"] if downloading else "")
-            s.sprite()
-            x, width, y = s.left(), s.column(), int(s.h * 0.3)
-            s.text(title, (x, y), s.font)
-            label = T.get(f"p_{phase}", "")
-            if total:
-                label += f"  {done}/{total}"
-            s.text(label, (x, y + s.font.get_linesize() * 1.5), s.small, DIM)
-            bar = pygame.Rect(x, y + int(s.font.get_linesize() * 2.6), width - 20, 14)
-            pygame.draw.rect(s.surf, (40, 44, 60), bar, border_radius=7)
-            if total:
-                fill = bar.copy()
-                fill.w = max(14, int(bar.w * min(share, 1)))
-                pygame.draw.rect(s.surf, ACCENT, fill, border_radius=7)
-                s.text(f"{int(100 * share)}%", (bar.right - 50, bar.bottom + 6), s.small, DIM)
-            else:
-                # No total yet: a stretch of the bar sweeps back and forth, so it never looks stuck
-                seg = bar.copy()
-                seg.w = bar.w // 4
-                t = (pygame.time.get_ticks() / 1400) % 2
-                seg.x = bar.x + int((bar.w - seg.w) * (t if t < 1 else 2 - t))
-                pygame.draw.rect(s.surf, ACCENT, seg, border_radius=7)
-            if detail:
-                s.text(detail, (x, bar.bottom + 6), s.small, DIM)
-            s.flip()
+            footer = T["stopping"] if stopping else T["stop_keys"] if downloading else T["back_keys"] if phase == "pulls" else ""
+            self.draw_progress(title, step, parts, footer)
             for event in pygame.event.get():
-                if downloading and not stopping and "b" in self.pad.actions(event):
+                if "b" not in self.pad.actions(event):
+                    continue
+                if downloading and not stopping:
                     stopping = True
                     subprocess.Popen(["sh", SCRIPT, "roms-stop"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                elif phase == "pulls":
+                    threading.Thread(target=proc.communicate, daemon=True).start()
+                    return
             self.clock.tick(SPRITE_FPS)
-        out = (proc.stdout.read() if proc.stdout else "").strip()
-        # A failure offers what is behind it: the network, the name lookup, the clock and the error itself
-        try:
-            with open(self.details_file(), encoding="utf-8") as f:
-                details = f.read().strip().splitlines()
-        except OSError:
-            details = []
-        if details:
-            if self.menu(T["title"], ["OK", T["details"]], info=[details[0]]) == 1:
-                self.menu(T["details"], ["OK"], info=details[1:])
-            return
-        self.message(" · ".join(out.splitlines()[-2:]) if out else T["error"].format(msg="sync"))
+        self.show_summary(title, proc.stdout.read() if proc.stdout else "")
 
-    def details_file(self):
-        return os.path.join(os.path.dirname(self.progress_file()), "fail-details")
+    def show_summary(self, title, out):
+        """The result of an action: one fact per line (only what is not zero), "All up to date" when nothing; a
+        failure says why, with its details behind a button. Kept for the Status screen"""
+        lines = out.splitlines()
+        details = read_text(self.details_file()).strip().splitlines()
+        try:
+            with open(os.path.join(work_dir(), "last-summary"), "w", encoding="utf-8") as f:
+                f.write("".join(l + "\n" for l in lines if l.startswith("sum\t")) + (f"fail\t{details[0]}\n" if details else ""))
+        except OSError:
+            pass
+        facts = summary_facts(lines)
+        if details:
+            if self.menu(title, ["OK", T["details"]], info=facts + [(None, details[0], BAD)], big_info=len(facts) < 5) == 1:
+                self.menu(T["details"], ["OK"], info=details[1:], wide=True)
+            return
+        self.message(None, title=title, lines=facts or [(None, T["up_to_date"], FG)])
 
     def settings(self):
         cfg = {}
@@ -827,16 +1079,7 @@ class App:
         on = self.settings().get(key, "1") == "1"
         subprocess.run(["sh", SCRIPT, "set", key, "0" if on else "1"], capture_output=True, timeout=30)
 
-    def toggle_auto_roms(self):
-        self.toggle("AUTO_ROMS")
-
-    def toggle_allow_pull(self):
-        self.toggle("ALLOW_PULL")
-
-    def toggle_allow_ssh(self):
-        self.toggle("ALLOW_SSH")
-
-    # ---------- deleting roms that are in no list ----------
+    # ---------- deleting games that are in no list ----------
 
     def prune_state(self):
         """on, ask (files, bytes), hold (files, roms), intro (the choice was offered) and cleanable, from the client"""
@@ -872,7 +1115,7 @@ class App:
                 self.prune_set(False)
 
     def roms_status(self):
-        """(done, total) of a rom download under way (the daemon's), None when there is none"""
+        """(done, total) of a game download under way (the daemon's), None when there is none"""
         try:
             out = subprocess.run(["sh", SCRIPT, "roms-status"], capture_output=True, text=True, timeout=10).stdout
         except subprocess.TimeoutExpired:
@@ -896,39 +1139,26 @@ class App:
         except ValueError:
             return None
 
+    def poll_live(self):
+        while True:
+            if self.live_on and self.linked():
+                self.live = {"roms": self.roms_status(), "pulls": self.pulls_status()}
+            time.sleep(2)
+
     def watch_pulls(self):
         """The copy the server asked for, on screen until it ends; B goes back to the menu and the copy goes on"""
-        s = self.screen
         st = self.pulls_status()
         checked = pygame.time.get_ticks()
         while st:
-            done, total, name, file_share = st
-            share = ((done - 1) + file_share) / total if total else 0
-            s.frame(T["title"], T["back_keys"])
-            s.sprite()
-            x, width, y = s.left(), s.column(), int(s.h * 0.3)
-            s.text(T["p_pulls"], (x, y), s.font)
-            s.text(f"{done}/{total}", (x, y + s.font.get_linesize() * 1.5), s.small, DIM)
-            bar = pygame.Rect(x, y + int(s.font.get_linesize() * 2.6), width - 20, 14)
-            pygame.draw.rect(s.surf, (40, 44, 60), bar, border_radius=7)
-            fill = bar.copy()
-            fill.w = max(14, int(bar.w * min(share, 1)))
-            pygame.draw.rect(s.surf, ACCENT, fill, border_radius=7)
-            s.text(f"{int(100 * share)}%", (bar.right - 50, bar.bottom + 6), s.small, DIM)
-            s.text(f"{name[:42]}  {int(file_share * 100)}%", (x, bar.bottom + 6), s.small, DIM)
-            s.flip()
+            done, total, name, _ = st
+            size = read_text(os.path.join(work_dir(), "pull-progress")).split("\t")
+            self.draw_progress(T["st_pulls"], "", ["pulls", str(done), str(total), size[2] if len(size) > 2 else "0", "", name], T["back_keys"])
             for event in pygame.event.get():
                 if "b" in self.pad.actions(event):
                     return
             self.clock.tick(SPRITE_FPS)
             if pygame.time.get_ticks() - checked > 1000:
                 st, checked = self.pulls_status(), pygame.time.get_ticks()
-
-    def toggle_prune(self):
-        self.prune_set(self.settings().get("PRUNE_ROMS", "0") != "1")
-
-    def prune_clean(self):
-        self.run_with_progress("prune", T["prune_clean"].format(n=self.cleanable), "clean")
 
     def conflicts(self):
         try:
@@ -952,14 +1182,15 @@ class App:
             if not rows:
                 self.message(T["no_conflicts"])
                 return
-            pick = self.menu(T["conflicts"].format(n=len(rows)), [r[2][:40] for r in rows])
+            title = T["conflicts"].format(n=len(rows))
+            pick = self.menu(title, [r[2][:40] for r in rows])
             if pick is None:
                 return
             c = rows[pick]
             info = T["conflict_info"].format(game=c[2], mine=c[4][:16].replace("T", " "), theirs=c[5][:16].replace("T", " "), dev=c[6])
-            choice = self.menu(T["conflicts"].format(n=len(rows)), [T["keep_device"], T["keep_server"]], info=[info])
+            choice = self.menu(title, [T["keep_device"], T["keep_server"]], info=[info])
             if choice is not None:
-                self.run_with_progress("resolve", T["syncing"], c[1], "device" if choice == 0 else "server")
+                self.run_with_progress("resolve", title, c[1], "device" if choice == 0 else "server")
 
     # ---------- the console's lists ----------
 
@@ -972,8 +1203,9 @@ class App:
         return [line.split("\t") for line in r.stdout.splitlines()] if r.returncode == 0 else None
 
     def lists(self):
-        """Each list ticked or not; A adds or removes one (a removal that deletes roms says how many first, a single
-        question). Leaving after a change brings the console in line with its lists at once, on screen."""
+        """Each list ticked or not; A adds or removes one (a removal that deletes games says how many first, a single
+        question). Leaving after a change brings the console in line with its lists at once, on screen. The last
+        item but one downloads the lists' games now."""
         changed, at = False, None
         while True:
             self.message(T["checking"], wait=False)
@@ -989,8 +1221,16 @@ class App:
             labels = [("[x] " if r[2] == "1" else "[  ] ") + r[4] + (f" @{r[5]}" if len(r) > 5 and r[5] else "") + f" ({r[3]})" for r in rows]
             # The cursor stays on the list just changed (the console's own lists come first, so it moves)
             start = next((i for i, r in enumerate(rows) if r[1] == at), 0)
-            pick = self.menu(T["lists"], labels + [T["back"]], info=[T["lists_info"].format(n=sum(r[2] == "1" for r in rows))], start=start)
-            if pick is None or pick >= len(rows):
+            pick = self.menu(T["lists"], labels + [T["roms_now"], T["back"]], info=[T["lists_info"].format(n=sum(r[2] == "1" for r in rows))], start=start, wide=True)
+            if pick == len(rows):
+                # A change made here goes with it (the whole sync); otherwise just the download
+                if changed:
+                    changed = False
+                    self.sync_now()
+                else:
+                    self.run_with_progress("roms", T["roms_now"])
+                continue
+            if pick is None or pick > len(rows):
                 break
             r = rows[pick]
             at = r[1]
@@ -1013,13 +1253,64 @@ class App:
         if changed:
             self.sync_now()
 
+    # ---------- settings ----------
+
+    def settings_menu(self):
+        """The toggles (what each does under it), deleting the saves of deleted games, the account and disconnecting
+        (asked first)"""
+        sel = 0
+        while True:
+            cfg = self.settings()
+
+            def yn(key, default):
+                return T["yes"] if cfg.get(key, default) == "1" else T["no"]
+
+            self.cleanable = (self.prune_state().get("cleanable") or ["0"])[0]
+            items = [T["allow_pull"].format(v=yn("ALLOW_PULL", "1")), T["allow_ssh"].format(v=yn("ALLOW_SSH", "1")), T["prune"].format(v=yn("PRUNE_ROMS", "0")),
+                     T["prune_clean"].format(n=self.cleanable), T["account"].format(user=self.cfg.get("USER") or "?", host=self.host()), T["logout"], T["back"]]
+            notes = [T["allow_pull_note"], T["allow_ssh_note"], T["prune_note"], T["prune_clean_note"], "", "", ""]
+            pick = self.menu(T["settings"], items, notes=notes, start=sel, wide=True)
+            if pick is None or pick == 6:
+                return
+            sel = pick
+            if pick == 0:
+                self.toggle("ALLOW_PULL")
+            elif pick == 1:
+                self.toggle("ALLOW_SSH")
+            elif pick == 2:
+                self.prune_set(cfg.get("PRUNE_ROMS", "0") != "1")
+            elif pick == 3:
+                self.run_with_progress("prune", T["prune_clean"].format(n=self.cleanable), "clean")
+            elif pick == 5 and self.logout():
+                return
+
+    def logout(self):
+        """Disconnects this console once the user says so; True when it did"""
+        if self.menu(T["logout_title"], [T["logout_go"], T["cancel"]], info=[T["logout_ask"].format(host=self.host())]) != 0:
+            return False
+        subprocess.run(["sh", SCRIPT, "unlink"], capture_output=True, timeout=30)
+        self.cfg = {}
+        self.message(T["logged_out"])
+        return True
+
+    # ---------- status ----------
+
     def status(self):
-        try:
-            with open(os.path.join(self.state, "log"), encoding="utf-8") as f:
-                lines = f.read().splitlines()[-6:]
-        except OSError:
-            lines = [T["nolog"]]
-        self.menu(T["status"], ["OK"], info=[self.version_line()] + lines)
+        """Version and install date, account and server, the last result, the last log lines (the only screen that
+        shows them as they are)"""
+        s = self.screen
+        width = s.column(wide=True)
+        info = [self.version_line(), T["account"].format(user=self.cfg.get("USER") or "?", host=self.host()),
+                s.clip(f"{T['server']}: {self.cfg.get('SERVER', '')}", s.small, width), synced_at()]
+        last = read_text(os.path.join(work_dir(), "last-summary"))
+        if last or os.path.exists(os.path.join(work_dir(), "last-summary")):
+            lines = last.splitlines()
+            fails = [(None, l.split("\t", 1)[1], BAD) for l in lines if l.startswith("fail\t")]
+            info += [T["last_result"]] + (summary_facts(lines) + fails or [(None, T["up_to_date"], FG)])
+        log = read_text(os.path.join(self.state, "log")).splitlines()[-4:]
+        # "HH:MM message" from "YYYY-MM-DD HH:MM:SS message"
+        info += [T["log"]] + ([s.clip(l[11:16] + l[19:], s.small, width) for l in log] or [T["nolog"]])
+        self.menu(T["status"], ["OK"], info=info, wide=True)
 
     def version_line(self):
         """The client's version and when this console first synced with it"""
@@ -1034,44 +1325,66 @@ class App:
             pass
         return line
 
-    def logout(self):
-        subprocess.run(["sh", SCRIPT, "unlink"], capture_output=True, timeout=30)
-        self.cfg = {}
-        self.message(T["logged_out"])
+    # ---------- home ----------
+
+    def home_state(self):
+        """The line under the title, the most urgent first: conflicts (warning colour), offline since, last sync"""
+        n = self.conflict_count or 0
+        if n:
+            return (T["conflicts_line1"] if n == 1 else T["conflicts_line"].format(n=n)), WARN
+        since = read_text(os.path.join(work_dir(), "offline-since")).strip()
+        if since.isdigit():
+            return T["offline_since"].format(t=time.strftime("%H:%M", time.localtime(int(since)))), DIM
+        return synced_at(), DIM
+
+    def home_live(self):
+        """Work under way, only while it runs: a game download, games sent to the server"""
+        roms, pulls = self.live.get("roms"), self.live.get("pulls")
+        out = []
+        if roms:
+            out.append(T["w_roms"].format(n=f"{roms[0]}/{roms[1]}" if roms[1] else ""))
+        if pulls:
+            out.append(T["w_pulls"].format(n=f"{pulls[0]}/{pulls[1]}"))
+        return out
+
+    def home_entries(self):
+        """(action, label) of the home screen: conflicts only when there are, the watch items only while they run"""
+        e = [(self.sync_now, T["sync_now"])]
+        if self.conflict_count:
+            e.append((self.resolve_conflicts, T["conflicts"].format(n=self.conflict_count)))
+        if self.live.get("roms"):
+            e.append((self.sync_roms, T["roms_watch"]))
+        if self.live.get("pulls"):
+            e.append((self.watch_pulls, T["pulls_watch"]))
+        return e + [(self.lists, T["lists"]), (self.settings_menu, T["settings"]), (self.status, T["status"]), (None, T["quit"])]
 
     def run(self):
-        # Opened while the daemon downloads the lists' roms: their progress first (B stops them)
+        # Opened while the daemon downloads the lists' games: their progress first (B stops them)
         if self.linked() and self.roms_status():
             self.sync_roms()
-        # Opened while the server fetches roms from this console: that copy's progress first
+        # Opened while the server fetches games from this console: that copy's progress first
         if self.linked():
             self.watch_pulls()
         while True:
             if self.linked():
-                info = [T["connected"].format(server=self.cfg.get("SERVER", "")), T["as"].format(user=self.cfg.get("USER", "?"))]
-                cfg = self.settings()
-                pull = T["yes"] if cfg.get("ALLOW_PULL", "1") == "1" else T["no"]
-                ssh = T["yes"] if cfg.get("ALLOW_SSH", "1") == "1" else T["no"]
                 self.prune_prompts()
-                cfg = self.settings()
-                prune = T["yes"] if cfg.get("PRUNE_ROMS", "0") == "1" else T["no"]
-                self.cleanable = (self.prune_state().get("cleanable") or ["0"])[0]
-                n = "…" if self.conflict_count is None else self.conflict_count
-                running = self.roms_status()
-                roms_label = T["roms_watch"].format(n=f"({running[0]}/{running[1]})" if running and running[1] else "") if running else T["sync_roms"]
-                items = [T["sync_now"], roms_label, T["lists"], T["allow_pull"].format(v=pull), T["allow_ssh"].format(v=ssh), T["prune"].format(v=prune), T["prune_clean"].format(n=self.cleanable), T["conflicts"].format(n=n), T["status"], T["logout"], T["quit"]]
-                # A copy the server asked for: an item to watch it while it lasts
-                pulling = self.pulls_status()
-                if pulling:
-                    items.insert(-1, T["pulls_watch"].format(n=f"({pulling[0]}/{pulling[1]})"))
-                choice = self.menu(T["title"], items, info, refresh=lambda: T["conflicts"].format(n="…" if self.conflict_count is None else self.conflict_count), refresh_index=7)
-                actions = [self.sync_now, self.sync_roms, self.lists, self.toggle_allow_pull, self.toggle_allow_ssh, self.toggle_prune, self.prune_clean, self.resolve_conflicts, self.status, self.logout] + ([self.watch_pulls] if pulling else [])
+                self.live = {"roms": self.roms_status(), "pulls": self.pulls_status()}
+                shown = {}
+
+                def labels():
+                    shown["e"] = self.home_entries()
+                    return [label for _, label in shown["e"]]
+
+                self.live_on = True
+                choice = self.menu(T["title"], labels, info=self.home_live, sub=self.home_state)
+                self.live_on = False
+                action = shown["e"][choice][0] if choice is not None else None
             else:
                 choice = self.menu(T["title"], [f"{T['server']}: {self.server}", T["login"], T["signup"], T["quit"]])
-                actions = [self.edit_server, self.login, self.signup]
-            if choice is None or choice >= len(actions):
+                action = [self.edit_server, self.login, self.signup, None][choice] if choice is not None else None
+            if action is None:
                 return
-            actions[choice]()
+            action()
             self.refresh_conflicts()
 
     def edit_server(self):

@@ -42,6 +42,33 @@ clock by NTP when it is clearly wrong (consoles without a battery-backed clock b
 
 Client commands: `setup`, `link SERVER`, `enroll`, `sync`, `daemon`, `boot`, `install`, `status`, `unlink`, `hints`.
 
+### Summary lines
+
+Run on screen (`all`, `sync`, `roms`, `pulls`, `resolve`, `prune run|confirm|clean`), the shell client prints,
+before its English line (`sync: 2 up, 1 down, 0 errors`, `roms: ...`, `sent to server: ...`, `deleted: ...`,
+`cleaned: ...`, which stays the last line), one machine-readable line per fact that is not zero:
+
+    sum<TAB>key<TAB>n[<TAB>extra]
+
+| key | n | extra |
+|---|---|---|
+| `saves-up` / `saves-down` | saves uploaded / received (memory cards count as saves) | |
+| `states-up` / `states-down` | savestates (`.state*`, `.ss0`-`.ss9`, `.st0`-`.st9`) uploaded / received | |
+| `games-down` | games downloaded for the lists | |
+| `games-sent` | games sent to the server (pulls) | |
+| `games-deleted` | games deleted for being in no list | |
+| `saves-cleaned` | save and state files of deleted games removed | |
+| `games-stopped` | 1: the game download was stopped | |
+| `games-nospace` | 1 | the game that did not fit |
+| `conflicts` | conflicts still open on this device (the last count wins) | |
+| `errors` | files that failed (the reason is in `fail-details`) | |
+
+The screens add up the same keys over an action (`all` prints the lines of each step) and show one translated
+fact per line, "All up to date" when there are none (docs/clients-ux.md). The background passes (`background`,
+the daemon, game events) print none. `all` also numbers its steps for the screens in `$WORK/step`
+(`n<TAB>of<TAB>saves|settings|prune|roms|pulls`); the last on-screen result is kept in `$WORK/last-summary` for
+the Status screen.
+
 ### When saves are uploaded
 
 - **Linux daemon**: checks sizes and mtimes of the save files every 15 s and syncs once they have stayed unchanged

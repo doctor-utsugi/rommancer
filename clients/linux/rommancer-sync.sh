@@ -22,7 +22,7 @@
 #                                   Menu++...) mounted on this computer; the link lives on the card itself,
 #                                   so any computer with this script can sync it. Without a command: sync.
 set -u
-CLIENT_VERSION=20261050
+CLIENT_VERSION=20261051
 # A clock before this date is surely wrong (no battery-backed clock); kept apart from the version, which may run ahead
 CLOCK_MIN=20261001
 # Onion keeps curl (with TLS) and friends outside the default PATH
@@ -185,8 +185,9 @@ detect() {
   NAME="${ROMMANCER_NAME:-$(hostname 2>/dev/null || echo device)}"
 }
 
-# Onion dialogs fit about 40 characters per line and turn a literal \n into a line break
-wrap() { printf '%s' "$1" | awk -v w=36 '{ n = split($0, a, " "); for (i = 1; i <= n; i++) { if (length(l) > 0 && length(l) + 1 + length(a[i]) > w) { if (o != "") o = o "\\n"; o = o l; l = a[i] } else if (l == "") l = a[i]; else l = l " " a[i] } } END { if (o != "") o = o "\\n"; o = o l; printf "%s", o }'; }
+# Onion dialogs fit about 40 characters per line and turn a literal \n into a line break; each line of the text is
+# wrapped on its own (one fact per line stays one per line)
+wrap() { printf '%s\n' "$1" | awk -v w=36 'function add(s) { o = (started ? o "\\n" : "") s; started = 1 } { l = ""; n = split($0, a, " "); for (i = 1; i <= n; i++) { if (length(l) > 0 && length(l) + 1 + length(a[i]) > w) { add(l); l = a[i] } else if (l == "") l = a[i]; else l = l " " a[i] } add(l) } END { printf "%s", o }'; }
 
 # On-screen message on Onion (infoPanel); "wait" blocks until a button, otherwise it stays until dismissed
 panel() {
@@ -330,6 +331,17 @@ is_rom() {
 progress() { printf '%s\t%s\t%s\n' "$1" "$2" "$3" > "$WORK/progress.tmp" && mv "$WORK/progress.tmp" "$WORK/progress"; }
 # The same with the file being worked on (its name is shown): "phase<TAB>done<TAB>total<TAB><TAB><TAB>name"
 progress_file() { printf '%s\t%s\t%s\t\t\t%s\n' "$1" "$2" "$3" "$(basename "$4")" > "$WORK/progress.tmp" && mv "$WORK/progress.tmp" "$WORK/progress"; }
+# The step of "Sync now" under way, for the screens: "n<TAB>of<TAB>key" (saves, settings, prune, roms, pulls)
+step() { printf '%s\t%s\t%s\n' "$1" "$2" "$3" > "$WORK/step"; }
+
+# Summary lines for the screens, printed next to the English lines when run on screen (VERBOSE):
+# "sum<TAB>key<TAB>n[<TAB>extra]", only for keys that are not zero (docs/clients-ux.md, docs/sync.md)
+sum_line() {
+  [ -n "${VERBOSE:-}" ] && [ "${2:-0}" != 0 ] || return 0
+  printf 'sum\t%s\t%s%s\n' "$1" "$2" "${3:+$TAB$3}"
+}
+# A savestate (.state, .state1, .state.auto, .ss0, NextUI's .st0); every other file a sync moves is a save
+is_state() { case "$1" in *.[Ss][Tt][Aa][Tt][Ee]*|*.[Ss][Ss][0-9]|*.[Ss][Tt][0-9]) return 0 ;; esac; return 1; }
 
 # "meta<TAB>path" for every file under the given find arguments, META being stat's FMT. One stat call for
 # many files where find can (-exec ... +): a fork per file is what makes a big rom folder slow on a handheld
@@ -583,12 +595,12 @@ synced_now() {
   return 0
 }
 synced_at() { cat "$WORK/last-sync" 2>/dev/null || cat "$STATE/last-sync" 2>/dev/null; }
-# "Sincronizado: 12 oct, 18:52" (the last sync that went through), on every setup screen
+# "Sincronizado: hoy, 18:52" / "Sincronizado: 12 oct, 18:52" (the last sync that went through), on the home screen
 synced_line() {
   at="$(synced_at)"
-  if lang_es; then m="ene feb mar abr may jun jul ago sep oct nov dic"; w="Sincronizado:"; never="Sin sincronizar todavia"; else m="Jan Feb Mar Apr May Jun Jul Aug Sep Oct Nov Dec"; w="Synced:"; never="Not synced yet"; fi
+  if lang_es; then m="ene feb mar abr may jun jul ago sep oct nov dic"; w="Sincronizado:"; td="hoy"; never="Sin sincronizar todavía"; else m="Jan Feb Mar Apr May Jun Jul Aug Sep Oct Nov Dec"; w="Synced:"; td="today"; never="Not synced yet"; fi
   [ -n "$at" ] || { printf '%s' "$never"; return 0; }
-  date -d "@$at" '+%m %d %H:%M' 2>/dev/null | awk -v m="$m" -v w="$w" '{ split(m, n, " "); printf "%s %d %s, %s", w, $2, n[$1 + 0], $3 }'
+  date -d "@$at" '+%m %d %H:%M %Y%m%d' 2>/dev/null | awk -v m="$m" -v w="$w" -v td="$td" -v today="$(date +%Y%m%d)" '{ split(m, n, " "); if ($4 == today) printf "%s %s, %s", w, td, $3; else printf "%s %d %s, %s", w, $2, n[$1 + 0], $3 }'
 }
 # "Actualizado el 11 oct 2026, 19:07": when this client arrived (the status screen)
 updated_line() {
@@ -599,7 +611,7 @@ updated_line() {
 }
 version_line() {
   since="$(cut -f2 "$VERSION_FILE" 2>/dev/null)"
-  if lang_es; then printf 'Version %s%s' "$CLIENT_VERSION" "${since:+, instalada el $since}"
+  if lang_es; then printf 'Versión %s%s' "$CLIENT_VERSION" "${since:+, instalada el $since}"
   else printf 'Version %s%s' "$CLIENT_VERSION" "${since:+, installed $since}"; fi
 }
 
@@ -614,8 +626,8 @@ sync_failed() {
   else
     case "${code:-}" in
       6) if [ "$es" = 1 ]; then why="No encuentra $host (DNS): revisa la red WiFi"; else why="Cannot find $host (DNS): check the WiFi network"; fi ;;
-      35|60) if [ "$es" = 1 ]; then why="Conexion segura rechazada: suele ser la hora de la consola ($(date '+%d/%m/%Y %H:%M'))"; else why="Secure connection refused: usually the console's clock ($(date '+%Y-%m-%d %H:%M'))"; fi ;;
-      22) if [ "$es" = 1 ]; then why="$host respondio con un error: $(printf '%s' "$err" | sed 's/.*error: //')"; else why="$host answered with an error: $(printf '%s' "$err" | sed 's/.*error: //')"; fi ;;
+      35|60) if [ "$es" = 1 ]; then why="Conexión segura rechazada: suele ser la hora de la consola ($(date '+%d/%m/%Y %H:%M'))"; else why="Secure connection refused: usually the console's clock ($(date '+%Y-%m-%d %H:%M'))"; fi ;;
+      22) if [ "$es" = 1 ]; then why="$host respondió con un error: $(printf '%s' "$err" | sed 's/.*error: //')"; else why="$host answered with an error: $(printf '%s' "$err" | sed 's/.*error: //')"; fi ;;
       28) if [ "$es" = 1 ]; then why="$host no contesta a tiempo: revisa la red WiFi"; else why="$host does not answer in time: check the WiFi network"; fi ;;
       *) if [ "$es" = 1 ]; then why="No llega a $host: revisa la red WiFi"; else why="Cannot reach $host: check the WiFi network"; fi ;;
     esac
@@ -749,7 +761,7 @@ cmd_sync() {
   sed -n "s/^backups$TAB//p" "$plan" > "$WORK/keep" && [ -s "$WORK/keep" ] && mv "$WORK/keep" "$STATE/backups-keep"
   [ "$pset" = 1 ] && rm -f "$STATE/prune-set"
   prune_answer "$(grep "^prune$TAB" "$plan" | head -n 1)"
-  ups=0; downs=0; errs=0; moved=0; total="$(grep -vc "^probe$TAB\|^backups$TAB\|^prune$TAB\|^clocksync$TAB" "$plan")"
+  ups=0; downs=0; errs=0; moved=0; sup=0; stup=0; sdown=0; stdown=0; total="$(grep -vc "^probe$TAB\|^backups$TAB\|^prune$TAB\|^clocksync$TAB" "$plan")"
   : > "$WORK/received"
   while IFS="$TAB" read -r action p a b; do
     case "$action" in probe|backups|prune) continue ;; clocksync) clock_sync_on; continue ;; esac
@@ -758,25 +770,25 @@ cmd_sync() {
       put)
         rh="$(grep -F "rom$TAB$a$TAB" "$req" | head -n 1 | cut -f3,4 | tr '\t' ',')"
         if http POST "$SERVER/api/v1/agent/upload" "$p" "$WORK/uploaded" "X-Rom-B64: $(b64 "$a")" "X-Path-B64: $(b64 "$p")" "X-Rom-Sha1: $rh" "X-Save-Exact: ${b:-0}"; then
-          ups=$((ups + 1))
+          ups=$((ups + 1)); if is_state "$p"; then stup=$((stup + 1)); else sup=$((sup + 1)); fi
           # A new savestate: the server asks for its screenshot; a memory card may come back with the server's saves in it
           while IFS="$TAB" read -r tk tp tv tr; do
             case "$tk" in
               tput) thumb_put "$tp" "$tv" ;;
-              cget) card_get "$tp" "$tv" "$tr" && { downs=$((downs + 1)); rn="$(basename "$tp")"; printf '%s\n' "${rn%.*}" >> "$WORK/received"; } ;;
+              cget) card_get "$tp" "$tv" "$tr" && { downs=$((downs + 1)); sdown=$((sdown + 1)); rn="$(basename "$tp")"; printf '%s\n' "${rn%.*}" >> "$WORK/received"; } ;;
             esac
           done < "$WORK/uploaded"
         else errs=$((errs + 1)); fi ;;
       get)
         mkdir -p "$(dirname "$p")"
         if http GET "$SERVER/api/v1/agent/file?v=$a" - "$p.rommancer-tmp" "X-Rom-B64: $(b64 "$b")" "X-Path-B64: $(b64 "$p")" && replace_save "$p.rommancer-tmp" "$p"; then
-          downs=$((downs + 1))
+          downs=$((downs + 1)); if is_state "$p"; then stdown=$((stdown + 1)); else sdown=$((sdown + 1)); fi
           rn="$(basename "$b")"; printf '%s\n' "${rn%.*}" >> "$WORK/received"
         else rm -f "$p.rommancer-tmp"; errs=$((errs + 1)); fi ;;
       tput) thumb_put "$p" "$a" ;;
       tget) thumb_get "$p" "$a" ;;
       aside) set_aside "$p" ;;
-      cget) if card_get "$p" "$a" "$b"; then downs=$((downs + 1)); rn="$(basename "$p")"; printf '%s\n' "${rn%.*}" >> "$WORK/received"; fi ;;
+      cget) if card_get "$p" "$a" "$b"; then downs=$((downs + 1)); sdown=$((sdown + 1)); rn="$(basename "$p")"; printf '%s\n' "${rn%.*}" >> "$WORK/received"; fi ;;
     esac
   done < "$plan"
   # Roms no hash or name identified: the server reads their product code from the blocks it asks for
@@ -793,10 +805,21 @@ cmd_sync() {
   notify_received
   log "sync: $ups up, $downs down, $errs errors"
   synced_now
+  if [ -n "${VERBOSE:-}" ]; then
+    # Files that failed: why, for the screens' details
+    [ "$errs" -gt 0 ] && sync_failed > /dev/null
+    # Conflicts still open, counted for the summary (and kept for Onion's menu)
+    nconf=0
+    if HTTP_MAX=10 http_once GET "$SERVER/api/v1/agent/conflicts" - "$WORK/conflicts.new" 2>/dev/null; then
+      nconf="$(grep -c "^conflict$TAB" "$WORK/conflicts.new")"; mv "$WORK/conflicts.new" "$WORK/conflicts"
+    fi
+  fi
   # The last log lines go to the server so problems can be seen without access to the device (a line repeated
   # in a row counted once, so a run of failures does not push everything else out)
   { log_tail; lists_report; [ -f "$DIR/last-run.txt" ] && { echo "--- last-run.txt"; tail -n 20 "$DIR/last-run.txt"; }; } > "$WORK/report" 2>/dev/null
   http POST "$SERVER/api/v1/agent/log" "$WORK/report" - "X-Client-Version: $CLIENT_VERSION" >/dev/null 2>&1
+  sum_line saves-up "$sup"; sum_line states-up "$stup"; sum_line saves-down "$sdown"; sum_line states-down "$stdown"
+  sum_line conflicts "${nconf:-0}"; sum_line errors "$errs"
   [ -n "${VERBOSE:-}" ] && printf 'sync: %s up, %s down, %s errors\n' "$ups" "$downs" "$errs"
   drop_lock
   trap - EXIT INT TERM
@@ -1236,15 +1259,17 @@ prune_run() {
     log "prune: $(printf '%s' "$hold" | cut -f2) roms to delete, waiting for confirmation"; return 0
   fi
   rm -f "$STATE/prune-hold"
-  n=0
+  n=0; i=0; pn="$(grep -c "^del$TAB" "$WORK/pruneplan")"
   while IFS="$TAB" read -r kind p _; do
     [ "$kind" = del ] || continue
+    i=$((i + 1)); progress_file prune "$i" "$pn" "$p"
     case "$p" in "${ROMS%/}"/*/*) ;; *) continue ;; esac
     [ -f "$p" ] || continue
     rm -f "$p" && { n=$((n + 1)); printf '%s\n' "$p" >> "$STATE/pruned"; roms_changed "$p"; }
   done < "$WORK/pruneplan"
   refresh_lists
   [ "$n" -gt 0 ] && log "prune: $n roms in no list deleted"
+  sum_line games-deleted "$n"
   [ -n "${VERBOSE:-}" ] && printf 'deleted: %s roms in no list\n' "$n"
   return 0
 }
@@ -1254,7 +1279,7 @@ cmd_prune_clean() {
   need_link
   [ -s "$STATE/pruned" ] || { echo "cleaned: 0 files"; return 0; }
   VERBOSE=1 cmd_sync > "$WORK/clean-sync" 2>&1 || { echo "cleaned: 0 files (no sync)"; return 1; }
-  grep -q ', 0 errors' "$WORK/clean-sync" || { echo "cleaned: 0 files (sync errors)"; return 1; }
+  grep -q ', 0 errors' "$WORK/clean-sync" || { grep "^sum$TAB" "$WORK/clean-sync"; echo "cleaned: 0 files (sync errors)"; return 1; }
   http POST "$SERVER/api/v1/agent/prune/saves" "$STATE/pruned" "$WORK/prunesaves" || { echo "cleaned: 0 files (no server)"; return 1; }
   n=0
   while IFS="$TAB" read -r kind f; do
@@ -1263,6 +1288,9 @@ cmd_prune_clean() {
   done < "$WORK/prunesaves"
   rm -f "$STATE/pruned"
   log "prune: $n save files of deleted roms removed"
+  # The summary: the sync that went first, then what went
+  grep "^sum$TAB" "$WORK/clean-sync"
+  [ "$n" = 0 ] || printf 'sum\tsaves-cleaned\t%s\n' "$n"
   echo "cleaned: $n files"
 }
 
@@ -1441,7 +1469,7 @@ roms_fetch() {
     # The card's free space, read once and counted down
     [ -n "$free" ] || free="$(free_bytes "$(dirname "$dest")")"
     if [ "$size" -gt 0 ] && [ "$free" -lt $((size - ps + 52428800)) ]; then
-      log "roms: not enough space for $(basename "$dest")"; fail=$((fail + 1)); break
+      log "roms: not enough space for $(basename "$dest")"; nospace="$(basename "$dest")"; fail=$((fail + 1)); break
     fi
     free=$((free - size + ps))
     [ -f "$part" ] && ip="$ps"
@@ -1459,7 +1487,7 @@ roms_fetch() {
   # lines out in one go at the end, so they cannot tell how far the run is)
   # A server restarting (502/503 for a minute) is waited for, instead of failing every file left
   curl -K "$WORK/romcfg.head" -K "$WORK/romcfg" -f -s -S --globoff --create-dirs -C - --connect-timeout 10 --speed-limit 1024 --speed-time 60 --retry 6 --retry-delay 15 --retry-connrefused \
-    -w '%{http_code}\n' > "$WORK/romdone" 2>> "$LOG" &
+    -w '%{http_code}\n' > "$WORK/romdone" 2> "$WORK/roms-err" &
   cpid=$!; echo "$cpid" > "$WORK/roms-lock/curl"
   cur=1
   while kill -0 "$cpid" 2>/dev/null; do
@@ -1480,8 +1508,11 @@ EOR
     if [ -f "$WORK/roms-stop" ]; then kill "$cpid" 2>/dev/null; stopped=1; fi
     sleep 1
   done
-  wait "$cpid" 2>/dev/null
+  wait "$cpid" 2>/dev/null; crc=$?
   rm -f "$WORK/roms-lock/curl"
+  cat "$WORK/roms-err" >> "$LOG" 2>/dev/null
+  # Why files failed, for the screens' details (as http leaves it)
+  [ "$crc" = 0 ] || [ "$stopped" = 1 ] || printf '%s\t%s\t%s\n' "$crc" "$SERVER/api/v1/agent/rom" "$(grep . "$WORK/roms-err" | tail -n 1)" > "$WORK/last-error"
   k=0
   while IFS="$TAB" read -r dest size _; do
     k=$((k + 1))
@@ -1514,15 +1545,19 @@ cmd_roms() {
     [ -n "${VERBOSE:-}" ] || return 0
     # On screen while the daemon downloads: its progress is shown, and a stop ends both
     while roms_running; do sleep 1; done
-    if [ -f "$STATE/roms-stopped" ]; then progress roms-finished 0 0; echo "roms: stopped"; return 0; fi
+    if [ -f "$STATE/roms-stopped" ]; then progress roms-finished 0 0; sum_line games-stopped 1; echo "roms: stopped"; return 0; fi
   fi
   rm -rf "$WORK/roms-lock"; mkdir -p "$WORK" && mkdir "$WORK/roms-lock" 2>/dev/null || return 0
   rm -f "$WORK/roms-stop"
   # This shell's own pid ($$ is the parent's inside a subshell): the parent of a child sh
   sh -c 'echo $PPID' > "$WORK/roms-lock/pid"
   progress roms-plan 0 0
-  http GET "$SERVER/api/v1/agent/roms" - "$WORK/romplan" || { log "roms: server unreachable"; rm -rf "$WORK/roms-lock"; return 1; }
-  total="$(grep -c . "$WORK/romplan")"; i=0; got=0; fail=0; have=0; stopped=0
+  if ! http GET "$SERVER/api/v1/agent/roms" - "$WORK/romplan"; then
+    log "roms: server unreachable"; rm -rf "$WORK/roms-lock"
+    [ -n "${VERBOSE:-}" ] && { sync_failed > /dev/null; sum_line errors 1; }
+    return 1
+  fi
+  total="$(grep -c . "$WORK/romplan")"; i=0; got=0; fail=0; have=0; stopped=0; nospace=""
   if command -v curl >/dev/null 2>&1; then roms_fetch; else
   while IFS="$TAB" read -r kind dest size ref; do
     [ "$kind" = rom ] || continue
@@ -1532,7 +1567,7 @@ cmd_roms() {
     printf 'roms-download\t%s\t%s\t%s\t%s\t%s\n' "$i" "$total" "$size" "$dest.part" "$(basename "$dest")" > "$WORK/progress.tmp" && mv "$WORK/progress.tmp" "$WORK/progress"
     if [ -f "$dest" ] && { [ "$size" = 0 ] || [ "$(stat -c %s "$dest" 2>/dev/null)" = "$size" ]; }; then have=$((have + 1)); continue; fi
     if [ "$size" -gt 0 ] && [ "$(free_bytes "$(dirname "$dest")")" -lt $((size + 52428800)) ]; then
-      log "roms: not enough space for $(basename "$dest")"; fail=$((fail + 1)); break
+      log "roms: not enough space for $(basename "$dest")"; nospace="$(basename "$dest")"; fail=$((fail + 1)); break
     fi
     mkdir -p "$(dirname "$dest")"
     if http GET "$SERVER/api/v1/agent/rom?f=$ref" - "$dest.part" && { [ "$size" = 0 ] || [ "$(stat -c %s "$dest.part")" = "$size" ]; }; then
@@ -1552,11 +1587,15 @@ cmd_roms() {
     rm -f "$WORK/roms-stop"
     progress roms-finished "$got" "$fail"
     log "roms: stopped, $got downloaded"
+    sum_line games-down "$got"; sum_line games-stopped 1
     [ -n "${VERBOSE:-}" ] && printf 'roms: stopped, %s downloaded\n' "$got"
     return 0
   fi
   progress roms-finished "$got" "$fail"
   log "roms: $got downloaded, $have already here, $fail failed"
+  rerr="$fail"; [ -n "$nospace" ] && rerr=$((rerr - 1))
+  [ -n "${VERBOSE:-}" ] && [ "$rerr" -gt 0 ] && sync_failed > /dev/null
+  sum_line games-down "$got"; sum_line games-nospace "${nospace:+1}" "$nospace"; sum_line errors "$rerr"
   [ -n "${VERBOSE:-}" ] && printf 'roms: %s downloaded, %s already here, %s failed\n' "$got" "$have" "$fail"
   return 0
 }
@@ -1641,9 +1680,29 @@ cmd_game_start() {
   return 0
 }
 
-# "Sync now" on the console's screen: saves, settings, then the lists' roms with their progress
-# (a sync that could not reach the server ends it: each step would wait for the network again)
-cmd_all() { cmd_sync || return 0; cmd_config; cmd_prune; cmd_roms; cmd_collections > /dev/null 2>&1; return 0; }
+# "Sync now" on the console's screen: saves, settings, roms in no list, the lists' roms and the roms the server asked
+# for, each a numbered step for the screens (a sync that could not reach the server ends it: each step would wait for
+# the network again). Deleting roms in no list is a step only when it is on, sending roms only when the server asked
+# for some and no copy runs already (a running one is watched from the menu)
+cmd_all() {
+  rm -f "$WORK/step"
+  a_pulls=0
+  if [ "$ALLOW_PULL" = 1 ] && [ -n "$TOKEN" ] && ! pulls_running && HTTP_MAX=10 http_once GET "$SERVER/api/v1/agent/pulls" - "$WORK/pulls-ask" 2>/dev/null; then
+    grep -q '^pull' "$WORK/pulls-ask" && a_pulls=1
+  fi
+  a_m=3; [ "$PRUNE_ROMS" = 1 ] && a_m=$((a_m + 1)); a_m=$((a_m + a_pulls)); a_n=1
+  step "$a_n" "$a_m" saves
+  cmd_sync || { rm -f "$WORK/step"; return 0; }
+  a_n=$((a_n + 1)); step "$a_n" "$a_m" settings; progress settings 0 0
+  cmd_config
+  if [ "$PRUNE_ROMS" = 1 ]; then a_n=$((a_n + 1)); step "$a_n" "$a_m" prune; progress prune 0 0; cmd_prune; fi
+  a_n=$((a_n + 1)); step "$a_n" "$a_m" roms
+  cmd_roms
+  if [ "$a_pulls" = 1 ]; then a_n=$((a_n + 1)); step "$a_n" "$a_m" pulls; progress pulls 0 0; cmd_pulls; fi
+  cmd_collections > /dev/null 2>&1
+  rm -f "$WORK/step"
+  return 0
+}
 
 # A copy for the server is under way (a lock whose process died does not count)
 pulls_running() { [ -f "$WORK/pull-lock/pid" ] && kill -0 "$(cat "$WORK/pull-lock/pid")" 2>/dev/null; }
@@ -1667,17 +1726,20 @@ cmd_pulls() {
   trap 'rm -rf "$WORK/pull-lock"' EXIT
   trap 'rm -rf "$WORK/pull-lock"; exit 1' INT TERM
   http GET "$SERVER/api/v1/agent/pulls" - "$WORK/pulls" || { rm -rf "$WORK/pull-lock"; return 1; }
-  total="$(grep -c '^pull' "$WORK/pulls")"; i=0; sent=0
+  total="$(grep -c '^pull' "$WORK/pulls")"; i=0; sent=0; missing=0
   while IFS="$TAB" read -r kind id p; do
     [ "$kind" = pull ] || continue
     i=$((i + 1))
     # "done<TAB>total<TAB>size<TAB>name" for the app's screens, apart from the sync's progress
-    printf '%s\t%s\t%s\t%s\n' "$i" "$total" "$(stat -c %s "$p" 2>/dev/null || echo 0)" "$(basename "$p")" > "$WORK/pull-progress.tmp" && mv "$WORK/pull-progress.tmp" "$WORK/pull-progress"
+    psz="$(stat -c %s "$p" 2>/dev/null || echo 0)"
+    printf '%s\t%s\t%s\t%s\n' "$i" "$total" "$psz" "$(basename "$p")" > "$WORK/pull-progress.tmp" && mv "$WORK/pull-progress.tmp" "$WORK/pull-progress"
+    # A step of "Sync now": its progress as the roms' ("phase<TAB>done<TAB>total<TAB>size<TAB><TAB>name")
+    [ -n "${VERBOSE:-}" ] && printf 'pulls\t%s\t%s\t%s\t\t%s\n' "$i" "$total" "$psz" "$(basename "$p")" > "$WORK/progress.tmp" && mv "$WORK/progress.tmp" "$WORK/progress"
     # Never compete with a game for the network and the card: wait until it ends
     while playing; do sleep 20; done
     if [ ! -f "$p" ]; then
       http POST "$SERVER/api/v1/agent/pull/$id" - - "X-Missing: 1" >/dev/null 2>&1
-      continue
+      missing=$((missing + 1)); continue
     fi
     if command -v curl >/dev/null 2>&1; then
       # A stalled transfer (under 1 KB/s for a minute) is dropped and sent again later
@@ -1693,6 +1755,7 @@ cmd_pulls() {
   done < "$WORK/pulls"
   rm -f "$WORK/pull-progress" "$WORK/pull-curl"
   log "pulls: $sent of $total sent"
+  sum_line games-sent "$sent"; sum_line errors $((total - sent - missing))
   [ -n "${VERBOSE:-}" ] && printf 'sent to server: %s of %s\n' "$sent" "$total"
   rm -rf "$WORK/pull-lock"
   trap - EXIT INT TERM
@@ -1740,62 +1803,112 @@ ask() {
 }
 
 tr_es() { grep -qs '"language"[^,]*es' /appconfigs/system.json; }
+# Every text the console shows, in English and Spanish (vocabulary in docs/clients-ux.md: save/partida,
+# savestate, game/juego); counts of one take the singular
 t() {
   if tr_es; then
     case "$1" in
       server) echo "Servidor" ;; login) echo "Entrar" ;; signup) echo "Crear cuenta" ;; quit) echo "Salir" ;;
-      user) echo "USUARIO O EMAIL" ;; username) echo "USUARIO" ;; email) echo "EMAIL" ;; password) echo "CONTRASENA" ;;
-      sync) echo "Sincronizar ahora" ;; status) echo "Estado" ;; unlink) echo "Desconectar esta consola" ;;
-      connected) echo "Conectado como ${USER_NAME:-?} a ${SERVER#*://}" ;; notlinked) echo "Esta consola no esta vinculada" ;;
-      badserver) echo "No hay un Rommancer en esa direccion" ;; badlogin) echo "Usuario o contrasena incorrectos" ;;
-      closed) echo "Este servidor no permite crear cuentas" ;; finished) echo "Listo. Sincronizacion automatica activada." ;;
-      syncing) echo "Sincronizando..." ;; roms) echo "Sincronizar roms" ;; autoroms) echo "Roms automaticas: $2" ;;
-      allowpull) echo "Servidor puede traer juegos: $2" ;; allowssh) echo "Acceso SSH del servidor: $2" ;; p_pulls) echo "Enviando juegos al servidor" ;;
-      yes) echo "si" ;; no) echo "no" ;; conflicts) echo "Conflictos ($2)" ;; noconflicts) echo "No hay conflictos" ;;
-      keepdevice) echo "Quedarme con el de esta consola" ;; keepserver) echo "Usar el del servidor" ;;
+      user) echo "USUARIO O EMAIL" ;; username) echo "USUARIO" ;; email) echo "EMAIL" ;; password) echo "CONTRASEÑA" ;;
+      sync) echo "Sincronizar ahora" ;; status) echo "Estado" ;; settings) echo "Ajustes" ;; unlink) echo "Desconectar esta consola" ;;
+      account) echo "Cuenta: $2 @ $3" ;; notlinked) echo "Esta consola no está vinculada" ;;
+      badserver) echo "No hay un Rommancer en esa dirección" ;; badlogin) echo "Usuario o contraseña incorrectos" ;;
+      exists) echo "Ese usuario o email ya existe" ;; signupfail) echo "No se pudo crear la cuenta: revisa los datos" ;; closed) echo "Este servidor no permite crear cuentas" ;;
+      finished) echo "Listo. La sincronización automática está activada." ;; syncing) echo "Sincronizando..." ;;
+      allowpull) echo "El servidor puede pedir juegos: $2" ;; allowssh) echo "Acceso SSH del servidor: $2" ;;
+      prune) echo "Borrar juegos fuera de listas: $2" ;; pruneclean) echo "Borrar partidas de juegos borrados ($2)" ;;
+      settingsinfo) echo "Pedir juegos: el servidor copia los que le faltan. SSH: sincroniza aunque la app esté cerrada. Fuera de listas: borra los juegos que no estén en ninguna." ;;
+      unlinkask) echo "¿Desconectar esta consola de $2? Sus partidas se quedan en ella, pero deja de sincronizar." ;; unlinkgo) echo "Desconectar" ;;
+      yes) echo "sí" ;; no) echo "no" ;; conflicts) echo "Conflictos ($2)" ;; noconflicts) echo "No hay conflictos" ;;
+      keepdevice) echo "Quedarme con la de esta consola" ;; keepserver) echo "Usar la del servidor" ;;
       conflictinfo) echo "$2: esta consola $3, servidor $4 ($5)" ;;
-      p_waiting) echo "Esperando a la sincronizacion en curso" ;; p_connecting) echo "Conectando" ;; p_roms) echo "Comprobando roms" ;;
-      p_saves) echo "Comprobando saves" ;; p_server) echo "Preguntando al servidor" ;; p_transfer) echo "Transfiriendo saves" ;;
-      p_roms-plan) echo "Preguntando que roms tocan" ;; p_roms-download) echo "Descargando roms" ;; p_*) echo "Trabajando..." ;;
-      prune) echo "Borrar roms fuera de listas: $2" ;; pruneclean) echo "Borrar saves de roms borradas ($2)" ;;
-      pruneintro) echo "Rommancer puede borrar de esta consola las roms que no esten en ninguna de sus listas (las que el servidor no tenga se suben antes). Los saves se quedan. Se puede cambiar luego aqui o en la web. Activarlo?" ;;
-      pruneask) echo "Se ha activado desde el servidor el borrado de roms que no estan en ninguna lista. Se borraran $2 roms ($3). Mantener esta opcion?" ;;
-      prunehold) echo "Se van a borrar $2 de las $3 roms de esta consola (mas de la mitad) por no estar en ninguna lista. Puede que una lista se haya vaciado. Borrarlas?" ;;
-      romswatch) echo "Ver descarga de roms $2" ;; stophint) echo "(B para parar)" ;; backhint) echo "(B para volver al menu; el envio sigue)" ;; pullswatch) echo "Ver envio de juegos al servidor" ;; details) echo "Ver detalles" ;;
-      s_start_ok) echo "partidas al dia" ;; s_start_offline) echo "sin conexion desde las $2. Esta partida puede no ser la ultima" ;;
-      s_offline) echo "sin conexion con el servidor desde las $2. Las partidas se guardan en la consola y se subiran al volver la red" ;;
-      s_online) echo "conectado de nuevo, partidas sincronizadas" ;; s_conflicts) echo "$2 partidas en conflicto: elige cual vale en la app" ;;
-      s_uploaded) echo "partida guardada en el servidor" ;; s_kept) echo "sin conexion: la partida queda en la consola y se subira al volver la red" ;;
-      clockask) echo "La consola no se pone en hora sola. Rommancer necesita la hora bien para conectar con el servidor y fechar las partidas. Activar la hora por internet (y esperarla al encender)?" ;;
+      conflictsline) if [ "$2" = 1 ]; then echo "1 partida en conflicto"; else echo "$2 partidas en conflicto"; fi ;;
+      offlinesince) echo "Sin conexión desde las $2" ;;
+      w_roms) echo "Descargando juegos $2" ;; w_pulls) echo "Enviando juegos al servidor $2" ;;
+      romswatch) echo "Ver descarga de juegos" ;; pullswatch) echo "Ver envío de juegos al servidor" ;;
+      romsnow) echo "Descargar ahora los juegos de las listas" ;;
+      step) echo "Paso $2 de $3 · $4" ;; of) echo "de" ;;
+      st_saves) echo "Partidas" ;; st_settings) echo "Ajustes" ;; st_prune) echo "Juegos que sobran" ;; st_roms) echo "Juegos de las listas" ;; st_pulls) echo "Envío al servidor" ;;
+      p_waiting) echo "Esperando a la sincronización en curso" ;; p_connecting) echo "Conectando con el servidor" ;;
+      p_roms) echo "Mirando los juegos" ;; p_saves) echo "Mirando las partidas" ;; p_hashing) echo "Leyendo ficheros nuevos o cambiados" ;;
+      p_server) echo "Preguntando al servidor" ;; p_transfer) echo "Pasando partidas" ;; p_identify) echo "Identificando juegos por su cabecera" ;;
+      p_finished) echo "Partidas al día" ;; p_settings) echo "Aplicando los ajustes del servidor" ;; p_prune) echo "Borrando juegos fuera de listas" ;;
+      p_roms-plan) echo "Preguntando qué juegos tocan" ;; p_roms-download) echo "Descargando juegos" ;; p_roms-finished) echo "Juegos al día" ;;
+      p_pulls) echo "Enviando juegos al servidor" ;; p_*) echo "Trabajando..." ;;
+      stophint) echo "B para parar" ;; backhint) echo "B vuelve al menú; el envío sigue" ;; stopping) echo "Parando la descarga..." ;;
+      details) echo "Ver detalles" ;; uptodate) echo "Todo al día" ;; lastresult) echo "Último resultado:" ;; log) echo "Registro:" ;;
+      f_saves-up) if [ "$2" = 1 ]; then echo "${UP}1 partida subida al servidor"; else echo "$UP$2 partidas subidas al servidor"; fi ;;
+      f_saves-down) if [ "$2" = 1 ]; then echo "${DOWN}1 partida recibida"; else echo "$DOWN$2 partidas recibidas"; fi ;;
+      f_states-up) if [ "$2" = 1 ]; then echo "${UP}1 savestate subido al servidor"; else echo "$UP$2 savestates subidos al servidor"; fi ;;
+      f_states-down) if [ "$2" = 1 ]; then echo "${DOWN}1 savestate recibido"; else echo "$DOWN$2 savestates recibidos"; fi ;;
+      f_games-down) if [ "$2" = 1 ]; then echo "${DOWN}1 juego descargado"; else echo "$DOWN$2 juegos descargados"; fi ;;
+      f_games-sent) if [ "$2" = 1 ]; then echo "${UP}1 juego enviado al servidor"; else echo "$UP$2 juegos enviados al servidor"; fi ;;
+      f_games-deleted) if [ "$2" = 1 ]; then echo "1 juego borrado (fuera de listas)"; else echo "$2 juegos borrados (fuera de listas)"; fi ;;
+      f_saves-cleaned) if [ "$2" = 1 ]; then echo "1 partida de juegos borrados quitada"; else echo "$2 partidas de juegos borrados quitadas"; fi ;;
+      f_games-stopped) echo "Descarga de juegos parada" ;; f_games-nospace) echo "No cabe «$3»: falta espacio" ;;
+      f_conflicts) if [ "$2" = 1 ]; then echo "${WARN}1 partida en conflicto"; else echo "$WARN$2 partidas en conflicto"; fi ;;
+      f_errors) if [ "$2" = 1 ]; then echo "${WARN}1 error"; else echo "$WARN$2 errores"; fi ;;
+      s_start_ok) echo "partidas al día" ;; s_start_offline) echo "sin conexión desde las $2. Esta partida puede no ser la última" ;;
+      s_offline) echo "sin conexión con el servidor desde las $2. Las partidas se guardan en la consola y se subirán al volver la red" ;;
+      s_online) echo "conectado de nuevo, partidas sincronizadas" ;; s_conflicts) echo "$2 partidas en conflicto: elige cuál vale en la app" ;;
+      s_uploaded) echo "partida guardada en el servidor" ;; s_kept) echo "sin conexión: la partida queda en la consola y se subirá al volver la red" ;;
+      clockask) echo "La consola no se pone en hora sola. Rommancer necesita la hora bien para conectar con el servidor y fechar las partidas. ¿Activar la hora por internet (y esperarla al encender)?" ;;
       clockon) echo "Activar (recomendado)" ;; later) echo "Ahora no" ;;
-      l_offline) echo "Rommancer (sin conexion)" ;; l_conflicts) echo "Rommancer ($2 conflictos)" ;;
-      lists) echo "Listas de esta consola" ;; listsinfo) echo "$2 listas en esta consola. A pone o quita una; al salir se descargan o borran sus roms." ;;
-      nolists) echo "No hay listas. Crealas en la web de Rommancer." ;; listsfail) echo "No se pudo hablar con el servidor" ;; back) echo "Volver" ;;
-      listdrop) echo "Quitar \"$2\" borrara $3 roms de esta consola ($4)." ;; listdropup) echo "$2 que el servidor no tiene se le envian antes." ;;
-      listdropgo) echo "Quitar y borrar $2 roms" ;; cancel) echo "Cancelar" ;;
-      pruneon) echo "Si, borrarlas" ;; pruneoff) echo "No, desactivarlo" ;; prunelater) echo "Ahora no" ;; cleaned) echo "Saves borrados: $2" ;; *) echo "$1" ;;
+      l_offline) echo "Rommancer (sin conexión)" ;; l_conflicts) echo "Rommancer ($2 conflictos)" ;;
+      lists) echo "Listas de esta consola" ;; listsinfo) echo "$2 listas en esta consola. A pone o quita una; al salir se descargan o borran sus juegos." ;;
+      nolists) echo "No hay listas. Créalas en la web de Rommancer." ;; listsfail) echo "No se pudo hablar con el servidor" ;; back) echo "Volver" ;;
+      listdrop) echo "Quitar «$2» borrará $3 juegos de esta consola ($4)." ;; listdropup) echo "$2 que el servidor no tiene se le envían antes." ;;
+      listdropgo) echo "Quitar y borrar $2 juegos" ;; cancel) echo "Cancelar" ;;
+      pruneintro) echo "Rommancer puede borrar de esta consola los juegos que no estén en ninguna de sus listas (los que el servidor no tenga se le envían antes). Las partidas se quedan. Puedes cambiarlo luego en Ajustes o en la web. ¿Lo activas?" ;;
+      pruneyes) echo "Sí, activarlo" ;; pruneno) echo "No, dejarlo desactivado" ;;
+      pruneask) echo "Se ha activado desde el servidor el borrado de juegos fuera de listas. Si lo mantienes se borrarán $2 juegos ($3). ¿Mantener esta opción?" ;;
+      prunekeep) echo "Sí, mantenerlo" ;; pruneoff) echo "No, desactivarlo" ;;
+      prunehold) echo "Se van a borrar $2 de los $3 juegos de esta consola (más de la mitad) por no estar en ninguna lista. Puede que una lista se haya vaciado. ¿Los borro?" ;;
+      prunedelete) echo "Sí, borrarlos" ;; prunelater) echo "Ahora no" ;;
+      *) echo "$1" ;;
     esac
   else
     case "$1" in
       server) echo "Server" ;; login) echo "Log in" ;; signup) echo "Create account" ;; quit) echo "Exit" ;;
       user) echo "USERNAME OR EMAIL" ;; username) echo "USERNAME" ;; email) echo "EMAIL" ;; password) echo "PASSWORD" ;;
-      sync) echo "Sync now" ;; status) echo "Status" ;; unlink) echo "Unlink this console" ;;
-      connected) echo "Connected as ${USER_NAME:-?} to ${SERVER#*://}" ;; notlinked) echo "This console is not linked" ;;
+      sync) echo "Sync now" ;; status) echo "Status" ;; settings) echo "Settings" ;; unlink) echo "Disconnect this console" ;;
+      account) echo "Account: $2 @ $3" ;; notlinked) echo "This console is not linked" ;;
       badserver) echo "No Rommancer at that address" ;; badlogin) echo "Wrong username or password" ;;
-      closed) echo "This server does not allow new accounts" ;; finished) echo "Done. Automatic sync is on." ;;
-      syncing) echo "Syncing..." ;; roms) echo "Sync roms" ;; autoroms) echo "Automatic roms: $2" ;;
-      allowpull) echo "Server may fetch games: $2" ;; allowssh) echo "Server SSH access: $2" ;; p_pulls) echo "Sending games to the server" ;;
+      exists) echo "That username or email already exists" ;; signupfail) echo "Could not create the account: check the details" ;; closed) echo "This server does not allow new accounts" ;;
+      finished) echo "Done. Automatic sync is on." ;; syncing) echo "Syncing..." ;;
+      allowpull) echo "The server may request games: $2" ;; allowssh) echo "Server SSH access: $2" ;;
+      prune) echo "Delete games in no list: $2" ;; pruneclean) echo "Delete saves of deleted games ($2)" ;;
+      settingsinfo) echo "Request games: the server copies the ones it lacks. SSH: syncs even while the app is closed. No list: deletes the games that are in none." ;;
+      unlinkask) echo "Disconnect this console from $2? Its saves stay on it, but it stops syncing." ;; unlinkgo) echo "Disconnect" ;;
       yes) echo "yes" ;; no) echo "no" ;; conflicts) echo "Conflicts ($2)" ;; noconflicts) echo "No conflicts" ;;
       keepdevice) echo "Keep this console's save" ;; keepserver) echo "Use the server's save" ;;
       conflictinfo) echo "$2: this console $3, server $4 ($5)" ;;
-      p_waiting) echo "Waiting for the running sync" ;; p_connecting) echo "Connecting" ;; p_roms) echo "Checking roms" ;;
-      p_saves) echo "Checking saves" ;; p_server) echo "Asking the server" ;; p_transfer) echo "Transferring saves" ;;
-      p_roms-plan) echo "Asking which roms belong here" ;; p_roms-download) echo "Downloading roms" ;; p_*) echo "Working..." ;;
-      prune) echo "Delete roms not in lists: $2" ;; pruneclean) echo "Delete saves of deleted roms ($2)" ;;
-      pruneintro) echo "Rommancer can delete from this console the roms that are in none of its lists (the ones the server lacks are uploaded first). Saves stay. You can change it later here or on the web. Turn it on?" ;;
-      pruneask) echo "Deleting roms that are not in any list was turned on from the server. $2 roms ($3) will be deleted. Keep this option?" ;;
-      prunehold) echo "$2 of the $3 roms on this console (more than half) would be deleted for being in no list. A list may have been emptied. Delete them?" ;;
-      romswatch) echo "Watch rom download $2" ;; stophint) echo "(B to stop)" ;; backhint) echo "(B for the menu; the copy goes on)" ;; pullswatch) echo "Watch games being sent to the server" ;; details) echo "Show details" ;;
+      conflictsline) if [ "$2" = 1 ]; then echo "1 save in conflict"; else echo "$2 saves in conflict"; fi ;;
+      offlinesince) echo "Offline since $2" ;;
+      w_roms) echo "Downloading games $2" ;; w_pulls) echo "Sending games to the server $2" ;;
+      romswatch) echo "Watch game download" ;; pullswatch) echo "Watch games being sent to the server" ;;
+      romsnow) echo "Download the lists' games now" ;;
+      step) echo "Step $2 of $3 · $4" ;; of) echo "of" ;;
+      st_saves) echo "Saves" ;; st_settings) echo "Settings" ;; st_prune) echo "Games in no list" ;; st_roms) echo "List games" ;; st_pulls) echo "Sending to the server" ;;
+      p_waiting) echo "Waiting for the sync under way" ;; p_connecting) echo "Contacting the server" ;;
+      p_roms) echo "Checking games" ;; p_saves) echo "Checking saves" ;; p_hashing) echo "Reading new or changed files" ;;
+      p_server) echo "Asking the server" ;; p_transfer) echo "Passing saves" ;; p_identify) echo "Identifying games by their header" ;;
+      p_finished) echo "Saves up to date" ;; p_settings) echo "Applying the server's settings" ;; p_prune) echo "Deleting games in no list" ;;
+      p_roms-plan) echo "Asking which games belong here" ;; p_roms-download) echo "Downloading games" ;; p_roms-finished) echo "Games up to date" ;;
+      p_pulls) echo "Sending games to the server" ;; p_*) echo "Working..." ;;
+      stophint) echo "B to stop" ;; backhint) echo "B goes back to the menu; sending goes on" ;; stopping) echo "Stopping the download..." ;;
+      details) echo "Show details" ;; uptodate) echo "All up to date" ;; lastresult) echo "Last result:" ;; log) echo "Log:" ;;
+      f_saves-up) if [ "$2" = 1 ]; then echo "${UP}1 save uploaded to the server"; else echo "$UP$2 saves uploaded to the server"; fi ;;
+      f_saves-down) if [ "$2" = 1 ]; then echo "${DOWN}1 save received"; else echo "$DOWN$2 saves received"; fi ;;
+      f_states-up) if [ "$2" = 1 ]; then echo "${UP}1 savestate uploaded to the server"; else echo "$UP$2 savestates uploaded to the server"; fi ;;
+      f_states-down) if [ "$2" = 1 ]; then echo "${DOWN}1 savestate received"; else echo "$DOWN$2 savestates received"; fi ;;
+      f_games-down) if [ "$2" = 1 ]; then echo "${DOWN}1 game downloaded"; else echo "$DOWN$2 games downloaded"; fi ;;
+      f_games-sent) if [ "$2" = 1 ]; then echo "${UP}1 game sent to the server"; else echo "$UP$2 games sent to the server"; fi ;;
+      f_games-deleted) if [ "$2" = 1 ]; then echo "1 game deleted (in no list)"; else echo "$2 games deleted (in no list)"; fi ;;
+      f_saves-cleaned) if [ "$2" = 1 ]; then echo "1 save of deleted games removed"; else echo "$2 saves of deleted games removed"; fi ;;
+      f_games-stopped) echo "Game download stopped" ;; f_games-nospace) echo "No room for \"$3\": not enough space" ;;
+      f_conflicts) if [ "$2" = 1 ]; then echo "${WARN}1 save in conflict"; else echo "$WARN$2 saves in conflict"; fi ;;
+      f_errors) if [ "$2" = 1 ]; then echo "${WARN}1 error"; else echo "$WARN$2 errors"; fi ;;
       s_start_ok) echo "saves up to date" ;; s_start_offline) echo "offline since $2. This save may not be the latest" ;;
       s_offline) echo "no connection to the server since $2. Saves stay on the console and go up when the network is back" ;;
       s_online) echo "connected again, saves synced" ;; s_conflicts) echo "$2 saves in conflict: choose which one counts in the app" ;;
@@ -1803,14 +1916,23 @@ t() {
       clockask) echo "This console does not set its own clock. Rommancer needs the right time to reach the server and date your saves. Set the time from the internet (and wait for it at power-on)?" ;;
       clockon) echo "Turn on (recommended)" ;; later) echo "Not now" ;;
       l_offline) echo "Rommancer (offline)" ;; l_conflicts) echo "Rommancer ($2 conflicts)" ;;
-      lists) echo "This console's lists" ;; listsinfo) echo "$2 lists on this console. A adds or removes one; on leaving, their roms download or go." ;;
+      lists) echo "This console's lists" ;; listsinfo) echo "$2 lists on this console. A adds or removes one; on leaving, their games download or go." ;;
       nolists) echo "No lists yet. Create them in Rommancer's web app." ;; listsfail) echo "Could not reach the server" ;; back) echo "Back" ;;
-      listdrop) echo "Removing \"$2\" deletes $3 roms from this console ($4)." ;; listdropup) echo "$2 the server lacks are sent to it first." ;;
-      listdropgo) echo "Remove and delete $2 roms" ;; cancel) echo "Cancel" ;;
-      pruneon) echo "Yes, delete them" ;; pruneoff) echo "No, turn it off" ;; prunelater) echo "Not now" ;; cleaned) echo "Saves deleted: $2" ;; *) echo "$1" ;;
+      listdrop) echo "Removing \"$2\" deletes $3 games from this console ($4)." ;; listdropup) echo "$2 the server lacks are sent to it first." ;;
+      listdropgo) echo "Remove and delete $2 games" ;; cancel) echo "Cancel" ;;
+      pruneintro) echo "Rommancer can delete from this console the games that are in none of its lists (the ones the server lacks are sent to it first). Saves stay. You can change it later in Settings or on the web. Turn it on?" ;;
+      pruneyes) echo "Yes, turn it on" ;; pruneno) echo "No, leave it off" ;;
+      pruneask) echo "Deleting games in no list was turned on from the server. If you keep it, $2 games ($3) will be deleted. Keep this option?" ;;
+      prunekeep) echo "Yes, keep it" ;; pruneoff) echo "No, turn it off" ;;
+      prunehold) echo "$2 of the $3 games on this console (more than half) would be deleted for being in no list. A list may have been emptied. Delete them?" ;;
+      prunedelete) echo "Yes, delete them" ;; prunelater) echo "Not now" ;;
+      *) echo "$1" ;;
     esac
   fi
 }
+# The summary's marks on Onion's screens: its theme fonts are not known to carry arrows or a warning sign (Latin-1
+# accents, ñ, « » and · they do), so no arrows and a plain "!"
+UP=""; DOWN=""; WARN="! "
 
 # POST a device form to /link/login or /link/signup and keep the token
 link_with() {
@@ -1818,15 +1940,22 @@ link_with() {
   form="name=$(urlenc "$NAME")&firmware=$(urlenc "$FW")&root=$(urlenc "$ROOT")&model=$(urlenc "$MODEL")$1"
   printf '%s' "$form" > "$WORK/form"
   TOKEN=""
+  rm -f "$WORK/last-error"
   resp="$(http POST "$SERVER/api/v1/link/$2" "$WORK/form" - "Content-Type: application/x-www-form-urlencoded")" || return 1
   TOKEN="$(field token "$resp")"; USER_NAME="$(field user "$resp")"
   [ -n "$TOKEN" ] || return 1
   save_link
 }
+# Why a log in or sign-up failed, in words: the server's answer (curl prints its HTTP status) or no answer at all
+link_failed() {
+  case "$(cut -f3 "$WORK/last-error" 2>/dev/null)" in
+    *" 401"*) t badlogin ;; *" 409"*) t exists ;; *" 403"*) t closed ;;
+    *) if [ "$(cut -f1 "$WORK/last-error" 2>/dev/null)" != 22 ]; then t listsfail; elif [ "$1" = login ]; then t badlogin; else t signupfail; fi ;;
+  esac
+}
 
-# Runs a command in the background and keeps an Onion panel updated with its phase and percentage
-# The B button while a progress panel shows (Onion's panels take no input): it stops a rom download. One 16-byte
-# input event at a time (the Miyoo's 32-bit layout: time, type, code, value); B is KEY_LEFTCTRL (29)
+# The B button while a progress panel shows (Onion's panels take no input). One 16-byte input event at a time (the
+# Miyoo's 32-bit layout: time, type, code, value); B is KEY_LEFTCTRL (29)
 key_watch() {
   [ -r /dev/input/event0 ] || return 0
   while :; do
@@ -1839,52 +1968,138 @@ key_watch_end() {
   for c in /proc/[0-9]*/cmdline; do grep -q 'if=/dev/input/event0' "$c" 2>/dev/null && { p="${c#/proc/}"; kill "${p%/cmdline}" 2>/dev/null; }; done
 }
 
+# Human size of a byte count (a decimal comma in Spanish)
+human() {
+  h="$(awk -v b="${1:-0}" 'BEGIN { split("B KB MB GB TB", u, " "); i = 1; while (b >= 1024 && i < 5) { b /= 1024; i++ } printf (i > 2 ? "%.1f %s" : "%d %s"), b, u[i] }')"
+  if tr_es; then printf '%s' "$h" | tr . ,; else printf '%s' "$h"; fi
+}
+
+# A file name cut to fit one line of a panel
+short() { if [ "${#1}" -gt 34 ]; then printf '%s...' "$(printf '%s' "$1" | cut -c1-31)"; else printf '%s' "$1"; fi; }
+
+# A bar of 20 for a percent: [#########-----------]
+bar() { awk -v p="$1" 'BEGIN { s = "["; for (i = 0; i < 20; i++) s = s (i < p / 5 ? "#" : "-"); printf "%s]", s }'; }
+
+# The lines of a progress panel from a "progress" line (PHASE, done, total, file size, partial file, name): the step
+# of "Sync now" (unless NOSTEP), what it does now with its count, the bar with its percent, the current file with its
+# own percent and size, and the button's hint last
+progress_text() {
+  pl="$1"
+  phase="$(printf '%s' "$pl" | cut -f1)"; dn="$(printf '%s' "$pl" | cut -f2)"; tt="$(printf '%s' "$pl" | cut -f3)"
+  fsize="$(printf '%s' "$pl" | cut -f4)"; part="$(printf '%s' "$pl" | cut -f5)"; name="$(printf '%s' "$pl" | cut -f6)"
+  [ -n "$phase" ] || phase=connecting
+  if [ -z "${2:-}" ] && [ -s "$WORK/step" ]; then
+    IFS="$TAB" read -r sn sm sk < "$WORK/step"
+    t step "$sn" "$sm" "$(t "st_$sk")"
+  fi
+  case "$phase" in *finished) tt=0 ;; esac
+  case "$tt" in ''|*[!0-9]*) tt=0 ;; esac
+  case "$dn" in ''|*[!0-9]*) dn=0 ;; esac
+  case "$fsize" in ''|*[!0-9]*) fsize=0 ;; esac
+  if [ "$tt" -gt 0 ]; then
+    t "p_$phase" | sed "s#\$# $dn/$tt#"
+    pct=$((dn * 100 / tt)); file=""; extra=""
+    case "$phase" in
+      roms-download)
+        cur="$(stat -c %s "$part" 2>/dev/null || echo 0)"; fp=0
+        [ "$fsize" -gt 0 ] && fp=$((cur * 100 / fsize))
+        [ "$fp" -gt 100 ] && fp=100
+        pct=$(( ((dn - 1) * 100 + fp) / tt ))
+        file="$(short "$name")"
+        if [ "$fsize" -gt 0 ]; then extra="$fp% $(t of) $(human "$fsize")"; else extra="$(human "$cur")"; fi ;;
+      pulls)
+        # The file's share: the last figure of curl's progress bar
+        fp="$(tr '\r' '\n' < "$WORK/pull-curl" 2>/dev/null | grep -o '[0-9.]*%' | tail -n 1)"; fp="${fp%%[.%]*}"
+        case "$fp" in ''|*[!0-9]*) fp=0 ;; esac
+        pct=$(( ((dn - 1) * 100 + fp) / tt ))
+        file="$(short "$name")"; extra="$fp% $(t of) $(human "$fsize")" ;;
+      *) [ -n "$name" ] && file="$(short "$name")" ;;
+    esac
+    [ "$pct" -lt 0 ] && pct=0
+    printf '%s %s%%\n' "$(bar "$pct")" "$pct"
+    [ -n "$file" ] && printf '%s\n' "$file"
+    [ -n "$extra" ] && printf '%s\n' "$extra"
+  else
+    t "p_$phase"
+  fi
+  if [ -f "$WORK/stopping" ]; then t stopping
+  else case "$phase" in roms-plan|roms-download) t stophint ;; pulls) t backhint ;; esac; fi
+}
+
+# The summary's facts in the guide's order from the "sum" lines of FILE: "key<TAB>n<TAB>extra", the same keys added up
+# (conflicts: the last count; a game with no room: each one)
+summary_facts() {
+  awk -F"$TAB" '
+    BEGIN { n = split("saves-up saves-down states-up states-down games-down games-sent games-deleted saves-cleaned games-stopped games-nospace conflicts errors", order, " ") }
+    $1 != "sum" { next }
+    $2 == "conflicts" { c = $3; next }
+    $2 == "games-nospace" { ns[++nn] = $4; next }
+    $2 == "games-stopped" { st = 1; next }
+    { v[$2] += $3 }
+    END {
+      for (i = 1; i <= n; i++) {
+        k = order[i]
+        if (k == "conflicts") { if (c > 0) print k "\t" c }
+        else if (k == "games-nospace") { for (j = 1; j <= nn; j++) print k "\t1\t" ns[j] }
+        else if (k == "games-stopped") { if (st) print k "\t1" }
+        else if (v[k] > 0) print k "\t" v[k]
+      }
+    }' "$1" 2>/dev/null
+}
+# One translated fact per line; what failed last (the reason the details explain); "All up to date" when nothing
+summary_text() {
+  summary_facts "$1" > "$WORK/facts"
+  while IFS="$TAB" read -r fk fn fx; do t "f_$fk" "$fn" "$fx"; done < "$WORK/facts"
+  [ -s "$WORK/fail-details" ] && head -n 1 "$WORK/fail-details"
+  [ -s "$WORK/facts" ] || [ -s "$WORK/fail-details" ] || t uptodate
+}
+# The result of an action run on screen (its output in FILE), titled with the action: OK, and the details of a failure
+# when there was one. Kept as the last result for the Status screen
+show_summary() {
+  grep "^sum$TAB" "$2" > "$WORK/last-summary" 2>/dev/null
+  head -n 1 "$WORK/fail-details" 2>/dev/null | sed "s/^/fail$TAB/" >> "$WORK/last-summary"
+  msg="$(summary_text "$2")"
+  if [ -s "$WORK/fail-details" ]; then
+    menu "$1" "$msg" "OK" "$(t details)"
+    [ $? = 1 ] && panel "$(t details)" "$(tail -n +2 "$WORK/fail-details")" wait
+  else
+    menu "$1" "$msg" "OK"
+  fi
+  return 0
+}
+
+# Runs a command in the background and keeps an Onion panel updated with its progress; B stops a game download, or
+# leaves the sending of games to the server going on behind the menu. Its summary at the end
 with_progress() {
   title="$1"; shift
   # A download under way keeps its progress on screen from the start
   roms_running || rm -f "$WORK/progress"
-  rm -f "$WORK/fail-details"
+  rm -f "$WORK/fail-details" "$WORK/step" "$WORK/stopping"
   ( VERBOSE=1; "$@" > "$WORK/run-out" 2>&1 ) &
   job=$!
   rm -f "$WORK/key-b"; key_watch & kw=$!
-  shown=""
+  shown=""; left=0
   while kill -0 "$job" 2>/dev/null; do
-    # B stops a rom download
-    [ -f "$WORK/key-b" ] && { rm -f "$WORK/key-b"; (sh "$DIR/$(basename "$0")" roms-stop > /dev/null 2>&1 &); }
     line="$(cat "$WORK/progress" 2>/dev/null)"
-    phase="$(printf '%s' "$line" | cut -f1)"; done_n="$(printf '%s' "$line" | cut -f2)"; total="$(printf '%s' "$line" | cut -f3)"
-    text="$(t "p_$phase")"
-    if [ "$phase" = roms-download ] && [ "${total:-0}" -gt 0 ] 2>/dev/null; then
-      # Overall share counts the finished roms plus what the current file has written so far
-      fsize="$(printf '%s' "$line" | cut -f4)"; part="$(printf '%s' "$line" | cut -f5)"; name="$(printf '%s' "$line" | cut -f6)"
-      cur="$(stat -c %s "$part" 2>/dev/null || echo 0)"; filepct=0
-      [ "${fsize:-0}" -gt 0 ] 2>/dev/null && filepct=$((cur * 100 / fsize))
-      pct=$(( ((done_n - 1) * 100 + filepct) / total ))
-      bar="["; k=0; while [ "$k" -lt 10 ]; do if [ "$k" -lt $((pct / 10)) ]; then bar="$bar#"; else bar="$bar-"; fi; k=$((k + 1)); done; bar="$bar]"
-      text="$text $done_n/$total $bar $pct% $(printf '%s' "$name" | cut -c1-30) ($filepct%) $(t stophint)"
-    elif [ -n "$total" ] && [ "$total" -gt 0 ] 2>/dev/null; then
-      text="$text $done_n/$total ($((done_n * 100 / total))%)"
+    if [ -f "$WORK/key-b" ]; then
+      rm -f "$WORK/key-b"
+      case "$(printf '%s' "$line" | cut -f1)" in
+        roms-plan|roms-download) [ -f "$WORK/stopping" ] || { touch "$WORK/stopping"; (sh "$DIR/$(basename "$0")" roms-stop > /dev/null 2>&1 &); } ;;
+        pulls) left=1; break ;;
+      esac
     fi
+    text="$(progress_text "$line")"
     [ "$text" != "$shown" ] && { panel "$title" "$text"; shown="$text"; }
     sleep 2
   done
-  wait "$job" 2>/dev/null
   key_watch_end "$kw"
   panel_close
-  # A failure offers what is behind it
-  if [ -s "$WORK/fail-details" ]; then
-    menu "$title" "$(head -n 1 "$WORK/fail-details")" "OK" "$(t details)"
-    [ $? = 1 ] && panel "$(t details)" "$(tail -n +2 "$WORK/fail-details" | awk 'NR > 1 { printf " · " } { printf "%s", $0 }')" wait
-    return 0
-  fi
-  panel "$title" "$(tail -n 1 "$WORK/run-out")" wait
+  rm -f "$WORK/stopping"
+  [ "$left" = 1 ] && return 0
+  wait "$job" 2>/dev/null
+  show_summary "$title" "$WORK/run-out"
 }
 
-# Human size of a byte count
-human() { awk -v b="${1:-0}" 'BEGIN { split("B KB MB GB TB", u, " "); i = 1; while (b >= 1024 && i < 5) { b /= 1024; i++ } printf (i > 2 ? "%.1f %s" : "%d %s"), b, u[i] }'; }
-
-# What the deletion of roms in no list needs from the user: the choice offered once after linking, a change made
-# in the web app (keep it or turn it off) and a deletion held for being more than half of the roms
 # Once, on Onion: its clock set from the internet is suggested (a wrong clock refuses the server's certificate and
 # dates saves wrongly); the web app suggests it too while it is off
 setup_clock() {
@@ -1895,38 +2110,29 @@ setup_clock() {
   return 0
 }
 
+# What the deletion of roms in no list needs from the user: the choice offered once after linking, a change made
+# in the web app (keep it or turn it off) and a deletion held for being more than half of the roms
 setup_prune() {
   if [ ! -f "$STATE/prune-intro" ]; then
-    menu "Rommancer Sync" "$(t pruneintro)" "$(t no)" "$(t yes)"; rc=$?
+    menu "Rommancer Sync" "$(t pruneintro)" "$(t pruneno)" "$(t pruneyes)"; rc=$?
     [ "$rc" = 1 ] && v=1 || v=0
     panel "Rommancer Sync" "$(t syncing)"; sh "$DIR/$(basename "$0")" prune set "$v" > /dev/null 2>&1; panel_close
   fi
   if [ -f "$STATE/prune-ask" ]; then
-    menu "Rommancer Sync" "$(t pruneask "$(cut -f1 "$STATE/prune-ask")" "$(human "$(cut -f2 "$STATE/prune-ask")")")" "$(t pruneon)" "$(t pruneoff)"; rc=$?
+    menu "Rommancer Sync" "$(t pruneask "$(cut -f1 "$STATE/prune-ask")" "$(human "$(cut -f2 "$STATE/prune-ask")")")" "$(t prunekeep)" "$(t pruneoff)"; rc=$?
     case $rc in 0) v=1 ;; 1) v=0 ;; *) v="" ;; esac
     [ -n "$v" ] && { panel "Rommancer Sync" "$(t syncing)"; sh "$DIR/$(basename "$0")" prune set "$v" > /dev/null 2>&1; panel_close; }
   fi
   if [ -f "$STATE/prune-hold" ] && [ "$PRUNE_ROMS" = 1 ]; then
-    menu "Rommancer Sync" "$(t prunehold "$(cut -f1 "$STATE/prune-hold")" "$(cut -f2 "$STATE/prune-hold")")" "$(t pruneon)" "$(t pruneoff)" "$(t prunelater)"; rc=$?
+    menu "Rommancer Sync" "$(t prunehold "$(cut -f1 "$STATE/prune-hold")" "$(cut -f2 "$STATE/prune-hold")")" "$(t prunedelete)" "$(t pruneoff)" "$(t prunelater)"; rc=$?
     case $rc in
-      0) with_progress "$(t sync)" sh "$DIR/$(basename "$0")" prune confirm ;;
+      0) with_progress "$(t p_prune)" sh "$DIR/$(basename "$0")" prune confirm ;;
       1) panel "Rommancer Sync" "$(t syncing)"; sh "$DIR/$(basename "$0")" prune set 0 > /dev/null 2>&1; panel_close ;;
     esac
   fi
   [ -f "$SETTINGS" ] && . "$SETTINGS"
 }
 
-# What the server is fetching from this console, while it lasts: count, file and a bar (B goes back to the menu, the
-# copy goes on)
-pulls_line() {
-  IFS="$TAB" read -r pd pt ps pn < "$WORK/pull-progress" 2>/dev/null || return 1
-  [ "${pt:-0}" -gt 0 ] 2>/dev/null || return 1
-  pct=$(( (pd - 1) * 100 / pt ))
-  bar="["; k=0; while [ "$k" -lt 10 ]; do if [ "$k" -lt $((pct / 10)) ]; then bar="$bar#"; else bar="$bar-"; fi; k=$((k + 1)); done; bar="$bar]"
-  # The file's share: the last figure of curl's progress bar
-  fp="$(tr '\r' '\n' < "$WORK/pull-curl" 2>/dev/null | grep -o '[0-9.]*%' | tail -n 1)"
-  printf '%s %s/%s %s %s (%s KB%s)' "$(t p_pulls)" "$pd" "$pt" "$bar" "$(printf '%s' "$pn" | cut -c1-30)" "$(( ${ps:-0} / 1024 ))" "${fp:+, $fp}"
-}
 # "done<TAB>total<TAB>name<TAB>file percent" of the copy the server asked for, nothing when none runs
 pulls_status() {
   pulls_running || return 0
@@ -1934,13 +2140,15 @@ pulls_status() {
   fp="$(tr '\r' '\n' < "$WORK/pull-curl" 2>/dev/null | grep -o '[0-9.]*%' | tail -n 1)"
   printf '%s\t%s\t%s\t%s\n' "$pd" "$pt" "$pn" "${fp%%%}"
 }
+# The copy the server asked for, on screen while it lasts (B goes back to the menu, the copy goes on)
 watch_pulls() {
   pulls_running || return 0
   rm -f "$WORK/key-b"; key_watch & kw=$!
   shown=""
   while pulls_running && [ ! -f "$WORK/key-b" ]; do
-    text="$(pulls_line) $(t backhint)"
-    [ "$text" != "$shown" ] && { panel "Rommancer Sync" "$text"; shown="$text"; }
+    IFS="$TAB" read -r pd pt ps pn < "$WORK/pull-progress" 2>/dev/null
+    text="$(progress_text "pulls$TAB${pd:-0}$TAB${pt:-0}$TAB${ps:-0}$TAB$TAB${pn:-}" nostep)"
+    [ "$text" != "$shown" ] && { panel "$(t st_pulls)" "$text"; shown="$text"; }
     sleep 2
   done
   key_watch_end "$kw"; rm -f "$WORK/key-b"
@@ -1949,13 +2157,16 @@ watch_pulls() {
 
 setup_after_link() {
   panel "Rommancer Sync" "$(t syncing)"
+  rm -f "$WORK/fail-details"
   VERBOSE=1 cmd_sync > "$WORK/first-sync" 2>&1
   cmd_install > /dev/null 2>&1
   if ! { [ -f "$STATE/pid" ] && kill -0 "$(cat "$STATE/pid")" 2>/dev/null; }; then
     nohup sh "$DIR/$(basename "$0")" daemon >/dev/null 2>&1 &
   fi
   panel_close
-  panel "Rommancer Sync" "$(t finished) $(tail -n 1 "$WORK/first-sync")" wait
+  # The first sync's summary, under the news that sync is on
+  menu "Rommancer Sync" "$(t finished)
+$(summary_text "$WORK/first-sync")" "OK"
   setup_prune
 }
 
@@ -1974,15 +2185,16 @@ setup_conflicts() {
     mine="$(printf '%s' "$line" | cut -f5 | cut -c1-16 | tr T ' ')"; theirs="$(printf '%s' "$line" | cut -f6 | cut -c1-16 | tr T ' ')"; dev="$(printf '%s' "$line" | cut -f7)"
     menu "$(t conflicts "$n")" "$(t conflictinfo "$game" "$mine" "$theirs" "$dev")" "$(t keepdevice)" "$(t keepserver)"; rc=$?
     case $rc in
-      0) panel "Rommancer Sync" "$(t syncing)"; cmd_resolve "$id" device > "$WORK/sync" 2>&1; panel_close ;;
-      1) panel "Rommancer Sync" "$(t syncing)"; cmd_resolve "$id" server > "$WORK/sync" 2>&1; panel_close ;;
+      0) with_progress "$(t conflicts "$n")" cmd_resolve "$id" device ;;
+      1) with_progress "$(t conflicts "$n")" cmd_resolve "$id" server ;;
     esac
     cmd_conflicts > "$WORK/conflicts" 2>/dev/null || : > "$WORK/conflicts"
   done
 }
 
 # The console's lists: each ticked or not, A adds or removes one (a removal that deletes roms says how many first, a
-# single question); leaving after a change brings the console in line with its lists at once, on screen
+# single question); leaving after a change brings the console in line with its lists at once, on screen. The last
+# item downloads the lists' roms now
 setup_lists() {
   l_changed=0; l_at=""
   while :; do
@@ -1990,8 +2202,8 @@ setup_lists() {
     HTTP_MAX=20 cmd_lists > "$WORK/lists" 2>/dev/null; l_rc=$?
     panel_close
     [ "$l_rc" = 0 ] || { panel "$(t lists)" "$(t listsfail)" wait; break; }
-    # Onion's menu takes up to 100 entries: the back item among them
-    grep "^list$TAB" "$WORK/lists" | head -n 98 > "$WORK/lists.rows"
+    # Onion's menu takes up to 100 entries: the two last items among them
+    grep "^list$TAB" "$WORK/lists" | head -n 97 > "$WORK/lists.rows"
     l_n="$(grep -c . "$WORK/lists.rows")"
     [ "$l_n" -gt 0 ] || { panel "$(t lists)" "$(t nolists)" wait; break; }
     l_on="$(awk -F"$TAB" '$3 == 1' "$WORK/lists.rows" | grep -c .)"
@@ -2004,7 +2216,12 @@ setup_lists() {
     done < "$WORK/lists.rows"
     # The cursor stays on the list just changed (the console's own lists come first, so it moves)
     l_sel="$(awk -F"$TAB" -v id="$l_at" '$2 == id { print NR - 1; exit }' "$WORK/lists.rows")"
-    menu "$(t lists)" "$(t listsinfo "$l_on")" -s "${l_sel:-0}" "$@" "$(t back)"; l_pick=$?
+    menu "$(t lists)" "$(t listsinfo "$l_on")" -s "${l_sel:-0}" "$@" "$(t romsnow)" "$(t back)"; l_pick=$?
+    if [ "$l_pick" = "$l_n" ]; then
+      # A change made here goes with it (the whole sync); otherwise just the download
+      if [ "$l_changed" = 1 ]; then l_changed=0; with_progress "$(t sync)" cmd_all; else with_progress "$(t romsnow)" cmd_roms; fi
+      continue
+    fi
     [ "$l_pick" -lt "$l_n" ] || break
     l_line="$(sed -n "$((l_pick + 1))p" "$WORK/lists.rows")"
     l_id="$(printf '%s' "$l_line" | cut -f2)"; l_at="$l_id"; l_o="$(printf '%s' "$l_line" | cut -f3)"; l_name="$(printf '%s' "$l_line" | cut -f5)"
@@ -2035,6 +2252,72 @@ setup_lists() {
   return 0
 }
 
+# Settings: the toggles (what they do in the menu's message: Onion's menu has no line per item), deleting the saves of
+# deleted roms, the account and disconnecting (asked first). Returns 1 when the console was disconnected
+setup_settings() {
+  s_sel=0
+  while :; do
+    if [ "$ALLOW_PULL" = 1 ]; then s_pull="$(t yes)"; else s_pull="$(t no)"; fi
+    if [ "$ALLOW_SSH" = 1 ]; then s_ssh="$(t yes)"; else s_ssh="$(t no)"; fi
+    if [ "$PRUNE_ROMS" = 1 ]; then s_prune="$(t yes)"; else s_prune="$(t no)"; fi
+    s_clean="$(cat "$STATE/pruned" 2>/dev/null | grep -c .)"
+    s_host="${SERVER#*://}"; s_host="${s_host%%/*}"
+    menu "$(t settings)" "$(t settingsinfo)" -s "$s_sel" "$(t allowpull "$s_pull")" "$(t allowssh "$s_ssh")" "$(t prune "$s_prune")" \
+      "$(t pruneclean "$s_clean")" "$(t account "${USER_NAME:-?}" "$s_host")" "$(t unlink)..." "$(t back)"; rc=$?
+    s_sel="$rc"
+    case $rc in
+      0) if [ "$ALLOW_PULL" = 1 ]; then ALLOW_PULL=0; else ALLOW_PULL=1; fi; set_setting ALLOW_PULL "$ALLOW_PULL" ;;
+      1) if [ "$ALLOW_SSH" = 1 ]; then ALLOW_SSH=0; else ALLOW_SSH=1; fi; set_setting ALLOW_SSH "$ALLOW_SSH" ;;
+      2) if [ "$PRUNE_ROMS" = 1 ]; then v=0; else v=1; fi
+         panel "Rommancer Sync" "$(t syncing)"; sh "$DIR/$(basename "$0")" prune set "$v" > /dev/null 2>&1; panel_close; PRUNE_ROMS="$v" ;;
+      3) with_progress "$(t pruneclean "$s_clean")" sh "$DIR/$(basename "$0")" prune clean ;;
+      4) ;;
+      5) menu "$(t unlink)" "$(t unlinkask "$s_host")" "$(t unlinkgo)" "$(t cancel)"
+         if [ $? = 0 ]; then
+           keep="$SERVER"; cmd_unlink > /dev/null; TOKEN=""; USER_NAME=""; SERVER="$keep"; PRUNE_ROMS=0
+           return 1
+         fi ;;
+      *) return 0 ;;
+    esac
+  done
+}
+
+# Status: version and install date, account and server, the last result, the last log lines (the only screen that
+# shows them as they are)
+setup_status() {
+  host="${SERVER#*://}"; host="${host%%/*}"
+  {
+    version_line; echo
+    t account "${USER_NAME:-?}" "$host"
+    echo "$(t server): $SERVER"
+    synced_line; echo
+    if [ -f "$WORK/last-summary" ]; then
+      printf '%s ' "$(t lastresult)"
+      { summary_facts "$WORK/last-summary" | while IFS="$TAB" read -r fk fn fx; do t "f_$fk" "$fn" "$fx"; done
+        sed -n "s/^fail$TAB//p" "$WORK/last-summary"; } > "$WORK/status-facts"
+      if [ -s "$WORK/status-facts" ]; then tr '\n' ';' < "$WORK/status-facts" | sed 's/;$//; s/;/; /g'; else t uptodate; fi
+      echo
+    fi
+    t log
+    tail -n 3 "$LOG" 2>/dev/null | cut -c12-16,20-70
+  } > "$WORK/status-text"
+  panel "$(t status)" "$(cat "$WORK/status-text")" wait
+}
+
+# The home screen's text: the state, the most urgent first (conflicts, offline, last sync), and the work under way
+home_text() {
+  if [ -f "$WORK/conflicts" ]; then h_conf="$(grep -c '^conflict' "$WORK/conflicts")"; else h_conf=0; fi
+  if [ "$h_conf" -gt 0 ]; then printf '%s%s\n' "$WARN" "$(t conflictsline "$h_conf")"
+  elif [ -f "$WORK/offline-since" ]; then t offlinesince "$(hhmm "$(cat "$WORK/offline-since")")"
+  else synced_line; echo; fi
+  rs="$(roms_status)"
+  [ -n "$rs" ] && t w_roms "$(printf '%s' "$rs" | awk -F"$TAB" '$2 { printf "%s/%s", $1, $2 }')"
+  if pulls_running; then
+    IFS="$TAB" read -r pd pt _ < "$WORK/pull-progress" 2>/dev/null
+    t w_pulls "${pd:+$pd/$pt}"
+  fi
+}
+
 cmd_setup() {
   [ -x "$ONION_BIN/prompt" ] && [ -x "$ONION_BIN/kbinput" ] || { say "setup needs Onion's prompt and kbinput"; exit 2; }
   fix_clock
@@ -2045,38 +2328,28 @@ cmd_setup() {
   [ -n "$TOKEN" ] && watch_pulls
   while :; do
     if [ -n "$TOKEN" ]; then
-      # The menu never waits for the network: the count is the last one fetched (a fetch runs meanwhile for the next
-      # time the menu shows; the conflicts screen fetches its own)
-      if [ -f "$WORK/conflicts" ]; then nconf="$(grep -c '^conflict' "$WORK/conflicts")"; else nconf="..."; fi
+      # The menu never waits for the network: the conflicts are the last ones fetched (a fetch runs meanwhile for
+      # the next time the menu shows; the conflicts screen fetches its own)
       ( HTTP_MAX=10 cmd_conflicts > "$WORK/conflicts.new" 2>/dev/null && mv "$WORK/conflicts.new" "$WORK/conflicts" ) &
-      if [ "$ALLOW_PULL" = 1 ]; then pull="$(t yes)"; else pull="$(t no)"; fi
-      if [ "$ALLOW_SSH" = 1 ]; then ssh="$(t yes)"; else ssh="$(t no)"; fi
       setup_clock
       setup_prune
-      if [ "$PRUNE_ROMS" = 1 ]; then prune="$(t yes)"; else prune="$(t no)"; fi
-      cleanable="$(cat "$STATE/pruned" 2>/dev/null | grep -c .)"
-      # While roms download, the roms item stops them instead
-      rs="$(roms_status)"; romsitem="$(t roms)"
-      [ -n "$rs" ] && romsitem="$(t romswatch "$(printf '%s' "$rs" | awk -F"$TAB" '$2 { printf "(%s/%s)", $1, $2 }')")"
-      # A copy the server asked for shows in the menu's text while it lasts
-      # and as an item to watch it
-      pl=""; set --; pulls_running && { pl=" $(pulls_line)"; set -- "$(t pullswatch)"; }
-      menu "Rommancer Sync $CLIENT_VERSION" "$(t connected). $(synced_line).$pl" "$(t sync)" "$romsitem" "$(t lists)" "$(t allowpull "$pull")" "$(t allowssh "$ssh")" "$(t prune "$prune")" "$(t pruneclean "$cleanable")" "$(t conflicts "$nconf")" "$(t status)" "$(t unlink)" "$@" "$(t quit)"; rc=$?
-      case $rc in
-        # On screen with its progress until done; B stops the roms
-        0) with_progress "$(t sync)" cmd_all ;;
-        1) with_progress "$(t roms)" cmd_roms ;;
-        2) setup_lists ;;
-        3) if [ "$ALLOW_PULL" = 1 ]; then ALLOW_PULL=0; else ALLOW_PULL=1; fi; set_setting ALLOW_PULL "$ALLOW_PULL" ;;
-        4) if [ "$ALLOW_SSH" = 1 ]; then ALLOW_SSH=0; else ALLOW_SSH=1; fi; set_setting ALLOW_SSH "$ALLOW_SSH" ;;
-        5) if [ "$PRUNE_ROMS" = 1 ]; then v=0; else v=1; fi
-           panel "Rommancer Sync" "$(t syncing)"; sh "$DIR/$(basename "$0")" prune set "$v" > /dev/null 2>&1; panel_close; PRUNE_ROMS="$v" ;;
-        6) with_progress "$(t pruneclean "$cleanable")" sh "$DIR/$(basename "$0")" prune clean ;;
-        7) panel "Rommancer Sync" "$(t p_connecting)"; cmd_conflicts > "$WORK/conflicts" 2>/dev/null || : > "$WORK/conflicts"; panel_close; setup_conflicts ;;
-        8) panel "$(t status)" "$(version_line). $(synced_line). $(tail -n 4 "$LOG" 2>/dev/null | cut -c21- | tr '\n' ' ')" wait ;;
-        9) keep="$SERVER"; cmd_unlink > /dev/null; TOKEN=""; USER_NAME=""; SERVER="$keep" ;;
-        # The copy's item when it showed, Quit otherwise
-        10) [ "$#" -gt 0 ] || return 0; watch_pulls ;;
+      nconf=0; [ -f "$WORK/conflicts" ] && nconf="$(grep -c '^conflict' "$WORK/conflicts")"
+      # Items that only show while they mean something: conflicts to settle, a download or a copy to watch
+      set -- "$(t sync)"; acts="sync"
+      [ "$nconf" -gt 0 ] && { set -- "$@" "$(t conflicts "$nconf")"; acts="$acts conflicts"; }
+      roms_running && { set -- "$@" "$(t romswatch)"; acts="$acts romswatch"; }
+      pulls_running && { set -- "$@" "$(t pullswatch)"; acts="$acts pullswatch"; }
+      set -- "$@" "$(t lists)" "$(t settings)" "$(t status)" "$(t quit)"; acts="$acts lists settings status quit"
+      menu "Rommancer Sync $CLIENT_VERSION" "$(home_text)" "$@"; rc=$?
+      case "$(printf '%s\n' $acts | sed -n "$((rc + 1))p")" in
+        sync) with_progress "$(t sync)" cmd_all ;;
+        conflicts) panel "Rommancer Sync" "$(t p_connecting)"; cmd_conflicts > "$WORK/conflicts" 2>/dev/null || : > "$WORK/conflicts"; panel_close; setup_conflicts ;;
+        # On screen until done; B stops the download
+        romswatch) with_progress "$(t st_roms)" cmd_roms ;;
+        pullswatch) watch_pulls ;;
+        lists) setup_lists ;;
+        settings) setup_settings ;;
+        status) setup_status ;;
         *) return 0 ;;
       esac
     else
@@ -2088,13 +2361,13 @@ cmd_setup() {
           if [ "$rc" -eq 1 ]; then
             u="$(ask "$(t user)" "")" || continue
             p="$(ask "$(t password)" "")" || continue
-            if link_with "&username=$(urlenc "$u")&password=$(urlenc "$p")" login; then setup_after_link; else panel "Rommancer Sync" "$(t badlogin)" wait; fi
+            if link_with "&username=$(urlenc "$u")&password=$(urlenc "$p")" login; then setup_after_link; else panel "Rommancer Sync" "$(link_failed login)" wait; fi
           else
             [ "$(field signup "$info")" = 1 ] || { panel "Rommancer Sync" "$(t closed)" wait; continue; }
             u="$(ask "$(t username)" "")" || continue
             e="$(ask "$(t email)" "")" || continue
             p="$(ask "$(t password)" "")" || continue
-            if link_with "&username=$(urlenc "$u")&email=$(urlenc "$e")&password=$(urlenc "$p")" signup; then setup_after_link; else panel "Rommancer Sync" "$(t badlogin)" wait; fi
+            if link_with "&username=$(urlenc "$u")&email=$(urlenc "$e")&password=$(urlenc "$p")" signup; then setup_after_link; else panel "Rommancer Sync" "$(link_failed signup)" wait; fi
           fi ;;
         *) return 0 ;;
       esac
@@ -2142,9 +2415,9 @@ case "${1:-}" in
   all)
     VERBOSE=1
     if [ -n "$SD" ] && [ -z "$TOKEN" ]; then echo "This card is not linked yet. Run: $0 sd $SD link http://server:port"; exit 2; fi
-    # A card only meets the server now and then: also send what the server asked for meanwhile
-    cmd_all; [ -n "$SD" ] && cmd_pulls
-    [ -n "$SD" ] && sync ;;
+    # A card only meets the server now and then: what the server asked for meanwhile goes too (a step of cmd_all)
+    cmd_all
+    [ -z "$SD" ] || sync ;;
   game-start) cmd_game_start "${2:-}" ;;
   # After a game: copies for the server may go on, and the game's saves go up
   game-stop) rm -f "$WORK/playing"; cmd_sync; refresh_lists after-game ;;
