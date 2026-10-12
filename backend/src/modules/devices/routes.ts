@@ -16,7 +16,7 @@ import { loadList, resolveListFiles } from '../lists/service.js';
 import { clearListCaches, copiesSystem, folderFor, layoutOf, openSink, systemFilterOf } from './sink.js';
 import { ownedGameIds, ownedRomIds } from '../roms/service.js';
 import { installClient, serverKey, syncOverSsh } from './ssh.js';
-import { OPEN_PULL, pullTransfers } from '../saves/agent.js';
+import { OPEN_PULL, pullTransfers, romDownloads } from '../saves/agent.js';
 import { devicePlan } from './plan.js';
 import { prunePlan } from './prune.js';
 import { previewPlacement } from '../roms/destination.js';
@@ -181,11 +181,63 @@ devicesRouter.post('/:id/ssh-sync', requireAdmin, async (req, res) => {
 });
 
 // Copies under way on any of the user's consoles, for the activity panel shown on every page
+/**
+ * Everything under way for the user, for the activity panel on every page (one entry per thing, by kind):
+ * - copy: roms a console is sending to the server
+ * - download: roms a console is taking from the server (seen in the last two minutes)
+ * - config: a configuration change waiting for or being applied by a console
+ * - sync: a sync asked from here that the console has not picked up yet
+ * - prune: a deletion of roms held until the user confirms it
+ * - job: the server's own work (scans, imports, copies to a card...): the user's, every one for an admin
+ */
 devicesRouter.get('/activity', async (req, res) => {
   const u = me(req);
+  const items: Record<string, unknown>[] = [];
   const queued = await prisma.devicePull.findMany({ where: { status: { in: QUEUED_PULL }, device: { userId: u.id } }, select: { deviceId: true }, distinct: ['deviceId'] });
-  const devices = await prisma.device.findMany({ where: { id: { in: queued.map((q) => q.deviceId) } } });
-  res.json(await Promise.all(devices.map(async (d) => ({ deviceId: d.id, name: d.name, ...(await pullProgress(d)) }))));
+  const copying = await prisma.device.findMany({ where: { id: { in: queued.map((q) => q.deviceId) } } });
+  for (const d of copying) items.push({ kind: 'copy', key: `copy-${d.id}`, deviceId: d.id, name: d.name, ...(await pullProgress(d)) });
+
+  const devices = await prisma.device.findMany({
+    where: { userId: u.id },
+    select: { id: true, name: true, lastSeenAt: true, wantSyncAt: true, pruneRoms: true, pruneHeld: true, pruneAllow: true },
+  });
+  const online = (d: { lastSeenAt: Date | null }) => !!d.lastSeenAt && Date.now() - d.lastSeenAt.getTime() < 60_000;
+  const ops = await prisma.deviceConfigOp.findMany({
+    where: { deviceId: { in: devices.map((d) => d.id) }, status: { in: ['pending', 'collecting', 'applying'] } },
+    select: { id: true, deviceId: true, kind: true, status: true, createdAt: true },
+  });
+  for (const d of devices) {
+    const dl = romDownloads.get(d.id);
+    if (dl && dl.at && (dl.current || Date.now() - dl.at < 120_000)) {
+      const sent = dl.current?.sent() ?? 0;
+      items.push({
+        kind: 'download',
+        key: `download-${d.id}`,
+        deviceId: d.id,
+        name: d.name,
+        done: dl.done,
+        total: Math.max(dl.expected, dl.done + (dl.current ? 1 : 0)),
+        bytesDone: dl.bytesDone + sent,
+        bytesTotal: Math.max(dl.bytesExpected, dl.bytesDone + sent),
+        current: dl.current && { name: dl.current.name, received: sent, size: dl.current.size },
+        active: !!dl.current,
+        online: online(d),
+      });
+    }
+    for (const op of ops.filter((o) => o.deviceId === d.id))
+      items.push({ kind: 'config', key: `config-${op.id}`, deviceId: d.id, name: d.name, op: op.kind, status: op.status, since: op.createdAt, online: online(d) });
+    if (d.wantSyncAt) items.push({ kind: 'sync', key: `sync-${d.id}`, deviceId: d.id, name: d.name, since: d.wantSyncAt, online: online(d) });
+    if (d.pruneRoms && d.pruneHeld !== null && d.pruneAllow === null) items.push({ kind: 'prune', key: `prune-${d.id}`, deviceId: d.id, name: d.name, held: d.pruneHeld });
+  }
+
+  const jobs = await prisma.job.findMany({
+    where: { status: { in: ['PENDING', 'RUNNING'] }, ...(u.role === 'ADMIN' ? {} : { userId: u.id }), OR: [{ runAfter: null }, { runAfter: { lte: new Date() } }] },
+    orderBy: { id: 'asc' },
+    take: 20,
+    select: { id: true, type: true, status: true, processed: true, total: true, message: true },
+  });
+  for (const j of jobs) items.push({ kind: 'job', key: `job-${j.id}`, ...j });
+  res.json(items);
 });
 
 devicesRouter.get('/:id', async (req, res) => {

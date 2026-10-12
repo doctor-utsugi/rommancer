@@ -36,6 +36,20 @@ export const agentRouter = Router();
 
 /** Requests still to be sent: "sending" ones whose transfer died with the server are sent again */
 export const OPEN_PULL = ['pending', 'sending'];
+/**
+ * Roms a device is downloading from the server, for the web app's activity: what its last plan offered that it
+ * lacked, what it has taken since, and the file going out now (its socket's bytes written since it started)
+ */
+export interface RomDownload {
+  expected: number;
+  bytesExpected: number;
+  done: number;
+  bytesDone: number;
+  current: { name: string; size: number; sent: () => number } | null;
+  at: number;
+}
+export const romDownloads = new Map<number, RomDownload>();
+
 /** Transfers in progress, for the progress shown in the web app (bytes received so far) */
 export const pullTransfers = new Map<number, { received: number; size: number; startedAt: number }>();
 
@@ -767,6 +781,11 @@ agentRouter.get('/roms', async (req, res) => {
     out.push(`rom\t${f.dest}\t${size}\t${fileRef(device.id, f.absPath, f.archiveEntry)}`);
   }
   await prisma.device.update({ where: { id: device.id }, data: { spaceShortfall: skipped.files ? { at: new Date().toISOString(), ...skipped } : Prisma.DbNull } });
+  // What a download right after this would take (the files the device does not have yet)
+  const missing = plan.files.filter((f) => !f.excluded && !f.onDevice && !f.present);
+  const prev = romDownloads.get(device.id);
+  if (!prev || Date.now() - prev.at > 120_000 || !prev.current)
+    romDownloads.set(device.id, { expected: missing.length, bytesExpected: missing.reduce((n, f) => n + f.size, 0), done: 0, bytesDone: 0, current: null, at: 0 });
   res.type('text/plain').send(out.join('\n') + (out.length ? '\n' : ''));
 });
 
@@ -774,6 +793,24 @@ agentRouter.get('/rom', async (req, res) => {
   const device = await deviceFromToken(req);
   const ref = readRef(String(req.query.f ?? ''), device.id);
   res.type('application/octet-stream');
+  // Followed for the web app: the file going out, and the tally once it has gone
+  const dl = romDownloads.get(device.id) ?? { expected: 0, bytesExpected: 0, done: 0, bytesDone: 0, current: null, at: 0 };
+  romDownloads.set(device.id, dl);
+  const size = ref.e ? 0 : await fs.promises.stat(ref.p).then((st) => st.size, () => 0);
+  const sock = res.socket;
+  const start = sock?.bytesWritten ?? 0;
+  const current = { name: path.posix.basename(ref.e ?? ref.p), size, sent: () => Math.max(0, (sock?.bytesWritten ?? start) - start) };
+  dl.current = current;
+  dl.at = Date.now();
+  res.on('finish', () => {
+    dl.done++;
+    dl.bytesDone += size || current.sent();
+    dl.at = Date.now();
+    if (dl.current === current) dl.current = null;
+  });
+  res.on('close', () => {
+    if (dl.current === current) dl.current = null;
+  });
   if (ref.e) {
     // A device that hangs up stops the extraction too
     const s = extractEntryStream(ref.p, ref.e).on('error', () => res.destroy());
