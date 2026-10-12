@@ -44,6 +44,7 @@ Items:
 
 Each toggle reads `Name: yes/no` and says what it does in one line under it where the UI has room (pygame, Android,
 desktop) or in the menu message (Onion).
+- Sync before each game, Ask about conflicts before a game (consoles; both on by default)
 - Upload saves when saved (Android, PC)
 - Server may request games
 - Server SSH access (consoles)

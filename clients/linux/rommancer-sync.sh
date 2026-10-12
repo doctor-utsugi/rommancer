@@ -22,7 +22,7 @@
 #                                   Menu++...) mounted on this computer; the link lives on the card itself,
 #                                   so any computer with this script can sync it. Without a command: sync.
 set -u
-CLIENT_VERSION=20261061
+CLIENT_VERSION=20261062
 # A clock before this date is surely wrong (no battery-backed clock); kept apart from the version, which may run ahead
 CLOCK_MIN=20261001
 # Onion keeps curl (with TLS) and friends outside the default PATH
@@ -86,6 +86,9 @@ ALLOW_PULL=1
 # ALLOW_SSH=1 adds the server's key to this console's SSH server, so the server can sync it while the
 # daemon is not running (asleep, not started yet); 0 removes the key
 ALLOW_SSH=1
+# GAME_SYNC=1 fetches a game's saves right before it starts; GAME_ASK=1 then settles its conflicts on screen
+GAME_SYNC=1
+GAME_ASK=1
 # PRUNE_ROMS=1 deletes roms that are in none of the lists the console has (cmd_prune). The console owns it:
 # a change made here or an answer to one made in the web app leaves $STATE/prune-set until the server hears it
 PRUNE_ROMS=0
@@ -1704,7 +1707,7 @@ ask_screen() {
 # conflicts on screen and fetches the server's saves, for that rom only
 cmd_game_start() {
   touch "$WORK/playing"
-  rom="$1"; [ -n "$TOKEN" ] && [ -f "$rom" ] || return 0
+  rom="$1"; [ -n "$TOKEN" ] && [ -f "$rom" ] && [ "$GAME_SYNC" = 1 ] || return 0
   # Known to be offline: the game starts at once with its local save
   [ -f "$WORK/offline-since" ] && { log "game-start: offline, playing local save"; return 0; }
   fix_clock
@@ -1729,7 +1732,7 @@ cmd_game_start() {
     gs_plan || return 0
   fi
   # Conflicts are settled on screen before the game starts; unanswered (or no screen) they wait, the local save plays
-  if grep -q "^conflict$TAB" "$WORK/gs-plan"; then
+  if [ "$GAME_ASK" = 1 ] && grep -q "^conflict$TAB" "$WORK/gs-plan"; then
     rm -f "$WORK/gs-resolved"
     grep "^conflict$TAB" "$WORK/gs-plan" > "$WORK/gs-conflicts"
     while IFS="$TAB" read -r _ id kind mine theirs dev; do
@@ -1891,7 +1894,8 @@ t() {
       finished) echo "Done. Automatic sync is on." ;; syncing) echo "Syncing..." ;;
       allowpull) echo "The server may request games: $2" ;; allowssh) echo "Server SSH access: $2" ;;
       prune) echo "Delete games in no list: $2" ;; pruneclean) echo "Delete saves of deleted games ($2)" ;;
-      settingsinfo) echo "Request games: the server copies the ones it lacks. SSH: syncs even while the app is closed. No list: deletes the games that are in none." ;;
+      settingsinfo) echo "Before each game: its saves are fetched, and save conflicts asked about. Request games: the server copies the ones it lacks. SSH: syncs even while the app is closed. No list: deletes the games that are in none." ;;
+      gamesync) echo "Sync before each game: $2" ;; gameask) echo "Ask about conflicts before a game: $2" ;;
       unlinkask) echo "Disconnect this console from $2? Its saves stay on it, but it stops syncing." ;; unlinkgo) echo "Disconnect" ;;
       restarttitle) echo "Restart to finish" ;; restartnow) echo "Restart now" ;; restarting) echo "Restarting..." ;;
       restartask) echo "Rommancer fetches each game's save right before the game starts. Onion turns this on after a restart." ;;
@@ -2284,20 +2288,24 @@ setup_settings() {
   while :; do
     if [ "$ALLOW_PULL" = 1 ]; then s_pull="$(t yes)"; else s_pull="$(t no)"; fi
     if [ "$ALLOW_SSH" = 1 ]; then s_ssh="$(t yes)"; else s_ssh="$(t no)"; fi
+    if [ "$GAME_SYNC" = 1 ]; then s_gsync="$(t yes)"; else s_gsync="$(t no)"; fi
+    if [ "$GAME_ASK" = 1 ]; then s_gask="$(t yes)"; else s_gask="$(t no)"; fi
     if [ "$PRUNE_ROMS" = 1 ]; then s_prune="$(t yes)"; else s_prune="$(t no)"; fi
     s_clean="$(cat "$STATE/pruned" 2>/dev/null | grep -c .)"
     s_host="${SERVER#*://}"; s_host="${s_host%%/*}"
-    menu "$(t settings)" "$(t settingsinfo)" -s "$s_sel" "$(t allowpull "$s_pull")" "$(t allowssh "$s_ssh")" "$(t prune "$s_prune")" \
-      "$(t pruneclean "$s_clean")" "$(t account "${USER_NAME:-?}" "$s_host")" "$(t unlink)..." "$(t back)"; rc=$?
+    menu "$(t settings)" "$(t settingsinfo)" -s "$s_sel" "$(t gamesync "$s_gsync")" "$(t gameask "$s_gask")" "$(t allowpull "$s_pull")" \
+      "$(t allowssh "$s_ssh")" "$(t prune "$s_prune")" "$(t pruneclean "$s_clean")" "$(t account "${USER_NAME:-?}" "$s_host")" "$(t unlink)..." "$(t back)"; rc=$?
     s_sel="$rc"
     case $rc in
-      0) if [ "$ALLOW_PULL" = 1 ]; then ALLOW_PULL=0; else ALLOW_PULL=1; fi; set_setting ALLOW_PULL "$ALLOW_PULL" ;;
-      1) if [ "$ALLOW_SSH" = 1 ]; then ALLOW_SSH=0; else ALLOW_SSH=1; fi; set_setting ALLOW_SSH "$ALLOW_SSH" ;;
-      2) if [ "$PRUNE_ROMS" = 1 ]; then v=0; else v=1; fi
+      0) if [ "$GAME_SYNC" = 1 ]; then GAME_SYNC=0; else GAME_SYNC=1; fi; set_setting GAME_SYNC "$GAME_SYNC" ;;
+      1) if [ "$GAME_ASK" = 1 ]; then GAME_ASK=0; else GAME_ASK=1; fi; set_setting GAME_ASK "$GAME_ASK" ;;
+      2) if [ "$ALLOW_PULL" = 1 ]; then ALLOW_PULL=0; else ALLOW_PULL=1; fi; set_setting ALLOW_PULL "$ALLOW_PULL" ;;
+      3) if [ "$ALLOW_SSH" = 1 ]; then ALLOW_SSH=0; else ALLOW_SSH=1; fi; set_setting ALLOW_SSH "$ALLOW_SSH" ;;
+      4) if [ "$PRUNE_ROMS" = 1 ]; then v=0; else v=1; fi
          panel "Rommancer Sync" "$(t syncing)"; sh "$DIR/$(basename "$0")" prune set "$v" > /dev/null 2>&1; panel_close; PRUNE_ROMS="$v" ;;
-      3) with_progress "$(t pruneclean "$s_clean")" sh "$DIR/$(basename "$0")" prune clean ;;
-      4) ;;
-      5) menu "$(t unlink)" "$(t unlinkask "$s_host")" "$(t unlinkgo)" "$(t cancel)"
+      5) with_progress "$(t pruneclean "$s_clean")" sh "$DIR/$(basename "$0")" prune clean ;;
+      6) ;;
+      7) menu "$(t unlink)" "$(t unlinkask "$s_host")" "$(t unlinkgo)" "$(t cancel)"
          if [ $? = 0 ]; then
            keep="$SERVER"; cmd_unlink > /dev/null; TOKEN=""; USER_NAME=""; SERVER="$keep"; PRUNE_ROMS=0
            return 1
