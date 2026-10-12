@@ -119,6 +119,7 @@ export function DevicePage() {
     await put(`/devices/${id}/lists`, { listIds })
     void qc.invalidateQueries({ queryKey: ['device-lists', id] })
     void qc.invalidateQueries({ queryKey: ['device-prune', id] })
+    void qc.invalidateQueries({ queryKey: ['device-sync-state', id] })
   }
   const changeLists = (listIds: number[]) => {
     if ((lists.data ?? []).some((l) => !listIds.includes(l.id))) setConfirming(listIds)
@@ -319,6 +320,7 @@ export function DevicePage() {
                   <CardContent className="space-y-2 text-sm">
                     <Progress value={l.total ? (100 * l.have) / l.total : 0} />
                     <p className="text-muted-foreground">{t('more.device.listProgress', { have: l.have, total: l.total, pct: l.total ? Math.round((100 * l.have) / l.total) : 0 })}</p>
+                    {l.have < l.total && <p className="text-amber-600">{t('more.device.listPending', { count: l.total - l.have })}</p>}
                   </CardContent>
                 </Card>
               ))}
@@ -1187,21 +1189,42 @@ interface SyncStateData {
   lastError: string | null
   conflicts: number
   clockSync: boolean | null
+  pending: { copy: number; copyBytes: number; delete: number; inventoryAt: string; downloading: { done: number; total: number } | null } | null
 }
 
 /** Where the console's sync stands: in touch or not since when, the last failure it reported, conflicts to settle */
 function SyncState({ deviceId }: { deviceId: string }) {
   const { t } = useTranslation()
-  const q = useQuery({ queryKey: ['device-sync-state', deviceId], queryFn: () => get<SyncStateData>(`/devices/${deviceId}/sync-state`), refetchInterval: 30_000 })
+  const q = useQuery({
+    queryKey: ['device-sync-state', deviceId],
+    queryFn: () => get<SyncStateData>(`/devices/${deviceId}/sync-state`),
+    // Faster while the console is catching up with its lists
+    refetchInterval: (q) => (q.state.data?.pending && (q.state.data.pending.copy || q.state.data.pending.delete) ? 5_000 : 30_000),
+  })
   const s = q.data
   if (!s?.agent) return null
-  const warn = s.quiet || s.conflicts > 0 || !!s.lastError
+  const p = s.pending
+  const behind = !!p && (p.copy > 0 || p.delete > 0)
+  const warn = s.quiet || s.conflicts > 0 || !!s.lastError || behind
   return (
     <div className={`space-y-1 rounded-md border p-3 text-sm ${warn ? 'border-amber-500/50' : 'border-emerald-500/40'}`}>
       {s.quiet ? (
         <p className="text-amber-600">{t('more.syncState.quiet', { when: formatDate(s.lastSeenAt) })}</p>
       ) : (
-        <p className="text-emerald-700 dark:text-emerald-400">{t('more.syncState.ok', { when: formatDate(s.lastSyncAt) })}</p>
+        <p className={behind ? '' : 'text-emerald-700 dark:text-emerald-400'}>{t(behind ? 'more.syncState.connected' : 'more.syncState.ok', { when: formatDate(s.lastSyncAt) })}</p>
+      )}
+      {behind && (
+        <div className="text-amber-600">
+          <p className="font-medium">{t('more.syncState.behind')}</p>
+          <ul className="list-disc pl-5">
+            {p.downloading ? (
+              <li>{t('more.syncState.downloading', { done: p.downloading.done, total: p.downloading.total })}</li>
+            ) : (
+              p.copy > 0 && <li>{t('more.syncState.toCopy', { count: p.copy, size: formatBytes(p.copyBytes) })}</li>
+            )}
+            {p.delete > 0 && <li>{t(s.quiet ? 'more.syncState.toDeleteOffline' : 'more.syncState.toDelete', { count: p.delete })}</li>}
+          </ul>
+        </div>
       )}
       {s.lastError && <p className="text-amber-600">{t('more.syncState.lastError', { why: s.lastError })}</p>}
       {s.conflicts > 0 && (

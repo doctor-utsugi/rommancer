@@ -1837,11 +1837,17 @@ test('sync client: roms of assigned lists, save before a game, conflicts resolve
   const later = await prisma.job.create({ data: { type: 'noop-test', params: {}, runAfter: new Date(Date.now() + 3600_000) } });
   assert.equal((await api('POST', `/jobs/${later.id}/cancel`)).json.state, 'cancelled');
   assert.equal((await prisma.job.findUniqueOrThrow({ where: { id: later.id } })).status, 'FAILED');
+  await a.run('sync');
+  const before = (await api('GET', `/devices/${a.id}/sync-state`)).json.pending;
+  assert.ok(before && before.copy >= 1 && before.copyBytes > 0, JSON.stringify(before));
   assert.match((await a.run('roms')).stdout, /roms: [1-9]\d* downloaded, 0 already here, 0 failed/);
+  await a.run('sync');
+  assert.equal((await api('GET', `/devices/${a.id}/sync-state`)).json.pending.copy, 0, 'the console has what its lists ask');
   const act = (await api('GET', '/devices/activity')).json;
   const dl = act.find((i: any) => i.kind === 'download' && i.deviceId === a.id);
   assert.ok(dl && dl.done >= 1 && dl.done === dl.total && dl.bytesDone > 0 && !dl.current, JSON.stringify(act));
-  assert.match((await a.run('roms')).stdout, /roms: 0 downloaded, [1-9]\d* already here, 0 failed/, 'nothing twice');
+  // Nothing twice (the inventory sent since tells the server: those files are not even offered again)
+  assert.match((await a.run('roms')).stdout, /roms: 0 downloaded, \d+ already here, 0 failed/, 'nothing twice');
   await b.run('roms');
   const romA = fs.readdirSync(path.join(a.root, 'roms/nes')).find((f) => f.endsWith('.nes'))!;
   const romPath = (d: typeof a) => path.join(d.root, 'roms/nes', romA);

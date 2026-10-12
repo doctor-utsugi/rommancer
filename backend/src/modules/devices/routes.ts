@@ -274,8 +274,31 @@ devicesRouter.get('/:id/sync-state', async (req, res) => {
     lastError: lastFail && !okAfter ? lastFail.l.replace(/^\S+ \S+ failed: /, '') : null,
     conflicts: await prisma.saveConflict.count({ where: { deviceId: d.id, resolvedAt: null } }),
     clockSync: d.clockSync,
+    pending: await listsPending(d),
   });
 });
+
+/**
+ * How far the console is from what its lists ask, by its last inventory: games still to copy to it (they go when
+ * the user downloads them on the console), roms to delete (at its next sync, when it deletes roms in no list) and
+ * a download under way. Null before it ever synced.
+ */
+async function listsPending(d: Awaited<ReturnType<typeof ownDevice>>) {
+  // A console that synced but never listed a rom has none
+  if (d.connType !== 'AGENT' || !(d.inventoryAt ?? d.lastSyncAt)) return null;
+  const plan = await devicePlan(d);
+  const missing = plan.files.filter((f) => !f.excluded && !f.present);
+  const prune = d.pruneRoms ? await prunePlan(d) : null;
+  const dl = romDownloads.get(d.id);
+  const live = dl && dl.at && (dl.current || Date.now() - dl.at < 120_000) ? dl : null;
+  return {
+    copy: missing.length,
+    copyBytes: missing.reduce((n, f) => n + f.size, 0),
+    delete: prune ? prune.del.length + prune.upload.length : 0,
+    inventoryAt: d.inventoryAt,
+    downloading: live?.current ? { done: live.done, total: Math.max(live.expected, live.done + 1) } : null,
+  };
+}
 
 devicesRouter.patch('/:id', async (req, res) => {
   const d = await ownDevice(intParam(req), me(req));
