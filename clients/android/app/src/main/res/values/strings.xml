@@ -80,6 +80,9 @@
     <string name="shizuku_off">Emulator settings: Shizuku is off</string>
     <string name="shizuku_allow">Emulator settings: allow Shizuku</string>
     <string name="shizuku_ready">Emulator settings: apply now (Shizuku on)</string>
+    <string name="usage_on">Wait for games to close: yes</string>
+    <string name="usage_off">Wait for games to close: allow usage access</string>
+    <string name="usage_sub">Saves from other devices arrive once the emulator is closed, so a running game cannot write over them.</string>
     <string name="shizuku_sub">Puts your RetroAchievements and settings into RetroArch and PPSSPP, through Shizuku.</string>
     <string name="shizuku_help">RetroArch and PPSSPP keep their settings in Android/data, where Android does not let other apps in. Shizuku lets Rommancer put your RetroAchievements there and copy their settings. Install Shizuku (Play Store or GitHub), start it with wireless debugging (or root), then come back here and allow it. Without it, only settings in public folders are changed.</string>
     <string name="applying_config">Applying the emulator settings</string>

@@ -88,7 +88,8 @@ class SyncEngine(private val context: Context, private val store: Store, private
         val listed = HashSet<String>()
         saveDirs.forEach { dir ->
             dir.walkTopDown().filter { it.isFile && !it.name.startsWith(".") && isSave(it.name, exts) }.forEach { save ->
-                if (listed.add(save.path)) request.append("file\t").append(save.path).append('\t').append(sha1(save, 0)).append('\n')
+                // file, path, sha1, mtime (the server tells which emulator folder is in use by the newest one)
+                if (listed.add(save.path)) request.append("file\t").append(save.path).append('\t').append(sha1(save, 0)).append('\t').append(save.lastModified() / 1000).append('\n')
             }
         }
         // Roms kept in a folder of their own under their system (ROMs/snes/CURADA/game.smc): sent as "srom" when a save
@@ -130,9 +131,17 @@ class SyncEngine(private val context: Context, private val store: Store, private
         plan.lines().firstOrNull { it.startsWith("backups\t") }?.substringAfter('\t')?.trim()?.toIntOrNull()?.let { store.backupsKeep = it }
         val steps = plan.lines().filter { it.isNotBlank() && !it.startsWith("probe\t") && !it.startsWith("backups\t") && !it.startsWith("prune\t") }
         val probes = plan.lines().filter { it.startsWith("probe\t") }.map { it.split('\t') }.filter { it.size >= 3 }
+        // A game running keeps its save in memory and would write it back over one arriving now: those wait
+        val playing = Foreground.playing(context)
+        HELD = false
         for ((n, line) in steps.withIndex()) {
             report(Progress("transfer", n + 1, steps.size))
             val f = line.split('\t')
+            if (playing && f[0] in HOLD) {
+                HELD = true
+                store.addLog("after the game: ${f.getOrElse(1) { "" }.substringAfterLast('/')}")
+                continue
+            }
             try {
                 when (f[0]) {
                     "put" -> {
@@ -588,6 +597,12 @@ class SyncEngine(private val context: Context, private val store: Store, private
         private val LOCK = Any()
         private val PULLING = java.util.concurrent.atomic.AtomicBoolean(false)
         private val STOP_ROMS = java.util.concurrent.atomic.AtomicBoolean(false)
+
+        private val HOLD = setOf("get", "aside", "cget")
+
+        /** The last pass left saves to fetch until the game in front closes */
+        @Volatile var HELD = false
+            private set
 
         /** The rom download under way, whoever started it; null when there is none */
         @Volatile var LIVE: Progress? = null

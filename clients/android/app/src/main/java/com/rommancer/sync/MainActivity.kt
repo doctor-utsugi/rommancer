@@ -612,6 +612,12 @@ private fun Linked(store: Store, onUnlinked: () -> Unit) {
                     pickDolphin.launch(Dolphin.initialUri)
                 }
             }
+            val usage = remember(settingsTick, screen) { Foreground.allowed(context) }
+            MenuItem(stringResource(if (usage) R.string.usage_on else R.string.usage_off), sub = stringResource(R.string.usage_sub)) {
+                runCatching { context.startActivity(Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS, Uri.parse("package:${context.packageName}"))) }
+                    .onFailure { context.startActivity(Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS)) }
+                settingsTick++
+            }
             val shizuku = remember(settingsTick) { Privileged.state() }
             val titleConfig = stringResource(R.string.applying_config)
             val shizukuHelp = stringResource(R.string.shizuku_help)

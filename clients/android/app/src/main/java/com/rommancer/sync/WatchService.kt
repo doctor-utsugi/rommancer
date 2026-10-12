@@ -98,7 +98,10 @@ class WatchService : Service() {
             conflicts = n
             showState()
         }
+        // Saves held back while a game ran: fetched once it is closed
+        val after = SyncEngine.HELD && !Foreground.playing(this)
         if ("sync" in asked) runCatching { engine().sync(); engine().prune() }
+        else if (after) runCatching { engine().sync() }
         // Another device sent a save this one should have: saves only
         else if ("saves" in asked) runCatching { engine().sync() }
         // Long copies for the server run apart, so saves keep going up meanwhile
