@@ -1831,6 +1831,12 @@ test('sync client: roms of assigned lists, save before a game, conflicts resolve
   // The activity panel saw the sync asked by the change of lists, then the download (files and bytes)
   const asked = (await api('GET', '/devices/activity')).json;
   assert.ok(asked.some((i: any) => i.kind === 'sync' && i.deviceId === a.id), JSON.stringify(asked));
+  // Withdrawn from the panel; a queued job cancelled from it never runs
+  assert.equal((await api('DELETE', `/devices/${a.id}/sync-request`)).status, 204);
+  assert.ok(!(await api('GET', '/devices/activity')).json.some((i: any) => i.kind === 'sync' && i.deviceId === a.id));
+  const later = await prisma.job.create({ data: { type: 'noop-test', params: {}, runAfter: new Date(Date.now() + 3600_000) } });
+  assert.equal((await api('POST', `/jobs/${later.id}/cancel`)).json.state, 'cancelled');
+  assert.equal((await prisma.job.findUniqueOrThrow({ where: { id: later.id } })).status, 'FAILED');
   assert.match((await a.run('roms')).stdout, /roms: [1-9]\d* downloaded, 0 already here, 0 failed/);
   const act = (await api('GET', '/devices/activity')).json;
   const dl = act.find((i: any) => i.kind === 'download' && i.deviceId === a.id);

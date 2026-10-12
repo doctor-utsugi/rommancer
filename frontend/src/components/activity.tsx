@@ -1,14 +1,14 @@
 import { useEffect, useRef, useState } from 'react'
 import { Link, useLocation } from 'react-router'
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
-import { AlertTriangle, ChevronDown, ChevronUp, Cog, Download, Loader2, Pause, RefreshCw, Settings2, Upload } from 'lucide-react'
+import { AlertTriangle, ChevronDown, ChevronUp, Cog, Download, Loader2, Pause, RefreshCw, Settings2, Upload, X } from 'lucide-react'
 import { toast } from 'sonner'
-import { get } from '@/lib/api'
+import { del, get, post } from '@/lib/api'
 import { useAuth } from '@/lib/auth'
 import { Button } from '@/components/ui/button'
 import { Progress } from '@/components/ui/progress'
-import { formatBytes } from '@/components/common'
+import { errMsg, formatBytes } from '@/components/common'
 
 interface Transfer {
   deviceId: number
@@ -28,7 +28,7 @@ interface Transfer {
 type Item =
   | ({ kind: 'copy'; key: string } & Transfer)
   | ({ kind: 'download'; key: string } & Transfer)
-  | { kind: 'config'; key: string; deviceId: number; name: string; op: string; status: string; online: boolean }
+  | { kind: 'config'; key: string; opId: number; deviceId: number; name: string; op: string; status: string; online: boolean }
   | { kind: 'sync'; key: string; deviceId: number; name: string; online: boolean }
   | { kind: 'prune'; key: string; deviceId: number; name: string; held: number }
   | { kind: 'job'; key: string; id: number; type: string; status: string; processed: number; total: number; message: string | null }
@@ -129,9 +129,32 @@ export function ActivityDock() {
   )
 }
 
+/** How to stop an entry from here, when it can be: what is asked, and whether to confirm first */
+function stopOf(i: Item): { run(): Promise<unknown>; confirm?: string } | null {
+  if (i.kind === 'sync') return { run: () => del(`/devices/${i.deviceId}/sync-request`) }
+  if (i.kind === 'config' && i.status === 'pending') return { run: () => del(`/devices/${i.deviceId}/config/ops/${i.opId}`) }
+  if (i.kind === 'copy' && (i.open ?? 0) > 0) return { run: () => del(`/devices/${i.deviceId}/pulls`), confirm: 'more.activity.stopCopy' }
+  if (i.kind === 'job') return { run: () => post(`/jobs/${i.id}/cancel`), confirm: 'more.activity.stopJob' }
+  return null
+}
+
 function Row({ item: i, admin }: { item: Item; admin: boolean }) {
   const { t } = useTranslation()
+  const qc = useQueryClient()
   const offline = 'online' in i && !i.online
+  const stopper = stopOf(i)
+  const stop = stopper
+    ? async () => {
+        if (stopper.confirm && !confirm(t(stopper.confirm))) return
+        try {
+          await stopper.run()
+          toast.success(t('more.activity.stopped'))
+        } catch (e) {
+          toast.error(errMsg(e))
+        }
+        void qc.invalidateQueries({ queryKey: ['activity'] })
+      }
+    : undefined
   if (i.kind === 'copy' || i.kind === 'download') {
     const files = i.done + (i.failed ?? 0)
     const share = i.bytesTotal ? (i.bytesDone / i.bytesTotal) * 100 : i.total ? (files / i.total) * 100 : 0
@@ -148,6 +171,7 @@ function Row({ item: i, admin }: { item: Item; admin: boolean }) {
         icon={i.kind === 'copy' ? Upload : Download}
         title={t(i.kind === 'copy' ? 'more.activity.copyTitle' : 'more.activity.downloadTitle', { name: i.name })}
         to={`/devices/${i.deviceId}`}
+        onStop={stop}
       >
         <Progress value={share} />
         <p className="flex items-center gap-1 truncate text-xs text-muted-foreground" title={state}>
@@ -160,13 +184,13 @@ function Row({ item: i, admin }: { item: Item; admin: boolean }) {
   }
   if (i.kind === 'config')
     return (
-      <Entry icon={Settings2} title={t(`more.activity.config.${i.op}`, { name: i.name, defaultValue: i.op })} to={`/devices/${i.deviceId}`}>
+      <Entry icon={Settings2} title={t(`more.activity.config.${i.op}`, { name: i.name, defaultValue: i.op })} to={`/devices/${i.deviceId}`} onStop={stop}>
         <Note>{offline ? t('more.activity.offline') : t(`more.activity.configStatus.${i.status}`, { defaultValue: i.status })}</Note>
       </Entry>
     )
   if (i.kind === 'sync')
     return (
-      <Entry icon={RefreshCw} title={t('more.activity.syncTitle', { name: i.name })} to={`/devices/${i.deviceId}`}>
+      <Entry icon={RefreshCw} title={t('more.activity.syncTitle', { name: i.name })} to={`/devices/${i.deviceId}`} onStop={stop}>
         <Note>{offline ? t('more.activity.offline') : t('more.activity.waiting')}</Note>
       </Entry>
     )
@@ -177,7 +201,7 @@ function Row({ item: i, admin }: { item: Item; admin: boolean }) {
       </Entry>
     )
   return (
-    <Entry icon={Cog} title={t(`jobs.types.${i.type}`, { defaultValue: i.type })} to={admin ? '/admin/jobs' : undefined}>
+    <Entry icon={Cog} title={t(`jobs.types.${i.type}`, { defaultValue: i.type })} to={admin ? '/admin/jobs' : undefined} onStop={stop}>
       {i.status === 'RUNNING' && i.total > 0 && <Progress value={(i.processed / i.total) * 100} />}
       <Note>
         {i.status === 'PENDING' ? t('more.activity.queued') : i.total > 0 ? `${i.processed} / ${i.total}` : t('more.activity.working')}
@@ -187,7 +211,7 @@ function Row({ item: i, admin }: { item: Item; admin: boolean }) {
   )
 }
 
-function Entry({ icon: Icon, title, to, warn, children }: { icon: typeof Cog; title: string; to?: string; warn?: boolean; children: React.ReactNode }) {
+function Entry({ icon: Icon, title, to, warn, onStop, children }: { icon: typeof Cog; title: string; to?: string; warn?: boolean; onStop?: () => void; children: React.ReactNode }) {
   const { t } = useTranslation()
   return (
     <div className="space-y-1.5">
@@ -196,11 +220,18 @@ function Entry({ icon: Icon, title, to, warn, children }: { icon: typeof Cog; ti
           <Icon className="size-3.5 shrink-0" />
           <span className="truncate">{title}</span>
         </p>
-        {to && (
-          <Button size="sm" variant="ghost" className="h-7 px-2" nativeButton={false} render={<Link to={to} />}>
-            {t('more.activity.open')}
-          </Button>
-        )}
+        <div className="flex shrink-0 items-center">
+          {to && (
+            <Button size="sm" variant="ghost" className="h-7 px-2" nativeButton={false} render={<Link to={to} />}>
+              {t('more.activity.open')}
+            </Button>
+          )}
+          {onStop && (
+            <Button size="icon-sm" variant="ghost" title={t('more.activity.stop')} aria-label={t('more.activity.stop')} onClick={onStop}>
+              <X />
+            </Button>
+          )}
+        </div>
       </div>
       {children}
     </div>

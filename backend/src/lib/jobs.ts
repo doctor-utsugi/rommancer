@@ -11,6 +11,13 @@ export interface JobContext {
 type Handler = (ctx: JobContext) => Promise<unknown>;
 
 const handlers = new Map<string, Handler>();
+// Running jobs the user cancelled: they stop at their next progress report
+const cancelled = new Set<number>();
+export class JobCancelled extends Error {
+  constructor() {
+    super('Cancelled by the user');
+  }
+}
 const running = new Set<string>();
 let timer: NodeJS.Timeout | null = null;
 const MAX_CONCURRENT = 3;
@@ -36,6 +43,7 @@ async function runJob(job: Job) {
     job,
     params: (job.params ?? {}) as Record<string, any>,
     async progress(processed, total, message) {
+      if (cancelled.has(job.id)) throw new JobCancelled();
       const now = Date.now();
       if (now - lastFlush < 500 && processed !== total) return;
       lastFlush = now;
@@ -54,7 +62,19 @@ async function runJob(job: Job) {
     ctx.log(`ERROR: ${msg}`);
     console.error(`Job ${job.id} (${job.type}) failed:`, e);
     await flush({ status: 'FAILED', finishedAt: new Date(), message: msg.slice(0, 512) });
+  } finally {
+    cancelled.delete(job.id);
   }
+}
+
+/** A queued job is dropped (failed, "cancelled"); a running one stops at its next progress report */
+export async function cancelJob(id: number) {
+  const queued = await prisma.job.updateMany({ where: { id, status: 'PENDING' }, data: { status: 'FAILED', message: 'Cancelled by the user', finishedAt: new Date() } });
+  if (queued.count) return 'cancelled';
+  const job = await prisma.job.findUnique({ where: { id }, select: { status: true } });
+  if (job?.status !== 'RUNNING') return 'finished';
+  cancelled.add(id);
+  return 'stopping';
 }
 
 async function tick() {

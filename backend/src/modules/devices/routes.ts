@@ -225,7 +225,7 @@ devicesRouter.get('/activity', async (req, res) => {
       });
     }
     for (const op of ops.filter((o) => o.deviceId === d.id))
-      items.push({ kind: 'config', key: `config-${op.id}`, deviceId: d.id, name: d.name, op: op.kind, status: op.status, since: op.createdAt, online: online(d) });
+      items.push({ kind: 'config', key: `config-${op.id}`, opId: op.id, deviceId: d.id, name: d.name, op: op.kind, status: op.status, since: op.createdAt, online: online(d) });
     if (d.wantSyncAt) items.push({ kind: 'sync', key: `sync-${d.id}`, deviceId: d.id, name: d.name, since: d.wantSyncAt, online: online(d) });
     if (d.pruneRoms && d.pruneHeld !== null && d.pruneAllow === null) items.push({ kind: 'prune', key: `prune-${d.id}`, deviceId: d.id, name: d.name, held: d.pruneHeld });
   }
@@ -238,6 +238,13 @@ devicesRouter.get('/activity', async (req, res) => {
   });
   for (const j of jobs) items.push({ kind: 'job', key: `job-${j.id}`, ...j });
   res.json(items);
+});
+
+// Withdraws a sync asked from here that the console has not picked up (it still syncs on its own schedule)
+devicesRouter.delete('/:id/sync-request', async (req, res) => {
+  const d = await ownDevice(intParam(req), me(req));
+  await prisma.device.update({ where: { id: d.id }, data: { wantSyncAt: null } });
+  res.status(204).end();
 });
 
 devicesRouter.get('/:id', async (req, res) => {

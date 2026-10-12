@@ -385,6 +385,10 @@ export const esMore = {
     pruneHeld_other: '{{count}} roms a borrar: confírmalo en la página de la consola',
     queued: 'en cola',
     working: 'trabajando',
+    stop: 'Cancelar',
+    stopped: 'Cancelado',
+    stopCopy: '¿Cancelar la copia? Lo que falte no se enviará al servidor; el archivo que se esté enviando termina.',
+    stopJob: '¿Cancelar este trabajo? Si ya está en marcha, se para en su siguiente paso y lo hecho hasta ahí se queda.',
     config: {
       backup: '{{name}}: copia de la configuración',
       settings: '{{name}}: aplicando tus ajustes',
@@ -1189,6 +1193,10 @@ export const enMore: typeof esMore = {
     pruneHeld_other: '{{count}} roms to delete: confirm it on the console page',
     queued: 'queued',
     working: 'working',
+    stop: 'Cancel',
+    stopped: 'Cancelled',
+    stopCopy: 'Cancel the copy? What is left is not sent to the server; the file being sent finishes.',
+    stopJob: 'Cancel this job? If it is running it stops at its next step, and what it did so far stays.',
     config: {
       backup: '{{name}}: configuration backup',
       settings: '{{name}}: applying your settings',

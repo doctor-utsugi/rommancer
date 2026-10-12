@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import { prisma } from '../../lib/prisma.js';
+import { cancelJob } from '../../lib/jobs.js';
 import { forbidden, intParam } from '../../lib/http.js';
 import { me } from '../auth/middleware.js';
 
@@ -48,4 +49,11 @@ jobsRouter.get('/:id/events', async (req, res) => {
     await new Promise((r) => setTimeout(r, 1000));
   }
   res.end();
+});
+
+// Cancel: a queued job is dropped, a running one stops at its next step
+jobsRouter.post('/:id/cancel', async (req, res) => {
+  const u = me(req);
+  const j = await getJob(intParam(req), u.id, u.role === 'ADMIN');
+  res.json({ state: await cancelJob(j.id) });
 });
