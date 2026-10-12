@@ -23,14 +23,14 @@ class Store(context: Context) {
     var lastSyncAt: Long
         get() = prefs.getLong("lastSyncAt", 0L)
         set(v) = prefs.edit().putLong("lastSyncAt", v).apply()
-    var lastResult: String
-        get() = prefs.getString("lastResult", "") ?: ""
-        set(v) = prefs.edit().putString("lastResult", v).apply()
 
-    /** Download the lists' roms by itself */
-    var autoRoms: Boolean
-        get() = prefs.getBoolean("autoRoms", true)
-        set(v) = prefs.edit().putBoolean("autoRoms", v).apply()
+    /** The last pass's summary (Summary.encode) and when it ended (ms), for the Status screen */
+    var lastSummary: String
+        get() = prefs.getString("lastSummary", "") ?: ""
+        set(v) = prefs.edit().putString("lastSummary", v).apply()
+    var lastSummaryAt: Long
+        get() = prefs.getLong("lastSummaryAt", 0L)
+        set(v) = prefs.edit().putLong("lastSummaryAt", v).apply()
 
     /** A rom download was stopped on screen: background passes leave the roms alone until one is asked for there */
     var romsStopped: Boolean
@@ -88,6 +88,6 @@ class Store(context: Context) {
     fun link(token: String, user: String) = prefs.edit().putString("token", token).putString("user", user).apply()
 
     // Another account's lists are not this one's: the deletion of roms in no list starts off and is offered again
-    fun unlink() = prefs.edit().remove("token").remove("user").remove("lastResult")
+    fun unlink() = prefs.edit().remove("token").remove("user").remove("lastResult").remove("lastSummary").remove("lastSummaryAt")
         .remove("pruneRoms").remove("pruneSet").remove("pruneAsk").remove("pruneHold").remove("pruneIntro").remove("pruned").apply()
 }

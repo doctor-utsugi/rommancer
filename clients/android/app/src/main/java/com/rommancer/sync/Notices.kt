@@ -22,7 +22,7 @@ object Notices {
         val builder = if (Build.VERSION.SDK_INT >= 26) Notification.Builder(context, CHANNEL) else @Suppress("DEPRECATION") Notification.Builder(context)
         val notification = builder
             .setSmallIcon(android.R.drawable.stat_sys_download_done)
-            .setContentTitle("Rommancer")
+            .setContentTitle(context.getString(R.string.app_title))
             .setContentText(text)
             .setContentIntent(open)
             .setAutoCancel(true)

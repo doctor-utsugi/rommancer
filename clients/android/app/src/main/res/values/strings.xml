@@ -1,5 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <string name="app_title">Rommancer Sync</string>
+
+    <!-- Setup -->
     <string name="server">Server address</string>
     <string name="login">Log in</string>
     <string name="signup">Create account</string>
@@ -9,99 +12,185 @@
     <string name="password">Password</string>
     <string name="have_account">I already have an account</string>
     <string name="no_account">No account? Create one</string>
-    <string name="connected">Connected to %1$s as %2$s</string>
-    <string name="sync_now">Sync now</string>
-    <string name="unlink">Unlink this device</string>
-    <string name="syncing">Syncing…</string>
-    <string name="last_sync">Last sync: %1$s</string>
-    <string name="never">never</string>
-    <string name="background">Saves sync by themselves every 15 minutes.</string>
     <string name="storage_title">Access to your files</string>
-    <string name="storage_text">Rommancer Sync needs access to all files to read the saves next to your roms (ROMs, RetroArch, PSP…).</string>
+    <string name="storage_text">Rommancer Sync needs access to all files to read the saves next to your games (ROMs, RetroArch, PSP…).</string>
     <string name="storage_grant">Allow access</string>
     <string name="bad_server">No Rommancer at that address</string>
     <string name="bad_login">Wrong username or password</string>
     <string name="signup_closed">This server does not allow new accounts</string>
     <string name="exists">That username or email already exists</string>
-    <string name="sync_roms">Sync roms</string>
-    <string name="auto_roms">Automatic roms: %1$s</string>
-    <string name="allow_pull">Server may fetch games: %1$s</string>
-    <string name="conflicts">Conflicts (%1$s)</string>
+
+    <!-- Home -->
+    <string name="synced_today">Synced: today, %1$s</string>
+    <string name="synced_yesterday">Synced: yesterday, %1$s</string>
+    <string name="synced_at">Synced: %1$s</string>
+    <string name="never_synced">Not synced yet</string>
+    <string name="home_offline">No connection since %1$s</string>
+    <string name="live_download">Downloading games %1$d/%2$d</string>
+    <string name="live_pulls">Sending games to the server %1$d/%2$d</string>
+    <string name="update_app">Update the app (%1$s)</string>
+    <string name="updating">Downloading the update…</string>
+    <string name="sync_now">Sync now</string>
+    <string name="conflicts">Conflicts (%1$d)</string>
+    <string name="watch_download">Watch the game download</string>
+    <string name="watch_pulls">Watch sending games to the server</string>
+    <string name="lists">This device\'s lists</string>
+    <string name="settings">Settings</string>
     <string name="status">Status</string>
-    <string name="exit">Exit</string>
+    <string name="press_back">Back</string>
+    <string name="cancel">Cancel</string>
+    <string name="details">Show details</string>
     <string name="yes">yes</string>
     <string name="no">no</string>
+
+    <!-- Conflicts -->
     <string name="no_conflicts">No conflicts</string>
     <string name="keep_device">Keep this device\'s save</string>
     <string name="keep_server">Use the server\'s save</string>
     <string name="conflict_info">%1$s: this device saved on %2$s; the server has a version from %3$s (%4$s).</string>
-    <string name="press_back">Back</string>
-    <string name="p_connecting">Contacting the server</string>
-    <string name="p_roms">Checking roms</string>
-    <string name="p_server">Asking the server</string>
-    <string name="p_transfer">Transferring saves</string>
-    <string name="p_identify">Identifying roms by their header</string>
-    <string name="p_roms_plan">Asking which roms belong here</string>
-    <string name="p_roms_download">Downloading roms</string>
-    <string name="p_pulls">Sending games to the server</string>
-    <string name="no_log">No log yet</string>
-    <string name="watch">Upload when saving: %1$s</string>
-    <string name="watch_channel">Save watcher</string>
-    <string name="watch_title">Rommancer Sync</string>
-    <string name="watch_text">Saves go to the server as soon as you save</string>
-    <string name="update_app">Update the app (%1$s)</string>
-    <string name="updating">Downloading the update…</string>
-    <string name="add_wifi">Add my WiFi networks</string>
+
+    <!-- Lists -->
+    <string name="lists_info">%1$d lists on this device. A adds or removes one; on leaving, their games download or go.</string>
+    <string name="no_lists">No lists yet. Create them in Rommancer\'s web app.</string>
+    <string name="lists_download">Download the lists\' games now</string>
+    <string name="lists_download_sub">Brings the games of the ticked lists that are not here yet. Nothing is deleted.</string>
+    <string name="list_drop">Removing “%1$s” deletes %2$d games from this device (%3$s).</string>
+    <string name="list_drop_up">%1$d the server lacks are sent to it first.</string>
+    <string name="list_drop_go">Remove and delete %1$d games</string>
+
+    <!-- Settings -->
+    <string name="set_watch">Upload saves when saved: %1$s</string>
+    <string name="set_watch_sub">Each save goes to the server a few seconds after the game writes it.</string>
+    <string name="set_pull">The server may request games: %1$s</string>
+    <string name="set_pull_sub">Games the server lacks are sent from this device when it asks for them.</string>
+    <string name="set_prune">Delete games in no list: %1$s</string>
+    <string name="set_prune_sub">Games in none of this device\'s lists are deleted here (sent to the server first if it lacks them). Saves stay.</string>
+    <string name="set_clean">Delete saves of deleted games (%1$d)</string>
+    <string name="set_clean_sub">Removes from this device the saves of games deleted for being in no list. They stay on the server.</string>
+    <string name="set_wifi">WiFi networks</string>
+    <string name="set_wifi_sub">Adds to Android the WiFi networks saved in your Rommancer profile.</string>
     <string name="wifi_done">Networks saved. Android will join them when they are in range.</string>
     <string name="wifi_none">There are no networks for this device in Rommancer (add them in your profile, on the web).</string>
     <string name="wifi_cancelled">No networks were saved.</string>
+    <string name="dolphin_grant">GameCube saves (Dolphin): allow access</string>
+    <string name="dolphin_linked">GameCube saves (Dolphin): connected</string>
+    <string name="dolphin_sub">Android only lets Rommancer read Dolphin\'s saves through a folder you share once.</string>
+    <string name="dolphin_done">Dolphin shared: GameCube saves sync from now on.</string>
+    <string name="dolphin_wrong">That is not Dolphin\'s folder. Open the menu (☰) in the picker, choose “Dolphin Emulator” and tap “Use this folder”.</string>
     <string name="shizuku_off">Emulator settings: Shizuku is off</string>
     <string name="shizuku_allow">Emulator settings: allow Shizuku</string>
     <string name="shizuku_ready">Emulator settings: apply now (Shizuku on)</string>
-    <string name="applying_config">Applying the configuration</string>
-    <string name="config_done">Done (%1$d tasks). Open emulators are never touched: they get it next time.</string>
+    <string name="shizuku_sub">Puts your RetroAchievements and settings into RetroArch and PPSSPP, through Shizuku.</string>
     <string name="shizuku_help">RetroArch and PPSSPP keep their settings in Android/data, where Android does not let other apps in. Shizuku lets Rommancer put your RetroAchievements there and copy their settings. Install Shizuku (Play Store or GitHub), start it with wireless debugging (or root), then come back here and allow it. Without it, only settings in public folders are changed.</string>
-    <string name="received_channel">Saves received</string>
-    <string name="received_one">Save received: %1$s</string>
-    <string name="received_many">%1$d saves received: %2$s and more</string>
-    <string name="dolphin_grant">GameCube saves (Dolphin): allow access</string>
-    <string name="dolphin_linked">GameCube saves (Dolphin): connected</string>
-    <string name="dolphin_done">Dolphin shared: GameCube saves sync from now on.</string>
-    <string name="dolphin_wrong">That is not Dolphin\'s folder. Open the menu (☰) in the picker, choose “Dolphin Emulator” and tap “Use this folder”.</string>
-    <string name="synced_at">Synced: %1$s</string>
-    <string name="never_synced">Not synced yet</string>
-    <string name="prune">Delete roms not in lists: %1$s</string>
-    <string name="prune_clean">Delete saves of deleted roms (%1$d)</string>
-    <string name="prune_cleaned">Saves deleted: %1$d</string>
-    <string name="prune_intro">Rommancer can delete from this device the roms that are in none of its lists. The ones the server lacks are uploaded before they are deleted. Saves stay. You can change it later here or on the web. Turn it on?</string>
-    <string name="prune_ask">Deleting roms that are not in any list was turned on from the server. If you keep it, %1$s roms (%2$s) will be deleted. Do you want to keep this option?</string>
-    <string name="prune_hold">%1$s of the %2$s roms on this device (more than half) would be deleted for being in no list. A list may have been emptied. Delete them?</string>
+    <string name="applying_config">Applying the emulator settings</string>
+    <string name="config_done">Done (%1$d tasks). Open emulators are never touched: they get it next time.</string>
+    <string name="account">Account: %1$s @ %2$s</string>
+    <string name="unlink">Disconnect this device</string>
+    <string name="unlink_confirm">Disconnect this device from %1$s? Its saves and games stay here, but nothing syncs until you log in again.</string>
+    <string name="unlink_go">Yes, disconnect</string>
+
+    <!-- Deleting games in no list -->
+    <string name="prune_title">Delete games in no list</string>
+    <string name="prune_intro">Rommancer can delete from this device the games that are in none of its lists. The ones the server lacks are sent to it before they are deleted. Saves stay. You can change it later in Settings or on the web. Turn it on?</string>
+    <string name="prune_ask">Deleting games that are in no list was turned on from the server. If you keep it, %1$s games (%2$s) will be deleted. Do you want to keep this option?</string>
+    <string name="prune_hold">%1$s of the %2$s games on this device (more than half) would be deleted for being in no list. A list may have been emptied. Delete them?</string>
     <string name="prune_yes">Yes, turn it on</string>
     <string name="prune_no">No, leave it off</string>
     <string name="prune_keep">Yes, keep it</string>
     <string name="prune_off">No, turn it off</string>
     <string name="prune_delete">Yes, delete them</string>
     <string name="prune_later">Not now</string>
-    <string name="lists">This device\'s lists</string>
-    <string name="lists_info">%1$d lists on this device. A adds or removes one; on leaving, their roms download or go.</string>
-    <string name="no_lists">No lists yet. Create them in Rommancer\'s web app.</string>
-    <string name="list_drop">Removing “%1$s” deletes %2$d roms from this device (%3$s).</string>
-    <string name="list_drop_up">%1$d the server lacks are sent to it first.</string>
-    <string name="list_drop_go">Remove and delete %1$d roms</string>
-    <string name="cancel">Cancel</string>
-    <string name="p_prune">Deleting roms not in lists</string>
-    <string name="roms_stop">Stop the rom download</string>
+
+    <!-- Progress -->
+    <string name="step">Step %1$d of %2$d · %3$s</string>
+    <string name="stage_saves">Saves</string>
+    <string name="stage_config">Settings</string>
+    <string name="stage_prune">Games in no list</string>
+    <string name="stage_roms">List games</string>
+    <string name="stage_pulls">Sending to the server</string>
+    <string name="p_connecting">Contacting the server</string>
+    <string name="p_roms">Checking games</string>
+    <string name="p_server">Asking the server</string>
+    <string name="p_transfer">Transferring saves</string>
+    <string name="p_identify">Identifying games by their header</string>
+    <string name="p_config">Applying the emulator settings</string>
+    <string name="p_prune">Deleting games in no list</string>
+    <string name="p_roms_plan">Asking which games belong here</string>
+    <string name="p_roms_download">Downloading games</string>
+    <string name="p_pulls">Sending games to the server</string>
+    <string name="file_share">%1$d%% of %2$s</string>
+    <string name="roms_stop">Stop the game download</string>
     <string name="stopping">Stopping…</string>
-    <string name="details">Show details</string>
+
+    <!-- Sync summary: one fact per line -->
+    <string name="sum_up_to_date">All up to date</string>
+    <plurals name="sum_saves_up">
+        <item quantity="one">↑ %d save sent to the server</item>
+        <item quantity="other">↑ %d saves sent to the server</item>
+    </plurals>
+    <plurals name="sum_saves_down">
+        <item quantity="one">↓ %d save received</item>
+        <item quantity="other">↓ %d saves received</item>
+    </plurals>
+    <plurals name="sum_states_up">
+        <item quantity="one">↑ %d savestate sent to the server</item>
+        <item quantity="other">↑ %d savestates sent to the server</item>
+    </plurals>
+    <plurals name="sum_states_down">
+        <item quantity="one">↓ %d savestate received</item>
+        <item quantity="other">↓ %d savestates received</item>
+    </plurals>
+    <plurals name="sum_games_down">
+        <item quantity="one">↓ %d game downloaded</item>
+        <item quantity="other">↓ %d games downloaded</item>
+    </plurals>
+    <plurals name="sum_games_sent">
+        <item quantity="one">↑ %d game sent to the server</item>
+        <item quantity="other">↑ %d games sent to the server</item>
+    </plurals>
+    <plurals name="sum_games_deleted">
+        <item quantity="one">✕ %d game deleted (in no list)</item>
+        <item quantity="other">✕ %d games deleted (in no list)</item>
+    </plurals>
+    <plurals name="sum_saves_cleaned">
+        <item quantity="one">✕ %d save of a deleted game removed</item>
+        <item quantity="other">✕ %d saves of deleted games removed</item>
+    </plurals>
+    <string name="sum_games_stopped">■ Game download stopped</string>
+    <string name="sum_games_nospace">⚠ No room for “%1$s”: not enough space</string>
+    <plurals name="sum_conflicts">
+        <item quantity="one">⚠ %d save in conflict</item>
+        <item quantity="other">⚠ %d saves in conflict</item>
+    </plurals>
+    <plurals name="sum_errors">
+        <item quantity="one">⚠ %d error</item>
+        <item quantity="other">⚠ %d errors</item>
+    </plurals>
+
+    <!-- Status -->
+    <string name="status_version">Version %1$s</string>
+    <string name="status_installed">Installed: %1$s</string>
+    <string name="status_last">Last sync (%1$s):</string>
+    <string name="status_log">Log</string>
+    <string name="no_log">No log yet</string>
+
+    <!-- Failures -->
     <string name="fail_offline">No network: connect the WiFi</string>
     <string name="fail_dns">Cannot find %1$s (DNS): check the network</string>
     <string name="fail_tls">Secure connection refused: check the device\'s date and time</string>
     <string name="fail_timeout">%1$s does not answer in time: check the network</string>
     <string name="fail_reach">Cannot reach %1$s: check the network</string>
     <string name="fail_server">%1$s answered with an error: %2$s</string>
+
+    <!-- Notifications -->
+    <string name="watch_channel">Save watcher</string>
+    <string name="watch_text">Saves go to the server as soon as you save</string>
     <string name="state_offline">No connection to the server since %1$s: saves stay here and go up when the network is back</string>
     <plurals name="state_conflicts">
         <item quantity="one">%d save in conflict: open the app to choose which one counts</item>
         <item quantity="other">%d saves in conflict: open the app to choose which one counts</item>
     </plurals>
+    <string name="received_channel">Saves received</string>
+    <string name="received_one">Save received: %1$s</string>
+    <string name="received_many">%1$d saves received: %2$s and more</string>
 </resources>

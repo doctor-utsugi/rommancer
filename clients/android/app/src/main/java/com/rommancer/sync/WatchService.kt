@@ -46,6 +46,7 @@ class WatchService : Service() {
     }
 
     override fun onDestroy() {
+        offlineSince = 0L
         observers.forEach { it.stopWatching() }
         worker.shutdownNow()
         super.onDestroy()
@@ -76,8 +77,6 @@ class WatchService : Service() {
 
     private var fails = 0
     private var failFirst = 0L
-    private var offlineSince = 0L
-    private var conflicts = 0
     private val started = System.currentTimeMillis()
 
     private fun poll() {
@@ -116,7 +115,7 @@ class WatchService : Service() {
         }
         return Notification.Builder(this, CHANNEL)
             .setSmallIcon(if (offlineSince != 0L || conflicts > 0) android.R.drawable.stat_notify_error else android.R.drawable.stat_notify_sync)
-            .setContentTitle(getString(R.string.watch_title))
+            .setContentTitle(getString(R.string.app_title))
             .setContentText(text)
             .setStyle(Notification.BigTextStyle().bigText(text))
             .setContentIntent(open)
@@ -146,6 +145,14 @@ class WatchService : Service() {
         private const val POLL_SECONDS = 15L
         private const val RESCAN_MINUTES = 10L
         private const val QUIET_SECONDS = 5L
+
+        /** Since when the server cannot be reached (ms, 0 when it can), for the app's header */
+        @Volatile var offlineSince = 0L
+            private set
+
+        /** Saves in conflict as the last poll said */
+        @Volatile var conflicts = 0
+            private set
 
         fun start(context: Context) {
             val store = Store(context)

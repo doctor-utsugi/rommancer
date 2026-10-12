@@ -9,6 +9,7 @@ import android.net.Uri
 import android.os.Bundle
 import android.os.Environment
 import android.provider.Settings
+import android.text.format.DateUtils
 import android.view.KeyEvent
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
@@ -21,6 +22,7 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -111,8 +113,13 @@ class MainActivity : ComponentActivity() {
 
 private sealed interface Screen {
     data object Menu : Screen
+    data object Settings : Screen
     data class Working(val title: String) : Screen
+    /** A download or a copy for the server another pass started, followed live until it ends */
+    data class Watch(val title: String, val pulls: Boolean) : Screen
     data class Message(val text: String, val details: String? = null) : Screen
+    /** What a sync did: TITLE is the action, the facts come from the summary */
+    data class Result(val title: String, val summary: Summary) : Screen
     data object Conflicts : Screen
     data class Conflict(val c: SyncEngine.Conflict) : Screen
     data object Status : Screen
@@ -122,6 +129,8 @@ private sealed interface Screen {
     data class ListDrop(val list: SyncEngine.DeviceList, val keep: List<Int>, val drop: SyncEngine.ListsDrop) : Screen
     /** Deleting roms in no list: "intro" (the choice offered once), "ask" (turned on in the web app), "hold" (a big deletion) */
     data class Prune(val kind: String) : Screen
+    /** Disconnecting the device, always asked first */
+    data object Unlink : Screen
 }
 
 @Composable
@@ -130,28 +139,29 @@ private fun App(resumes: Int) {
     val store = remember { Store(context) }
     var linked by remember { mutableStateOf(store.linked) }
     val canRead = remember(resumes) { Environment.isExternalStorageManager() }
-    // Two columns like the handheld setup app: content on the left, the spinning save point on the right
-    Row(Modifier.fillMaxSize().padding(horizontal = 24.dp, vertical = 12.dp)) {
-        Column(Modifier.weight(0.6f).fillMaxHeight().verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-            // The app's version next to its name, and when the last sync went through, always in sight under it
-            val version = remember { runCatching { context.packageManager.getPackageInfo(context.packageName, 0).versionName }.getOrNull().orEmpty() }
-            val syncedAt by produceState(store.lastSyncAt) { while (true) { value = store.lastSyncAt; delay(2_000) } }
-            Row(verticalAlignment = Alignment.Bottom) {
-                Text("Rommancer Sync", fontSize = 26.sp, fontWeight = FontWeight.SemiBold, color = Accent)
-                Text("  $version", fontSize = 14.sp, color = Dim, modifier = Modifier.padding(bottom = 4.dp))
-            }
-            Text(
-                if (syncedAt > 0) stringResource(R.string.synced_at, java.text.SimpleDateFormat("d MMM, HH:mm", java.util.Locale.getDefault()).format(java.util.Date(syncedAt)))
-                else stringResource(R.string.never_synced),
-                fontSize = 14.sp, color = Dim,
-            )
-            when {
-                !canRead -> StoragePermission()
-                linked -> Linked(store) { linked = false }
-                else -> Setup(store) { linked = true }
-            }
+    // Two columns like the handheld setup app: content on the left, the spinning save point on the right. Narrow
+    // screens (a phone upright) give all the width to the text
+    BoxWithConstraints(Modifier.fillMaxSize().padding(horizontal = 20.dp, vertical = 12.dp)) {
+        val sprite = when {
+            maxWidth < 560.dp -> 0f
+            maxWidth < 840.dp -> 0.3f
+            else -> 0.4f
         }
-        Box(Modifier.weight(0.4f).fillMaxHeight(), contentAlignment = Alignment.Center) { SavePoint() }
+        Row(Modifier.fillMaxSize()) {
+            Column(Modifier.weight(1f - sprite).fillMaxHeight().verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                val version = remember { runCatching { context.packageManager.getPackageInfo(context.packageName, 0).versionName }.getOrNull().orEmpty() }
+                Row(verticalAlignment = Alignment.Bottom) {
+                    Text(stringResource(R.string.app_title), fontSize = 26.sp, fontWeight = FontWeight.SemiBold, color = Accent)
+                    Text("  $version", fontSize = 14.sp, color = Dim, modifier = Modifier.padding(bottom = 4.dp))
+                }
+                when {
+                    !canRead -> StoragePermission()
+                    linked -> Linked(store) { linked = false }
+                    else -> Setup(store) { linked = true }
+                }
+            }
+            if (sprite > 0f) Box(Modifier.weight(sprite).fillMaxHeight(), contentAlignment = Alignment.Center) { SavePoint() }
+        }
     }
 }
 
@@ -178,20 +188,26 @@ private fun SavePoint() {
     }
 }
 
-/** A menu entry that the D-pad can reach and A/Enter can press, outlined when focused */
+/**
+ * A menu entry that the D-pad can reach and A/Enter can press, outlined when focused; SUB says in one smaller,
+ * dimmed line what it does
+ */
 @Composable
-private fun MenuItem(text: String, focus: FocusRequester? = null, onClick: () -> Unit) {
+private fun MenuItem(text: String, focus: FocusRequester? = null, sub: String? = null, color: Color = Color.White, onClick: () -> Unit) {
     var focused by remember { mutableStateOf(false) }
     TextButton(
         onClick = onClick,
-        contentPadding = PaddingValues(horizontal = 14.dp, vertical = 4.dp),
+        contentPadding = PaddingValues(horizontal = 14.dp, vertical = 8.dp),
         modifier = Modifier
             .fillMaxWidth()
             .then(if (focus != null) Modifier.focusRequester(focus) else Modifier)
             .onFocusChanged { focused = it.isFocused }
             .border(2.dp, if (focused) Accent else Color.Transparent, RoundedCornerShape(10.dp)),
     ) {
-        Text(text, fontSize = 19.sp, color = if (focused) Accent else Color.White, modifier = Modifier.fillMaxWidth())
+        Column(Modifier.fillMaxWidth()) {
+            Text(text, fontSize = 19.sp, color = if (focused) Accent else color)
+            if (sub != null) Text(sub, fontSize = 14.sp, color = Dim, lineHeight = 18.sp)
+        }
     }
 }
 
@@ -265,11 +281,77 @@ private fun Setup(store: Store, onLinked: () -> Unit) {
     TextButton(onClick = { signup = !signup }) { Text(stringResource(if (signup) R.string.have_account else R.string.no_account)) }
 }
 
+private val Warn = Color(0xFFFFB454)
+
+/** "Synced: today, 18:52", "Synced: yesterday, 09:10", "Synced: 3 Oct, 18:52" or "Not synced yet" */
+private fun syncedText(context: android.content.Context, at: Long): String {
+    if (at == 0L) return context.getString(R.string.never_synced)
+    val time = java.text.DateFormat.getTimeInstance(java.text.DateFormat.SHORT).format(java.util.Date(at))
+    return when {
+        DateUtils.isToday(at) -> context.getString(R.string.synced_today, time)
+        DateUtils.isToday(at + DateUtils.DAY_IN_MILLIS) -> context.getString(R.string.synced_yesterday, time)
+        else -> context.getString(R.string.synced_at, java.text.SimpleDateFormat("d MMM", java.util.Locale.getDefault()).format(java.util.Date(at)) + ", " + time)
+    }
+}
+
+private fun size(context: android.content.Context, bytes: Long) = android.text.format.Formatter.formatShortFileSize(context, bytes)
+
+/** One fact per line, as Summary.lines gives them */
+@Composable
+private fun SummaryLines(summary: Summary) {
+    val context = LocalContext.current
+    val lines = remember(summary) { summary.lines(context) }
+    lines.forEach { line ->
+        val warn = line.startsWith("⚠")
+        Text(line, fontSize = 18.sp, color = if (warn) Warn else Color.White)
+    }
+}
+
+/** Step of a full sync, what it does now with its count, the bar and the current file with its share and size */
+@Composable
+private fun ProgressLines(p: SyncEngine.Progress) {
+    val context = LocalContext.current
+    if (p.steps > 0) {
+        val stage = stringResource(when (p.stage) {
+            "saves" -> R.string.stage_saves
+            "config" -> R.string.stage_config
+            "prune" -> R.string.stage_prune
+            "roms" -> R.string.stage_roms
+            else -> R.string.stage_pulls
+        })
+        Text(stringResource(R.string.step, p.step, p.steps, stage), fontSize = 18.sp, color = Accent)
+    }
+    val label = stringResource(when (p.phase) {
+        "roms" -> R.string.p_roms
+        "server" -> R.string.p_server
+        "transfer" -> R.string.p_transfer
+        "identify" -> R.string.p_identify
+        "config" -> R.string.p_config
+        "prune" -> R.string.p_prune
+        "roms-plan" -> R.string.p_roms_plan
+        "roms-download" -> R.string.p_roms_download
+        "pulls" -> R.string.p_pulls
+        else -> R.string.p_connecting
+    })
+    Text(if (p.total > 0) "$label  ${p.done}/${p.total}" else label, fontSize = 17.sp)
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        LinearProgressIndicator(progress = { p.share }, modifier = Modifier.weight(1f).height(10.dp))
+        Text("  ${(p.share * 100).toInt()}%", color = Dim)
+    }
+    if (p.detail.isNotBlank()) {
+        Text(p.detail, color = Dim, fontSize = 15.sp, maxLines = 2)
+        val pct = (p.fileShare * 100).toInt()
+        Text(if (p.fileBytes > 0) stringResource(R.string.file_share, pct, size(context, p.fileBytes)) else "$pct%", color = Dim, fontSize = 15.sp)
+    }
+}
+
 @Composable
 private fun Linked(store: Store, onUnlinked: () -> Unit) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var screen by remember { mutableStateOf<Screen>(Screen.Menu) }
+    // Where Back leads from a result: the settings when the action was started there
+    var back by remember { mutableStateOf<Screen>(Screen.Menu) }
     var progress by remember { mutableStateOf(SyncEngine.Progress("connecting")) }
     var conflicts by remember { mutableStateOf<List<SyncEngine.Conflict>?>(null) }
     var settingsTick by remember { mutableIntStateOf(0) }
@@ -284,6 +366,36 @@ private fun Linked(store: Store, onUnlinked: () -> Unit) {
             notifications.launch(Manifest.permission.POST_NOTIFICATIONS)
         }
         WatchService.start(context)
+    }
+
+    fun from() = if (screen == Screen.Settings) Screen.Settings else Screen.Menu
+
+    fun run(title: String, work: (SyncEngine) -> Summary) {
+        back = from()
+        progress = SyncEngine.Progress("connecting")
+        screen = Screen.Working(title)
+        scope.launch {
+            val result = withContext(Dispatchers.IO) {
+                runCatching { work(SyncEngine(context, store) { progress = it }) }
+            }
+            screen = result.fold(
+                { Screen.Result(title, it) },
+                { e -> Failure.describe(context, store, e).let { (why, details) -> Screen.Message(why, details) } },
+            )
+        }
+    }
+
+    /** Work whose outcome is a sentence, not a sync */
+    fun runText(title: String, work: () -> String) {
+        back = from()
+        progress = SyncEngine.Progress("connecting")
+        screen = Screen.Working(title)
+        scope.launch {
+            val result = withContext(Dispatchers.IO) {
+                runCatching { work() to null }.getOrElse { e -> Failure.describe(context, store, e) }
+            }
+            screen = Screen.Message(result.first, result.second)
+        }
     }
 
     // The user's WiFi networks: Android asks to save them in its own dialog
@@ -305,16 +417,10 @@ private fun Linked(store: Store, onUnlinked: () -> Unit) {
         }
         Dolphin(context, store).link(uri)
         settingsTick++
-        screen = Screen.Working(dolphinDone)
-        scope.launch {
-            val text = withContext(Dispatchers.IO) {
-                runCatching { "$dolphinDone\n" + SyncEngine(context, store) { progress = it }.sync() }.getOrElse { it.message ?: "error" }
-            }
-            screen = Screen.Message(text)
-        }
+        run(dolphinDone) { it.sync() }
     }
 
-    // Shizuku starting, stopping or granting its permission redraws its menu entry
+    // Shizuku starting, stopping or granting its permission redraws its settings entry
     DisposableEffect(Unit) {
         val granted = rikka.shizuku.Shizuku.OnRequestPermissionResultListener { _, _ -> settingsTick++ }
         val alive = rikka.shizuku.Shizuku.OnBinderReceivedListener { settingsTick++ }
@@ -338,20 +444,14 @@ private fun Linked(store: Store, onUnlinked: () -> Unit) {
         if (screen == Screen.Menu) conflicts = withContext(Dispatchers.IO) { runCatching { SyncEngine(context, store).conflicts() }.getOrNull() }
     }
 
-    fun run(title: String, work: (SyncEngine) -> String) {
-        screen = Screen.Working(title)
-        scope.launch {
-            val result = withContext(Dispatchers.IO) {
-                runCatching { work(SyncEngine(context, store) { progress = it }) to null }
-                    .getOrElse { e -> Failure.describe(context, store, e) }
-            }
-            screen = Screen.Message(result.first, result.second)
-        }
-    }
+    // A rom download or a copy for the server under way, whoever started it
+    val live by produceState(SyncEngine.LIVE) { while (true) { value = SyncEngine.LIVE; delay(500) } }
+    val pullLive by produceState(SyncEngine.PULL_LIVE) { while (true) { value = SyncEngine.PULL_LIVE; delay(500) } }
 
-    // Opened while the background downloads the lists' roms: their progress first, on screen until done or stopped
-    val titleRomsOpen = stringResource(R.string.sync_roms)
-    LaunchedEffect(Unit) { if (SyncEngine.LIVE != null) run(titleRomsOpen) { it.roms() } }
+    // Opened while a download of the lists' roms goes on: its progress first, on screen until done or stopped
+    val titleWatchRoms = stringResource(R.string.watch_download)
+    val titleWatchPulls = stringResource(R.string.watch_pulls)
+    LaunchedEffect(Unit) { if (SyncEngine.LIVE != null) screen = Screen.Watch(titleWatchRoms, pulls = false) }
 
     // What the deletion of roms in no list needs from the user, checked whenever the menu shows
     var holdLater by remember { mutableStateOf(false) }
@@ -371,7 +471,7 @@ private fun Linked(store: Store, onUnlinked: () -> Unit) {
     var listsBusy by remember { mutableStateOf(false) }
     var listsChanged by remember { mutableStateOf(false) }
     var listAt by remember { mutableStateOf<Int?>(null) }
-    val titleSyncLists = stringResource(R.string.syncing)
+    val titleSync = stringResource(R.string.sync_now)
     fun loadLists() {
         listsBusy = true
         scope.launch {
@@ -411,62 +511,94 @@ private fun Linked(store: Store, onUnlinked: () -> Unit) {
     fun leaveLists() {
         if (listsChanged) {
             listsChanged = false
-            run(titleSyncLists) { it.all(roms = true) }
+            run(titleSync) { it.all(roms = true) }
         } else screen = Screen.Menu
     }
 
-    // B / back returns to the menu from any inner screen; a running sync is left alone
+    fun unlink() {
+        SyncWorker.cancel(context)
+        WatchService.stop(context)
+        store.unlink()
+        onUnlinked()
+    }
+
+    // B / back returns from any inner screen; a running sync is left alone. On the deletion prompts it is the safe
+    // answer: leave the deletion off (intro), turn it off (ask), not now (hold), so the prompt does not come back at once
+    val titlePrune = stringResource(R.string.prune_title)
     BackHandler(enabled = screen != Screen.Menu && screen !is Screen.Working) {
-        if (screen == Screen.Prune("hold")) holdLater = true
-        when (screen) {
+        when (val s = screen) {
             Screen.Lists -> leaveLists()
             is Screen.ListDrop -> screen = Screen.Lists
             is Screen.Conflict -> screen = Screen.Conflicts
+            Screen.Unlink -> screen = Screen.Settings
+            is Screen.Message, is Screen.Result -> screen = back
+            is Screen.Prune -> when (s.kind) {
+                "intro", "ask" -> run(titlePrune) { it.pruneSet(false) }
+                else -> { holdLater = true; screen = Screen.Menu }
+            }
             else -> screen = Screen.Menu
         }
     }
 
     when (val s = screen) {
         Screen.Menu -> {
-            Text(stringResource(R.string.connected, store.server, store.user ?: "?"), color = Dim)
-            // The server is fetching roms from this device: shown with its progress while it lasts
-            val pull by produceState(SyncEngine.PULL_LIVE) { while (true) { value = SyncEngine.PULL_LIVE; delay(500) } }
-            pull?.let { p ->
-                Text("${stringResource(R.string.p_pulls)}  ${p.done}/${p.total}", fontSize = 18.sp)
-                LinearProgressIndicator(progress = { p.share }, modifier = Modifier.fillMaxWidth().height(10.dp))
-                Text("${(p.share * 100).toInt()}%  ·  ${p.detail}  ${(p.fileShare * 100).toInt()}%", color = Dim)
+            // The state, the most urgent first: saves in conflict, no server since when, when it last synced
+            val n = conflicts?.size ?: WatchService.conflicts
+            val offline by produceState(WatchService.offlineSince) { while (true) { value = WatchService.offlineSince; delay(2_000) } }
+            val syncedAt by produceState(store.lastSyncAt) { while (true) { value = store.lastSyncAt; delay(2_000) } }
+            when {
+                n > 0 -> Text(context.resources.getQuantityString(R.plurals.sum_conflicts, n, n), fontSize = 16.sp, color = Warn)
+                offline > 0 -> Text(stringResource(R.string.home_offline, java.text.DateFormat.getTimeInstance(java.text.DateFormat.SHORT).format(java.util.Date(offline))), fontSize = 16.sp, color = Warn)
+                else -> Text(syncedText(context, syncedAt), fontSize = 16.sp, color = Dim)
             }
-            settingsTick // read so the toggles redraw after a change
-            val n = conflicts?.size?.toString() ?: "…"
-            val titleSync = stringResource(R.string.syncing)
-            val titleRoms = stringResource(R.string.sync_roms)
+            // Live work, only while it runs
+            live?.takeIf { it.phase == "roms-download" }?.let { Text(stringResource(R.string.live_download, it.done, it.total), fontSize = 16.sp, color = Accent) }
+            pullLive?.let { Text(stringResource(R.string.live_pulls, it.done, it.total), fontSize = 16.sp, color = Accent) }
+            Spacer(Modifier.height(4.dp))
+
             val titleUpdate = stringResource(R.string.updating)
             update?.let { u ->
-                MenuItem(stringResource(R.string.update_app, u.name)) { run(titleUpdate) { Updater.install(context, store); "" } }
+                MenuItem(stringResource(R.string.update_app, u.name)) { runText(titleUpdate) { Updater.install(context, store); "" } }
             }
             // Asked on screen: the roms download again even after a stop
-            MenuItem(stringResource(R.string.sync_now), firstItem) { run(titleSync) { it.all(roms = true) } }
-            MenuItem(titleRoms) { run(titleRoms) { it.roms() } }
+            MenuItem(titleSync, firstItem) { run(titleSync) { it.all(roms = true) } }
+            if (n > 0) MenuItem(stringResource(R.string.conflicts, n), color = Warn) { screen = Screen.Conflicts }
+            if (live != null) MenuItem(titleWatchRoms) { screen = Screen.Watch(titleWatchRoms, pulls = false) }
+            if (pullLive != null) MenuItem(titleWatchPulls) { screen = Screen.Watch(titleWatchPulls, pulls = true) }
             MenuItem(stringResource(R.string.lists)) { lists = null; listsError = null; listAt = null; screen = Screen.Lists; loadLists() }
-            MenuItem(stringResource(R.string.watch, if (store.watch) yes else no)) {
+            MenuItem(stringResource(R.string.settings)) { screen = Screen.Settings }
+            MenuItem(stringResource(R.string.status)) { screen = Screen.Status }
+            LaunchedEffect(Unit) { runCatching { firstItem.requestFocus() } }
+        }
+        Screen.Settings -> {
+            settingsTick // read so the toggles redraw after a change
+            Text(stringResource(R.string.settings), fontSize = 22.sp)
+            MenuItem(stringResource(R.string.set_watch, if (store.watch) yes else no), firstItem, sub = stringResource(R.string.set_watch_sub)) {
                 store.watch = !store.watch
                 if (store.watch) WatchService.start(context) else WatchService.stop(context)
                 settingsTick++
             }
-            MenuItem(stringResource(R.string.allow_pull, if (store.allowPull) yes else no)) { store.allowPull = !store.allowPull; settingsTick++ }
-            MenuItem(stringResource(R.string.prune, if (store.pruneRoms) yes else no)) { val on = !store.pruneRoms; run(titleSync) { it.pruneSet(on) } }
+            MenuItem(stringResource(R.string.set_pull, if (store.allowPull) yes else no), sub = stringResource(R.string.set_pull_sub)) {
+                store.allowPull = !store.allowPull
+                settingsTick++
+            }
+            MenuItem(stringResource(R.string.set_prune, if (store.pruneRoms) yes else no), sub = stringResource(R.string.set_prune_sub)) {
+                val on = !store.pruneRoms
+                run(titlePrune) { it.pruneSet(on) }
+            }
             val cleanable = remember(settingsTick, screen) { store.pruned.size }
-            val titleClean = stringResource(R.string.prune_clean, cleanable)
-            MenuItem(titleClean) { run(titleClean) { it.pruneClean() } }
+            val titleClean = stringResource(R.string.set_clean, cleanable)
+            MenuItem(titleClean, sub = stringResource(R.string.set_clean_sub)) { run(titleClean) { it.pruneClean() } }
             if (WifiSetup.supported) {
-                val titleWifi = stringResource(R.string.add_wifi)
-                MenuItem(titleWifi) {
+                val titleWifi = stringResource(R.string.set_wifi)
+                MenuItem(titleWifi, sub = stringResource(R.string.set_wifi_sub)) {
+                    back = Screen.Settings
                     screen = Screen.Working(titleWifi)
                     scope.launch {
                         val nets = withContext(Dispatchers.IO) { runCatching { WifiSetup.fetch(context, store) } }
                         val intent = nets.getOrNull()?.let { WifiSetup.intent(it) }
                         when {
-                            nets.isFailure -> screen = Screen.Message(nets.exceptionOrNull()?.message ?: "error")
+                            nets.isFailure -> screen = Failure.describe(context, store, nets.exceptionOrNull()!!).let { (why, details) -> Screen.Message(why, details) }
                             intent == null -> screen = Screen.Message(wifiNone)
                             else -> addWifi.launch(intent)
                         }
@@ -475,7 +607,10 @@ private fun Linked(store: Store, onUnlinked: () -> Unit) {
             }
             if (Dolphin.installed(context)) {
                 val dolphinLinked = remember(settingsTick) { Dolphin(context, store).linked }
-                MenuItem(stringResource(if (dolphinLinked) R.string.dolphin_linked else R.string.dolphin_grant)) { pickDolphin.launch(Dolphin.initialUri) }
+                MenuItem(stringResource(if (dolphinLinked) R.string.dolphin_linked else R.string.dolphin_grant), sub = stringResource(R.string.dolphin_sub)) {
+                    back = Screen.Settings
+                    pickDolphin.launch(Dolphin.initialUri)
+                }
             }
             val shizuku = remember(settingsTick) { Privileged.state() }
             val titleConfig = stringResource(R.string.applying_config)
@@ -484,43 +619,37 @@ private fun Linked(store: Store, onUnlinked: () -> Unit) {
                 Privileged.State.READY -> R.string.shizuku_ready
                 Privileged.State.NOT_ALLOWED -> R.string.shizuku_allow
                 Privileged.State.NOT_RUNNING -> R.string.shizuku_off
-            })) {
+            }), sub = stringResource(R.string.shizuku_sub)) {
                 when (shizuku) {
-                    Privileged.State.READY -> run(titleConfig) { e -> context.getString(R.string.config_done, ConfigEngine(context, store).run()) }
+                    Privileged.State.READY -> runText(titleConfig) { context.getString(R.string.config_done, ConfigEngine(context, store).run()) }
                     Privileged.State.NOT_ALLOWED -> { Privileged.request(1); settingsTick++ }
-                    Privileged.State.NOT_RUNNING -> screen = Screen.Message(shizukuHelp)
+                    Privileged.State.NOT_RUNNING -> { back = Screen.Settings; screen = Screen.Message(shizukuHelp) }
                 }
             }
-            MenuItem(stringResource(R.string.conflicts, n)) { screen = Screen.Conflicts }
-            MenuItem(stringResource(R.string.status)) { screen = Screen.Status }
-            MenuItem(stringResource(R.string.unlink)) {
-                SyncWorker.cancel(context)
-                WatchService.stop(context)
-                store.unlink()
-                onUnlinked()
-            }
+            Spacer(Modifier.height(4.dp))
+            Text(stringResource(R.string.account, store.user ?: "?", store.server), color = Dim, fontSize = 15.sp, modifier = Modifier.padding(horizontal = 14.dp))
+            MenuItem(stringResource(R.string.unlink)) { screen = Screen.Unlink }
+            MenuItem(stringResource(R.string.press_back)) { screen = Screen.Menu }
+            LaunchedEffect(Unit) { runCatching { firstItem.requestFocus() } }
+        }
+        Screen.Unlink -> {
+            Text(stringResource(R.string.unlink_confirm, store.server), fontSize = 20.sp)
+            MenuItem(stringResource(R.string.cancel), firstItem) { screen = Screen.Settings }
+            MenuItem(stringResource(R.string.unlink_go), color = Warn) { unlink() }
             LaunchedEffect(Unit) { runCatching { firstItem.requestFocus() } }
         }
         is Screen.Working -> {
-            // A download the background started shows its own progress (this pass waits for it)
-            val live by produceState(SyncEngine.LIVE) { while (true) { value = SyncEngine.LIVE; delay(500) } }
-            val pullLive by produceState(SyncEngine.PULL_LIVE) { while (true) { value = SyncEngine.PULL_LIVE; delay(500) } }
-            val progress = if (progress.phase.startsWith("roms") || progress.phase == "connecting") live ?: progress else if (progress.phase == "pulls") pullLive ?: progress else progress
-            Text(s.title, fontSize = 22.sp)
-            val label = when (progress.phase) {
-                "roms" -> stringResource(R.string.p_roms)
-                "server" -> stringResource(R.string.p_server)
-                "transfer" -> stringResource(R.string.p_transfer)
-                "identify" -> stringResource(R.string.p_identify)
-                "roms-plan" -> stringResource(R.string.p_roms_plan)
-                "roms-download" -> stringResource(R.string.p_roms_download)
-                "pulls" -> stringResource(R.string.p_pulls)
-                else -> stringResource(R.string.p_connecting)
+            // A download or copy another pass started shows its own progress while this one waits for it
+            val p = progress
+            val shown = when {
+                p.stage in listOf("", "roms") && (p.phase.startsWith("roms") || p.phase == "connecting") && live != null ->
+                    live!!.copy(step = p.step, steps = p.steps, stage = p.stage)
+                p.phase == "pulls" && pullLive != null -> pullLive!!.copy(step = p.step, steps = p.steps, stage = p.stage)
+                else -> p
             }
-            Text(if (progress.total > 0) "$label  ${progress.done}/${progress.total}" else label, color = Dim)
-            LinearProgressIndicator(progress = { progress.share }, modifier = Modifier.fillMaxWidth().height(10.dp))
-            Text("${(progress.share * 100).toInt()}%" + if (progress.detail.isNotBlank()) "  ·  ${progress.detail}  ${(progress.fileShare * 100).toInt()}%" else "", color = Dim)
-            if (progress.phase == "roms-download" || progress.phase == "roms-plan") {
+            Text(s.title, fontSize = 22.sp)
+            ProgressLines(shown)
+            if (shown.phase == "roms-download" || shown.phase == "roms-plan") {
                 var stopping by remember { mutableStateOf(false) }
                 MenuItem(stringResource(if (stopping) R.string.stopping else R.string.roms_stop), firstItem) {
                     stopping = true
@@ -529,12 +658,42 @@ private fun Linked(store: Store, onUnlinked: () -> Unit) {
                 LaunchedEffect(Unit) { runCatching { firstItem.requestFocus() } }
             }
         }
+        is Screen.Watch -> {
+            Text(s.title, fontSize = 22.sp)
+            val p = if (s.pulls) pullLive else live
+            val started = remember(s) { System.currentTimeMillis() }
+            if (p != null) ProgressLines(p) else Text(stringResource(R.string.p_connecting), color = Dim)
+            if (!s.pulls && p != null) {
+                var stopping by remember { mutableStateOf(false) }
+                MenuItem(stringResource(if (stopping) R.string.stopping else R.string.roms_stop), firstItem) {
+                    stopping = true
+                    SyncEngine.stopRoms(store)
+                }
+            }
+            MenuItem(stringResource(R.string.press_back), if (s.pulls) firstItem else null) { screen = Screen.Menu }
+            LaunchedEffect(s) { runCatching { firstItem.requestFocus() } }
+            // Done: what the pass did, once it has written it down; the menu otherwise
+            LaunchedEffect(p == null) {
+                if (p != null) return@LaunchedEffect
+                delay(1_500)
+                screen = if (store.lastSummaryAt >= started) Screen.Result(s.title, Summary.decode(store.lastSummary)) else Screen.Menu
+            }
+        }
+        is Screen.Result -> {
+            var open by remember(s) { mutableStateOf(false) }
+            Text(s.title, fontSize = 22.sp)
+            SummaryLines(s.summary)
+            if (open) s.summary.details.takeLast(20).forEach { Text(it, color = Dim, fontSize = 14.sp) }
+            MenuItem(stringResource(R.string.press_back), firstItem) { screen = back }
+            if (s.summary.errors > 0 && s.summary.details.isNotEmpty() && !open) MenuItem(stringResource(R.string.details)) { open = true }
+            LaunchedEffect(s) { runCatching { firstItem.requestFocus() } }
+        }
         is Screen.Message -> {
             var open by remember(s) { mutableStateOf(false) }
             Text(s.text, fontSize = 20.sp)
             // A failure offers what is behind it
             if (open && s.details != null) Text(s.details, color = Dim, fontSize = 14.sp)
-            MenuItem(stringResource(R.string.press_back), firstItem) { screen = Screen.Menu }
+            MenuItem(stringResource(R.string.press_back), firstItem) { screen = back }
             if (s.details != null && !open) MenuItem(stringResource(R.string.details)) { open = true }
             LaunchedEffect(s) { runCatching { firstItem.requestFocus() } }
         }
@@ -548,32 +707,31 @@ private fun Linked(store: Store, onUnlinked: () -> Unit) {
         is Screen.Conflict -> {
             val c = s.c
             Text(stringResource(R.string.conflict_info, c.game, c.mine.take(16).replace('T', ' '), c.theirs.take(16).replace('T', ' '), c.device), color = Dim)
-            val title = stringResource(R.string.syncing)
-            MenuItem(stringResource(R.string.keep_device), firstItem) { run(title) { e -> "sync: ${e.resolve(c.id, "device")}" } }
-            MenuItem(stringResource(R.string.keep_server)) { run(title) { e -> "sync: ${e.resolve(c.id, "server")}" } }
+            val keepDevice = stringResource(R.string.keep_device)
+            val keepServer = stringResource(R.string.keep_server)
+            MenuItem(keepDevice, firstItem) { run(keepDevice) { e -> e.resolve(c.id, "device") } }
+            MenuItem(keepServer) { run(keepServer) { e -> e.resolve(c.id, "server") } }
             MenuItem(stringResource(R.string.press_back)) { screen = Screen.Conflicts }
             LaunchedEffect(Unit) { runCatching { firstItem.requestFocus() } }
         }
         is Screen.Prune -> {
-            val title = stringResource(R.string.syncing)
             when (s.kind) {
                 "intro" -> {
                     Text(stringResource(R.string.prune_intro), fontSize = 20.sp)
-                    MenuItem(stringResource(R.string.prune_no), firstItem) { run(title) { it.pruneSet(false) } }
-                    MenuItem(stringResource(R.string.prune_yes)) { run(title) { it.pruneSet(true) } }
+                    MenuItem(stringResource(R.string.prune_no), firstItem) { run(titlePrune) { it.pruneSet(false) } }
+                    MenuItem(stringResource(R.string.prune_yes)) { run(titlePrune) { it.pruneSet(true) } }
                 }
                 "ask" -> {
                     val (files, bytes) = (store.pruneAsk ?: "0\t0").split('\t').let { it.getOrElse(0) { "0" } to (it.getOrNull(1)?.toLongOrNull() ?: 0L) }
-                    Text(stringResource(R.string.prune_ask, files, android.text.format.Formatter.formatShortFileSize(context, bytes)), fontSize = 20.sp)
-                    MenuItem(stringResource(R.string.prune_keep), firstItem) { run(title) { it.pruneSet(true) } }
-                    MenuItem(stringResource(R.string.prune_off)) { run(title) { it.pruneSet(false) } }
+                    Text(stringResource(R.string.prune_ask, files, size(context, bytes)), fontSize = 20.sp)
+                    MenuItem(stringResource(R.string.prune_keep), firstItem) { run(titlePrune) { it.pruneSet(true) } }
+                    MenuItem(stringResource(R.string.prune_off)) { run(titlePrune) { it.pruneSet(false) } }
                 }
                 else -> {
                     val (files, total) = (store.pruneHold ?: "0\t0").split('\t').let { it.getOrElse(0) { "0" } to it.getOrElse(1) { "0" } }
                     Text(stringResource(R.string.prune_hold, files, total), fontSize = 20.sp)
-                    val titlePrune = stringResource(R.string.p_prune)
                     MenuItem(stringResource(R.string.prune_delete), firstItem) { run(titlePrune) { it.pruneConfirm() } }
-                    MenuItem(stringResource(R.string.prune_off)) { run(title) { it.pruneSet(false) } }
+                    MenuItem(stringResource(R.string.prune_off)) { run(titlePrune) { it.pruneSet(false) } }
                     MenuItem(stringResource(R.string.prune_later)) { holdLater = true; screen = Screen.Menu }
                 }
             }
@@ -593,6 +751,12 @@ private fun Linked(store: Store, onUnlinked: () -> Unit) {
                 val label = (if (l.on) "☑ " else "☐ ") + l.name + (if (l.owner.isNotEmpty()) " @${l.owner}" else "") + " (${l.items})"
                 MenuItem(label, focus.getOrPut(l.id) { FocusRequester() }) { if (!listsBusy) toggleList(l) }
             }
+            // Downloads what the lists hold and is missing here; never deletes anything
+            val titleDownload = stringResource(R.string.lists_download)
+            MenuItem(titleDownload, sub = stringResource(R.string.lists_download_sub)) {
+                listsChanged = false
+                run(titleDownload) { it.roms() }
+            }
             MenuItem(stringResource(R.string.press_back), firstItem) { leaveLists() }
             // The cursor goes back to the list just changed, or to the first one
             LaunchedEffect(current) {
@@ -602,17 +766,30 @@ private fun Linked(store: Store, onUnlinked: () -> Unit) {
         }
         is Screen.ListDrop -> {
             val d = s.drop
-            val size = android.text.format.Formatter.formatShortFileSize(context, d.bytes)
-            Text(stringResource(R.string.list_drop, s.list.name, d.files + d.upload, size), fontSize = 20.sp)
+            Text(stringResource(R.string.list_drop, s.list.name, d.files + d.upload, size(context, d.bytes)), fontSize = 20.sp)
             if (d.upload > 0) Text(stringResource(R.string.list_drop_up, d.upload), color = Dim)
             MenuItem(stringResource(R.string.list_drop_go, d.files + d.upload), firstItem) { setLists(s.keep) }
             MenuItem(stringResource(R.string.cancel)) { screen = Screen.Lists }
             LaunchedEffect(s) { runCatching { firstItem.requestFocus() } }
         }
         Screen.Status -> {
+            val info = remember { runCatching { context.packageManager.getPackageInfo(context.packageName, 0) }.getOrNull() }
+            val day = java.text.DateFormat.getDateInstance(java.text.DateFormat.MEDIUM)
+            Text(stringResource(R.string.status), fontSize = 22.sp)
+            Text(stringResource(R.string.status_version, info?.versionName.orEmpty()), color = Dim, fontSize = 15.sp)
+            info?.let { Text(stringResource(R.string.status_installed, day.format(java.util.Date(it.firstInstallTime))), color = Dim, fontSize = 15.sp) }
+            Text(stringResource(R.string.account, store.user ?: "?", store.server), color = Dim, fontSize = 15.sp)
+            Spacer(Modifier.height(4.dp))
+            val at = store.lastSummaryAt
+            if (at > 0) {
+                Text(stringResource(R.string.status_last, java.text.DateFormat.getDateTimeInstance(java.text.DateFormat.MEDIUM, java.text.DateFormat.SHORT).format(java.util.Date(at))), fontSize = 17.sp)
+                SummaryLines(remember { Summary.decode(store.lastSummary) })
+            } else Text(stringResource(R.string.never_synced), color = Dim)
+            Spacer(Modifier.height(4.dp))
+            Text(stringResource(R.string.status_log), fontSize = 17.sp)
             val log = store.log
             if (log.isEmpty()) Text(stringResource(R.string.no_log), color = Dim)
-            log.takeLast(10).forEach { Text(it, color = Dim, fontSize = 14.sp) }
+            log.takeLast(10).forEach { Text(it, color = Dim, fontSize = 13.sp) }
             Spacer(Modifier.height(8.dp))
             MenuItem(stringResource(R.string.press_back), firstItem) { screen = Screen.Menu }
             LaunchedEffect(Unit) { runCatching { firstItem.requestFocus() } }
