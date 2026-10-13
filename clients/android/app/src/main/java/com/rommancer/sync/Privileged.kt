@@ -24,17 +24,19 @@ object Privileged {
     private fun shizuku() = runCatching { Shizuku.pingBinder() && !Shizuku.isPreV11() && Shizuku.checkSelfPermission() == PackageManager.PERMISSION_GRANTED }.getOrDefault(false)
 
     @Volatile private var rootKnown: Boolean? = null
+    @Volatile private var rootAskedAt = 0L
 
     /**
-     * Whether su runs commands as root here, asked once a run off the main thread (Magisk shows its prompt the first
-     * time); the screen sees it once a sync asked
+     * Whether su runs commands as root here, asked off the main thread (Magisk shows its prompt the first time); a
+     * refusal is asked again after a few minutes, as the user may grant it later. The screen sees it once a sync asked
      */
     private val root: Boolean
         get() {
-            rootKnown?.let { return it }
+            rootKnown?.let { if (it || System.currentTimeMillis() - rootAskedAt < 5 * 60_000L) return it }
             if (android.os.Looper.myLooper() == android.os.Looper.getMainLooper()) return false
-            val ok = listOf("/system/bin/su", "/system/xbin/su", "/sbin/su", "/debug_ramdisk/su").any { File(it).exists() } &&
-                runCatching { ProcessBuilder("su", "-c", "id -u").start().let { p -> p.inputStream.bufferedReader().readText().trim() == "0" && p.waitFor() == 0 } }.getOrDefault(false)
+            // Wherever the root manager put it (/product/bin, /debug_ramdisk...): asked by name, none without it
+            val ok = runCatching { ProcessBuilder("su", "-c", "id -u").start().let { p -> p.inputStream.bufferedReader().readText().trim() == "0" && p.waitFor() == 0 } }.getOrDefault(false)
+            rootAskedAt = System.currentTimeMillis()
             return ok.also { rootKnown = it }
         }
 
