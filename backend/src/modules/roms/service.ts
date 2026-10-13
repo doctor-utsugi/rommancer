@@ -1,10 +1,10 @@
 import { Prisma } from '@prisma/client';
 import { prisma } from '../../lib/prisma.js';
 
-// Partes que no cuentan para considerar una rom completa (los .cue suelen diferir del DAT)
+// Parts that do not count toward a complete rom (.cue files often differ from the DAT)
 const IGNORED_PART = `(p.name LIKE '%.cue' OR p.name LIKE '%.gdi' OR p.name LIKE '%.sub' OR p.name LIKE '%.m3u')`;
 
-/** Ids de roms completas en disco. Por defecto solo verificadas; 'any' incluye las no verificadas (listas, dispositivos). */
+/** Ids of complete roms on disk. Verified only by default; 'any' includes unverified ones (lists, devices). */
 export async function ownedRomIds(filter: { systemId?: number; romIds?: number[]; include?: 'verified' | 'any' } = {}): Promise<Set<number>> {
   if (filter.romIds && !filter.romIds.length) return new Set();
   if (filter.include === 'any') {
@@ -39,7 +39,7 @@ export async function ownedGameIds(systemId?: number): Promise<Set<number>> {
     const rows = await prisma.rom.findMany({ where: { id: { in: ids.slice(i, i + 5000) } }, select: { gameId: true } });
     rows.forEach((r) => out.add(r.gameId));
   }
-  // Juegos con algun romhack presente tambien cuentan como "tengo algo"
+  // Games with any romhack present also count as "I have something"
   return out;
 }
 
@@ -87,7 +87,7 @@ export interface RomPreference {
   strictRegions?: boolean;
   strictLanguages?: boolean;
   excludeFlags?: string[];
-  // Obras multiplataforma: sistemas (slugs) por orden de preferencia
+  // Cross-platform works: systems (slugs) in order of preference
   platforms?: string[];
 }
 
@@ -104,7 +104,7 @@ type RomForPick = {
 
 const DEFAULT_EXCLUDE = ['proto', 'beta', 'demo', 'sample', 'pirate'];
 
-/** Elige la mejor rom de un juego segun preferencias. Devuelve null si ninguna cumple los filtros. */
+/** Picks the best rom of a game by preferences. Returns null if none meets the filters. */
 export function pickRom<T extends RomForPick>(roms: T[], pref: RomPreference, owned?: Set<number>): T | null {
   const cands = romCandidates(roms, pref, owned);
   if (!cands.length) return null;
@@ -139,13 +139,13 @@ export function romScore(r: RomForPick, pref: RomPreference = {}, owned?: Set<nu
   if (owned?.has(r.id)) s += 50;
   if (r.raGameId) s += 20;
   if ((r.flags as string[]).length === 0) s += 10;
-  // Revisiones mas altas primero
+  // Higher revisions first
   const rev = r.revision?.match(/[\d.]+|[A-Z]$/)?.[0];
   if (rev) s += Math.min(9, isNaN(Number(rev)) ? rev.charCodeAt(0) - 64 : Number(rev));
   return s;
 }
 
-/** Elige juego y rom de una obra: primero la plataforma preferida que tenga una rom valida. */
+/** Picks game and rom of a work: first the preferred platform that has a valid rom. */
 export function pickFromWork<R extends RomForPick, G extends { id: number; system: { slug: string }; roms: R[] }>(games: G[], pref: RomPreference, owned?: Set<number>): { game: G; rom: R } | null {
   const order = pref.platforms ?? [];
   const rank = (g: G) => (order.includes(g.system.slug) ? order.indexOf(g.system.slug) : order.length + (g.roms.some((r) => owned?.has(r.id)) ? 0 : 1));

@@ -21,14 +21,14 @@ export interface SaveKey {
   baseName: string;
 }
 
-/** Busca la rom/juego que corresponde a un nombre de fichero (sin extension). */
+/** Finds the rom/game matching a file name (no extension). */
 export async function identifyRom(baseName: string, systemId?: number | null) {
   const rom = await prisma.rom.findFirst({
     where: { name: baseName, ...(systemId ? { game: { systemId } } : {}) },
     select: { id: true, gameId: true, game: { select: { systemId: true } } },
   });
   if (rom) return { romId: rom.id, gameId: rom.gameId, systemId: rom.game.systemId };
-  // Nombre de fichero local distinto del DAT: se busca por el fichero escaneado
+  // Local file name differs from the DAT: look it up by the scanned file
   const files = await prisma.romFile.findMany({
     where: { relativePath: { contains: baseName }, status: { in: ['MATCHED', 'HACK'] } },
     include: { romPart: { include: { rom: { include: { game: true } } } }, romHack: { include: { game: true } } },
@@ -99,8 +99,8 @@ export async function storeVersion(
   const rel = path.join(String(key.userId), String(save.id), `${version.id}-${sha1.slice(0, 8)}.bin`);
   await fs.promises.writeFile(path.join(env.savesDir, rel), buf);
   await prisma.saveVersion.update({ where: { id: version.id }, data: { path: rel } });
-  // La version nueva pasa a ser la actual salvo que se indique lo contrario (conflictos).
-  // No se comparan fechas: los relojes de las portatiles no son fiables.
+  // The new version becomes current unless told otherwise (conflicts).
+  // Dates are not compared: handheld clocks are unreliable.
   if (opts.makeCurrent !== false || !save.currentVersionId) {
     await prisma.save.update({ where: { id: save.id }, data: { currentVersionId: version.id } });
     // The user's other devices fetch it now instead of at their next regular pass

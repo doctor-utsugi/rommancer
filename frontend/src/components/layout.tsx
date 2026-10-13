@@ -24,7 +24,8 @@ import {
 import { cn } from '@/lib/utils'
 import { useAuth } from '@/lib/auth'
 import { Button } from '@/components/ui/button'
-import i18n from '@/i18n'
+import i18n, { setLanguage } from '@/i18n'
+import { LOCALES } from '@/i18n/locales'
 import { patch } from '@/lib/api'
 import { ActivityDock } from '@/components/activity'
 
@@ -49,9 +50,8 @@ function Item({ to, icon: Icon, label }: { to: string; icon: typeof Home; label:
 export function Layout() {
   const { t } = useTranslation()
   const { user, logout, can } = useAuth()
-  const switchLang = async () => {
-    const next = i18n.language === 'es' ? 'en' : 'es'
-    await i18n.changeLanguage(next)
+  const switchLang = async (next: string) => {
+    await setLanguage(next)
     await patch('/users/me', { locale: next }).catch(() => {})
   }
   return (
@@ -91,9 +91,18 @@ export function Layout() {
               <LogOut className="size-4" />
               {t('nav.logout')}
             </Button>
-            <Button variant="ghost" size="sm" onClick={() => void switchLang()} aria-label="language">
-              {i18n.language === 'es' ? 'EN' : 'ES'}
-            </Button>
+            <select
+              value={i18n.language}
+              onChange={(e) => void switchLang(e.target.value)}
+              aria-label={t('profile.language')}
+              className="h-8 rounded-md bg-transparent px-1 text-sm uppercase text-muted-foreground hover:bg-accent"
+            >
+              {LOCALES.map((l) => (
+                <option key={l.code} value={l.code}>
+                  {l.code}
+                </option>
+              ))}
+            </select>
           </div>
         </div>
       </aside>

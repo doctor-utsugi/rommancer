@@ -52,17 +52,18 @@ registerJob('dat-import', async (ctx) => {
 
 import { MARKER, refreshHealth, registerIdentity, volumeKey } from '../storage/health.js';
 import { storageRouter } from '../storage/routes.js';
+import { LOCALE_CODES, defaultLocale, localeSchema, setDefaultLocale } from '../../lib/locales.js';
 
 export const adminRouter = Router();
 adminRouter.use(requireAdmin);
 adminRouter.use('/storage', storageRouter);
 
-// --- Rutas de roms ---
+// --- Rom paths ---
 const pathBody = z.object({
   label: z.string().min(1).max(128),
   path: z.string().min(1).max(700),
   systemId: z.number().int().nullable().optional(),
-  // Destino de roms nuevas: sistemas que recibe, predeterminada para el resto y esquema de carpetas
+  // Destination of new roms: the systems it takes, the default for the rest and the folder scheme
   targetSystems: z.array(z.string()).nullable().optional(),
   isDefaultTarget: z.boolean().optional(),
   targetScheme: z.string().max(32).optional(),
@@ -226,7 +227,7 @@ adminRouter.get('/dats/presets', async (_req, res) => {
   res.json(DAT_PRESETS.map((p) => ({ ...p, imported: imported.some((d) => d.system.slug === p.system && d.type === p.type) })));
 });
 
-// Descarga e importa varios DATs de libretro-database (todos si no se indican ids)
+// Downloads and imports several libretro-database DATs (all when no ids are given)
 adminRouter.post('/dats/fetch-presets', async (req, res) => {
   const { ids, force } = z.object({ ids: z.array(z.string()).optional(), force: z.boolean().default(false) }).parse(req.body ?? {});
   const presets = DAT_PRESETS.filter((p) => !ids || ids.includes(p.id));
@@ -245,12 +246,12 @@ adminRouter.post('/dats/fetch-presets', async (req, res) => {
   res.status(202).json(jobs);
 });
 
-// Los datos externos son permanentes: un DAT no se borra (se reimporta o se actualiza)
+// External data is permanent: a DAT is never deleted (it is reimported or updated)
 adminRouter.delete('/dats/:id', async () => {
   throw badRequest('DATs are permanent');
 });
 
-// Vuelve a evaluar por contenido los ficheros desconocidos y los romhacks enlazados por titulo
+// Re-evaluates unknown files by content, and romhacks linked only by title
 adminRouter.post('/hacks/identify', async (req, res) => {
   const { recheck } = z.object({ recheck: z.boolean().default(false) }).parse(req.body ?? {});
   res.status(202).json(await enqueue('hack-identify', { recheck }, me(req).id));
@@ -260,7 +261,7 @@ adminRouter.post('/rematch', async (req, res) => {
   res.status(202).json(await enqueue('rematch', {}, me(req).id));
 });
 
-// --- Semilla ---
+// --- Seed ---
 adminRouter.post('/seed/export', async (req, res) => {
   res.status(202).json(await enqueue('seed-export', {}, me(req).id));
 });
@@ -269,7 +270,7 @@ adminRouter.post('/seed/apply', async (req, res) => {
   res.status(202).json(await enqueue('seed-apply', {}, me(req).id));
 });
 
-// --- Ajustes globales ---
+// --- Global settings ---
 adminRouter.get('/tools', async (_req, res) => {
   const { hasTool } = await import('../../lib/tools.js');
   res.json({
@@ -282,7 +283,7 @@ adminRouter.get('/tools', async (_req, res) => {
   });
 });
 
-// --- Sincronizacion de fuentes externas ---
+// --- External source sync ---
 adminRouter.get('/sync', async (_req, res) => {
   const [states, jobs] = await Promise.all([
     prisma.sourceState.findMany({ orderBy: { key: 'asc' } }),
@@ -296,7 +297,7 @@ adminRouter.post('/sync', async (req, res) => {
   res.status(202).json(await forceSync(body.sources, body.system, me(req).id));
 });
 
-// --- Revision de agrupaciones ---
+// --- Grouping review ---
 adminRouter.get('/review', async (req, res) => {
   const q = z.object({ kind: z.string().optional(), status: z.string().default('open'), systemId: z.coerce.number().int().optional() }).parse(req.query);
   const items = await prisma.reviewItem.findMany({
@@ -320,7 +321,7 @@ adminRouter.post('/review/:id', async (req, res) => {
       // conflict: same/different; wikidata: link (qid) / none
       action: z.enum(['same', 'different', 'link', 'none', 'dismiss']),
       wikidataId: z.string().regex(/^Q\d+$/).optional(),
-      // hack: rom base elegida (o solo el juego si no se sabe la base exacta)
+      // hack: the chosen base rom (or just the game when the exact base is unknown)
       romId: z.number().int().optional(),
       gameId: z.number().int().optional(),
     })
@@ -346,7 +347,7 @@ adminRouter.post('/review/:id', async (req, res) => {
       const rom = body.romId ? await prisma.rom.findUniqueOrThrow({ where: { id: body.romId } }) : null;
       await linkFileAsHack(p.fileId, { romId: rom?.id ?? null, gameId: rom?.gameId ?? body.gameId! }, 'manual');
     } else if (body.action === 'none') {
-      // No es un romhack de ningun juego conocido: si estaba enlazado solo por titulo, se desenlaza
+      // Not a romhack of any known game: if it was linked only by title, it is unlinked
       const f = await prisma.romFile.findUnique({ where: { id: p.fileId }, include: { romHack: true } });
       if (f?.romHack && f.romHack.baseEvidence === 'title') {
         await prisma.romFile.update({ where: { id: f.id }, data: { status: 'UNKNOWN', romHackId: null } });
@@ -360,7 +361,7 @@ adminRouter.post('/review/:id', async (req, res) => {
   res.status(204).end();
 });
 
-// Enlace manual de un juego con un elemento de Wikidata (o desenlace)
+// Manual link of a game to a Wikidata item (or unlink)
 adminRouter.post('/games/:id/work', async (req, res) => {
   const { wikidataId } = z.object({ wikidataId: z.string().regex(/^Q\d+$/).nullable() }).parse(req.body);
   const game = await prisma.game.findUniqueOrThrow({ where: { id: intParam(req) } });
@@ -397,6 +398,16 @@ adminRouter.put('/settings/session', async (req, res) => {
     .parse(req.body);
   await setSessionDays(days);
   res.json({ days, min: SESSION_MIN_DAYS });
+});
+
+adminRouter.get('/settings/locale', async (_req, res) => {
+  res.json({ locale: await defaultLocale(), locales: LOCALE_CODES });
+});
+
+adminRouter.put('/settings/locale', async (req, res) => {
+  const { locale } = z.object({ locale: localeSchema }).parse(req.body);
+  await setDefaultLocale(locale);
+  res.json({ locale, locales: LOCALE_CODES });
 });
 
 adminRouter.put('/settings/signup', async (req, res) => {

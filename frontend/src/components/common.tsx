@@ -5,6 +5,7 @@ import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
 import { Combobox } from '@/components/combobox'
 import { get } from '@/lib/api'
+import i18n from '@/i18n'
 import { Button } from '@/components/ui/button'
 import { Progress } from '@/components/ui/progress'
 import { Badge } from '@/components/ui/badge'
@@ -65,7 +66,7 @@ export function formatBytes(n: number) {
 
 export function formatDate(d: string | Date | null | undefined) {
   if (!d) return '-'
-  return new Date(d).toLocaleString()
+  return new Date(d).toLocaleString(i18n.language)
 }
 
 export interface Job {
@@ -87,7 +88,7 @@ export function JobStatusBadge({ status }: { status: Job['status'] }) {
   return <Badge variant={variant}>{t(`jobs.${status}`)}</Badge>
 }
 
-/** Sigue un trabajo hasta que termina e invalida las consultas indicadas. */
+/** Follows a job until it finishes and invalidates the given queries. */
 export function useJob(jobId: number | null, invalidate: string[][] = [], onDone?: (j: Job) => void) {
   const qc = useQueryClient()
   const { t } = useTranslation()

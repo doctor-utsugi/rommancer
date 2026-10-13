@@ -1,19 +1,19 @@
 export const PERMISSIONS = [
-  // Ver juegos, fichas, faltantes y romhacks
+  // View games, entries, missing files and romhacks
   'collection.view',
-  // Listas propias, compartir, clonar, sublistas, exportar/importar
+  // Own lists, sharing, cloning, sublists, export/import
   'lists',
-  // Saves propios y sincronizacion con dispositivos
+  // Own saves and device sync
   'saves',
-  // Zip de listas, descargas de roms y parcheadas, copia a dispositivos
+  // List zips, rom and patched-rom downloads, copy to devices
   'roms.download',
-  // Subidas cuyo checksum coincide con la base de datos
+  // Uploads whose checksum matches the database
   'roms.upload',
-  // Subidas sin coincidencia y creacion de juegos nuevos
+  // Uploads without a match and creation of new games
   'roms.uploadUnverified',
-  // Multimedia de los elementos de sus listas, con su propia cuenta
+  // Media for the items in their lists, with their own account
   'scrape.lists',
-  // Scraping de sistemas o colecciones completas
+  // Scraping of whole systems or collections
   'scrape.bulk',
 ] as const;
 

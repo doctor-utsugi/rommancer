@@ -1,11 +1,11 @@
 import { prisma } from '../../lib/prisma.js';
 
-// Prioridad de fuentes de metadatos: una fuente nunca pisa a otra de mayor prioridad ni borra valores
+// Metadata source priority: a source never overrides a higher-priority one nor erases values
 const PRIORITY: Record<string, number> = { manual: 100, screenscraper: 50, thegamesdb: 40, libretro: 30, wikidata: 20 };
 
 export type MetaField = 'title' | 'releaseYear' | 'developer' | 'publisher' | 'genre' | 'players' | 'description';
 
-/** Rellena metadatos de un juego respetando la prioridad de fuentes. Devuelve los campos cambiados. */
+/** Fills a game's metadata respecting source priority. Returns the changed fields. */
 export async function applyMeta(gameId: number, source: string, values: Partial<Record<MetaField, string | number | null | undefined>>) {
   const game = await prisma.game.findUnique({ where: { id: gameId } });
   if (!game) return [];

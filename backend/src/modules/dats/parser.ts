@@ -25,7 +25,7 @@ export interface DatFile {
   games: DatGame[];
 }
 
-// Normaliza un hash; descarta valores mal formados que aparecen en algunos DATs
+// Normalizes a hash; drops malformed values that appear in some DATs
 const hash = (v: unknown, len: number) => {
   const s = typeof v === 'string' ? v.trim().toLowerCase() : '';
   return new RegExp(`^[0-9a-f]{${len}}$`).test(s) ? s : null;
@@ -50,7 +50,7 @@ function parseXml(text: string): DatFile {
   const header = df.header ?? {};
   const games: DatGame[] = [];
   const all = [...(df.game ?? []), ...(df.machine ?? [])];
-  // Formato P/C moderno de No-Intro: id / cloneofid en lugar de cloneof
+  // Modern No-Intro P/C format: id / cloneofid instead of cloneof
   const idToName = new Map<string, string>();
   for (const g of all) if (g.id != null) idToName.set(String(g.id), g.name);
   for (const g of all) {
@@ -114,7 +114,6 @@ function parseClrMamePro(text: string): DatFile {
   const str = (t: string) => (t.startsWith('\u0000') ? t.slice(1) : t);
 
   function block(): Node {
-    // se asume tokens[pos] === '('
     pos++;
     const node: Node = {};
     while (pos < tokens.length && tokens[pos] !== ')') {
@@ -156,7 +155,7 @@ function parseClrMamePro(text: string): DatFile {
   return out;
 }
 
-/** Entradas "game ( ... )" de un fichero clrmamepro como pares clave/valor simples (metadat de libretro). */
+/** "game ( ... )" entries of a clrmamepro file as flat key/value pairs (libretro metadat). */
 export function parseClrMameEntries(text: string): Record<string, string>[] {
   const tokens = tokenize(text);
   const str = (t: string) => (t.startsWith('\u0000') ? t.slice(1) : t);
@@ -180,7 +179,7 @@ export function parseClrMameEntries(text: string): Record<string, string>[] {
         const k = str(t);
         const v = tokens[pos + 1];
         if (v !== undefined && v !== '(' && v !== ')') {
-          // Solo el primer nivel; en rom ( crc X ) se guarda como rom.crc
+          // First level only; in rom ( crc X ) it is stored as rom.crc
           const name = depth === 1 ? k : `rom.${k}`;
           if (!(name in entry)) entry[name] = str(v);
           pos += 2;

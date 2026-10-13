@@ -1,7 +1,7 @@
 /**
- * Port a TypeScript de los algoritmos de hash de RetroAchievements (rcheevos/src/rhash, licencia MIT).
- * Los sistemas de cartucho "buffer" se resuelven a partir de los hashes ya calculados en el escaneo
- * (md5 completo o sin cabecera), el resto leyendo el fichero.
+ * TypeScript port of the RetroAchievements hash algorithms (rcheevos/src/rhash, MIT license).
+ * "Buffer" cartridge systems are resolved from the hashes already computed during the scan
+ * (full or headerless md5); the rest by reading the file.
  */
 import crypto from 'node:crypto';
 import fs from 'node:fs';
@@ -11,11 +11,11 @@ import type { FileHashes } from './hash.js';
 
 const MAX_BUFFER = 64 * 1024 * 1024;
 
-// Sistemas cuyo hash RA es el md5 de los datos (con o sin cabecera segun el sistema)
+// Systems whose RA hash is the md5 of the data (with or without header, per system)
 const BUFFER_SYSTEMS = new Set(['gb', 'gbc', 'gba', 'sms', 'gg', 'md', 'nes', 'fds', 'snes', 'lynx', 'a7800']);
 const DISC_SYSTEMS = new Set(['psx', 'ps2', 'psp', 'gc', 'wii']);
 
-/** Hash RA a partir de los hashes de escaneo, sin leer el fichero. Null si el sistema requiere el fichero. */
+/** RA hash from the scan hashes, without reading the file. Null if the system needs the file. */
 export function raHashFromHashes(system: string, h: FileHashes): string | null {
   if (!BUFFER_SYSTEMS.has(system)) return null;
   if (h.size > MAX_BUFFER) return null;
@@ -23,10 +23,10 @@ export function raHashFromHashes(system: string, h: FileHashes): string | null {
   return h.md5;
 }
 
-/** Hash RA a partir de un DAT (hash de los datos sin cabecera). */
+/** RA hash from a DAT (hash of the headerless data). */
 export function raHashFromDat(system: string, part: { md5: string | null; headerlessMd5: string | null; size: bigint | number }): string | null {
   if (!BUFFER_SYSTEMS.has(system) && system !== 'n64') return null;
-  // No-Intro N64 esta en formato z64 (big endian), que es el que usa RA
+  // No-Intro N64 is in z64 format (big endian), which is what RA uses
   return part.headerlessMd5 ?? part.md5 ?? null;
 }
 
@@ -177,7 +177,7 @@ export async function raHashPsp(discFile: string): Promise<string | null> {
 
 export type ReadAt = (pos: number, len: number) => Promise<Buffer>;
 
-/** Cabeceras de particion + segmentos del main.dol (rc_hash_nintendo_disc_partition). shift=2 en Wii. */
+/** Partition headers + main.dol segments (rc_hash_nintendo_disc_partition). shift=2 on Wii. */
 async function hashNintendoPartition(md5: crypto.Hash, readAt: ReadAt, partOffset: number, shift: number) {
   const BASE = 0x2440;
   const sizes = await readAt(partOffset + BASE + 0x14, 8);
@@ -194,7 +194,7 @@ async function hashNintendoPartition(md5: crypto.Hash, readAt: ReadAt, partOffse
   }
 }
 
-/** GameCube: readAt permite leer de ISO o de RVZ. */
+/** GameCube: readAt allows reading from ISO or RVZ. */
 export async function raHashGamecubeFrom(readAt: ReadAt): Promise<string | null> {
   const magic = await readAt(0x1c, 4);
   if (!magic.equals(Buffer.from([0xc2, 0x33, 0x9f, 0x3d]))) return null;
@@ -203,7 +203,7 @@ export async function raHashGamecubeFrom(readAt: ReadAt): Promise<string | null>
   return md5.digest('hex');
 }
 
-/** Wii (rc_hash_wii): disco (cifrado o descifrado) o WiiWare (.wad). */
+/** Wii (rc_hash_wii): disc (encrypted or decrypted) or WiiWare (.wad). */
 export async function raHashWiiFrom(readAt: ReadAt): Promise<string | null> {
   const md5 = crypto.createHash('md5');
   const be = async (pos: number) => (await readAt(pos, 4)).readUInt32BE(0);
@@ -218,7 +218,7 @@ export async function raHashWiiFrom(readAt: ReadAt): Promise<string | null> {
     for (let j = 0; j < 8; j += 2) for (let i = 0; i < info[j]; i++) parts.push([await be(info[j + 1] * 4 + i * 8), await be(info[j + 1] * 4 + i * 8 + 4)]);
     if (!parts.length) return null;
     for (const [off4, type] of parts) {
-      if (type === 1) continue; // particion de actualizacion
+      if (type === 1) continue; // update partition
       const base = off4 * 4;
       const tmdSize = Math.min(await be(base + 0x2a4), CLUSTER);
       const tmdOffset = (await be(base + 0x2a8)) * 4;
@@ -277,7 +277,7 @@ export const raHashWii = (file: string) => withReader(file, raHashWiiFrom);
 
 export const raHashGamecube = (file: string) => withReader(file, raHashGamecubeFrom);
 
-/** Hash RA leyendo el fichero (sistemas no-buffer). discFile: .iso/.cue/.bin ya extraido. */
+/** RA hash by reading the file (non-buffer systems). discFile: already-extracted .iso/.cue/.bin. */
 export async function raHashFile(system: string, file: string): Promise<string | null> {
   try {
     switch (system) {

@@ -6,7 +6,7 @@ function req(name: string): string {
   return v;
 }
 
-// Valores de ejemplo de .env.example: no se permite arrancar con ellos
+// Example values from .env.example: starting with them is refused
 const EXAMPLE_SECRETS = new Set(['change-me-jwt-secret', '0'.repeat(64)]);
 
 function secret(name: string): string {
@@ -22,7 +22,7 @@ export const env = {
   port: Number(process.env.API_PORT ?? 3000),
   jwtSecret: secret('JWT_SECRET'),
   encryptionKey: Buffer.from(secret('ENCRYPTION_KEY'), 'hex'),
-  // Origenes web permitidos (CORS). Vacio: solo el mismo origen (la web servida por nginx o el proxy de Vite)
+  // Allowed web origins (CORS). Empty: same origin only (web served by nginx or the Vite proxy)
   corsOrigins: list(process.env.CORS_ORIGINS),
   // Web address shown to sync clients for pairing (e.g. http://myserver:8080); guessed from the request if empty
   publicUrl: (process.env.PUBLIC_URL ?? '').replace(/\/+$/, ''),
@@ -34,8 +34,9 @@ export const env = {
   patchesDir: path.join(dataDir, 'patches'),
   tmpDir: path.join(dataDir, 'tmp'),
   libraryDir: path.join(dataDir, 'library'),
-  // Semilla de datos (DATs, RetroAchievements, scraping) para nuevos despliegues
+  // Data seed (DATs, RetroAchievements, scraping) for new deployments
   seedDir: path.resolve(process.env.SEED_DIR ?? path.join(dataDir, '..', 'seed')),
+  defaultLocale: process.env.DEFAULT_LOCALE ?? 'en',
   seedOnStart: process.env.SEED_ON_START !== 'false',
   seedAutoExport: process.env.SEED_AUTO_EXPORT !== 'false',
   admin: {
@@ -70,10 +71,10 @@ export const env = {
     rawUrl: process.env.GITHUB_RAW_URL ?? 'https://raw.githubusercontent.com',
   },
   libretroThumbsUrl: process.env.LIBRETRO_THUMBS_URL ?? 'https://raw.githubusercontent.com/libretro-thumbnails',
-  // Sincronizacion global de fuentes externas (por defecto domingos a las 4:00). Vacio = desactivada
+  // Global sync of external sources (Sundays at 4:00 by default). Empty = disabled
   externalSyncCron: process.env.EXTERNAL_SYNC_CRON ?? '0 4 * * 0',
-  // Intervalo minimo entre sincronizaciones forzadas de la misma fuente y sistema
+  // Minimum interval between forced syncs of the same source and system
   forceSyncMinMinutes: Number(process.env.FORCE_SYNC_MIN_MINUTES ?? 10),
-  // Identificacion ante servicios externos (politica de Wikidata)
+  // Identification toward external services (Wikidata policy)
   userAgent: process.env.HTTP_USER_AGENT ?? 'Rommancer/1.0 (self-hosted rom manager)',
 };

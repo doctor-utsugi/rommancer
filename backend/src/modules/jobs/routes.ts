@@ -31,7 +31,7 @@ jobsRouter.get('/:id', async (req, res) => {
   res.json(await getJob(intParam(req), u.id, u.role === 'ADMIN'));
 });
 
-// Server-Sent Events con el progreso del trabajo
+// Server-Sent Events with the job progress
 jobsRouter.get('/:id/events', async (req, res) => {
   const u = me(req);
   const id = intParam(req);

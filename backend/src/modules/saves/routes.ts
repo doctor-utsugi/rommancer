@@ -352,7 +352,7 @@ savesRouter.post('/upload', upload.single('file'), async (req, res) => {
   }
 });
 
-// Descarga una version, opcionalmente convertida al formato de otro emulador
+// Downloads a version, optionally converted to another emulator's format
 // ---------- playing a save in the browser (EmulatorJS, nothing kept) ----------
 
 
@@ -435,7 +435,7 @@ savesRouter.post('/:id/restore', async (req, res) => {
   const s = await ownSave(intParam(req), me(req));
   const { versionId } = z.object({ versionId: z.number().int() }).parse(req.body);
   const v = await prisma.saveVersion.findFirstOrThrow({ where: { id: versionId, saveId: s.id } });
-  // Se crea una nueva version con fecha actual para que gane en la siguiente sincronizacion
+  // A new version dated now is created so it wins at the next sync
   const r = await storeVersion({ userId: s.userId, emulatorId: s.emulatorId, kind: s.kind, slot: s.slot, baseName: s.baseName }, await readVersion(v.id), new Date(), {
     note: `restore of version ${v.id}`,
     force: true,
@@ -443,7 +443,7 @@ savesRouter.post('/:id/restore', async (req, res) => {
   res.json({ versionId: r.version.id });
 });
 
-// Crea una copia del save para otro emulador (p.ej. de RetroArch .srm a DuckStation .mcd)
+// Makes a copy of the save for another emulator (e.g. RetroArch .srm to DuckStation .mcd)
 savesRouter.post('/:id/convert', async (req, res) => {
   const u = me(req);
   const s = await ownSave(intParam(req), u);
@@ -460,7 +460,7 @@ savesRouter.post('/:id/convert', async (req, res) => {
   res.status(201).json({ saveId: r.save.id, versionId: r.version.id });
 });
 
-// Cambia el nombre base (reubicacion: el emulador busca el save por el nombre de la rom)
+// Changes the base name (relocation: the emulator looks the save up by the rom's name)
 savesRouter.patch('/:id', async (req, res) => {
   const s = await ownSave(intParam(req), me(req));
   const body = z.object({ baseName: z.string().min(1).max(255).optional(), gameId: z.number().int().nullable().optional(), romId: z.number().int().nullable().optional() }).parse(req.body);

@@ -1,11 +1,8 @@
 /**
- * Identificacion de romhacks por su contenido, no por su nombre.
- *
- * Un hack o una traduccion conserva la mayor parte de los bytes de su rom base. Se compara una huella
- * de bloques de 1 KiB del fichero desconocido con la de las roms que se tienen del mismo sistema. Si no
- * se tiene la base, se usa el codigo interno de la cabecera (GBA, NDS, N64, Mega Drive) frente a los
- * seriales de los DATs. El nombre del fichero nunca enlaza por si solo: solo genera sugerencias en la
- * cola de revision.
+ * Identifies romhacks by content, not by name. A hack or translation keeps most bytes of its base rom, so a fingerprint of
+ * 1 KiB blocks of the unknown file is compared with those of the roms held for the same system. Without the base, the
+ * header game code (GBA, NDS, N64, Mega Drive) is matched against DAT serials. The file name never links on its own:
+ * it only produces suggestions for the review queue.
  */
 import fs from 'node:fs';
 import path from 'node:path';
@@ -20,15 +17,15 @@ import type { JobContext } from '../../lib/jobs.js';
 import { ownedRomIds } from '../roms/service.js';
 
 const CHUNK = 1024;
-// Muestreo por contenido: solo los bloques cuyo crc es multiplo de 8 (igual en todos los ficheros)
+// Content sampling: only blocks whose crc is a multiple of 8 (same in all files)
 const SAMPLE_MOD = 8;
 const MAX_SIZE = 64 * 1024 * 1024;
 export const CART_SYSTEMS = new Set(['nes', 'fds', 'snes', 'gb', 'gbc', 'gba', 'n64', 'nds', 'sms', 'gg', 'md', 'lynx', 'a7800']);
 
-// Umbrales de parecido (fraccion de la rom base que se conserva)
+// Similarity thresholds (fraction of the base rom that is kept)
 export const MIN_SCORE = 0.5;
-// Por encima se da por buena la rom base exacta; por debajo solo el juego (p.ej. una traduccion de la
-// version japonesa cuando solo se tiene la americana)
+// Above this the exact base rom is accepted; below it only the game (e.g. a translation of the
+// Japanese version when only the American one is held)
 export const EXACT_SCORE = 0.85;
 const MARGIN = 0.05;
 const SUGGEST_SCORE = 0.2;
@@ -37,7 +34,7 @@ export function sampleChunks(buf: Buffer): Uint32Array {
   const out = new Set<number>();
   for (let i = 0; i + CHUNK <= buf.length; i += CHUNK) {
     const c = buf.subarray(i, i + CHUNK);
-    // Relleno (todo 00 o FF) aparece en cualquier rom: no cuenta
+    // Padding (all 00 or FF) appears in any rom: does not count
     if (c[0] === c[CHUNK - 1] && c.every((b) => b === c[0])) continue;
     const crc = zlib.crc32(c) >>> 0;
     if (crc % SAMPLE_MOD === 0) out.add(crc);
@@ -51,7 +48,7 @@ async function readStream(s: NodeJS.ReadableStream): Promise<Buffer> {
   return Buffer.concat(chunks);
 }
 
-/** Contenido de un fichero escaneado, sin cabecera de copiadora/emulador. */
+/** Content of a scanned file, without copier/emulator header. */
 async function fileContent(f: RomFile & { romPath: RomPath }, system: System): Promise<Buffer | null> {
   if (Number(f.size) > MAX_SIZE) return null;
   const abs = path.join(f.romPath.path, f.relativePath);
@@ -60,7 +57,7 @@ async function fileContent(f: RomFile & { romPath: RomPath }, system: System): P
   return header ? buf.subarray(header) : buf;
 }
 
-/** Codigo interno del juego en la cabecera de la rom, comparable con el serial de los DATs. */
+/** Internal game code in the rom header, comparable to the DAT serial. */
 export function headerCode(slug: string, buf: Buffer): string | null {
   const ascii = (a: number, b: number) => (buf.length >= b ? buf.toString('latin1', a, b) : '');
   let code = '';
@@ -68,7 +65,7 @@ export function headerCode(slug: string, buf: Buffer): string | null {
   else if (slug === 'nds') code = ascii(0x0c, 0x10);
   else if (slug === 'n64' && buf.length > 0x40 && buf.readUInt32BE(0) === 0x80371240) code = ascii(0x3b, 0x3f);
   else if (slug === 'md') {
-    // "GM T-48073-00": tipo + serial
+    // "GM T-48073-00": type + serial
     const m = ascii(0x180, 0x18e).match(/^[A-Z]{2} ([A-Z0-9-]{4,})/);
     return m ? m[1].replace(/-+$/, '') : null;
   }
@@ -82,7 +79,7 @@ interface Signature {
   sample: Uint32Array;
 }
 
-/** Huellas de las roms de un cartucho que se tienen en el sistema (se calculan una vez y se guardan). */
+/** Fingerprints of the cartridge roms held in the system (computed once and stored). */
 async function systemSignatures(system: System, ctx?: JobContext): Promise<Signature[]> {
   const owned = [...(await ownedRomIds({ systemId: system.id, include: 'any' }))];
   if (!owned.length) return [];
@@ -103,9 +100,9 @@ async function systemSignatures(system: System, ctx?: JobContext): Promise<Signa
         create: { romId: r.id, fileSha1: f.sha1, chunks: Math.floor(content.length / CHUNK), sample: new Uint8Array(sample.buffer as ArrayBuffer) },
         update: { fileSha1: f.sha1, chunks: Math.floor(content.length / CHUNK), sample: new Uint8Array(sample.buffer as ArrayBuffer) },
       });
-      ctx?.log(`Huella de ${r.name}`);
+      ctx?.log(`Fingerprint of ${r.name}`);
     }
-    // Copia alineada a 4 bytes
+    // 4-byte aligned copy
     out.push({ romId: r.id, gameId: r.gameId, name: r.name, sample: new Uint32Array(Uint8Array.from(sig.sample).buffer) });
   }
   return out;
@@ -128,7 +125,7 @@ export function buildIndex(sigs: Signature[]): SignatureIndex {
   return index;
 }
 
-/** Roms base ordenadas por la fraccion de su contenido que conserva el fichero. */
+/** Base roms ordered by the fraction of their content the file keeps. */
 export function rankBases(sample: Uint32Array, sigs: Signature[], index = buildIndex(sigs)): Candidate[] {
   const hits = new Map<number, number>();
   for (const c of sample) for (const i of index.get(c) ?? []) hits.set(i, (hits.get(i) ?? 0) + 1);
@@ -148,7 +145,7 @@ export function decide(ranked: Candidate[], codeRoms: { romId: number; gameId: n
   }
   const games = new Set(codeRoms.map((r) => r.gameId));
   if (games.size === 1) {
-    // Varias revisiones con el mismo codigo: la base exacta queda sin fijar salvo que haya una sola
+    // Several revisions with the same code: the exact base stays unset unless there is only one
     const preferred = codeRoms.find((r) => ranked.some((c) => c.romId === r.romId)) ?? (codeRoms.length === 1 ? codeRoms[0] : null);
     return { base: { romId: preferred?.romId ?? null, gameId: codeRoms[0].gameId }, evidence: 'header' };
   }
@@ -156,7 +153,7 @@ export function decide(ranked: Candidate[], codeRoms: { romId: number; gameId: n
   return null;
 }
 
-/** Crea (o reutiliza) el romhack de un fichero y lo enlaza. */
+/** Creates (or reuses) the romhack of a file and links it. */
 export async function linkFileAsHack(fileId: number, base: { romId: number | null; gameId: number }, evidence: string) {
   const f = await prisma.romFile.findUniqueOrThrow({ where: { id: fileId } });
   const game = await prisma.game.findUniqueOrThrow({ where: { id: base.gameId } });
@@ -165,7 +162,7 @@ export async function linkFileAsHack(fileId: number, base: { romId: number | nul
   const shas = [f.sha1, f.headerlessSha1].filter((x): x is string => !!x);
   let hack = shas.length ? await prisma.romHack.findFirst({ where: { OR: [{ sha1: { in: shas } }, { headerlessSha1: { in: shas } }] } }) : null;
   if (hack) {
-    // Solo se corrige un enlace debil (por titulo); los de DAT, parche o manuales se respetan
+    // Only a weak (title) link is corrected; DAT, patch and manual ones are respected
     if (hack.baseEvidence === 'title' || !hack.baseEvidence)
       hack = await prisma.romHack.update({ where: { id: hack.id }, data: { gameId: game.id, baseRomId: base.romId, baseEvidence: evidence } });
   } else {
@@ -174,7 +171,7 @@ export async function linkFileAsHack(fileId: number, base: { romId: number | nul
         gameId: game.id,
         baseRomId: base.romId,
         baseEvidence: evidence,
-        // Sin marcas de hack en el nombre puede ser un volcado alterado: se registra como "otro"
+        // Without hack marks in the name it may be an altered dump: recorded as "other"
         type: p.hack?.type ?? 'OTHER',
         title: name.slice(0, 255),
         author: p.hack?.author?.slice(0, 255) ?? null,
@@ -193,7 +190,7 @@ export async function linkFileAsHack(fileId: number, base: { romId: number | nul
   return hack;
 }
 
-/** Sugerencias por titulo: solo informativas para la revision. */
+/** Suggestions by title: informative only, for review. */
 async function titleSuggestions(systemId: number, name: string) {
   const segs = parseRomName(name).title.split(' - ');
   const titles = segs.map((_, i) => segs.slice(0, segs.length - i).join(' - '));
@@ -209,8 +206,8 @@ export interface IdentifyStats {
 }
 
 /**
- * Evalua los ficheros desconocidos de sistemas de cartucho (y los romhacks enlazados solo por titulo).
- * Cada fichero se evalua una vez; `recheck` repite todos.
+ * Evaluates unknown files of cartridge systems (and romhacks linked only by title).
+ * Each file is evaluated once; `recheck` repeats all.
  */
 export async function identifyHacks(opts: { romPathId?: number; fileIds?: number[]; recheck?: boolean } = {}, ctx?: JobContext): Promise<IdentifyStats> {
   const stats: IdentifyStats = { checked: 0, linked: 0, review: 0, relinked: 0 };
@@ -238,7 +235,7 @@ export async function identifyHacks(opts: { romPathId?: number; fileIds?: number
     try {
       content = await fileContent(f, system);
     } catch (e) {
-      ctx?.log(`No se puede leer ${f.relativePath}: ${e instanceof Error ? e.message : e}`);
+      ctx?.log(`Cannot read ${f.relativePath}: ${e instanceof Error ? e.message : e}`);
     }
     if (!content) {
       await prisma.romFile.update({ where: { id: f.id }, data: { hackCheckedAt: new Date() } });

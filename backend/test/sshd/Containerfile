@@ -1,4 +1,4 @@
-# Servidor SFTP minimo para probar dispositivos SSH
+# Minimal SFTP server for testing SSH devices
 FROM docker.io/library/alpine:3
 RUN apk add --no-cache openssh-server \
  && ssh-keygen -A \

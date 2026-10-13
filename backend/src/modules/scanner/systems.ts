@@ -54,7 +54,7 @@ export async function systemIndex(): Promise<SystemIndex> {
       if (s && v.folder) idx.byFolder.set(v.folder.toLowerCase(), s);
     }
   }
-  // Solo extensiones inequivocas sirven para deducir el sistema
+  // Only unambiguous extensions can infer the system
   for (const s of systems)
     for (const e of s.extensions as string[]) if (extCount.get(e) === 1 && !EXTRA_EXTS.includes(e)) idx.byExt.set(e, s);
   cache = { at: Date.now(), idx };

@@ -22,7 +22,7 @@ startExternalSyncCron();
 startLocalDeviceWatcher();
 startSshSweep();
 startHealthWatch();
-// Aplica la semilla (DATs, RA, scraping) si existe; lo ya importado se omite
+// Applies the seed (DATs, RA, scraping) if present; anything already imported is skipped
 if (env.seedOnStart && fs.existsSync(env.seedDir)) await enqueue('seed-apply', {});
 
 createApp().listen(env.port, () => console.log(`Rommancer API listening on :${env.port}`));

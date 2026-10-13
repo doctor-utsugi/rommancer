@@ -1,4 +1,4 @@
-# CLI de referencia sobre rcheevos (MIT) para validar el hash RA de Rommancer en las pruebas
+# Reference CLI over rcheevos (MIT) to validate Rommancer's RA hash in tests
 RC = ../rcheevos
 # Pinned: newer releases moved src/rhash and src/rc_util.c
 RC_VERSION = v12.5.0

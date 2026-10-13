@@ -241,7 +241,7 @@ function PathDialog({ path, onClose }: { path: any | null; onClose(): void }) {
                 <Input
                   className="font-mono"
                   value={r.folder}
-                  placeholder="varios"
+                  placeholder="misc"
                   onChange={(e) => setForm({ ...form, folderSystems: form.folderSystems.map((x, j) => (j === i ? { ...x, folder: e.target.value } : x)) })}
                 />
                 <NativeSelect value={r.slug} onChange={(e) => setForm({ ...form, folderSystems: form.folderSystems.map((x, j) => (j === i ? { ...x, slug: e.target.value } : x)) })}>

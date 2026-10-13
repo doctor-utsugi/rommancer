@@ -7,6 +7,7 @@ import { prisma } from '../../lib/prisma.js';
 import { sha256 } from '../../lib/crypto.js';
 import { HttpError, badRequest } from '../../lib/http.js';
 import { DEFAULT_PERMISSIONS, normalizePermissions } from '../../lib/permissions.js';
+import { LOCALE_CODES, defaultLocale, localeSchema } from '../../lib/locales.js';
 import { signAccess, signFiles } from './middleware.js';
 
 export const authRouter = Router();
@@ -23,7 +24,7 @@ const ROTATE_GRACE_MS = 60_000;
 const MAX_FAILS = 5;
 const WINDOW_MS = 15 * 60_000;
 
-// Limite de intentos fallidos por IP y por usuario, en memoria
+// Failed-attempt limit per IP and per user, in memory
 const fails = new Map<string, number[]>();
 
 function recent(key: string) {
@@ -126,7 +127,7 @@ authRouter.post('/register', async (req, res) => {
       username: z.string().min(3).max(64).regex(/^[a-zA-Z0-9_.-]+$/),
       email: z.email(),
       password: z.string().min(8).max(512),
-      locale: z.enum(['es', 'en']).optional(),
+      locale: localeSchema.optional(),
     })
     .parse(req.body);
   const inv = await prisma.invitation.findUnique({ where: { token: body.token } });
@@ -138,7 +139,7 @@ authRouter.post('/register', async (req, res) => {
         email: body.email,
         passwordHash: await bcrypt.hash(body.password, 10),
         role: inv.role,
-        locale: body.locale ?? 'es',
+        locale: body.locale ?? (await defaultLocale()),
         permissions: inv.permissions ? normalizePermissions(inv.permissions) : DEFAULT_PERMISSIONS,
       },
     });
@@ -159,7 +160,7 @@ export async function setSignupOpen(open: boolean) {
 }
 
 authRouter.get('/config', async (_req, res) => {
-  res.json({ signupOpen: await signupOpen() });
+  res.json({ signupOpen: await signupOpen(), defaultLocale: await defaultLocale(), locales: LOCALE_CODES });
 });
 
 // Self-service sign-up, only when the admin opened it; default permissions, never admin
@@ -167,7 +168,7 @@ export const signupBody = z.object({
   username: z.string().min(3).max(64).regex(/^[a-zA-Z0-9_.-]+$/),
   email: z.email(),
   password: z.string().min(10).max(512),
-  locale: z.enum(['es', 'en']).optional(),
+  locale: localeSchema.optional(),
 });
 
 /** Self-service account (default permissions, never admin) when the admin opened sign-up. */
@@ -177,7 +178,7 @@ export async function selfSignup(req: Request, body: z.infer<typeof signupBody>)
   recent(`signup:${clientIp(req)}`).push(Date.now());
   if (await prisma.user.findFirst({ where: { OR: [{ username: body.username }, { email: body.email }] } })) throw new HttpError(409, 'User already exists');
   return prisma.user.create({
-    data: { username: body.username, email: body.email, passwordHash: await bcrypt.hash(body.password, 10), role: 'USER', locale: body.locale ?? 'es', permissions: DEFAULT_PERMISSIONS },
+    data: { username: body.username, email: body.email, passwordHash: await bcrypt.hash(body.password, 10), role: 'USER', locale: body.locale ?? (await defaultLocale()), permissions: DEFAULT_PERMISSIONS },
   });
 }
 

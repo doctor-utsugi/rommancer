@@ -1,7 +1,6 @@
 /**
- * API para los scripts de eventos de los dispositivos (ES-DE game-start/game-end, Batocera/Knulli).
- * El script no conoce formatos: pide la lista de rutas de saves de una rom, envia los ficheros y
- * descarga lo que le indique el servidor, ya convertido para su emulador.
+ * API for the devices' event scripts (ES-DE game-start/game-end, Batocera/Knulli). The script knows no
+ * formats: it asks for a rom's save paths, sends the files and downloads what the server says, already converted.
  */
 import path from 'node:path';
 import express, { Router, type Request } from 'express';
@@ -289,7 +288,7 @@ async function storeLauncher(device: AgentDevice, info: LauncherInfo | null): Pr
   return { ...device, launcher: home as Prisma.JsonValue };
 }
 
-/** Sistema y emulador de una rom del dispositivo a partir de su carpeta. */
+/** System and emulator of a device rom, from its folder. */
 async function romContext(device: AgentDevice, romPath: string) {
   const launched = await launcherContext(device, romPath);
   if (launched) return launched;
@@ -1319,7 +1318,7 @@ agentRouter.get('/roots', async (req, res) => {
   res.type('text/plain').send(lines.join('\n') + '\n');
 });
 
-// Rutas de saves y savestates de una rom en este dispositivo (una por linea)
+// Save and savestate paths of a rom on this device (one per line)
 agentRouter.get('/manifest', async (req, res) => {
   const device = await deviceFromToken(req);
   const ctx = await romContext(device, b64(req.header('x-rom-b64')));
@@ -1368,8 +1367,8 @@ async function conflictLine(c: { id: number; deviceVersionId: number; serverVers
 }
 
 /**
- * Inicio de juego. Cuerpo: lineas "ruta<TAB>sha1" de los ficheros que existen.
- * Respuesta: "get<TAB>ruta<TAB>version" para bajar o "put<TAB>ruta" para subir; "conflict<TAB>..." (conflictLine) for
+ * Game start. Body: "path<TAB>sha1" lines for the files that exist.
+ * Response: "get<TAB>path<TAB>version" to download or "put<TAB>path" to upload; "conflict<TAB>..." (conflictLine) for
  * a save of the game in conflict on this device, to settle before it starts.
  */
 agentRouter.post('/start', express.text({ limit: '1mb', type: '*/*' }), async (req, res) => {
@@ -1399,7 +1398,7 @@ agentRouter.post('/start', express.text({ limit: '1mb', type: '*/*' }), async (r
     }
     const d = await decide(save, device, ctx.emu, deviceSha1 ? { sha1: deviceSha1 } : null);
     if (d.action === 'download') out.push(...asideLines(f, files, present), `get\t${f.path}\t${d.versionId}`);
-    // En conflicto tambien se sube: el servidor guarda ambas versiones y avisa
+    // A conflict also uploads: the server keeps both versions and warns
     else if (d.action === 'upload' || d.action === 'conflict') out.push(`put\t${f.path}`);
     else if (d.action === 'adopt' && save) await setBase(save.id, device.id, save.currentVersionId, deviceSha1!);
     const thumb = d.action === 'download' && f.kind === 'STATE' ? await thumbLine(f.path, ctx.emu, ctx.layout.savesLayout, d.versionId, null) : null;
@@ -1408,7 +1407,7 @@ agentRouter.post('/start', express.text({ limit: '1mb', type: '*/*' }), async (r
   res.type('text/plain').send(out.join('\n') + (out.length ? '\n' : ''));
 });
 
-// Descarga de una version convertida para el emulador del dispositivo; anota la base
+// Download of a version converted for the device's emulator; records the base
 agentRouter.get('/file', async (req, res) => {
   const device = await deviceFromToken(req);
   const ctx = await romContext(device, b64(req.header('x-rom-b64')));
@@ -1421,7 +1420,7 @@ agentRouter.get('/file', async (req, res) => {
   res.type('application/octet-stream').send(content);
 });
 
-// Fin de juego: subida de un fichero de save o savestate tal cual esta en el dispositivo
+// Game end: upload of a save or savestate file as it is on the device
 agentRouter.post('/upload', express.raw({ limit: '128mb', type: '*/*' }), async (req, res) => {
   const device = await deviceFromToken(req);
   const filePath = b64(req.header('x-path-b64'));

@@ -25,7 +25,7 @@ export function createApp() {
   app.set('json replacer', jsonReplacer);
   app.set('trust proxy', 'loopback');
   app.disable('x-powered-by');
-  // CORS cerrado salvo origenes configurados
+  // CORS closed except for configured origins
   app.use(cors({ origin: env.corsOrigins.length ? env.corsOrigins : false }));
   app.use((_req, res, next) => {
     res.setHeader('X-Content-Type-Options', 'nosniff');
@@ -40,7 +40,7 @@ export function createApp() {
     res.json({ ok: true });
   });
   api.use('/auth', express.json({ limit: '1mb' }), authRouter);
-  // Scripts de dispositivos: autenticados con su propio token
+  // Device scripts: authenticated with their own token
   api.use('/agent/config', configAgentRouter);
   api.use('/agent', agentRouter);
   api.use('/link', linkPublicRouter);

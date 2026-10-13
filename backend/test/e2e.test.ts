@@ -1,8 +1,8 @@
 /**
- * Prueba de extremo a extremo de todos los flujos sobre una base de datos de test.
- * Requiere: MySQL de compose levantado, 7zz y chdman, ../roms/{nes,snes} y ../data/dats/*.dat.
- * Opcional: contenedor rommancer-sshd en 127.0.0.1:2222 (usuario device/device) para probar SFTP.
- * Opcional: the same image on the host network, port 2224, to install and run the client over SSH:
+ * End-to-end test of every flow against a test database.
+ * Requires: compose MySQL up, 7zz and chdman, ../roms/{nes,snes} and ../data/dats/*.dat.
+ * Optional: rommancer-sshd container on 127.0.0.1:2222 (user device/device) to test SFTP.
+ * Optional: the same image on the host network, port 2224, to install and run the client over SSH:
  *   podman run -d --name rommancer-sshd-host --network host localhost/rommancer-test-sshd /usr/sbin/sshd -D -e -p 2224
  */
 import { after, before, test } from 'node:test';
@@ -26,7 +26,7 @@ const ROMS = path.join(ROOT, 'roms');
 const SEVENZIP = process.env.SEVENZIP_BIN ?? '7zz';
 const SMB3 = 'Super Mario Bros. 3 (USA) (Rev 1)';
 
-// --- Mock de ScreenScraper y del resto de servicios externos ---
+// --- Mock of ScreenScraper and the other external services ---
 const PNG = Buffer.from('89504e470d0a1a0a0000000d49484452000000010000000108060000001f15c4890000000d49444154789c6360000002000154a24f5d0000000049454e44ae426082', 'hex');
 let ssRequests = 0;
 // normal | quota | notfound
@@ -36,7 +36,7 @@ const ssRomSha1s: Record<string, string[]> = {};
 // Contadores de peticiones al resto de mocks
 const hits: Record<string, number> = {};
 const hit = (k: string) => (hits[k] = (hits[k] ?? 0) + 1);
-// Contenido servido por el mock de GitHub (ruta -> { body, etag })
+// Content served by the GitHub mock (path -> { body, etag })
 const ghFiles = new Map<string, { body: string | Buffer; etag: string }>();
 const wdBindings: Record<string, { props: any[]; names: any[] }> = {};
 const raLists: Record<string, any[]> = {};
@@ -261,7 +261,7 @@ before(async () => {
 after(async () => {
   const { stopJobRunner } = await import('../src/lib/jobs.js');
   const { prisma } = await import('../src/lib/prisma.js');
-  // Tareas encoladas por las ultimas pruebas (multimedia de listas): se espera a que terminen
+  // Jobs queued by the last tests (list media): wait for them to finish
   for (let i = 0; i < 240; i++) {
     const busy = await prisma.job.count({ where: { status: { in: ['PENDING', 'RUNNING'] }, OR: [{ runAfter: null }, { runAfter: { lte: new Date() } }] } });
     if (!busy) break;
@@ -273,12 +273,12 @@ after(async () => {
   await prisma.$disconnect();
 });
 
-test('auth: login admin, invitacion y registro de usuario', async () => {
+test('auth: admin login, invitation and user sign-up', async () => {
   const bad = await api('POST', '/auth/login', { username: 'admin', password: 'nope' });
   assert.equal(bad.status, 401);
   const first = await api('POST', '/auth/login', { username: 'admin', password: 'admin1234' });
   assert.equal(first.status, 200);
-  // Contrasena inicial de .env: hay que cambiarla antes de nada
+  // Initial password from .env: it must be changed first
   assert.equal(first.json.user.mustChangePassword, true);
   adminToken = first.json.accessToken;
   assert.equal((await api('GET', '/systems')).status, 403);
@@ -314,7 +314,7 @@ test('auth: login admin, invitacion y registro de usuario', async () => {
   assert.equal(shortNext.json.persistent, false);
   assert.ok((await until(shortNext.json.refreshToken)) <= 86400_000);
   assert.ok((await until(short.json.refreshToken)) <= 60_000, 'the used token ends after the grace');
-  // El token de ficheros no sirve como token de API
+  // The files token is not valid as an API token
   assert.equal((await api('GET', '/systems', undefined, adminFiles)).status, 401);
 
   const inv = await api('POST', '/invitations', { role: 'USER' });
@@ -342,19 +342,19 @@ test('auth: login admin, invitacion y registro de usuario', async () => {
   assert.deepEqual(me.json.permissions, ['collection.view', 'lists', 'saves', 'scrape.lists']);
 });
 
-test('permisos: por defecto, 403 y concesion por el admin', async () => {
+test('permissions: default, 403 and grant by the admin', async () => {
   assert.equal((await api('GET', '/lists/1/files', undefined, userToken)).status, 403);
   assert.equal((await api('POST', '/scrape', { gameIds: [1] }, userToken)).status, 403);
   const fd = new FormData();
   fd.append('file', new Blob([Buffer.from('x')]), 'x.nes');
   assert.equal((await api('POST', '/uploads', fd, userToken)).status, 403);
-  // Lista sin permiso de listas
+  // List without list permission
   const u = await api('POST', '/users', { username: 'viewer', email: 'v@example.com', password: 'viewerpass', permissions: ['collection.view'] });
   assert.equal(u.status, 201);
   const vt = (await api('POST', '/auth/login', { username: 'viewer', password: 'viewerpass' })).json.accessToken;
   assert.equal((await api('GET', '/lists', undefined, vt)).status, 403);
   assert.equal((await api('GET', '/systems', undefined, vt)).status, 200);
-  // Se conceden todos al usuario de pruebas; los permisos van en el token y se renuevan con refresh
+  // All are granted to the test user; permissions travel in the token and are renewed on refresh
   const all = ['collection.view', 'lists', 'saves', 'roms.download', 'roms.upload', 'roms.uploadUnverified', 'scrape.lists', 'scrape.bulk'];
   assert.equal((await api('PATCH', `/users/${userId}`, { permissions: all })).status, 200);
   const rr = await api('POST', '/auth/refresh', { refreshToken: userRefresh });
@@ -364,7 +364,7 @@ test('permisos: por defecto, 403 y concesion por el admin', async () => {
   assert.deepEqual((await api('GET', '/users/me', undefined, userToken)).json.permissions, all);
 });
 
-test('seguridad: limite de login, CORS cerrado y cabeceras', async () => {
+test('security: login limit, closed CORS and headers', async () => {
   const { resetLoginLimits } = await import('../src/modules/auth/routes.js');
   for (let i = 0; i < 5; i++) assert.equal((await api('POST', '/auth/login', { username: 'viewer', password: 'mal' })).status, 401);
   assert.equal((await api('POST', '/auth/login', { username: 'viewer', password: 'viewerpass' })).status, 429);
@@ -374,7 +374,7 @@ test('seguridad: limite de login, CORS cerrado y cabeceras', async () => {
   assert.equal(r.headers.get('x-content-type-options'), 'nosniff');
 });
 
-test('dats: importacion No-Intro y hacks', async () => {
+test('dats: No-Intro import and hacks', async () => {
   for (const file of ['nointro - Nintendo - Nintendo Entertainment System.dat', 'nointro - Nintendo - Super Nintendo Entertainment System.dat', 'hacks - Nintendo - Nintendo Entertainment System.dat', 'hacks - Nintendo - Super Nintendo Entertainment System.dat']) {
     const j = await api('POST', '/admin/dats/import-file', { file });
     assert.equal(j.status, 202);
@@ -389,7 +389,7 @@ test('dats: importacion No-Intro y hacks', async () => {
   assert.ok(nes.romCount > 7000);
 });
 
-test('escaneo: rutas, checksums con y sin cabecera, hacks y hash RA', async () => {
+test('scan: paths, checksums with and without header, hacks and RA hash', async () => {
   const nes = await api('POST', '/admin/paths', { label: 'NES', path: path.join(ROMS, 'nes') });
   const snes = await api('POST', '/admin/paths', { label: 'SNES', path: path.join(ROMS, 'snes') });
   assert.equal(nes.status, 201);
@@ -399,9 +399,9 @@ test('escaneo: rutas, checksums con y sin cabecera, hacks y hash RA', async () =
   const r2 = await waitJob((await api('POST', `/admin/paths/${snes.json.id}/scan`)).json.id);
   assert.ok(r1.result.matched >= 150, `nes matched ${r1.result.matched}`);
   assert.ok(r2.result.matched >= 140, `snes matched ${r2.result.matched}`);
-  // Romhacks enlazados por contenido (los que no tienen su base en roms/snes quedan en revision)
+  // Romhacks linked by content (those without their base in roms/snes go to review)
   assert.ok(r2.result.hacksLinked >= 5, JSON.stringify(r2.result));
-  // Re-escaneo incremental: nada que hashear
+  // Incremental rescan: nothing to hash
   const r3 = await waitJob((await api('POST', `/admin/paths/${nes.json.id}/scan`)).json.id);
   assert.equal(r3.result.hashed, 0);
   assert.equal(r3.result.skipped, r3.result.files);
@@ -414,7 +414,7 @@ test('escaneo: rutas, checksums con y sin cabecera, hacks y hash RA', async () =
 
   const translation = await api('GET', `/files?q=${encodeURIComponent('Chrono Trigger (USA) [T+Spa')}`);
   assert.equal(translation.json.items[0].status, 'HACK');
-  // Romhacks identificados por contenido: base exacta; los que no tienen base en la coleccion van a revision
+  // Romhacks identified by content: exact base; those without a base in the collection go to review
   const { prisma } = await import('../src/lib/prisma.js');
   const ct = await prisma.romHack.findUniqueOrThrow({ where: { id: translation.json.items[0].romHackId }, include: { baseRom: true } });
   assert.ok(ct.baseEvidence === 'content' || ct.baseEvidence === 'dat', String(ct.baseEvidence));
@@ -422,7 +422,7 @@ test('escaneo: rutas, checksums con y sin cabecera, hacks y hash RA', async () =
   assert.equal(await prisma.romHack.count({ where: { baseEvidence: 'title' } }), 0);
   const review = (await api('GET', '/admin/review?kind=hack')).json.items;
   assert.ok(review.length >= 25);
-  assert.ok(review.every((i: any) => i.payload.titleSuggestions), 'el titulo solo como sugerencia');
+  assert.ok(review.every((i: any) => i.payload.titleSuggestions), 'the title only as a suggestion');
   const unknown = await api('GET', '/files?status=UNKNOWN&pageSize=100');
   assert.ok(unknown.json.items.some((x: any) => x.relativePath.startsWith('Pooyan')));
 
@@ -433,7 +433,7 @@ test('escaneo: rutas, checksums con y sin cabecera, hacks y hash RA', async () =
   ctx.snesSystemId = systems.json.find((x: any) => x.slug === 'snes').id;
 });
 
-test('coleccion: juegos, filtros, faltantes, ficha y fusion', async () => {
+test('collection: games, filters, missing, detail and merge', async () => {
   const owned = await api('GET', `/games?systemId=${ctx.nesSystemId}&status=owned&pageSize=500`);
   assert.ok(owned.json.total >= 140);
   const missing = await api('GET', `/games?systemId=${ctx.nesSystemId}&status=missing&pageSize=10`);
@@ -443,7 +443,7 @@ test('coleccion: juegos, filtros, faltantes, ficha y fusion', async () => {
   assert.ok(game.ownedCount >= 1);
   ctx.smb3GameId = game.id;
   const detail = await api('GET', `/games/${game.id}`);
-  assert.ok(detail.json.roms.length >= 3, 'varias roms por juego');
+  assert.ok(detail.json.roms.length >= 3, 'several roms per game');
   const ownedRom = detail.json.roms.find((r: any) => r.name === SMB3);
   assert.equal(ownedRom.owned, true);
   ctx.smb3RomId = ownedRom.id;
@@ -457,7 +457,7 @@ test('coleccion: juegos, filtros, faltantes, ficha y fusion', async () => {
   const hacks = await api('GET', `/hacks?systemId=${ctx.snesSystemId}`);
   assert.ok(hacks.json.total >= 40);
 
-  // Fusion: "Rockman" (Japon) dentro de "Mega Man"
+  // Merge: "Rockman" (Japan) into "Mega Man"
   const rock = (await api('GET', `/games?q=Rockman&systemId=${ctx.nesSystemId}`)).json.items.find((g: any) => g.title === 'Rockman');
   const mega = (await api('GET', `/games?q=${encodeURIComponent('Mega Man')}&systemId=${ctx.nesSystemId}`)).json.items.find((g: any) => g.title === 'Mega Man');
   assert.ok(rock && mega);
@@ -467,10 +467,10 @@ test('coleccion: juegos, filtros, faltantes, ficha y fusion', async () => {
   assert.ok(afterMerge > before);
 });
 
-test('retroachievements: importacion de hashes y enlace a roms', async () => {
+test('retroachievements: hash import and linking to roms', async () => {
   const detail = (await api('GET', `/games/${ctx.smb3GameId}`)).json;
   const europe = detail.roms.find((r: any) => r.id === ctx.smb3EuropeRomId);
-  assert.ok(europe.raHash, 'hash RA precalculado desde el DAT');
+  assert.ok(europe.raHash, 'RA hash precomputed from the DAT');
   const r = await api('POST', '/ra/import', {
     system: 'nes',
     games: [{ ID: 1446, Title: 'Super Mario Bros. 3', NumAchievements: 60, Hashes: ['55b7111567c1709e849c574078699577', europe.raHash] }],
@@ -485,7 +485,7 @@ test('retroachievements: importacion de hashes y enlace a roms', async () => {
   assert.equal(filtered.json.total, 1);
 });
 
-test('listas: crear, compartir, colaborar, clonar, sublistas, exportar e importar', async () => {
+test('lists: create, share, collaborate, clone, sublists, export and import', async () => {
   const fav = await api('POST', '/lists', { name: 'Favoritos', visibility: 'PRIVATE' });
   assert.equal(fav.status, 201);
   ctx.favId = fav.json.id;
@@ -505,7 +505,7 @@ test('listas: crear, compartir, colaborar, clonar, sublistas, exportar e importa
   await api('POST', `/lists/${ctx.favId}/items`, { hackId: hack.id });
   await api('POST', `/lists/${ctx.favId}/items`, { romId: ctx.smb3RomId });
 
-  // Privada: otro usuario no la ve
+  // Private: another user does not see it
   assert.equal((await api('GET', `/lists/${ctx.favId}`, undefined, userToken)).status, 403);
   await api('PUT', `/lists/${ctx.favId}/shares`, [{ userId, canEdit: true }]);
   const shared = await api('GET', '/lists?scope=shared', undefined, userToken);
@@ -514,7 +514,7 @@ test('listas: crear, compartir, colaborar, clonar, sublistas, exportar e importa
   const del = (await api('GET', `/lists/${ctx.favId}`, undefined, userToken)).json.items.find((i: any) => i.gameId === kirby);
   assert.equal((await api('DELETE', `/lists/${ctx.favId}/items/${del.id}`, undefined, userToken)).status, 204);
 
-  // Publica y clonada por el otro usuario
+  // Public and cloned by the other user
   await api('PATCH', `/lists/${ctx.favId}`, { visibility: 'PUBLIC' });
   const pub = await api('GET', '/lists?scope=public', undefined, userToken);
   assert.ok(pub.json.some((l: any) => l.id === ctx.favId));
@@ -534,12 +534,12 @@ test('listas: crear, compartir, colaborar, clonar, sublistas, exportar e importa
   const euList = (await api('GET', `/lists/${eu.json.id}`)).json;
   const smbEu = euList.items.find((i: any) => i.gameId === ctx.smb3GameId);
   assert.equal(smbEu.romId, ctx.smb3EuropeRomId);
-  // Sublista: compatibles con RetroAchievements
+  // Sublist: RetroAchievements-compatible
   const ra = await api('POST', `/lists/${ctx.favId}/derive`, { name: 'Favoritos RA', raOnly: true });
   const raList = (await api('GET', `/lists/${ra.json.id}`)).json;
   assert.equal(raList.items.filter((i: any) => i.kind === 'rom').length, 1);
   assert.ok(ra.json.skipped.length >= 4);
-  // Sublista: solo lo que tengo, preferencia USA
+  // Sublist: only what I own, USA preferred
   const usa = await api('POST', `/lists/${ctx.favId}/derive`, { name: 'Favoritos USA (tengo)', regions: ['USA'], ownedOnly: true });
   ctx.usaListId = usa.json.id;
   await api('PATCH', `/lists/${usa.json.id}`, { visibility: 'PUBLIC' });
@@ -559,10 +559,10 @@ test('listas: crear, compartir, colaborar, clonar, sublistas, exportar e importa
   assert.equal(imp.json.added, exp.json.items.length);
 });
 
-test('listas: descarga zip con estructura de firmware', async () => {
+test('lists: zip download with firmware structure', async () => {
   const files = await api('GET', `/lists/${ctx.usaListId}/files`);
   assert.ok(files.json.items.length >= 5);
-  // El token de acceso no vale en la URL; el de ficheros si
+  // The access token is not valid in the URL; the files token is
   assert.equal((await fetch(`${base}/api/v1/lists/${ctx.usaListId}/download?token=${adminToken}`)).status, 401);
   const r = await fetch(`${base}/api/v1/lists/${ctx.usaListId}/download?firmware=knulli&token=${adminFiles}`);
   assert.equal(r.status, 200);
@@ -574,7 +574,7 @@ test('listas: descarga zip con estructura de firmware', async () => {
   assert.ok(listing.includes('roms/snes/'), listing);
 });
 
-test('dispositivos: catalogo, alta local, prueba y copia de lista', async () => {
+test('devices: catalog, local registration, test and list copy', async () => {
   const consoles = (await api('GET', '/devices/consoles')).json;
   const firmwares = (await api('GET', '/devices/firmwares')).json;
   const thor = consoles.find((c: any) => c.name === 'AYN Thor');
@@ -592,7 +592,7 @@ test('dispositivos: catalogo, alta local, prueba y copia de lista', async () => 
   const t = await api('POST', `/devices/${d.json.id}/test`, undefined, userToken);
   assert.equal(t.json.ok, true);
 
-  // El usuario copia una lista publica del admin
+  // The user copies a public list from the admin
   const dry = await waitJob((await api('POST', `/devices/${d.json.id}/transfer`, { listId: ctx.usaListId, dryRun: true }, userToken)).json.id, userToken);
   assert.ok(dry.result.plan.length >= 5);
   assert.ok(!fs.existsSync(path.join(root, 'roms/nes')));
@@ -602,7 +602,7 @@ test('dispositivos: catalogo, alta local, prueba y copia de lista', async () => 
   const again = await waitJob((await api('POST', `/devices/${d.json.id}/transfer`, { listId: ctx.usaListId }, userToken)).json.id, userToken);
   assert.equal(again.result.copied, 0);
 
-  // Otro firmware con overrides de carpetas
+  // Another firmware with folder overrides
   fs.mkdirSync(path.join(DATA, 'device-rocknix'), { recursive: true });
   const d3 = await api('POST', '/devices', { name: 'Thor Rocknix', consoleId: thor.id, firmwareId: rocknix.id, connType: 'LOCAL', rootPath: path.join(DATA, 'device-rocknix'), overrides: { systemMap: { nes: { folder: 'famicom', emulator: 'ra-nestopia' } } } }, userToken);
   ctx.rocknixDevice = d3.json.id;
@@ -610,9 +610,9 @@ test('dispositivos: catalogo, alta local, prueba y copia de lista', async () => 
   assert.ok(fs.existsSync(path.join(DATA, 'device-rocknix/roms/famicom', `${SMB3}.nes`)));
 });
 
-test('dispositivos: SSH/SFTP', async (t) => {
+test('devices: SSH/SFTP', async (t) => {
   if (!(await sshAvailable())) {
-    t.skip('rommancer-sshd no disponible');
+    t.skip('rommancer-sshd not available');
     return;
   }
   const consoles = (await api('GET', '/devices/consoles')).json;
@@ -625,7 +625,7 @@ test('dispositivos: SSH/SFTP', async (t) => {
   );
   assert.equal(d.status, 201);
   ctx.sshDevice = d.json.id;
-  assert.equal(d.json.sshPassword, undefined, 'no se devuelven credenciales');
+  assert.equal(d.json.sshPassword, undefined, 'credentials are not returned');
   const job = await waitJob((await api('POST', `/devices/${d.json.id}/transfer`, { listId: ctx.usaListId }, userToken)).json.id, userToken);
   assert.ok(job.result.copied >= 5);
   const tst = await api('POST', `/devices/${d.json.id}/test`, undefined, userToken);
@@ -633,9 +633,9 @@ test('dispositivos: SSH/SFTP', async (t) => {
   assert.ok(tst.json.romsFolders.includes('Nintendo NES-Famicom'));
 });
 
-test('dispositivos: el servidor instala el cliente por SSH y sincroniza la consola', async (t) => {
+test('devices: the server installs the client over SSH and syncs the console', async (t) => {
   if (!(await sshAvailable(2224))) {
-    t.skip('rommancer-sshd-host no disponible');
+    t.skip('rommancer-sshd-host not available');
     return;
   }
   const consoles = (await api('GET', '/devices/consoles')).json;
@@ -661,7 +661,7 @@ test('dispositivos: el servidor instala el cliente por SSH y sincroniza la conso
   assert.equal((await api('GET', '/devices')).json.filter((x: any) => x.name === 'SSH only').length, 1);
 });
 
-test('subidas: validacion por hash (DAT, romhack, RetroAchievements)', async () => {
+test('uploads: hash validation (DAT, romhack, RetroAchievements)', async () => {
   const target = path.join(DATA, 'uploads-target');
   fs.mkdirSync(target, { recursive: true });
   const p = await api('POST', '/admin/paths', { label: 'Subidas', path: target, isDefaultTarget: true });
@@ -675,20 +675,20 @@ test('subidas: validacion por hash (DAT, romhack, RetroAchievements)', async () 
   // Fichero basura: rechazado
   const junk = await send('junk.nes', crypto.randomBytes(40000));
   assert.equal(junk.status, 422);
-  // Rom que ya existe en la coleccion
+  // Rom already in the collection
   const smb = fs.readFileSync(path.join(ROMS, 'nes', `${SMB3}.nes`));
   const h = (b: Buffer, a: string) => crypto.createHash(a).update(b).digest('hex');
   const pre = await api('POST', '/roms/match', { sha1: h(smb, 'sha1'), md5: h(smb, 'md5'), size: smb.length, headerless: { sha1: h(smb.subarray(16), 'sha1'), md5: h(smb.subarray(16), 'md5') } }, userToken);
   assert.equal(pre.json.status, 'MATCHED');
   assert.equal((await send('cualquier nombre.nes', smb)).json.status, 'already-owned');
-  // Romhack registrado por el admin con su hash
+  // Romhack registered by the admin with its hash
   const hackBuf = Buffer.concat([Buffer.from('NES\x1a\x02\x01\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00', 'latin1'), crypto.randomBytes(32768)]);
   await api('POST', '/hacks', { gameId: ctx.smb3GameId, title: 'SMB3 Test Hack', sha1: crypto.createHash('sha1').update(hackBuf).digest('hex'), size: hackBuf.length });
   const up = await send('hack.nes', hackBuf);
   assert.equal(up.status, 201);
   assert.equal(up.json.match, 'HACK');
   assert.ok(fs.existsSync(path.join(target, 'nes', 'SMB3 Test Hack.nes')));
-  // Hash conocido solo por RetroAchievements
+  // Hash known only to RetroAchievements
   const raBuf = Buffer.concat([Buffer.from('NES\x1a\x01\x01\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00', 'latin1'), crypto.randomBytes(24576)]);
   const raHash = crypto.createHash('md5').update(raBuf.subarray(16)).digest('hex');
   await api('POST', '/ra/import', { system: 'nes', games: [{ ID: 99999, Title: 'Homebrew RA', Hashes: [raHash] }] });
@@ -697,8 +697,8 @@ test('subidas: validacion por hash (DAT, romhack, RetroAchievements)', async () 
   assert.equal(up2.json.raGameId, 99999);
 });
 
-test('scraping: ScreenScraper (mock) y libretro-thumbnails (real)', async (t) => {
-  // Sin credenciales de usuario ScreenScraper se omite; el admin pone las suyas
+test('scraping: ScreenScraper (mock) and libretro-thumbnails (real)', async (t) => {
+  // Without user ScreenScraper credentials it is skipped; the admin sets their own
   await api('PATCH', '/users/me', { ssUser: 'user', ssPassword: 'pass' });
   const job = await waitJob((await api('POST', '/scrape', { gameIds: [ctx.smb3GameId], sources: ['screenscraper'], types: ['COVER', 'MANUAL'] })).json.id);
   assert.equal(job.result.media, 2);
@@ -711,7 +711,7 @@ test('scraping: ScreenScraper (mock) y libretro-thumbnails (real)', async (t) =>
   assert.equal(img.status, 200);
   assert.ok(g.media.some((m: any) => m.type === 'MANUAL'));
 
-  // libretro-thumbnails (mock): la portada de Mega Man 2 puede haberse bajado ya al anadirlo a una lista
+  // libretro-thumbnails (mock): Mega Man 2's cover may already be downloaded when it is added to a list
   const mm2 = (await api('GET', `/games?q=${encodeURIComponent('Mega Man 2')}&systemId=${ctx.nesSystemId}`)).json.items.find((x: any) => x.title === 'Mega Man 2');
   await waitJob((await api('POST', '/scrape', { gameIds: [mm2.id], sources: ['libretro'], types: ['COVER', 'SCREENSHOT', 'TITLE'] }, userToken)).json.id, userToken);
   const mm2d = (await api('GET', `/games/${mm2.id}`)).json;
@@ -719,7 +719,7 @@ test('scraping: ScreenScraper (mock) y libretro-thumbnails (real)', async (t) =>
   void t;
 });
 
-test('saves: subida, historial, restauracion, conversion y backups', async () => {
+test('saves: upload, history, restore, conversion and backups', async () => {
   const emus = (await api('GET', '/devices/emulators')).json;
   ctx.emus = Object.fromEntries(emus.map((e: any) => [e.slug, e]));
   const send = async (name: string, buf: Buffer, emulator: string, mtime: number, token = userToken) => {
@@ -738,10 +738,10 @@ test('saves: subida, historial, restauracion, conversion y backups', async () =>
   const same = await send(`${SMB3}.srm`, v2, 'ra-fceumm', now);
   assert.equal(same.status, 200);
   const save = (await api('GET', `/saves/${a.json.saveId}`, undefined, userToken)).json;
-  assert.equal(save.gameId, ctx.smb3GameId, 'save identificado por nombre de rom');
+  assert.equal(save.gameId, ctx.smb3GameId, 'save identified by rom name');
   assert.equal(save.versions.length, 2);
   assert.equal(save.currentVersionId, b.json.versionId);
-  // Sin relojes: la ultima subida pasa a ser la actual aunque su fecha sea anterior
+  // Without clocks: the last upload becomes the current one even if its date is older
   const old = await send(`${SMB3}.srm`, crypto.randomBytes(8192), 'ra-fceumm', now - 3600_000);
   assert.equal((await api('GET', `/saves/${a.json.saveId}`, undefined, userToken)).json.currentVersionId, old.json.versionId);
   // Restaurar v1
@@ -751,7 +751,7 @@ test('saves: subida, historial, restauracion, conversion y backups', async () =>
   const dl = await fetch(`${base}/api/v1/saves/${a.json.saveId}/versions/${rest.json.versionId}/download?token=${userFiles}`);
   assert.ok(Buffer.from(await dl.arrayBuffer()).equals(v1));
   ctx.smbSaveId = a.json.saveId;
-  // Otro usuario no puede verlo
+  // Another user cannot see it
   assert.equal((await api('GET', `/saves/${a.json.saveId}`)).status, 403);
 
   // .srm (mGBA RetroArch) -> .sav standalone
@@ -782,9 +782,9 @@ test('saves: subida, historial, restauracion, conversion y backups', async () =>
   assert.equal(bad.status, 400);
 });
 
-test('saves: sincronizacion con dispositivos (pull, push, conflictos, reubicacion)', async () => {
+test('saves: device sync (pull, push, conflicts, relocation)', async () => {
   const root = path.join(DATA, 'device-sd');
-  // Save creado en la consola: Knulli guarda en saves/<sistema>/
+  // Save created on the console: Knulli stores in saves/<system>/
   const contra = 'Contra (USA)';
   const devSave = crypto.randomBytes(8192);
   fs.mkdirSync(path.join(root, 'saves/nes'), { recursive: true });
@@ -793,13 +793,13 @@ test('saves: sincronizacion con dispositivos (pull, push, conflictos, reubicacio
   const sync = await waitJob((await api('POST', `/saves/sync/${ctx.localDevice}`, { direction: 'both' }, userToken)).json.id, userToken);
   assert.equal(sync.result.pulled, 2);
   assert.ok(sync.result.pushed >= 1);
-  // El save de SMB3 subido por web aparece en la consola
+  // The SMB3 save uploaded from the web shows up on the console
   assert.ok(fs.existsSync(path.join(root, 'saves/nes', `${SMB3}.srm`)));
   const saves = (await api('GET', '/saves', undefined, userToken)).json;
   const state = saves.find((s: any) => s.kind === 'STATE' && s.baseName === contra);
   assert.equal(state.slot, 1);
 
-  // Solo cambia la consola: gana su version, la anterior queda en el historial (sin mirar fechas)
+  // Only the console changes: its version wins, the previous one stays in the history (dates ignored)
   const newer = crypto.randomBytes(8192);
   const f = path.join(root, 'saves/nes', `${SMB3}.srm`);
   fs.writeFileSync(f, newer);
@@ -812,14 +812,14 @@ test('saves: sincronizacion con dispositivos (pull, push, conflictos, reubicacio
   assert.equal(current.sourceDevice.id, ctx.localDevice);
   assert.ok(smb.versions.length >= 4);
 
-  // Push a otro dispositivo (Rocknix: saves junto a la rom, carpeta 'famicom', otro core)
+  // Push to another device (Rocknix: saves next to the rom, 'famicom' folder, another core)
   await api('PATCH', `/devices/${ctx.rocknixDevice}`, { overrides: { systemMap: { nes: { folder: 'famicom', emulator: 'ra-fceumm' } } } }, userToken);
   const push = await waitJob((await api('POST', `/saves/sync/${ctx.rocknixDevice}`, { direction: 'push' }, userToken)).json.id, userToken);
   assert.ok(push.result.pushed >= 2);
   const pushed = path.join(DATA, 'device-rocknix/roms/famicom', `${SMB3}.srm`);
   assert.ok(fs.readFileSync(pushed).equals(newer));
 
-  // Reubicacion: en el dispositivo la rom tiene otro nombre
+  // Relocation: on the device the rom has another name
   const relocRoot = path.join(DATA, 'device-reloc');
   fs.mkdirSync(path.join(relocRoot, 'roms/nes'), { recursive: true });
   fs.writeFileSync(path.join(relocRoot, 'roms/nes', 'Super Mario Bros. 3 (U) (PRG1) [!].nes'), 'x');
@@ -829,14 +829,14 @@ test('saves: sincronizacion con dispositivos (pull, push, conflictos, reubicacio
   await waitJob((await api('POST', `/saves/sync/${d.json.id}`, { direction: 'push' }, userToken)).json.id, userToken);
   assert.ok(fs.existsSync(path.join(relocRoot, 'roms/nes', 'Super Mario Bros. 3 (U) (PRG1) [!].srm')));
 
-  // Push por SSH
+  // Push over SSH
   if (ctx.sshDevice) {
     const s = await waitJob((await api('POST', `/saves/sync/${ctx.sshDevice}`, { direction: 'both' }, userToken)).json.id, userToken);
     assert.ok(s.result.pushed >= 2, JSON.stringify(s.result));
   }
 });
 
-test('organizacion: renombrado y ordenacion por carpetas (dry-run y aplicar)', async () => {
+test('organization: renaming and sorting into folders (dry-run and apply)', async () => {
   const dir = path.join(DATA, 'messy');
   fs.mkdirSync(path.join(dir, 'varios'), { recursive: true });
   fs.copyFileSync(path.join(ROMS, 'nes', `${SMB3}.nes`), path.join(dir, 'varios', 'smb3.nes'));
@@ -851,15 +851,15 @@ test('organizacion: renombrado y ordenacion por carpetas (dry-run y aplicar)', a
   const plan = (await api('GET', `/admin/paths/${p.json.id}/organize?scheme=knulli`)).json;
   assert.ok(plan.find((x: any) => x.to === path.join('nes', `${SMB3}.nes`)), JSON.stringify(plan));
   assert.ok(plan.find((x: any) => x.to === path.join('snes', 'Chrono Trigger (USA).sfc') || x.to === path.join('snes', 'Chrono Trigger (USA).smc')));
-  assert.ok(fs.existsSync(path.join(dir, 'varios', 'smb3.nes')), 'dry-run no mueve nada');
+  assert.ok(fs.existsSync(path.join(dir, 'varios', 'smb3.nes')), 'dry-run moves nothing');
   const applied = (await api('POST', `/admin/paths/${p.json.id}/organize`, { scheme: 'knulli' })).json;
   assert.equal(applied.errors.length, 0);
   assert.ok(fs.existsSync(path.join(dir, 'nes', `${SMB3}.nes`)));
   const rescan = await waitJob((await api('POST', `/admin/paths/${p.json.id}/scan`)).json.id);
-  assert.equal(rescan.result.hashed, 0, 'la base de datos sigue sincronizada tras mover');
+  assert.equal(rescan.result.hashed, 0, 'the database stays in sync after moving');
 });
 
-test('discos: CHD de PS1 con hash Redump y RetroAchievements', async (t) => {
+test('discs: PS1 CHD with Redump hash and RetroAchievements', async (t) => {
   // Disco sintetico: SYSTEM.CNF + ejecutable PS-X EXE en ISO9660, convertido a CHD
   const work = path.join(DATA, 'ps1');
   const src = path.join(work, 'src');
@@ -877,7 +877,7 @@ test('discos: CHD de PS1 con hash Redump y RetroAchievements', async (t) => {
     try {
       execSync(`xorriso -as mkisofs -o "${iso}" "${src}"`, { stdio: 'ignore' });
     } catch {
-      t.skip('sin herramienta para crear ISO');
+      t.skip('no tool to create an ISO');
       return;
     }
   }
@@ -886,7 +886,7 @@ test('discos: CHD de PS1 con hash Redump y RetroAchievements', async (t) => {
   execSync(`chdman createcd -i "${iso}" -o "${path.join(romsDir, 'Test Game (USA).chd')}" -f`, { stdio: 'ignore' });
   const expectedRa = crypto.createHash('md5').update('SLUS_999.99').update(exe).digest('hex');
 
-  // DAT Redump minimo con el hash de la pista (2352 bytes/sector tras extraer)
+  // Minimal Redump DAT with the track hash (2352 bytes/sector after extraction)
   const tmp = path.join(work, 'x');
   fs.mkdirSync(tmp, { recursive: true });
   execSync(`chdman extractcd -i "${path.join(romsDir, 'Test Game (USA).chd')}" -o "${tmp}/t.cue" -ob "${tmp}/t (Track %t).bin" -sb -f`, { stdio: 'ignore' });
@@ -908,13 +908,13 @@ test('discos: CHD de PS1 con hash Redump y RetroAchievements', async (t) => {
   assert.equal(psx.owned, 1);
 });
 
-test('comprimidos: zip/7z de cartuchos y sets arcade FBNeo', async () => {
+test('archives: cartridge zip/7z and FBNeo arcade sets', async () => {
   const dir = path.join(DATA, 'archives');
   fs.mkdirSync(path.join(dir, 'fbneo'), { recursive: true });
   fs.mkdirSync(path.join(dir, 'mix'), { recursive: true });
   execSync(`${SEVENZIP} a -tzip "${path.join(dir, 'mix', 'smb3.zip')}" "${path.join(ROMS, 'nes', `${SMB3}.nes`)}"`, { stdio: 'ignore' });
   execSync(`${SEVENZIP} a -t7z "${path.join(dir, 'mix', 'ct.7z')}" "${path.join(ROMS, 'snes', 'Chrono Trigger (USA).smc')}"`, { stdio: 'ignore' });
-  // Set arcade sintetico con dos roms internas
+  // Synthetic arcade set with two inner roms
   const a = crypto.randomBytes(4096);
   const b = crypto.randomBytes(2048);
   const work = path.join(DATA, 'arcade-src');
@@ -931,8 +931,8 @@ test('comprimidos: zip/7z de cartuchos y sets arcade FBNeo', async () => {
   fs.writeFileSync(path.join(DATA, 'dats', 'fbneo-test.dat'), dat);
   const imp = await waitJob((await api('POST', '/admin/dats/import-file', { file: 'fbneo-test.dat' })).json.id);
   assert.equal(imp.result.system, 'fbneo');
-  assert.equal(imp.result.games, 1, 'el clon comparte juego con el padre');
-  // DAT de "un zip por set" (como el de libretro-database): describe los mismos juegos con otro nombre; no crea roms
+  assert.equal(imp.result.games, 1, 'the clone shares a game with its parent');
+  // "One zip per set" DAT (like libretro-database's): describes the same games under another name; creates no roms
   const zipDat = `clrmamepro (\n\tname "FBNeo - Arcade Games"\n)\n\ngame (\n\tname "Test Game (World)"\n\trom ( name testgame.zip size 100 crc 12345678 )\n)\n`;
   fs.writeFileSync(path.join(DATA, 'dats', 'fbneo-zip.dat'), zipDat);
   const zipImp = await waitJob((await api('POST', '/admin/dats/import-file', { file: 'fbneo-zip.dat' })).json.id);
@@ -952,7 +952,7 @@ test('comprimidos: zip/7z de cartuchos y sets arcade FBNeo', async () => {
   assert.equal(g.romCount, 2);
 });
 
-test('discos: RVZ de GameCube verificado contra Redump sin dolphin-tool', async () => {
+test('discs: GameCube RVZ verified against Redump without dolphin-tool', async () => {
   const { makeGcRvz } = await import('./helpers/rvz-encoder.js');
   const { raHashGamecubeFrom } = await import('../src/lib/rahash.js');
   const { iso, rvz } = makeGcRvz();
@@ -995,7 +995,7 @@ async function waitJobDone(id: number) {
   throw new Error('timeout');
 }
 
-test('fase2: destino final, subidas no verificadas y verificacion posterior', async () => {
+test('phase2: final destination, unverified uploads and later verification', async () => {
   const prisma = await prismaClient();
   const nesTarget = path.join(DATA, 'target-nes');
   fs.mkdirSync(nesTarget, { recursive: true });
@@ -1014,9 +1014,9 @@ test('fase2: destino final, subidas no verificadas y verificacion posterior', as
   const up = await send({ systemId: String(ctx.nesSystemId), newGameTitle: 'Mi Homebrew', regions: 'World', revision: 'v1.0' });
   assert.equal(up.status, 201, JSON.stringify(up.json));
   assert.equal(up.json.match, 'UNVERIFIED');
-  assert.ok(fs.existsSync(path.join(nesTarget, 'Mi Homebrew (World).nes')), 'destino del sistema, esquema plano');
+  assert.ok(fs.existsSync(path.join(nesTarget, 'Mi Homebrew (World).nes')), 'system destination, flat scheme');
   assert.equal((await send({ systemId: String(ctx.nesSystemId), newGameTitle: 'Otra' })).status, 409);
-  // No cuenta en el porcentaje; se muestra aparte
+  // Not counted in the percentage; shown apart
   const after = (await api('GET', '/systems')).json.find((s: any) => s.slug === 'nes');
   assert.equal(after.owned, before.owned);
   assert.equal(after.roms, before.roms);
@@ -1024,7 +1024,7 @@ test('fase2: destino final, subidas no verificadas y verificacion posterior', as
   const g = (await api('GET', `/games/${up.json.gameId}`)).json;
   assert.equal(g.roms[0].unverified, true);
   assert.equal(g.roms[0].uploadedBy, 'player2');
-  // Hack no verificado de SNES: va a la ruta predeterminada (Subidas)
+  // Unverified SNES hack: goes to the default path (Subidas)
   const snesHack = await send({ systemId: String(ctx.snesSystemId), newGameTitle: 'Juego Snes', kind: 'translation', hackName: 'Traduccion', hackVersion: '0.9', hackLanguage: 'Es' }, crypto.randomBytes(65536), 'juego-es.sfc');
   assert.equal(snesHack.status, 201, JSON.stringify(snesHack.json));
   assert.ok(fs.existsSync(path.join(DATA, 'uploads-target', 'snes', 'juego-es.sfc')));
@@ -1038,7 +1038,7 @@ test('fase2: destino final, subidas no verificadas y verificacion posterior', as
   assert.ok(!fs.existsSync(path.join(DATA, 'library', 'gb', 'hb.gb')));
   await api('PATCH', `/admin/paths/${def.id}`, { isDefaultTarget: true });
 
-  // Un DAT posterior con su checksum la verifica
+  // A later DAT with its checksum verifies it
   const dat = `<?xml version="1.0"?><datafile><header><name>Nintendo - Nintendo Entertainment System</name><description>Homebrew test</description><version>1</version></header>
     <game name="Mi Homebrew (World)"><description>Mi Homebrew (World)</description><rom name="Mi Homebrew (World).nes" size="${rom.length}" crc="${crcHex(rom)}" md5="${md5h(rom)}" sha1="${md(rom, 'sha1')}"/></game></datafile>`;
   fs.writeFileSync(path.join(DATA, 'dats', 'homebrew-test.dat'), dat);
@@ -1079,7 +1079,7 @@ function bpsVarint(n: number) {
   return Buffer.from(out);
 }
 
-// BPS minimo: el destino entero como TargetRead
+// Minimal BPS: the whole target as TargetRead
 function bpsPatch(source: Buffer, target: Buffer) {
   const body = Buffer.concat([Buffer.from('BPS1', 'latin1'), bpsVarint(source.length), bpsVarint(target.length), bpsVarint(0), bpsVarint(((target.length - 1) << 2) | 1), target]);
   const foot = Buffer.alloc(8);
@@ -1091,7 +1091,7 @@ function bpsPatch(source: Buffer, target: Buffer) {
   return Buffer.concat([withFoot, pc]);
 }
 
-test('fase2: parches IPS/BPS, generacion bajo demanda y etiquetas', async () => {
+test('phase2: IPS/BPS patches, on-demand generation and labels', async () => {
   const prisma = await prismaClient();
   const base = fs.readFileSync(path.join(ROMS, 'nes', `${SMB3}.nes`));
   const h = await api('POST', '/hacks', { gameId: ctx.smb3GameId, baseRomId: ctx.smb3RomId, title: 'Super Mario Bros. 3 Parcheado', hackName: 'Parcheado', version: '1.2' });
@@ -1104,13 +1104,13 @@ test('fase2: parches IPS/BPS, generacion bajo demanda y etiquetas', async () => 
   assert.equal(p.json.format, 'ips');
   const expected = Buffer.from(base);
   expected.write('ROMMANCER', 0x20, 'latin1');
-  // Con la base en la coleccion se conoce ya el checksum del resultado
+  // With the base in the collection the result's checksum is already known
   assert.equal((await prisma.romHack.findUniqueOrThrow({ where: { id: h.json.id } })).sha1, md(expected, 'sha1'));
   const g = (await api('GET', `/games/${ctx.smb3GameId}`)).json;
   const hk = g.hacks.find((x: any) => x.id === h.json.id);
   assert.equal(hk.canGenerate, true);
   assert.equal(hk.label, 'Super Mario Bros. 3 (USA) Rev 1 + Parcheado v1.2');
-  // Descarga: se genera en el destino final del sistema y queda registrado
+  // Download: generated at the system's final destination and recorded
   const dl = await fetch(`${base_()}/api/v1/hacks/${h.json.id}/download?token=${userFiles}`);
   assert.equal(dl.status, 200);
   assert.ok(Buffer.from(await dl.arrayBuffer()).equals(expected));
@@ -1118,8 +1118,8 @@ test('fase2: parches IPS/BPS, generacion bajo demanda y etiquetas', async () => 
   await fetch(`${base_()}/api/v1/hacks/${h.json.id}/download?token=${userFiles}`);
   assert.equal(await prisma.romFile.count({ where: { romHackId: h.json.id } }), 1);
 
-  // Ficheros ya parcheados en disco antes de tener el parche: uno con cabecera y otro sin ella.
-  // Se reconocen por contenido como romhacks de SMB3 (sin mirar el nombre).
+  // Files already patched on disk before the patch exists: one with a header and one without.
+  // They are recognised by content as SMB3 romhacks (name ignored).
   const target = Buffer.from(base);
   target.write('BPS!', 0x40, 'latin1');
   const pre = path.join(DATA, 'pre-hacks', 'nes');
@@ -1135,8 +1135,8 @@ test('fase2: parches IPS/BPS, generacion bajo demanda y etiquetas', async () => 
     assert.equal(f.romHack!.baseRomId, ctx.smb3RomId);
     assert.equal(f.romHack!.baseEvidence, 'content');
   }
-  // BPS: la base se encuentra por el CRC del parche; los romhacks creados por contenido con el mismo
-  // resultado se fusionan con este y sus ficheros quedan enlazados
+  // BPS: the base is found by the patch CRC; romhacks created by content with the same
+  // result merge into this one and their files stay linked
   const h2 = await api('POST', '/hacks', { gameId: ctx.smb3GameId, title: 'SMB3 BPS', hackName: 'BPS', version: '2.0' });
   const fd2 = new FormData();
   fd2.append('file', new Blob([bpsPatch(base, target)]), 'p.bps');
@@ -1151,7 +1151,7 @@ test('fase2: parches IPS/BPS, generacion bajo demanda y etiquetas', async () => 
   const h3 = await api('POST', '/hacks', { gameId: ctx.smb3GameId, baseRomId: ctx.smb3RomId, title: 'SMB3 Malo' });
   await api('POST', `/hacks/${h3.json.id}/patches`, fd3);
   assert.equal((await fetch(`${base_()}/api/v1/hacks/${h3.json.id}/download?token=${userFiles}`)).status, 409);
-  // En una lista: se usa el fichero que ya habia, no se genera otro
+  // In a list: the existing file is used, none is generated
   const l = await api('POST', '/lists', { name: 'Hacks' }, userToken);
   await api('POST', `/lists/${l.json.id}/items`, { items: [{ hackId: h2.json.id }] }, userToken);
   const files = (await api('GET', `/lists/${l.json.id}/files`, undefined, userToken)).json;
@@ -1159,7 +1159,7 @@ test('fase2: parches IPS/BPS, generacion bajo demanda y etiquetas', async () => 
   assert.ok(files.items[0].files[0].absPath.startsWith(path.dirname(pre)));
   assert.equal(await prisma.romFile.count({ where: { romHackId: h2.json.id } }), 2);
 
-  // Parche generado desde un romhack que solo existe como fichero: se puede regenerar si se pierde
+  // Patch generated from a romhack that exists only as a file: it can be regenerated if lost
   const other = Buffer.from(base);
   other.write('OTRO HACK', 0x300, 'latin1');
   fs.writeFileSync(path.join(pre, 'otro hack.nes'), other);
@@ -1182,10 +1182,10 @@ function base_() {
   return base;
 }
 
-test('fase2: multimedia al anadir a listas con cuenta propia, cuotas y TheGamesDB', async () => {
+test('phase2: media when adding to lists with own account, quotas and TheGamesDB', async () => {
   const prisma = await prismaClient();
   const { env } = await import('../src/config/env.js');
-  // Credenciales globales presentes: un usuario normal nunca debe usarlas
+  // Global credentials present: a regular user must never use them
   env.screenscraper.user = 'global';
   env.screenscraper.password = 'globalpass';
   try {
@@ -1199,28 +1199,28 @@ test('fase2: multimedia al anadir a listas con cuenta propia, cuotas y TheGamesD
     assert.equal((j1!.params as any).mode, 'lists');
     const r1 = await waitJobDone(j1!.id);
     assert.equal((r1.result as any).noCredentials, true);
-    assert.equal(ssUsers.length, n, 'sin cuenta propia no se usa ScreenScraper');
-    // Con cuenta propia: se usa la suya
+    assert.equal(ssUsers.length, n, 'without own account ScreenScraper is not used');
+    // With own account: theirs is used
     await api('PATCH', '/users/me', { ssUser: 'player2ss', ssPassword: 'x', tgdbApiKey: 'tgdb-user' }, userToken);
     await api('POST', `/lists/${l.json.id}/items`, { items: [{ gameId: zelda.id }] }, userToken);
     await waitJobDone((await lastJob('scrape', userId))!.id);
     assert.ok(ssUsers.slice(n).length >= 1);
     assert.ok(ssUsers.slice(n).every((u) => u === 'player2ss'), ssUsers.slice(n).join(','));
-    // Lo descargado es comun: el admin lo ve y no se vuelve a pedir
+    // What was downloaded is shared: the admin sees it and it is not requested again
     const zd = (await api('GET', `/games/${zelda.id}`)).json;
     assert.ok(zd.media.some((m: any) => m.type === 'COVER' && m.source === 'screenscraper'));
     const before = ssRequests;
     await waitJob((await api('POST', `/scrape/game/${zelda.id}`, { types: ['COVER'] }, userToken)).json.id, userToken);
     assert.equal(ssRequests, before);
 
-    // TheGamesDB como respaldo de la contraportada (ScreenScraper no la tiene en el mock)
+    // TheGamesDB as fallback for the back cover (ScreenScraper lacks it in the mock)
     const tj = await waitJob((await api('POST', `/scrape/game/${contra.id}`, { types: ['BOX_BACK'] }, userToken)).json.id, userToken);
     assert.equal(tj.result.media, 1, JSON.stringify(tj.result));
     const cd = (await api('GET', `/games/${contra.id}`)).json;
     assert.equal(cd.tgdbGameId, 77);
     assert.ok(cd.media.some((m: any) => m.type === 'BOX_BACK' && m.source === 'thegamesdb'));
 
-    // "No encontrado": se recuerda y no se repite
+    // "Not found": remembered and not repeated
     ssMode = 'notfound';
     const mm = (await api('GET', `/games?q=Metroid&systemId=${ctx.nesSystemId}`)).json.items[0];
     await waitJob((await api('POST', '/scrape', { gameIds: [mm.id], sources: ['screenscraper'], types: ['COVER'] })).json.id);
@@ -1229,7 +1229,7 @@ test('fase2: multimedia al anadir a listas con cuenta propia, cuotas y TheGamesD
     assert.equal(ssRequests, c1);
     assert.ok(await prisma.scrapeMiss.findUnique({ where: { gameId_source: { gameId: mm.id, source: 'screenscraper' } } }));
 
-    // Cuota: al acercarse al limite diario se para y lo pendiente se reanuda otro dia
+    // Quota: nearing the daily limit it stops and the rest resumes another day
     ssMode = 'quota';
     const ids = (await api('GET', `/games?systemId=${ctx.nesSystemId}&status=owned&pageSize=3`)).json.items.map((x: any) => x.id);
     const qj = await waitJob((await api('POST', '/scrape', { gameIds: ids, sources: ['screenscraper'], types: ['COVER'], overwrite: true })).json.id);
@@ -1248,7 +1248,7 @@ test('fase2: multimedia al anadir a listas con cuenta propia, cuotas y TheGamesD
   }
 });
 
-test('fase2: sincronizacion global, ETag de GitHub, metadatos libretro y permanencia', async () => {
+test('phase2: global sync, GitHub ETag, libretro metadata and retention', async () => {
   const prisma = await prismaClient();
   const { env } = await import('../src/config/env.js');
   const nesDat = fs.readFileSync(path.join(DATA, 'dats', 'nointro - Nintendo - Nintendo Entertainment System.dat'), 'utf8');
@@ -1260,31 +1260,31 @@ test('fase2: sincronizacion global, ETag de GitHub, metadatos libretro y permane
   ghFiles.set(`${lr}/developer/${nesName}.dat`, { body: `game (\n\tcomment "${SMB3}"\n\tdeveloper "Nintendo R&D4"\n\trom ( crc ${smbCrc} )\n)\n`, etag: '"d1"' });
   ghFiles.set(`${lr}/genre/${nesName}.dat`, { body: `game (\n\tcomment "${SMB3}"\n\tgenre "Platform"\n)\ngame (\n\tcomment "Contra (USA)"\n\tgenre "Run and gun"\n)\n`, etag: '"g1"' });
   ghFiles.set(`${lr}/franchise/${nesName}.dat`, { body: `game (\n\tcomment "${SMB3}"\n\tfranchise "Super Mario"\n)\n`, etag: '"f1"' });
-  // Edicion manual del genero de Contra: libretro no la pisa
+  // Manual edit of Contra's genre: libretro does not overwrite it
   await api('PATCH', `/games/${ctx.contraGameId}`, { genre: 'Accion (manual)' });
 
   const r = await api('POST', '/admin/sync', { sources: ['libretro'], system: 'nes' });
   assert.equal(r.status, 202, JSON.stringify(r.json));
-  // Forzar lo mismo enseguida no se permite; si hay una en curso tampoco
+  // Forcing the same again right away is not allowed; neither while one is running
   assert.equal((await api('POST', '/admin/sync', { sources: ['libretro'], system: 'nes' })).status, 409);
   const done = await waitJob(r.json.id);
   assert.equal(done.result.libretro.metaGames, 2, JSON.stringify(done.result));
   assert.equal((await api('POST', '/admin/sync', { sources: ['libretro'], system: 'nes' })).status, 429);
   const smb = (await api('GET', `/games/${ctx.smb3GameId}`)).json;
-  assert.equal(smb.developer, 'Nintendo EAD', 'ScreenScraper tiene prioridad sobre libretro');
-  assert.equal(smb.genre, 'Plataformas', 'tampoco pisa el genero de ScreenScraper');
+  assert.equal(smb.developer, 'Nintendo EAD', 'ScreenScraper takes priority over libretro');
+  assert.equal(smb.genre, 'Plataformas', 'nor does it overwrite the ScreenScraper genre');
   assert.equal(smb.franchiseName, 'Super Mario');
   assert.equal((await api('GET', `/games/${ctx.contraGameId}`)).json.genre, 'Accion (manual)');
   assert.equal(hits[`gh:${lr}/no-intro/${nesName}.dat`], 1);
 
-  // Segunda pasada sin cambios: peticiones condicionales, nada se descarga
+  // Second pass without changes: conditional requests, nothing downloaded
   env.forceSyncMinMinutes = 0;
   const r2 = await waitJob((await api('POST', '/admin/sync', { sources: ['libretro'], system: 'nes' })).json.id);
   assert.equal(r2.result.libretro.dats, 0);
   assert.equal(hits[`gh:${lr}/no-intro/${nesName}.dat`], 1);
   assert.ok(hits.gh304 >= 5);
 
-  // El DAT cambia y ya no tiene Contra (USA): se conserva marcada como retirada
+  // The DAT changes and no longer has Contra (USA): it is kept, marked as withdrawn
   const contraRom = await prisma.rom.findFirstOrThrow({ where: { name: 'Contra (USA)', game: { systemId: ctx.nesSystemId } } });
   const without = nesDat.replace(/game \(\r?\n\tname "Contra \(USA\)"[\s\S]*?\r?\n\)\r?\n/g, '');
   assert.notEqual(without.length, nesDat.length);
@@ -1295,7 +1295,7 @@ test('fase2: sincronizacion global, ETag de GitHub, metadatos libretro y permane
   assert.equal(kept.removedFromSource, true);
   const contraFile = await prisma.romFile.findFirst({ where: { romPart: { romId: contraRom.id } } });
   assert.equal(contraFile?.status, 'MATCHED');
-  // Vuelve a aparecer: deja de estar retirada
+  // Reappears: no longer withdrawn
   ghFiles.set(`${lr}/no-intro/${nesName}.dat`, { body: nesDat, etag: '"v3"' });
   await waitJob((await api('POST', '/admin/sync', { sources: ['libretro'], system: 'nes' })).json.id);
   assert.equal((await prisma.rom.findUniqueOrThrow({ where: { id: contraRom.id } })).removedFromSource, false);
@@ -1303,7 +1303,7 @@ test('fase2: sincronizacion global, ETag de GitHub, metadatos libretro y permane
   assert.ok((await api('GET', '/admin/sync')).json.history.length >= 4);
 });
 
-test('fase2: agrupacion por evidencias (clones del DAT, Retool, RA, ScreenScraper) y revision', async () => {
+test('phase2: grouping by evidence (DAT clones, Retool, RA, ScreenScraper) and review', async () => {
   const prisma = await prismaClient();
   const { env } = await import('../src/config/env.js');
   env.forceSyncMinMinutes = 0;
@@ -1325,12 +1325,12 @@ test('fase2: agrupacion por evidencias (clones del DAT, Retool, RA, ScreenScrape
 
   const romOf = async (n: string) => prisma.rom.findFirstOrThrow({ where: { name: n, game: { systemId: gb.id } } });
   const sameGame = async (a: string, b: string) => (await romOf(a)).gameId === (await romOf(b)).gameId;
-  // Los clones del DAT unen titulos distintos; padres con el mismo titulo quedan separados
+  // DAT clones join different titles; parents with the same title stay separate
   assert.ok(await sameGame('Alpha (Japan)', 'Beta Quest (USA)'));
   assert.ok(!(await sameGame('Gamma (USA)', 'Gamma (Europe)')));
   assert.ok(!(await sameGame('Delta (USA)', 'Delta Kun (Japan)')));
 
-  // Retool (mock de GitHub): grupo curado
+  // Retool (GitHub mock): curated group
   const rt = '/unexpectedpanda/retool-clonelists-metadata/main';
   ghFiles.set(`${rt}/clonelists/Nintendo - Game Boy (No-Intro).json`, { body: JSON.stringify({ variants: [{ group: 'Delta', titles: [{ searchTerm: 'Delta' }, { searchTerm: 'Delta Kun' }] }] }), etag: '"r1"' });
   ghFiles.set(`${rt}/metadata/Nintendo - Game Boy (No-Intro).json`, { body: JSON.stringify({ 'Delta Kun (Japan)': { localName: 'Deruta-kun' } }), etag: '"m1"' });
@@ -1338,17 +1338,17 @@ test('fase2: agrupacion por evidencias (clones del DAT, Retool, RA, ScreenScrape
   assert.ok(await sameGame('Delta (USA)', 'Delta Kun (Japan)'));
   assert.equal((await romOf('Delta Kun (Japan)')).localTitle, 'Deruta-kun');
 
-  // RetroAchievements: mismo juego RA por hash (sincronizacion forzada solo de ese sistema)
+  // RetroAchievements: same RA game by hash (forced sync of that system only)
   raLists['4'] = [
     { ID: 555, Title: 'Alpha', NumAchievements: 5, Hashes: [md5h(bufs['Alpha (Japan)'])] },
     { ID: 556, Title: 'Epsilon', NumAchievements: 5, Hashes: [md5h(bufs['Epsilon (USA)']), md5h(bufs['Zeta (Japan)'])] },
   ];
   await waitJob((await api('POST', '/ra/sync', { systemId: gb.id })).json.id);
   assert.equal(hits['ra:4'], 1);
-  assert.equal(Object.keys(hits).filter((k) => k.startsWith('ra:')).length, 1, 'una sola llamada, la del sistema pedido');
+  assert.equal(Object.keys(hits).filter((k) => k.startsWith('ra:')).length, 1, 'a single call, for the requested system');
   assert.ok(await sameGame('Epsilon (USA)', 'Zeta (Japan)'));
 
-  // ScreenScraper: la lista de roms del juego (por hash) une los dos Gamma
+  // ScreenScraper: the game's rom list (by hash) joins the two Gammas
   ssRomSha1s['Gamma'] = [md(bufs['Gamma (USA)'], 'sha1'), md(bufs['Gamma (Europe)'], 'sha1')];
   await api('PATCH', '/users/me', { ssUser: 'user', ssPassword: 'pass' });
   await waitJob((await api('POST', '/scrape', { gameIds: [(await romOf('Gamma (USA)')).gameId], sources: ['screenscraper'], types: ['COVER'] })).json.id);
@@ -1356,12 +1356,12 @@ test('fase2: agrupacion por evidencias (clones del DAT, Retool, RA, ScreenScrape
   await resolveRomGroups(gb.id);
   assert.ok(await sameGame('Gamma (USA)', 'Gamma (Europe)'));
 
-  // Agrupacion solo por titulo (NES, sin Parent/Clone): confianza baja salvo con RA
+  // Grouping by title only (NES, no Parent/Clone): low confidence except with RA
   const low = await api('GET', `/games?systemId=${ctx.nesSystemId}&lowConfidence=1&pageSize=1`);
   assert.ok(low.json.total > 100);
   assert.equal((await prisma.game.findUniqueOrThrow({ where: { id: ctx.smb3GameId } })).groupConfidence, 'high');
 
-  // Separar a mano contra la evidencia P/C: conflicto en la cola de revision
+  // Splitting by hand against the P/C evidence: conflict in the review queue
   const alpha = await romOf('Alpha (Japan)');
   const beta = await romOf('Beta Quest (USA)');
   await api('POST', `/games/${alpha.gameId}/split`, { romIds: [beta.id] });
@@ -1373,7 +1373,7 @@ test('fase2: agrupacion por evidencias (clones del DAT, Retool, RA, ScreenScrape
   assert.ok(await sameGame('Alpha (Japan)', 'Beta Quest (USA)'));
 });
 
-test('fase2: obras multiplataforma con Wikidata, sagas y listas por plataforma', async () => {
+test('phase2: multiplatform works with Wikidata, sagas and per-platform lists', async () => {
   const prisma = await prismaClient();
   const e = (q: string) => ({ value: `http://www.wikidata.org/entity/${q}` });
   const v = (x: string) => ({ value: x });
@@ -1397,9 +1397,9 @@ test('fase2: obras multiplataforma con Wikidata, sagas y listas por plataforma',
   await waitJob((await api('POST', '/admin/sync', { sources: ['wikidata'], system: 'gb' })).json.id);
   await waitJob((await api('POST', '/admin/sync', { sources: ['wikidata'], system: 'nes' })).json.id);
   const gameOf = async (n: string) => (await prisma.rom.findFirstOrThrow({ where: { name: n, game: { systemId: ctx.gbSystemId } }, include: { game: true } })).game;
-  // Ancla exacta por id de RetroAchievements aunque el nombre no coincida
+  // Exact anchor by RetroAchievements id even if the name does not match
   assert.equal((await gameOf('Alpha (Japan)')).wikidataId, 'Q100');
-  // Nombre unico en la plataforma (incluidos titulos locales de Retool)
+  // Unique name on the platform (including Retool local titles)
   assert.equal((await gameOf('Delta (USA)')).wikidataId, 'Q300');
   // Ambiguo: a revision
   const gamma = await gameOf('Gamma (USA)');
@@ -1409,7 +1409,7 @@ test('fase2: obras multiplataforma con Wikidata, sagas y listas por plataforma',
   await api('POST', `/admin/review/${rv.id}`, { action: 'link', wikidataId: 'Q200' });
   assert.equal((await gameOf('Gamma (USA)')).wikidataId, 'Q200');
 
-  // Obra con dos plataformas y saga
+  // Work with two platforms and a saga
   const smbGb = await gameOf('Super Mario Bros. 3 (World)');
   const smbNes = await prisma.game.findUniqueOrThrow({ where: { id: ctx.smb3GameId } });
   assert.ok(smbGb.workId && smbGb.workId === smbNes.workId);
@@ -1421,7 +1421,7 @@ test('fase2: obras multiplataforma con Wikidata, sagas y listas por plataforma',
   const detail = (await api('GET', `/games/${ctx.smb3GameId}`)).json;
   assert.equal(detail.work.games[0].system.slug, 'gb');
 
-  // Lista con la obra y sublistas con preferencia de plataforma
+  // List with the work and sublists with a platform preference
   const l = await api('POST', '/lists', { name: 'Obras' }, userToken);
   await api('POST', `/lists/${l.json.id}/items`, { items: [{ workId: work.id }] }, userToken);
   const items = (await api('GET', `/lists/${l.json.id}`, undefined, userToken)).json.items;
@@ -1432,13 +1432,13 @@ test('fase2: obras multiplataforma con Wikidata, sagas y listas por plataforma',
   const owned = await api('POST', `/lists/${l.json.id}/derive`, { name: 'Lo que tengo', platforms: ['gb', 'nes'], ownedOnly: true }, userToken);
   const ownedList = (await api('GET', `/lists/${owned.json.id}`, undefined, userToken)).json;
   assert.equal(ownedList.items[0].romId, ctx.smb3RomId);
-  // Exportar/importar conserva la obra
+  // Export/import keeps the work
   const exp = (await api('GET', `/lists/${l.json.id}/export`, undefined, userToken)).json;
   assert.equal(exp.items[0].type, 'rom');
   assert.equal((await api('POST', '/lists/import', exp, userToken)).json.unresolved.length, 0);
 });
 
-test('fase2: saves por eventos con script (inicio, cierre, conflicto, sin red) y SD montada', async () => {
+test('phase2: event-driven saves with script (start, close, conflict, offline) and mounted SD', async () => {
   const prisma = await prismaClient();
   const thor = (await api('GET', '/devices/consoles')).json.find((c: any) => c.name === 'AYN Thor');
   const knulli = ctx.firmwares.find((f: any) => f.slug === 'knulli');
@@ -1459,7 +1459,7 @@ test('fase2: saves por eventos con script (inicio, cierre, conflicto, sin red) y
   fs.writeFileSync(path.join(scripts, 's.zip'), Buffer.from(await zr.arrayBuffer()));
   execSync(`${SEVENZIP} x -y s.zip`, { cwd: scripts, stdio: 'ignore' });
   const hook = path.join(scripts, 'system/scripts/rommancer.sh');
-  // Asincrono: el servidor de la API corre en este mismo proceso
+  // Async: the API server runs in this same process
   const run = async (event: string, rom = romPath) => {
     try {
       return (await execFileP('sh', [hook, event, 'a', 'b', 'c', rom], { timeout: 30_000, env: { ...process.env, SHELLOPTS: 'xtrace' } })).stdout;
@@ -1469,24 +1469,24 @@ test('fase2: saves por eventos con script (inicio, cierre, conflicto, sin red) y
   };
   const saveFile = path.join(root, 'saves/nes', `${SMB3}.srm`);
 
-  // Inicio: el servidor entrega su version, ya en el formato del emulador del dispositivo
+  // Start: the server delivers its version, already in the device emulator's format
   await run('gameStart');
   const smb = (await api('GET', `/saves/${ctx.smbSaveId}`, undefined, userToken)).json;
   const serverCur = await fetch(`${base}/api/v1/saves/${ctx.smbSaveId}/versions/${smb.currentVersionId}/download?token=${userFiles}`);
   assert.ok(fs.readFileSync(saveFile).equals(Buffer.from(await serverCur.arrayBuffer())));
-  // Cierre: sube lo que cambio en el dispositivo
+  // Close: uploads what changed on the device
   const played = crypto.randomBytes(8192);
   fs.writeFileSync(saveFile, played);
   await run('gameStop');
   const s2 = (await api('GET', `/saves/${ctx.smbSaveId}`, undefined, userToken)).json;
   const cur2 = s2.versions.find((v: any) => v.id === s2.currentVersionId);
   assert.equal(cur2.sourceDevice?.id, d.json.id);
-  // Sin cambios: no crea versiones
+  // No changes: creates no versions
   const nv = s2.versions.length;
   await run('gameStop');
   assert.equal((await api('GET', `/saves/${ctx.smbSaveId}`, undefined, userToken)).json.versions.length, nv);
 
-  // Conflicto: cambian el servidor (web) y el dispositivo. No se pisa nada.
+  // Conflict: both the server (web) and the device change. Nothing is overwritten.
   const fdw = new FormData();
   fdw.append('file', new Blob([crypto.randomBytes(8192)]), `${SMB3}.srm`);
   fdw.append('emulatorId', String(ctx.emus['ra-fceumm'].id));
@@ -1494,7 +1494,7 @@ test('fase2: saves por eventos con script (inicio, cierre, conflicto, sin red) y
   const local = crypto.randomBytes(8192);
   fs.writeFileSync(saveFile, local);
   await run('gameStart');
-  assert.ok(fs.readFileSync(saveFile).equals(local), 'el dispositivo conserva su version');
+  assert.ok(fs.readFileSync(saveFile).equals(local), 'the device keeps its version');
   const conflicts = (await api('GET', '/saves/conflicts', undefined, userToken)).json;
   assert.equal(conflicts.length, 1);
   assert.equal(conflicts[0].device.id, d.json.id);
@@ -1503,7 +1503,7 @@ test('fase2: saves por eventos con script (inicio, cierre, conflicto, sin red) y
   assert.equal(s3.currentVersionId, conflicts[0].deviceVersionId);
   assert.equal((await api('GET', '/saves/conflicts', undefined, userToken)).json.length, 0);
 
-  // Sin red: no bloquea y se sube en el siguiente evento con red
+  // Offline: does not block and is uploaded at the next event with network
   const syncSh = path.join(scripts, 'system/scripts/rommancer/rommancer-sync.sh');
   const original = fs.readFileSync(syncSh, 'utf8');
   fs.writeFileSync(syncSh, original.replace(/^SERVER=".*"$/m, 'SERVER="http://127.0.0.1:9"'));
@@ -1521,13 +1521,13 @@ test('fase2: saves por eventos con script (inicio, cierre, conflicto, sin red) y
   const dl4 = await fetch(`${base}/api/v1/saves/${ctx.smbSaveId}/versions/${cur4.id}/download?token=${userFiles}`);
   assert.ok(Buffer.from(await dl4.arrayBuffer()).equals(offline));
 
-  // Token revocado: el script deja de tener acceso
+  // Revoked token: the script loses access
   await api('DELETE', `/devices/${d.json.id}/token`, undefined, userToken);
   const tok = original.match(/^TOKEN="(.*)"$/m)![1];
   const m = await fetch(`${base}/api/v1/agent/manifest`, { headers: { 'X-Device-Token': tok, 'X-Rom-B64': Buffer.from(romPath).toString('base64') } });
   assert.equal(m.status, 401);
 
-  // SD montada en el servidor: al aparecer se encola su sincronizacion
+  // SD mounted on the server: when it appears its sync is queued
   const { checkLocalDevices } = await import('../src/modules/saves/sync.js');
   const sd = path.join(DATA, 'sd-montada');
   const dev = await api('POST', '/devices', { name: 'SD', consoleId: thor.id, firmwareId: knulli.id, connType: 'LOCAL', rootPath: sd, syncSaves: true }, userToken);
@@ -1539,9 +1539,9 @@ test('fase2: saves por eventos con script (inicio, cierre, conflicto, sin red) y
   await waitJobDone(job.id);
 });
 
-test('fase2: semilla acumulada con evidencias, wikidata, parches y multimedia grande', async () => {
+test('phase2: accumulated seed with evidence, wikidata, patches and large media', async () => {
   const prisma = await prismaClient();
-  // Rom que su DAT ya no trae: se guarda en la semilla y se recupera en un despliegue nuevo
+  // Rom its DAT no longer carries: kept in the seed and recovered in a fresh deployment
   const gone = await prisma.rom.findFirstOrThrow({ where: { name: 'Zeta (Japan)' }, include: { parts: true } });
   await prisma.rom.update({ where: { id: gone.id }, data: { removedFromSource: true } });
   const r = await waitJob((await api('POST', '/admin/seed/export')).json.id);

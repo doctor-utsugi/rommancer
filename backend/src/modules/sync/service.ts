@@ -1,7 +1,6 @@
 /**
- * Sincronizacion global de fuentes externas. Una sola tarea recorre las fuentes en secuencia y cada
- * una solo descarga lo que ha cambiado; al final se re-emparejan ficheros, se recalculan agrupaciones
- * y se exporta la semilla una vez.
+ * Global sync of external sources. One task walks the sources in sequence and each downloads only what changed;
+ * at the end files are rematched, groupings recomputed and the seed exported once.
  */
 import fs from 'node:fs';
 import path from 'node:path';
@@ -31,7 +30,7 @@ export type Source = (typeof SOURCES)[number];
 const LIBRETRO_META = `${env.github.rawUrl}/libretro/libretro-database/master/metadat`;
 const RETOOL = `${env.github.rawUrl}/unexpectedpanda/retool-clonelists-metadata/main`;
 
-// Ficheros de Retool por sistema (clonelists y metadata comparten nombre)
+// Retool files per system (clonelists and metadata share a name)
 const RETOOL_FILES: Record<string, string> = {
   nes: 'Nintendo - Nintendo Entertainment System (No-Intro)',
   fds: 'Nintendo - Family Computer Disk System (No-Intro)',
@@ -84,7 +83,7 @@ async function syncLibretro(ctx: JobContext, systemSlug?: string, force = false)
       ctx.log(`libretro DAT ${p.id}: failed: ${e instanceof Error ? e.message.split('\n').filter(Boolean).pop() : e}`);
     }
   }
-  // Metadatos: solo rellenan campos vacios o de menor prioridad
+  // Metadata only fills empty or lower-priority fields
   for (const s of systems) {
     const romIndex = new Map((await prisma.rom.findMany({ where: { game: { systemId: s.id } }, select: { name: true, gameId: true } })).map((r) => [r.name, r.gameId]));
     const perGame = new Map<number, Record<string, string | number>>();
@@ -108,7 +107,7 @@ async function syncLibretro(ctx: JobContext, systemSlug?: string, force = false)
       res.metaGames++;
     }
   }
-  // Caratulas (portada, captura, titulo) de juegos que se tienen y no las tienen
+  // Artwork (cover, screenshot, title) for owned games that lack it
   for (const s of systems) {
     const owned = [...(await ownedGameIds(s.id))];
     const games = await prisma.game.findMany({ where: { id: { in: owned }, media: { none: { type: 'COVER' } } }, include: { roms: { select: { id: true, name: true, regions: true } } } });
@@ -131,7 +130,7 @@ async function syncLibretro(ctx: JobContext, systemSlug?: string, force = false)
   return res;
 }
 
-// --- Retool: listas de clones curadas y titulos locales ---
+// --- Retool: curated clone lists and local titles ---
 async function syncRetool(ctx: JobContext, systemSlug?: string, force = false) {
   const res = { systems: 0, evidence: 0, localTitles: 0 };
   const systems = await prisma.system.findMany({ where: systemSlug ? { slug: systemSlug } : {} });
@@ -184,7 +183,7 @@ export async function raCatalogKey() {
   return decrypt(admin?.raApiKey) ?? '';
 }
 
-// --- RetroAchievements: una llamada por consola con la clave global del admin ---
+// --- RetroAchievements: one call per console with the admin's global key ---
 async function syncRetroAchievements(ctx: JobContext, systemSlug?: string) {
   const apiKey = await raCatalogKey();
   if (!apiKey) {
@@ -242,7 +241,7 @@ export async function runExternalSync(ctx: JobContext, sources: Source[], system
 }
 
 registerJob('external-sync', async (ctx) => runExternalSync(ctx, (ctx.params.sources as Source[]) ?? [...SOURCES], ctx.params.system, !!ctx.params.force));
-/** Sincronizacion forzada: no si ya hay una en curso ni si se forzo lo mismo hace menos del intervalo minimo. */
+/** Forced sync: refused if one is running or the same was forced less than the minimum interval ago. */
 export async function forceSync(sources: Source[], system: string | undefined, userId: number) {
   const recent = await prisma.job.findMany({ where: { type: 'external-sync', createdAt: { gte: new Date(Date.now() - env.forceSyncMinMinutes * 60_000) } } });
   const running = await prisma.job.findFirst({ where: { type: 'external-sync', status: { in: ['PENDING', 'RUNNING'] } } });

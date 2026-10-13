@@ -9,7 +9,7 @@ import { Progress } from '@/components/ui/progress'
 import { Empty, PageHeader, useSystems } from '@/components/common'
 
 export function DashboardPage() {
-  const { t } = useTranslation()
+  const { t, i18n } = useTranslation()
   const { data, isLoading } = useSystems()
   const systems = (data ?? []).filter((s) => s.roms > 0 || s.files.unknown > 0)
   const totals = systems.reduce(
@@ -48,7 +48,7 @@ export function DashboardPage() {
                 <CardHeader className="pb-1">
                   <CardTitle className="text-sm font-medium text-muted-foreground">{t(`dashboard.${k}`)}</CardTitle>
                 </CardHeader>
-                <CardContent className="text-2xl font-semibold">{v.toLocaleString()}</CardContent>
+                <CardContent className="text-2xl font-semibold">{v.toLocaleString(i18n.language)}</CardContent>
               </Card>
             ))}
           </div>
@@ -67,7 +67,7 @@ export function DashboardPage() {
                     <CardContent className="space-y-2 text-sm">
                       <div className="flex justify-between">
                         <span>
-                          {t('dashboard.owned')}: {s.owned.toLocaleString()} / {s.roms.toLocaleString()}
+                          {t('dashboard.owned')}: {s.owned.toLocaleString(i18n.language)} / {s.roms.toLocaleString(i18n.language)}
                         </span>
                         <span className="text-muted-foreground">{pct.toFixed(1)}%</span>
                       </div>

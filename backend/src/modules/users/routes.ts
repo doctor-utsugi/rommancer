@@ -12,6 +12,7 @@ import { HttpError, intParam } from '../../lib/http.js';
 import { DEFAULT_PERMISSIONS, PERMISSIONS, normalizePermissions } from '../../lib/permissions.js';
 import { me, requireAdmin } from '../auth/middleware.js';
 import { issueTokens } from '../auth/routes.js';
+import { localeSchema } from '../../lib/locales.js';
 
 export const usersRouter = Router();
 
@@ -28,7 +29,7 @@ const publicUser = {
 
 const permissionsSchema = z.array(z.enum(PERMISSIONS));
 
-// Contrasena robusta: 10+ caracteres y distinta de la inicial de .env
+// Strong password: 10+ characters and different from the initial one in .env
 export function weakPassword(pw: string) {
   return pw.length < 10 || (!!env.admin.password && pw === env.admin.password);
 }
@@ -76,7 +77,7 @@ usersRouter.patch('/me', async (req, res) => {
   const body = z
     .object({
       email: z.email().optional(),
-      locale: z.enum(['es', 'en']).optional(),
+      locale: localeSchema.optional(),
       currentPassword: z.string().optional(),
       newPassword: z.string().min(8).max(512).optional(),
       ssUser: z.string().nullable().optional(),
@@ -123,7 +124,7 @@ usersRouter.patch('/me', async (req, res) => {
     if (u.role === 'ADMIN' && (await prisma.raGame.count()) === 0) await forceSync(['retroachievements'], undefined, u.id).catch(() => {});
     void refreshProgress(u.id).catch(() => {});
   }
-  // Al cambiar la contrasena se invalidan las sesiones anteriores y se entregan tokens nuevos
+  // Changing the password invalidates previous sessions and issues new tokens
   if (body.newPassword) {
     await prisma.refreshToken.deleteMany({ where: { userId: u.id } });
     res.json(await issueTokens(updated));
@@ -132,7 +133,7 @@ usersRouter.patch('/me', async (req, res) => {
   res.status(204).end();
 });
 
-// Listado minimo para compartir listas
+// Minimal listing for sharing lists
 usersRouter.get('/directory', async (_req, res) => {
   res.json(await prisma.user.findMany({ select: { id: true, username: true }, orderBy: { username: 'asc' } }));
 });

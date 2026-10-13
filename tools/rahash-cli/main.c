@@ -1,7 +1,7 @@
 /*
- * CLI minimo sobre rcheevos (rc_hash) para validar el hash de RetroAchievements de Rommancer.
- * Uso: rahash <console_id> <fichero>
- * Compilar: make -C tools/rahash-cli
+ * Minimal CLI over rcheevos (rc_hash) to validate Rommancer's RetroAchievements hash.
+ * Usage: rahash <console_id> <file>
+ * Build: make -C tools/rahash-cli
  */
 #include <stdio.h>
 #include <stdlib.h>

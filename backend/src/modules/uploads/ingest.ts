@@ -28,7 +28,7 @@ export async function analyse(tmp: string, originalName: string, systemId?: numb
   const guessed = systemId ? idx.byId.get(systemId) ?? null : guessSystem(idx, originalName, null);
   const ext = path.extname(tmp);
   if (CONTAINERS.has(ext)) {
-    // RVZ/WIA/CSO/ZSO: hashes de la ISO reconstruida; WBFS/CISO: por id de disco
+    // RVZ/WIA/CSO/ZSO: hashes of the rebuilt ISO; WBFS/CISO: by disc id
     const [row] = await processFile(tmp, originalName, idx, guessed, '');
     const h = row.hashes as FileHashes;
     let m = await matchHashes(h);
@@ -55,7 +55,7 @@ export async function ingestVerified(tmp: string, originalName: string, u: Inges
   const { idx, h, m, raHash, system: sys, container } = await analyse(tmp, original);
   let system = sys;
   let raGameId: number | null = null;
-  // WBFS/CISO identificados por id de disco: se aceptan, quedan como no verificados
+  // WBFS/CISO identified by disc id: accepted, left as unverified
   const byDisc = m.status === 'UNVERIFIED' && !!container && !!m.romPartId;
   if (!byDisc && (m.status === 'UNKNOWN' || m.status === 'UNVERIFIED')) {
     const candidates = [raHash, h.md5, h.headerless?.md5].filter(Boolean) as string[];
@@ -70,7 +70,7 @@ export async function ingestVerified(tmp: string, originalName: string, u: Inges
   let romId: number | null = null;
   if (m.romPartId && (m.status === 'MATCHED' || byDisc)) {
     const part = await prisma.romPart.findUniqueOrThrow({ where: { id: m.romPartId } });
-    // Los contenedores conservan su extension (.rvz, .cso...)
+    // Containers keep their extension (.rvz, .cso...)
     destName = container ? part.name.replace(/\.[^.]+$/, '') + path.extname(original) : part.name;
     romId = part.romId;
     if (await prisma.romFile.findFirst({ where: { romPartId: part.id, status: 'MATCHED' } })) {
@@ -115,7 +115,7 @@ export const unverifiedBody = z.object({
   regions: z.string().optional(),
   languages: z.string().optional(),
   revision: z.string().max(32).optional(),
-  // Datos de hack/traduccion
+  // Hack/translation data
   hackName: z.string().max(255).optional(),
   hackVersion: z.string().max(64).optional(),
   hackLanguage: z.string().max(32).optional(),

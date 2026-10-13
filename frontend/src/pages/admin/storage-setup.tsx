@@ -142,7 +142,7 @@ export function StorageSetupPage() {
             {env.data?.inContainer && (
               <div className="rounded-md border border-dashed p-3 text-xs">
                 <p>{t('more.setup.container')}</p>
-                <pre className="mt-2 overflow-x-auto rounded bg-muted p-2">{`volumes:\n  - /ruta/en/tu/disco:/roms-disco2`}</pre>
+                <pre className="mt-2 overflow-x-auto rounded bg-muted p-2">{`volumes:\n  - /path/to/your/disk:/roms-disco2`}</pre>
               </div>
             )}
             <div className="flex flex-wrap gap-2">

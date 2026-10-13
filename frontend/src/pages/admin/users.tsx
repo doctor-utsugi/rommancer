@@ -13,6 +13,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Checkbox } from '@/components/ui/checkbox'
 import { Switch } from '@/components/ui/switch'
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
+import { LOCALES } from '@/i18n/locales'
 import { Field, NativeSelect, PageHeader, errMsg, formatDate } from '@/components/common'
 
 export const PERMISSIONS = ['collection.view', 'lists', 'saves', 'roms.download', 'roms.upload', 'roms.uploadUnverified', 'scrape.lists', 'scrape.bulk']
@@ -39,6 +40,7 @@ export function AdminUsersPage() {
   const users = useQuery({ queryKey: ['users'], queryFn: () => get<any[]>('/users') })
   const invs = useQuery({ queryKey: ['invitations'], queryFn: () => get<any[]>('/invitations') })
   const signup = useQuery({ queryKey: ['signup-open'], queryFn: () => get<{ open: boolean }>('/admin/settings/signup') })
+  const defLocale = useQuery({ queryKey: ['default-locale'], queryFn: () => get<{ locale: string }>('/admin/settings/locale') })
   const history = useQuery({ queryKey: ['save-history'], queryFn: () => get<{ history: number }>('/admin/settings/saves') })
   const [keep, setKeep] = useState('')
   const session = useQuery({ queryKey: ['session-days'], queryFn: () => get<{ days: number; min: number }>('/admin/settings/session') })
@@ -73,6 +75,26 @@ export function AdminUsersPage() {
               void qc.invalidateQueries({ queryKey: ['signup-open'] })
             })}
           />
+        </CardContent>
+        <CardContent className="flex items-center justify-between gap-4">
+          <div>
+            <p className="font-medium">{t('more.defaultLocale.title')}</p>
+            <p className="text-sm text-muted-foreground">{t('more.defaultLocale.help')}</p>
+          </div>
+          <NativeSelect
+            value={defLocale.data?.locale ?? ''}
+            onChange={(e) => act(async () => {
+              await put('/admin/settings/locale', { locale: e.target.value })
+              void qc.invalidateQueries({ queryKey: ['default-locale'] })
+              toast.success(t('common.saved'))
+            })}
+          >
+            {LOCALES.map((l) => (
+              <option key={l.code} value={l.code}>
+                {l.name}
+              </option>
+            ))}
+          </NativeSelect>
         </CardContent>
         <CardContent className="flex items-center justify-between gap-4">
           <div>

@@ -27,7 +27,7 @@ const QUEUED_PULL = [...OPEN_PULL, 'paused'];
 import { createAgentDevice, publicBase } from '../link/routes.js';
 
 export const devicesRouter = Router();
-// Dispositivos: para copiar roms (descargar) o para sincronizar saves
+// Devices: for copying roms (download) or syncing saves
 devicesRouter.use(requirePerm('roms.download', 'saves'));
 
 const publicDevice = { sshPassword: true, sshKey: true, tokenHash: true } as const;
@@ -35,7 +35,7 @@ const publicDevice = { sshPassword: true, sshKey: true, tokenHash: true } as con
 /** Where each firmware's card or data lives, for consoles added over SSH */
 const DEFAULT_ROOTS: Record<string, string> = { onion: '/mnt/SDCARD', knulli: '/userdata', batocera: '/userdata', rocknix: '/storage', muos: '/mnt/mmc', arkos: '/roms', nextui: '/mnt/SDCARD' };
 
-// --- Catalogo de consolas y firmwares ---
+// --- Console and firmware catalogue ---
 devicesRouter.get('/consoles', async (_req, res) => {
   res.json(await prisma.console.findMany({ orderBy: [{ manufacturer: 'asc' }, { name: 'asc' }] }));
 });
@@ -72,7 +72,7 @@ devicesRouter.get('/emulators', async (_req, res) => {
   res.json(await prisma.emulator.findMany({ orderBy: { name: 'asc' } }));
 });
 
-// --- Dispositivos del usuario ---
+// --- User devices ---
 async function ownDevice(id: number, u: AuthUser) {
   const d = await prisma.device.findUniqueOrThrow({ where: { id }, include: { firmware: true, console: true } });
   if (d.userId !== u.id && u.role !== 'ADMIN') throw forbidden();
@@ -772,8 +772,8 @@ devicesRouter.post('/:id/test', async (req, res) => {
   }
 });
 
-// Copia las roms de una lista al dispositivo
-// Token y scripts de eventos para dispositivos que sincronizan solos (ES-DE, Batocera, Knulli)
+// Copies a list's roms to the device
+// Token and event scripts for devices that sync on their own (ES-DE, Batocera, Knulli)
 devicesRouter.post('/:id/token', async (req, res) => {
   const d = await ownDevice(intParam(req), me(req));
   const token = crypto.randomBytes(24).toString('base64url');
@@ -802,7 +802,7 @@ devicesRouter.delete('/:id/token', async (req, res) => {
   res.status(204).end();
 });
 
-// Zip con los scripts ya configurados; el token se genera nuevo (el anterior deja de valer)
+// Zip of the configured scripts; a new token is generated (the old one stops working)
 devicesRouter.post('/:id/agent-script', async (req, res) => {
   const d = await ownDevice(intParam(req), me(req));
   const { flavor, server } = z.object({ flavor: z.enum(['esde', 'batocera']), server: z.url() }).parse(req.body);

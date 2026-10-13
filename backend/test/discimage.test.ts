@@ -12,7 +12,7 @@ after(() => fs.rmSync(dir, { recursive: true, force: true }));
 
 const sha1 = (b: Buffer) => crypto.createHash('sha1').update(b).digest('hex');
 
-// Disco con cabecera de GameCube o Wii, datos aleatorios y zonas a cero
+// Disc with a GameCube or Wii header, random data and zeroed areas
 function makeIso(size: number, platform: 'gc' | 'wii', blockSize: number, emptyBlocks: number[] = []) {
   const iso = crypto.randomBytes(size);
   for (const b of emptyBlocks) iso.fill(0, b * blockSize, (b + 1) * blockSize);
@@ -46,8 +46,8 @@ async function checkReader(file: string, expected: Buffer, format: string) {
   }
 }
 
-test('WBFS de un disco Wii, tambien partido en .wbfs + .wbf1', async () => {
-  const blockShift = 21; // bloques de 2 MiB
+test('WBFS of a Wii disc, also split into .wbfs + .wbf1', async () => {
+  const blockShift = 21; // 2 MiB blocks
   const block = 1 << blockShift;
   const nBlocks = 5;
   const iso = makeIso(nBlocks * block, 'wii', block, [2]);
@@ -60,7 +60,7 @@ test('WBFS de un disco Wii, tambien partido en .wbfs + .wbf1', async () => {
   head[12] = 1;
   const info = Buffer.alloc(0x100 + perDisc * 2);
   iso.copy(info, 0, 0, 0x100);
-  // Bloques almacenados a partir del bloque 1 del fichero (el 0 contiene las cabeceras)
+  // Blocks stored from file block 1 on (block 0 holds the headers)
   const stored: Buffer[] = [];
   let next = 1;
   for (let i = 0; i < nBlocks; i++) {
@@ -84,7 +84,7 @@ test('WBFS de un disco Wii, tambien partido en .wbfs + .wbf1', async () => {
   await checkReader(path.join(dir, 'split', 'game.wbfs'), iso, 'wbfs');
 });
 
-test('CISO de GameCube con bloques ausentes', async () => {
+test('GameCube CISO with missing blocks', async () => {
   const block = 0x200000;
   const iso = makeIso(6 * block, 'gc', block, [1, 4]);
   const map = Buffer.alloc(0x8000 - 8);
@@ -98,7 +98,7 @@ test('CISO de GameCube con bloques ausentes', async () => {
   head.write('CISO', 0, 'latin1');
   head.writeUInt32LE(block, 4);
   fs.writeFileSync(path.join(dir, 'game.ciso'), Buffer.concat([head, map, ...data]));
-  // La ISO reconstruida tiene el tamano de un disco de GameCube (relleno con ceros)
+  // The rebuilt ISO has the size of a GameCube disc (zero-padded)
   const r = await openDiscImage(path.join(dir, 'game.ciso'));
   assert.ok(r);
   assert.equal(r.format, 'ciso');
@@ -111,11 +111,11 @@ test('CISO de GameCube con bloques ausentes', async () => {
   await r.close();
 });
 
-// Compresor LZ4 trivial: literales y una coincidencia repetida
+// Trivial LZ4 compressor: literals and one repeated match
 function lz4Compress(src: Buffer) {
   const out: number[] = [];
   const half = Math.floor(src.length / 2);
-  // Si la segunda mitad repite la primera, se codifica como un match
+  // If the second half repeats the first, it is encoded as a match
   if (src.subarray(0, half).equals(src.subarray(half, half * 2)) && half >= 4) {
     const lit = src.subarray(0, half);
     const pushLen = (n: number) => {
@@ -150,11 +150,11 @@ function lz4Compress(src: Buffer) {
   return Buffer.from(out);
 }
 
-test('LZ4 de bloque con match solapado', () => {
+test('LZ4 block with overlapping match', () => {
   const a = crypto.randomBytes(1000);
   const src = Buffer.concat([a, a, Buffer.from('fin')]);
   assert.ok(lz4BlockDecompress(lz4Compress(src), 4096).equals(src));
-  // Match con offset 1 (repeticion de un byte)
+  // Match with offset 1 (single-byte repeat)
   const rle = Buffer.from([0x1f, 0x41, 0x01, 0x00, 0x05, 0x10, 0x42]);
   assert.equal(lz4BlockDecompress(rle, 100).toString('latin1'), 'A'.repeat(1 + 4 + 15 + 5) + 'B');
 });
@@ -181,12 +181,12 @@ function makeCsoLike(iso: Buffer, block: number, magic: 'CISO' | 'ZISO', compres
   return Buffer.concat([head, index, ...blocks]);
 }
 
-test('CSO v1 (deflate y sin comprimir) y ZSO (LZ4)', async () => {
+test('CSO v1 (deflate and uncompressed) y ZSO (LZ4)', async () => {
   const block = 2048;
   const a = crypto.randomBytes(block / 2);
   const parts: Buffer[] = [];
   for (let i = 0; i < 40; i++) parts.push(i % 3 === 0 ? Buffer.alloc(block, i) : i % 3 === 1 ? Buffer.concat([a, a]) : crypto.randomBytes(block));
-  parts.push(crypto.randomBytes(700)); // ultimo bloque incompleto
+  parts.push(crypto.randomBytes(700)); // last, incomplete block
   const iso = Buffer.concat(parts);
   const cso = makeCsoLike(iso, block, 'CISO', (b, i) => (i % 3 === 2 ? { data: b, flag: true } : { data: zlib.deflateRawSync(b), flag: false }));
   fs.writeFileSync(path.join(dir, 'game.cso'), cso);

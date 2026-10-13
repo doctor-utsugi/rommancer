@@ -36,8 +36,8 @@ class Hasher {
 }
 
 /**
- * Tamano de cabecera a ignorar segun el tipo de sistema y los primeros bytes.
- * Si headerType es 'none' se prueban las cabeceras auto-identificables (NES, FDS, LYNX, A7800).
+ * Header size to skip, by system type and first bytes.
+ * With headerType 'none', self-identifying headers are tried (NES, FDS, LYNX, A7800).
  */
 export function detectHeader(headerType: HeaderType | string, first: Buffer, totalSize: number): number {
   const magic = (s: string, off = 0) => first.length >= off + s.length && first.toString('latin1', off, off + s.length) === s;
@@ -45,12 +45,12 @@ export function detectHeader(headerType: HeaderType | string, first: Buffer, tot
     return 16;
   if ((headerType === 'lynx' || headerType === 'none') && magic('LYNX\0') && totalSize > 64) return 64;
   if ((headerType === 'a7800' || headerType === 'none') && magic('ATARI7800', 1) && totalSize > 128) return 128;
-  // Cabecera de copiadora SNES: 512 bytes sobrantes respecto a un multiplo de 8 KB (mismo criterio que rcheevos)
+  // SNES copier header: 512 bytes beyond a multiple of 8 KB (same rule as rcheevos)
   if (headerType === 'snes' && totalSize % 0x2000 === 512) return 512;
   return 0;
 }
 
-/** Hashea un stream calculando a la vez el hash completo y el hash sin cabecera. */
+/** Hashes a stream, computing the full hash and the headerless hash at once. */
 export async function hashStream(stream: Readable, headerType: HeaderType | string, totalSize: number): Promise<FileHashes> {
   const full = new Hasher();
   let headerless: Hasher | null = null;
@@ -59,7 +59,7 @@ export async function hashStream(stream: Readable, headerType: HeaderType | stri
   let pendingLen = 0;
 
   const feedHeaderless = (b: Buffer, offset: number) => {
-    // offset = posicion absoluta de b dentro del fichero
+    // offset = absolute position of b within the file
     if (!headerless) return;
     const start = Math.max(0, headerSize - offset);
     if (start < b.length) headerless.update(start ? b.subarray(start) : b);

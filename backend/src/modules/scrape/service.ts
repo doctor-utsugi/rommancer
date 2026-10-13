@@ -1,9 +1,7 @@
 /**
- * Multimedia y metadatos de juegos: ScreenScraper (principal), TheGamesDB (respaldo) y
- * libretro-thumbnails (sin cuenta). Todo lo descargado es permanente y comun a todos los usuarios.
- *
- * Uso responsable: cuotas por credencial leidas de las respuestas, un hilo, pausa hasta el dia
- * siguiente al acercarse al limite, y "no encontrado" recordado durante 6 meses.
+ * Game media and metadata: ScreenScraper (main), TheGamesDB (fallback) and libretro-thumbnails (no account).
+ * Everything downloaded is permanent and shared by all users. Responsible use: per-credential quotas read from
+ * responses, one thread, pause until the next day near the limit, and "not found" remembered for 6 months.
  */
 import fs from 'node:fs';
 import path from 'node:path';
@@ -17,9 +15,10 @@ import { ownedRomIds, pickRom } from '../roms/service.js';
 import { addRomEvidence } from '../grouping/service.js';
 import { normalizeTitle } from '../../lib/romname.js';
 import { applyMeta } from './meta.js';
+import { defaultLocale, localePrefs } from '../../lib/locales.js';
 
 export const ALL_MEDIA: MediaType[] = ['COVER', 'BOX_BACK', 'BOX_SIDE', 'BOX_3D', 'SUPPORT', 'SCREENSHOT', 'TITLE', 'FLYER', 'FANART', 'WHEEL', 'MARQUEE', 'MANUAL', 'VIDEO'];
-// Por defecto no se bajan los pesados (manuales y videos), salvo que se pidan
+// Heavy items (manuals and videos) are not downloaded by default unless requested
 export const DEFAULT_MEDIA: MediaType[] = ['COVER', 'BOX_BACK', 'BOX_SIDE', 'BOX_3D', 'SUPPORT', 'SCREENSHOT', 'TITLE', 'FLYER', 'FANART', 'WHEEL', 'MARQUEE'];
 export const LARGE_MEDIA: MediaType[] = ['MANUAL', 'VIDEO'];
 
@@ -45,7 +44,7 @@ const LIBRETRO_TYPES: [string, MediaType][] = [
   ['Named_Titles', 'TITLE'],
 ];
 
-// Plataformas de TheGamesDB
+// TheGamesDB platforms
 const TGDB_PLATFORM: Record<string, number> = {
   nes: 7, fds: 4936, snes: 6, gb: 4, gbc: 41, gba: 5, n64: 3, nds: 8, gc: 2, wii: 9, sms: 35, gg: 20, md: 18, psx: 10, ps2: 11, psp: 13, fbneo: 23, lynx: 4924, a7800: 27,
 };
@@ -91,7 +90,7 @@ export interface Credentials {
   tgdb: string | null;
 }
 
-/** Credenciales de un usuario: los no admin solo usan las suyas; el admin puede usar las globales. */
+/** A user's credentials: non-admins use only their own; the admin may use the global ones. */
 export async function credentialsFor(userId: number): Promise<Credentials> {
   const u = await prisma.user.findUnique({ where: { id: userId } });
   const admin = u?.role === 'ADMIN';
@@ -108,7 +107,7 @@ export async function credentialsFor(userId: number): Promise<Credentials> {
   };
 }
 
-// --- Cuotas ---
+// --- Quotas ---
 const today = () => new Date().toISOString().slice(0, 10);
 const tomorrow = () => {
   const d = new Date();
@@ -134,7 +133,7 @@ async function recordQuota(key: string, info: { requests?: number; ko?: number; 
   const ko = info.ko ?? (fresh ? (wasKo ? 1 : 0) : q!.ko + (wasKo ? 1 : 0));
   const maxPerDay = info.maxPerDay ?? q?.maxPerDay ?? null;
   const maxKoPerDay = info.maxKoPerDay ?? q?.maxKoPerDay ?? null;
-  // Se para al 95% del limite diario para no agotarlo nunca
+  // Stops at 95% of the daily limit so it is never exhausted
   const exhausted = (maxPerDay != null && requests >= maxPerDay * 0.95) || (maxKoPerDay != null && ko >= maxKoPerDay * 0.95);
   const data = { day, requests, ko, maxPerDay, maxKoPerDay, maxPerMin: info.maxPerMin ?? q?.maxPerMin ?? null, pausedUntil: exhausted ? tomorrow() : fresh ? null : q!.pausedUntil };
   await prisma.scrapeQuota.upsert({ where: { key }, create: { key, ...data }, update: data });
@@ -154,7 +153,7 @@ async function recordMiss(gameId: number, source: string) {
   await prisma.scrapeMiss.upsert({ where: { gameId_source: { gameId, source } }, create: { gameId, source }, update: { at: new Date() } });
 }
 
-// --- Descargas ---
+// --- Downloads ---
 function mediaRel(system: System, gameId: number, type: MediaType, source: string, ext: string) {
   const base = LARGE_MEDIA.includes(type) ? path.join('large', system.slug) : system.slug;
   return path.join(base, String(gameId), `${type.toLowerCase()}-${source}.${ext}`);
@@ -164,7 +163,7 @@ async function download(url: string, dest: string): Promise<number> {
   const r = await fetch(url, { headers: { 'User-Agent': env.userAgent } });
   if (!r.ok) return 0;
   const buf = Buffer.from(await r.arrayBuffer());
-  // ScreenScraper devuelve texto (NOMEDIA, errores) en lugar de un fichero cuando no hay
+  // ScreenScraper returns text (NOMEDIA, errors) instead of a file when there is none
   if (!buf.length || (buf.length < 64 && /^[A-Z ]+$/.test(buf.toString('latin1').trim()))) return 0;
   await fs.promises.mkdir(path.dirname(dest), { recursive: true });
   await fs.promises.writeFile(dest, buf);
@@ -233,7 +232,7 @@ async function screenscraper(t: Target, creds: NonNullable<Credentials['ss']>, c
   const ssId = Number(jeu.id) || null;
   if (ssId) {
     await prisma.game.update({ where: { id: t.gameId }, data: { ssGameId: ssId } });
-    // Evidencia de agrupacion: todas las roms que ScreenScraper asocia a este juego
+    // Grouping evidence: all roms ScreenScraper associates with this game
     const hashes = (jeu.roms ?? []) as { romsha1?: string; rommd5?: string }[];
     const sha1s = hashes.map((x) => x.romsha1?.toLowerCase()).filter(Boolean) as string[];
     if (sha1s.length) {
@@ -259,7 +258,7 @@ async function screenscraper(t: Target, creds: NonNullable<Credentials['ss']>, c
     if (!medias.length) continue;
     const m = t.regionPrefs.map((p) => medias.find((x) => x.region === p)).find(Boolean) ?? medias[0];
     const rel = mediaRel(t.system, t.gameId, type, 'ss', m.format ?? (type === 'MANUAL' ? 'pdf' : type === 'VIDEO' ? 'mp4' : 'png'));
-    // Las descargas de ficheros no cuentan como peticiones de API; solo se espacian
+    // File downloads do not count as API requests; they are only spaced out
     await new Promise((r) => setTimeout(r, 100));
     const size = await download(m.url, path.join(env.mediaDir, rel));
     if (size) {
@@ -288,7 +287,7 @@ async function thegamesdb(t: Target, apiKey: string): Promise<MediaType[]> {
   };
   let tgdbId = (await prisma.game.findUnique({ where: { id: t.gameId } }))?.tgdbGameId ?? null;
   if (!tgdbId) {
-    // TheGamesDB solo permite buscar por nombre: se exige coincidencia exacta del titulo normalizado en la plataforma
+    // TheGamesDB can only search by name: an exact match of the normalized title on the platform is required
     const j = await call('/v1.1/Games/ByGameName', { name: t.title, 'filter[platform]': String(platform) });
     const games = (j?.data?.games ?? []) as { id: number; game_title: string }[];
     const names = new Set([t.title, ...t.altNames].map((x) => normalizeTitle(x)));
@@ -353,12 +352,13 @@ const regionRank = (regions: string[]) => Math.min(...regions.map((r) => (REGION
 async function buildTarget(gameId: number, types: MediaType[], locale: string, overwrite: boolean): Promise<Target | null> {
   const game = await prisma.game.findUnique({ where: { id: gameId }, include: { system: true, roms: { include: { parts: { take: 1 } } }, media: { select: { type: true } } } });
   if (!game) return null;
+  const prefs = localePrefs(locale);
   const owned = await ownedRomIds({ romIds: game.roms.map((r) => r.id), include: 'any' });
-  const rom = pickRom(game.roms, { regions: locale === 'es' ? ['Spain', 'Europe', 'USA', 'World', 'Japan'] : ['USA', 'World', 'Europe', 'Japan'] }, owned) ?? game.roms[0] ?? null;
+  const rom = pickRom(game.roms, { regions: [...prefs.regions] }, owned) ?? game.roms[0] ?? null;
   const have = new Set(game.media.map((m) => m.type));
   const missing = overwrite ? types : types.filter((x) => !have.has(x));
   const romRegions = ((rom?.regions as string[] | undefined) ?? []).map((r) => SS_REGION[r]).filter(Boolean);
-  const userRegions = locale === 'es' ? ['sp', 'eu'] : ['us', 'wor'];
+  const userRegions = prefs.ssRegions;
   return {
     gameId,
     system: game.system,
@@ -368,7 +368,7 @@ async function buildTarget(gameId: number, types: MediaType[], locale: string, o
     title: game.title,
     missing,
     regionPrefs: [...new Set([...romRegions, ...userRegions, 'wor', 'us', 'eu', 'ss', 'jp'])],
-    langPrefs: locale === 'es' ? ['es', 'en', 'fr'] : ['en', 'es', 'fr'],
+    langPrefs: [...prefs.languages],
   };
 }
 
@@ -379,7 +379,7 @@ export interface ScrapeOptions {
   overwrite?: boolean;
 }
 
-/** Scrapea una lista de juegos. Si se agota una cuota, devuelve los pendientes y hasta cuando esperar. */
+/** Scrapes a list of games. If a quota runs out, returns the pending ones and how long to wait. */
 export async function scrapeGames(gameIds: number[], opts: ScrapeOptions, ctx?: JobContext) {
   const creds = await credentialsFor(opts.userId);
   const user = await prisma.user.findUnique({ where: { id: opts.userId } });
@@ -389,7 +389,7 @@ export async function scrapeGames(gameIds: number[], opts: ScrapeOptions, ctx?: 
   let ssPaused = false;
   let tgdbPaused = false;
   for (const [i, gameId] of gameIds.entries()) {
-    const t = await buildTarget(gameId, types, user?.locale ?? 'es', !!opts.overwrite);
+    const t = await buildTarget(gameId, types, user?.locale ?? (await defaultLocale()), !!opts.overwrite);
     if (!t || !t.missing.length) {
       stats.skipped++;
       await ctx?.progress(i + 1, gameIds.length);

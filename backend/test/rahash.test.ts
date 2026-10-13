@@ -1,6 +1,6 @@
 /**
- * Valida el port TypeScript del hash de RetroAchievements contra rcheevos compilado
- * (tools/rahash-cli, `make -C tools/rahash-cli`). Se omite si el binario no existe.
+ * Validates the TypeScript port of the RetroAchievements hash against compiled rcheevos
+ * (tools/rahash-cli, `make -C tools/rahash-cli`). Skipped if the binary does not exist.
  */
 import { after, test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -59,7 +59,7 @@ function makeIso(name: string, files: Record<string, Buffer>): string | null {
   return iso;
 }
 
-test('RA: todas las roms reales de NES y SNES', { skip }, async () => {
+test('RA: all real NES and SNES roms', { skip }, async () => {
   for (const sys of ['nes', 'snes']) {
     const dir = path.join(ROOT, 'roms', sys);
     if (!fs.existsSync(dir)) continue;
@@ -67,7 +67,7 @@ test('RA: todas las roms reales de NES y SNES', { skip }, async () => {
   }
 });
 
-test('RA: cartuchos con y sin cabecera (GB, GBA, MD, Lynx, 7800)', { skip }, async () => {
+test('RA: cartridges with and without header (GB, GBA, MD, Lynx, 7800)', { skip }, async () => {
   await check('gb', write('a.gb', crypto.randomBytes(32768)));
   await check('gba', write('a.gba', crypto.randomBytes(65536)));
   await check('md', write('a.md', crypto.randomBytes(131072)));
@@ -79,7 +79,7 @@ test('RA: cartuchos con y sin cabecera (GB, GBA, MD, Lynx, 7800)', { skip }, asy
   await check('a7800', write('a.a78', a78));
 });
 
-test('RA: N64 en z64, v64 y n64', { skip }, async () => {
+test('RA: N64 in z64, v64 and n64', { skip }, async () => {
   const z64 = crypto.randomBytes(1 << 20);
   z64.writeUInt32BE(0x80371240, 0);
   const v64 = Buffer.from(z64).swap16();
@@ -108,7 +108,7 @@ test('RA: PlayStation, PS2 y PSP (ISO9660)', { skip }, async (t) => {
   exe.write('PS-X EXE', 0, 'latin1');
   exe.writeUInt32LE(8192, 28);
   const psx = makeIso('psx', { 'SYSTEM.CNF': Buffer.from('BOOT = cdrom:\\SLUS_012.34;1\r\nTCB = 4\r\n'), 'SLUS_012.34': exe });
-  if (!psx) return t.skip('sin herramienta ISO');
+  if (!psx) return t.skip('no ISO tool');
   await check('psx', psx);
   const elf = crypto.randomBytes(40000);
   elf.write('\x7fELF', 0, 'latin1');
@@ -118,7 +118,7 @@ test('RA: PlayStation, PS2 y PSP (ISO9660)', { skip }, async (t) => {
   await check('psp', psp!);
 });
 
-test('RA: GameCube desde ISO y desde RVZ', { skip }, async () => {
+test('RA: GameCube from ISO and from RVZ', { skip }, async () => {
   const { iso, rvz } = makeGcRvz();
   const isoFile = write('gc.iso', iso);
   const rvzFile = write('gc.rvz', rvz);
@@ -127,7 +127,7 @@ test('RA: GameCube desde ISO y desde RVZ', { skip }, async () => {
   assert.equal(await ours('gc', rvzFile), ref);
 });
 
-test('RA: Wii cifrado, descifrado y WiiWare', { skip }, async () => {
+test('RA: Wii encrypted, decrypted and WiiWare', { skip }, async () => {
   const disc = crypto.randomBytes(0x50000 + 0x20000 + 40 * 0x8000);
   disc.writeUInt32BE(0x5d1c9ea3, 0x18);
   disc[0x61] = 0;
@@ -143,10 +143,10 @@ test('RA: Wii cifrado, descifrado y WiiWare', { skip }, async () => {
   disc.writeUInt32BE((40 * 0x8000) >> 2, part + 0x2bc);
   await check('wii', write('enc.iso', disc));
 
-  // Descifrado: la particion contiene apploader y main.dol con offsets desplazados 2 bits
+  // Decrypted: the partition holds apploader and main.dol with offsets shifted by 2 bits
   const dec = Buffer.from(disc);
   dec[0x61] = 1;
-  // rcheevos interpreta el offset de datos de la particion como absoluto
+  // rcheevos reads the partition data offset as absolute
   const p = part + 0x20000;
   dec.writeUInt32BE(p >> 2, part + 0x2b8);
   dec.writeUInt32BE(0x1000, p + 0x2440 + 0x14);
@@ -170,13 +170,13 @@ test('RA: Wii cifrado, descifrado y WiiWare', { skip }, async () => {
   await check('wii', write('a.wad', wad));
 });
 
-test('RA: arcade por nombre de set', { skip }, async () => {
+test('RA: arcade by set name', { skip }, async () => {
   await check('fbneo', write('arcade/sf2.zip', crypto.randomBytes(100)));
 });
 
 const MELEE = path.join(ROOT, 'roms/gc/Super Smash Bros. Melee (Europe) (En,Fr,De,Es,It).rvz');
 
-test('RA: RVZ real de GameCube (Melee) contra rcheevos sobre la ISO extraida', { skip: skip || !fs.existsSync(MELEE) }, async () => {
+test('RA: real GameCube RVZ (Melee) against rcheevos on the extracted ISO', { skip: skip || !fs.existsSync(MELEE) }, async () => {
   const r = await RvzReader.open(MELEE);
   const iso = path.join(tmp, 'melee.iso');
   const fd = fs.openSync(iso, 'w');

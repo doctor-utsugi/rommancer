@@ -2,8 +2,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 /**
- * Lector de sectores de datos (2048 bytes) de la primera pista de un disco.
- * Soporta .iso (2048), .bin raw (2352, modo 1 y modo 2) y .cue (usa el primer fichero de la pista 1).
+ * Reader of the 2048-byte data sectors of a disc's first track.
+ * Supports .iso (2048), raw .bin (2352, mode 1 and 2) and .cue (uses track 1's first file).
  */
 export class CdTrack {
   private constructor(
@@ -48,7 +48,7 @@ export class CdTrack {
     await this.fd.close();
   }
 
-  /** Busca un fichero en el sistema ISO9660. path con separador '\\'. Devuelve sector y tamano. */
+  /** Finds a file in the ISO9660 filesystem. path uses '\\' as separator. Returns sector and size. */
   async findFile(filePath: string): Promise<{ sector: number; size: number } | null> {
     let p = filePath.replace(/^\\+/, '');
     let sector: number;

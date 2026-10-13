@@ -1,7 +1,7 @@
 /**
- * Verificacion del lector RVZ con imagenes sinteticas: se construye una ISO de GameCube y otra de Wii
- * (con particion cifrada y arbol de hashes calculados aqui de forma independiente), se empaquetan
- * en RVZ con un codificador minimo y se comprueba que el lector reconstruye exactamente la ISO.
+ * Verifies the RVZ reader with synthetic images: a GameCube ISO and a Wii ISO are built
+ * (with an encrypted partition and a hash tree computed independently here), packed
+ * into RVZ with a minimal encoder, and the reader must rebuild the ISO exactly.
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -25,7 +25,7 @@ async function readAll(file: string) {
   }
 }
 
-test('RVZ GameCube: grupos comprimidos, vacios y empaquetado de relleno LFG', async () => {
+test('RVZ GameCube: compressed and empty groups and LFG fill packing', async () => {
   const { iso, rvz } = makeGcRvz();
   const dir = tmp();
   const file = path.join(dir, 'gc.rvz');
@@ -39,7 +39,7 @@ test('RVZ GameCube: grupos comprimidos, vacios y empaquetado de relleno LFG', as
   fs.rmSync(dir, { recursive: true });
 });
 
-/** Implementacion independiente del formato de particion Wii (wiibrew.org/wiki/Wii_disc). */
+/** Independent implementation of the Wii partition format (wiibrew.org/wiki/Wii_disc). */
 function encryptWiiGroup(plain: Buffer, key: Buffer, tamper?: (hashBlocks: Buffer[]) => void): Buffer {
   const blocks = 64;
   const h0 = Array.from({ length: blocks }, (_, b) => Buffer.concat(Array.from({ length: 31 }, (_, j) => sha1(plain.subarray(b * 0x7c00 + j * 0x400, b * 0x7c00 + (j + 1) * 0x400)))));
@@ -63,7 +63,7 @@ function encryptWiiGroup(plain: Buffer, key: Buffer, tamper?: (hashBlocks: Buffe
   return Buffer.concat(out);
 }
 
-test('RVZ Wii: particion cifrada, arbol de hashes y excepciones de hash', async () => {
+test('RVZ Wii: encrypted partition, hash tree and hash exceptions', async () => {
   const key = crypto.randomBytes(16);
   const firstSector = 2;
   const sectors0 = 64;
@@ -72,7 +72,7 @@ test('RVZ Wii: particion cifrada, arbol de hashes y excepciones de hash', async 
   const plain = Buffer.alloc(128 * 0x7c00);
   crypto.randomBytes(total * 0x7c00).copy(plain);
   plain.fill(0, 80 * 0x7c00, total * 0x7c00);
-  // Excepcion: el disco original tiene un H0 distinto en el bloque 3, entrada 5
+  // Exception: the original disc has a different H0 in block 3, entry 5
   const badHash = crypto.randomBytes(20);
   const exceptionOffset = 3 * 0x400 + 5 * 20;
   const enc0 = encryptWiiGroup(plain.subarray(0, 64 * 0x7c00), key, (h) => badHash.copy(h[3], 5 * 20));
@@ -93,7 +93,7 @@ test('RVZ Wii: particion cifrada, arbol de hashes y excepciones de hash', async 
   const groups: EncGroup[] = [
     { data: zlib.zstdCompressSync(iso.subarray(0, firstSector * 0x8000)), compressed: true, packedSize: 0 },
     { data: zlib.zstdCompressSync(Buffer.concat([exc0, plain.subarray(0, dataChunk)])), compressed: true, packedSize: 0 },
-    // sin comprimir: lista de excepciones alineada a 4 bytes
+    // uncompressed: exception list aligned to 4 bytes
     { data: Buffer.concat([exc1, Buffer.alloc(2), plain.subarray(dataChunk, dataChunk + sectors1 * 0x7c00)]), compressed: false, packedSize: 0 },
     { data: zlib.zstdCompressSync(iso.subarray(tailStart)), compressed: true, packedSize: 0 },
   ];
@@ -123,7 +123,7 @@ test('RVZ Wii: particion cifrada, arbol de hashes y excepciones de hash', async 
 
 const MELEE = path.resolve(import.meta.dirname, '../../roms/gc/Super Smash Bros. Melee (Europe) (En,Fr,De,Es,It).rvz');
 
-test('RVZ real: Super Smash Bros. Melee (Europe) coincide con Redump', { skip: !fs.existsSync(MELEE) }, async () => {
+test('RVZ real: Super Smash Bros. Melee (Europe) matches Redump', { skip: !fs.existsSync(MELEE) }, async () => {
   const r = await RvzReader.open(MELEE);
   try {
     const h = await r.hashIso();

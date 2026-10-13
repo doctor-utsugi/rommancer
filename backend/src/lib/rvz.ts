@@ -1,13 +1,13 @@
 /**
- * Lector de imagenes RVZ/WIA (GameCube y Wii) que reconstruye la ISO original byte a byte,
- * incluido el cifrado y el arbol de hashes de las particiones Wii, para poder verificarla
- * contra Redump sin dolphin-tool.
+ * Reader of RVZ/WIA images (GameCube and Wii) that rebuilds the original ISO byte for byte,
+ * including the encryption and hash tree of Wii partitions, so it can be verified
+ * against Redump without dolphin-tool.
  *
- * Port a TypeScript de Dolphin (https://github.com/dolphin-emu/dolphin):
+ * TypeScript port of Dolphin (https://github.com/dolphin-emu/dolphin):
  *   Source/Core/DiscIO/WIABlob.cpp, WIACompression.cpp, VolumeWii.cpp  (GPL-2.0-or-later)
  *   Source/Core/DiscIO/LaggedFibonacciGenerator.cpp                    (CC0-1.0)
  *   docs/WiaAndRvz.md
- * Compresiones soportadas: NONE y Zstandard (RVZ), NONE y PURGE (WIA). bzip2/LZMA no.
+ * Supported compression: NONE and Zstandard (RVZ), NONE and PURGE (WIA). Not bzip2/LZMA.
  */
 import crypto from 'node:crypto';
 import fs from 'node:fs';
@@ -32,13 +32,13 @@ enum Compression {
   Zstd = 5,
 }
 
-// --- Generador de Fibonacci retardado (relleno pseudoaleatorio de los discos) ---
+// --- Lagged Fibonacci generator (pseudo-random disc padding) ---
 const LFG_K = 521;
 const LFG_J = 32;
 const SEED_WORDS = 17;
 
 class LaggedFibonacci {
-  // Palabras ya transformadas: los bytes de salida son la representacion big endian de cada palabra
+  // Words already transformed: output bytes are the big-endian form of each word
   private buf = new Uint32Array(LFG_K);
   private pos = 0;
 
@@ -46,7 +46,7 @@ class LaggedFibonacci {
     this.pos = 0;
     for (let i = 0; i < SEED_WORDS; i++) this.buf[i] = seed.readUInt32BE(i * 4);
     for (let i = SEED_WORDS; i < LFG_K; i++) this.buf[i] = ((this.buf[i - 17] << 23) ^ (this.buf[i - 16] >>> 9) ^ this.buf[i - 1]) >>> 0;
-    // El algoritmo original desplaza 18 en lugar de 16 al emitir: se aplica aqui una vez
+    // The original algorithm shifts by 18 instead of 16 when emitting: applied once here
     for (let i = 0; i < LFG_K; i++) {
       const x = this.buf[i];
       this.buf[i] = ((x & 0xff00ffff) | ((x >>> 2) & 0x00ff0000)) >>> 0;
@@ -80,7 +80,7 @@ class LaggedFibonacci {
   }
 }
 
-/** Decodifica el empaquetado RVZ (datos literales y tramos de relleno regenerados con el LFG). */
+/** Decodes RVZ packing (literal data and padding runs regenerated with the LFG). */
 export function rvzUnpack(packed: Buffer, outSize: number, dataOffset: number): Buffer {
   const out = Buffer.alloc(outSize);
   const lfg = new LaggedFibonacci();
@@ -106,7 +106,7 @@ export function rvzUnpack(packed: Buffer, outSize: number, dataOffset: number): 
   return out;
 }
 
-/** Utilidad para pruebas: genera relleno LFG a partir de una semilla. */
+/** Test helper: generates LFG padding from a seed. */
 export function lfgBytes(seed: Buffer, size: number, offset: number): Buffer {
   const lfg = new LaggedFibonacci();
   lfg.setSeed(seed);
@@ -270,7 +270,7 @@ export class RvzReader {
     this.entries.sort((a, b) => a.end - b.end);
   }
 
-  /** Lee y descomprime un grupo. outSize: datos esperados; exceptionLists: listas de excepciones de hash delante. */
+  /** Reads and decompresses a group. outSize: expected data; exceptionLists: hash exception lists up front. */
   private async readChunk(groupIdx: number, outSize: number, exceptionLists: number, dataOffset: number): Promise<ChunkData> {
     const key = `${groupIdx}:${outSize}`;
     const cached = this.chunkCache.get(key);
@@ -316,7 +316,7 @@ export class RvzReader {
     return result;
   }
 
-  /** Lectura generica sobre una zona dividida en grupos (datos crudos o datos descifrados de particion). */
+  /** Generic read over an area split into groups (raw data or decrypted partition data). */
   private async readFromGroups(
     offset: number,
     size: number,
@@ -357,7 +357,7 @@ export class RvzReader {
     return read;
   }
 
-  /** Datos descifrados (sin hashes) de una particion Wii. */
+  /** Decrypted data (without hashes) of a Wii partition. */
   private async readWiiDecrypted(p: Partition, offset: number, size: number, out: Buffer, exceptionsOut: HashException[]) {
     const first = p.data[0].firstSector;
     const chunk = (this.chunkSize * BLOCK_DATA_SIZE) / BLOCK_TOTAL_SIZE;
@@ -373,7 +373,7 @@ export class RvzReader {
     if (done !== size) throw new Error('Wii partition read out of range');
   }
 
-  /** Reconstruye un grupo cifrado de 2 MiB (64 bloques) de una particion Wii. */
+  /** Rebuilds an encrypted 2 MiB group (64 blocks) of a Wii partition. */
   private async encryptedGroup(pi: number, groupNo: number): Promise<Buffer> {
     const key = `${pi}:${groupNo}`;
     if (this.encCache?.key === key) return this.encCache.data;
@@ -387,7 +387,7 @@ export class RvzReader {
     const exceptions: HashException[] = [];
     if (readable) await this.readWiiDecrypted(p, decOffset, readable, plain, exceptions);
 
-    // Arbol de hashes H0/H1/H2 (VolumeWii::HashGroup)
+    // Hash tree H0/H1/H2 (VolumeWii::HashGroup)
     const hashes = Buffer.alloc(GROUP_HEADER_SIZE_TOTAL);
     const sha1 = (b: Buffer) => crypto.createHash('sha1').update(b).digest();
     for (let b = 0; b < BLOCKS_PER_GROUP; b++) {
@@ -411,7 +411,7 @@ export class RvzReader {
       e.hash.copy(hashes, block * BLOCK_HEADER_SIZE + inBlock);
     }
 
-    // Cifrado AES-128-CBC: cabecera con IV cero, datos con IV = cabecera cifrada [0x3D0, 0x3E0)
+    // AES-128-CBC: header with zero IV, data with IV = encrypted header [0x3D0, 0x3E0)
     const out = Buffer.alloc(GROUP_TOTAL_SIZE);
     const aes = (iv: Buffer, data: Buffer) => {
       const c = crypto.createCipheriv('aes-128-cbc', p.key, iv);
@@ -429,7 +429,7 @@ export class RvzReader {
     return out;
   }
 
-  /** Lee bytes de la ISO reconstruida. */
+  /** Reads bytes from the rebuilt ISO. */
   async read(offset: number, size: number): Promise<Buffer> {
     if (offset + size > this.isoSize) size = Math.max(0, this.isoSize - offset);
     const out = Buffer.alloc(size);
@@ -462,7 +462,7 @@ export class RvzReader {
     return out;
   }
 
-  /** Hashes de la ISO completa (CRC32, MD5, SHA1), leida en bloques de 2 MiB. */
+  /** Hashes of the whole ISO (CRC32, MD5, SHA1), read in 2 MiB blocks. */
   async hashIso(onProgress?: (done: number, total: number) => void) {
     let crc = 0;
     const md5 = crypto.createHash('md5');
@@ -481,7 +481,7 @@ export class RvzReader {
 
 const GROUP_HEADER_SIZE_TOTAL = BLOCK_HEADER_SIZE * BLOCKS_PER_GROUP;
 
-/** PURGE (solo WIA): segmentos {offset, size, datos} + SHA-1 final; el resto son ceros. */
+/** PURGE (WIA only): segments {offset, size, data} + final SHA-1; the rest is zeros. */
 function purgeDecompress(buf: Buffer, outSize: number): Buffer {
   const out = Buffer.alloc(outSize);
   let p = 0;

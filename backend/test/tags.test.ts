@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { baseRomName, hackLabel, parseRomName } from '../src/lib/romname.js';
 
-test('etiquetas: region, idiomas, revision y marcas de traduccion', () => {
+test('tags: region, languages, revision and translation marks', () => {
   const p = parseRomName('Contra (Japan) [T+Eng1.0_MadHacker].nes');
   assert.equal(p.title, 'Contra');
   assert.deepEqual(p.regions, ['Japan']);
@@ -14,7 +14,7 @@ test('etiquetas: region, idiomas, revision y marcas de traduccion', () => {
   assert.deepEqual(l.languages, ['En', 'Fr', 'De']);
 });
 
-test('etiquetas: rom base exacta y version propia del hack', () => {
+test('tags: exact base rom and the hack's own version', () => {
   assert.equal(
     hackLabel({ name: 'Gran Turismo 4 (USA) (v1.01)' }, { type: 'HACK', title: 'Gran Turismo 4 Spec II', hackName: 'Spec II', version: '1.10' }),
     'Gran Turismo 4 (USA) v1.01 + Spec II v1.10',

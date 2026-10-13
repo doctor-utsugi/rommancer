@@ -1,4 +1,4 @@
-// Codificador RVZ minimo para pruebas
+// Minimal RVZ encoder for tests
 import crypto from 'node:crypto';
 import zlib from 'node:zlib';
 import { lfgBytes } from '../../src/lib/rvz.js';
@@ -16,13 +16,13 @@ const u64 = (n: number) => {
 };
 
 export interface EncGroup {
-  data: Buffer; // datos tal como se guardan (comprimidos o no)
+  data: Buffer; // data as stored (compressed or not)
   compressed: boolean;
   packedSize: number;
   empty?: boolean;
 }
 
-/** Codificador RVZ minimo para pruebas (compresion Zstandard). */
+/** Minimal RVZ encoder for tests (Zstandard compression). */
 export function buildRvz(opts: {
   discType: number;
   chunkSize: number;
@@ -43,7 +43,7 @@ export function buildRvz(opts: {
   const blobs: Buffer[] = [];
   const entries: Buffer[] = [];
   const groupTableOff = pos;
-  // la tabla de grupos se coloca despues de los datos: se calcula primero el tamano de los datos
+  // the group table goes after the data, so the data size is computed first
   let dataPos = 0;
   const groupData: { off: number; g: EncGroup }[] = [];
   for (const g of opts.groups) {
@@ -101,12 +101,12 @@ export function buildRvz(opts: {
 }
 
 
-/** ISO GameCube sintetica (con cabecera, apploader y main.dol) y su RVZ. */
+/** Synthetic GameCube ISO (with header, apploader and main.dol) and its RVZ. */
 export function makeGcRvz() {
   const chunk = 0x20000;
   const iso = Buffer.alloc(8 * chunk);
   crypto.randomBytes(0x40000).copy(iso, 0);
-  // Cabecera GameCube con apploader y main.dol para el hash de RetroAchievements
+  // GameCube header with apploader and main.dol for the RetroAchievements hash
   iso.writeUInt32BE(0xc2339f3d, 0x1c);
   iso.writeUInt32BE(0x1000, 0x2440 + 0x14);
   iso.writeUInt32BE(0x100, 0x2440 + 0x18);
@@ -114,9 +114,9 @@ export function makeGcRvz() {
   iso.fill(0, 0x30000, 0x300d8);
   iso.writeUInt32BE(0x31000, 0x30000);
   iso.writeUInt32BE(0x2000, 0x30090);
-  // [0x40000, 0x80000): ceros -> grupos vacios
+  // [0x40000, 0x80000): zeros -> empty groups
   iso.fill(0, 0x40000, 0x80000);
-  // [0x80000, 0xC0000): relleno pseudoaleatorio, un grupo entero y otro con literal + relleno
+  // [0x80000, 0xC0000): pseudo-random fill, one whole group and another with literal + fill
   const seedA = crypto.randomBytes(68);
   const seedB = crypto.randomBytes(68);
   lfgBytes(seedA, chunk, 0).copy(iso, 0x80000);
@@ -135,7 +135,7 @@ export function makeGcRvz() {
       groups.push({ data: zlib.zstdCompressSync(packed), compressed: true, packedSize: packed.length });
     } else if (g === 5) {
       const packed = Buffer.concat([u32(0x100), literal, u32((chunk - 0x100) | 0x80000000), seedB]);
-      // empaquetado sin comprimir
+      // packed uncompressed
       groups.push({ data: packed, compressed: false, packedSize: packed.length });
     } else if (g === 7) groups.push({ data: Buffer.from(data), compressed: false, packedSize: 0 });
     else groups.push({ data: zlib.zstdCompressSync(data), compressed: true, packedSize: 0 });

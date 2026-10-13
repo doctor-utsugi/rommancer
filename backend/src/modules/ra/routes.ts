@@ -23,7 +23,7 @@ export async function storeRaGames(systemId: number, games: RaApiGame[]) {
     const data = { systemId, title: g.Title.slice(0, 255), numAchievements: g.NumAchievements ?? 0, imageIcon: g.ImageIcon ?? null };
     await prisma.raGame.upsert({ where: { id: g.ID }, create: { id: g.ID, ...data }, update: data });
     const hs = [...new Set((g.Hashes ?? []).map((h) => h.toLowerCase()).filter((h) => /^[0-9a-f]{32}$/.test(h)))];
-    // Permanente: los hashes que desaparecen de RetroAchievements se conservan
+    // Permanent: hashes that disappear from RetroAchievements are kept
     if (hs.length) await prisma.raHash.createMany({ data: hs.map((hash) => ({ hash, raGameId: g.ID })), skipDuplicates: true });
     hashes += hs.length;
   }
@@ -31,14 +31,14 @@ export async function storeRaGames(systemId: number, games: RaApiGame[]) {
   return { games: games.length, hashes };
 }
 
-// Sincronizacion bajo demanda (por sistema): pasa por la sincronizacion global con sus protecciones
+// On-demand sync (per system): goes through the global sync with its protections
 raRouter.post('/sync', requireAdmin, async (req, res) => {
   const { systemId } = z.object({ systemId: z.number().int().optional() }).parse(req.body ?? {});
   const system = systemId ? await prisma.system.findUniqueOrThrow({ where: { id: systemId } }) : null;
   res.status(202).json(await forceSync(['retroachievements'], system?.slug, me(req).id));
 });
 
-// Importacion offline de una respuesta de API_GetGameList guardada en JSON
+// Offline import of a saved API_GetGameList response in JSON
 raRouter.post('/import', requireAdmin, async (req, res) => {
   const body = z
     .object({

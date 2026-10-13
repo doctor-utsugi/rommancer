@@ -13,7 +13,7 @@ export interface SinkEntry {
   isDir: boolean;
 }
 
-/** Acceso a ficheros de un dispositivo (SD montada o SSH/SFTP). Rutas relativas a la raiz del dispositivo. */
+/** File access to a device (mounted SD or SSH/SFTP). Paths are relative to the device root. */
 export interface Sink {
   stat(rel: string): Promise<{ size: number; mtimeMs: number } | null>;
   mkdirp(rel: string): Promise<void>;

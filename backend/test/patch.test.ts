@@ -32,7 +32,7 @@ function withFooter(body: Buffer, source: Buffer, target: Buffer) {
 
 const signed = (n: number) => varint((Math.abs(n) * 2) | (n < 0 ? 1 : 0));
 
-test('IPS: registro normal, RLE, extension y truncado', () => {
+test('IPS: normal record, RLE, extension and truncation', () => {
   const src = crypto.randomBytes(1000);
   const rec = (off: number, data: Buffer) => {
     const h = Buffer.alloc(5);
@@ -56,7 +56,7 @@ test('IPS: registro normal, RLE, extension y truncado', () => {
   exp.fill(0xaa, 100, 150);
   exp.write('fin', 1100, 'latin1');
   assert.ok(out.equals(exp));
-  // Truncado tras EOF
+  // Truncation after EOF
   const trunc = Buffer.alloc(3);
   trunc.writeUIntBE(500, 0, 3);
   const t = applyPatch(src, Buffer.concat([Buffer.from('PATCH'), rec(10, Buffer.from('hola')), Buffer.from('EOF'), trunc]));
@@ -64,13 +64,13 @@ test('IPS: registro normal, RLE, extension y truncado', () => {
   assert.ok(t.subarray(14).equals(src.subarray(14, 500)));
 });
 
-test('BPS: las cuatro acciones, offsets negativos, copia solapada y checksums', () => {
+test('BPS: the four actions, negative offsets, overlapping copy and checksums', () => {
   const src = crypto.randomBytes(300);
-  // Destino: 100 bytes de source tal cual, 20 literales, 50 de source desde 200, 30 desde 120 (negativo), 40 repitiendo 'ab'
+  // Target: 100 bytes of source as-is, 20 literals, 50 of source from 200, 30 from 120 (negative), 40 repeating 'ab'
   const lit = crypto.randomBytes(20);
   const target = Buffer.concat([src.subarray(0, 100), lit, src.subarray(200, 250), src.subarray(120, 150), Buffer.from('ab'.repeat(20))]);
   const act = (cmd: number, len: number) => varint(((len - 1) << 2) | cmd);
-  const tgtAb = 200; // posicion de 'ab' (se escriben como literales y luego TargetCopy solapado)
+  const tgtAb = 200; // position of 'ab' (written as literals, then an overlapping TargetCopy)
   const body = Buffer.concat([
     Buffer.from('BPS1'),
     varint(src.length),
@@ -82,11 +82,11 @@ test('BPS: las cuatro acciones, offsets negativos, copia solapada y checksums', 
     lit,
     act(2, 50), // SourceCopy +200
     signed(200),
-    act(2, 30), // SourceCopy desde 250 hasta 120: -130
+    act(2, 30), // SourceCopy from 250 back to 120: -130
     signed(-130),
     act(1, 2),
     Buffer.from('ab'),
-    act(3, 38), // TargetCopy desde 200 (solapado)
+    act(3, 38), // TargetCopy from 200 (overlapping)
     signed(tgtAb),
   ]);
   const patch = withFooter(body, src, target);
@@ -97,23 +97,23 @@ test('BPS: las cuatro acciones, offsets negativos, copia solapada y checksums', 
   assert.equal(info.sourceCrc32, hex(src));
   assert.equal(info.targetCrc32, hex(target));
   assert.ok(applyPatch(src, patch).equals(target));
-  // Origen distinto
+  // Different source
   const other = Buffer.from(src);
   other[5] ^= 1;
   assert.throws(() => applyPatch(other, patch), (e: unknown) => e instanceof PatchError && /source checksum/.test((e as Error).message));
-  // Parche corrupto
+  // Corrupt patch
   const bad = Buffer.from(patch);
   bad[30] ^= 0xff;
   assert.throws(() => applyPatch(src, bad), PatchError);
 });
 
-test('UPS: varios bloques XOR y destino mas largo', () => {
+test('UPS: several XOR blocks and longer target', () => {
   const src = crypto.randomBytes(200);
   const target = Buffer.concat([src, crypto.randomBytes(20)]);
   target[10] ^= 0x55;
   target[11] ^= 0x01;
   target[150] ^= 0xff;
-  // Diferencias por bloques: salto relativo + bytes XOR hasta 0
+  // Block differences: relative skip + XOR bytes up to 0
   const blocks: Buffer[] = [];
   let pos = 0;
   const diffs: number[] = [];
@@ -141,7 +141,7 @@ test('UPS: varios bloques XOR y destino mas largo', () => {
   assert.throws(() => applyPatch(src, bad), PatchError);
 });
 
-test('BPS: se genera un parche a partir de base y romhack, y se aplica de vuelta', async () => {
+test('BPS: a patch is generated from base and romhack, and applied back', async () => {
   const { createBps } = await import('../src/lib/patch.js');
   const base = crypto.randomBytes(256 * 1024);
   const hack = Buffer.concat([base, crypto.randomBytes(5000)]);
@@ -149,7 +149,7 @@ test('BPS: se genera un parche a partir de base y romhack, y se aplica de vuelta
   const p = createBps(base, hack);
   assert.ok(p.length < hack.length / 4, `parche de ${p.length} bytes`);
   assert.ok(applyPatch(base, p).equals(hack));
-  // Destino mas corto que el origen
+  // Target shorter than the source
   const short = hack.subarray(0, 1000);
   assert.ok(applyPatch(base, createBps(base, short)).equals(short));
 });

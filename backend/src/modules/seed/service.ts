@@ -1,22 +1,21 @@
 /**
- * Semilla de datos para nuevos despliegues: todo lo obtenido de fuentes externas (acumulado, nunca se
- * borra) y las decisiones manuales. Se exporta desde una instancia y se aplica al arrancar otra, sin
- * volver a descargar nada.
+ * Data seed for new deployments: everything obtained from external sources (cumulative, never deleted) and manual
+ * decisions. Exported from one instance and applied at startup on another, without downloading anything again.
  *
  * SEED_DIR/
- *   dats/<fichero>.dat        DATs tal cual
+ *   dats/<file>.dat           DATs as is
  *   dats/manifest.json        [{ file, system, type, priority }]
  *   ra.json                   { <slug>: [{ ID, Title, NumAchievements, ImageIcon, Hashes }] }
- *   games.json                [{ system, roms, ...metadatos, media: [{ type, source, file, region }] }]
- *   removed.json              roms que ya no estan en su DAT (se conservan aunque la fuente las retire)
- *   grouping.json             evidencias externas (Retool, ScreenScraper), reglas manuales y "no encontrados"
- *   wikidata.json             subconjunto local de Wikidata (items y etiquetas)
- *   patches/                  parches de romhacks + patches.json
- *   retool/                   listas de clones y metadatos de Retool (repositorio congelado)
- *   media/<ruta>              imagenes (misma ruta relativa que DATA_DIR/media)
- *   media-large/<ruta>        manuales y videos
+ *   games.json                [{ system, roms, ...metadata, media: [{ type, source, file, region }] }]
+ *   removed.json              roms no longer in their DAT (kept even if the source withdraws them)
+ *   grouping.json             external evidence (Retool, ScreenScraper), manual rules and "not found"
+ *   wikidata.json             local Wikidata subset (items and labels)
+ *   patches/                  romhack patches + patches.json
+ *   retool/                   Retool clone lists and metadata (frozen repository)
+ *   media/<path>              images (same relative path as DATA_DIR/media)
+ *   media-large/<path>        manuals and videos
  *
- * Los juegos se identifican por los nombres de sus roms (los ids y titulos cambian entre instancias).
+ * Games are identified by their rom names (ids and titles differ between instances).
  */
 import fs from 'node:fs';
 import path from 'node:path';
@@ -40,7 +39,7 @@ interface ManifestEntry {
 
 interface SeedGame {
   system: string;
-  // Antes: titulo normalizado. Ahora: nombres de roms del juego
+  // Before: normalized title. Now: the game's rom names
   key?: string;
   roms?: string[];
   releaseYear: number | null;
@@ -102,10 +101,10 @@ async function copyIfMissing(src: string, dest: string) {
   return true;
 }
 
-// Manuales y videos van a media-large (ruta relativa en DATA_DIR/media: large/...)
+// Manuals and videos go to media-large (relative path in DATA_DIR/media: large/...)
 const seedMediaPath = (dir: string, rel: string) => (rel.startsWith('large' + path.sep) || rel.startsWith('large/') ? path.join(dir, 'media-large', rel.slice(6)) : path.join(dir, 'media', rel));
 
-// Roms de juegos de DATs (no subidas de usuarios) como identificador estable
+// Roms of DAT games (not user uploads) as a stable identifier
 async function romNamesByGame(gameIds: number[]) {
   const map = new Map<number, string[]>();
   for (let i = 0; i < gameIds.length; i += 5000) {
@@ -119,7 +118,7 @@ export async function exportSeed(ctx?: JobContext) {
   const dir = env.seedDir;
   await fs.promises.mkdir(path.join(dir, 'dats'), { recursive: true });
 
-  // DATs: se localiza el fichero por nombre o, si no consta, por sha1 entre los descargados
+  // DATs: the file is found by name or, if absent, by sha1 among those downloaded
   const sources = await prisma.datSource.findMany({ where: { type: { not: 'USER' } }, include: { system: true } });
   const datFiles = (await fs.promises.readdir(env.datsDir).catch(() => [] as string[])).filter((f) => /\.(dat|xml)$/i.test(f));
   const bySha: Map<string, string> = new Map();
@@ -131,7 +130,7 @@ export async function exportSeed(ctx?: JobContext) {
       file = bySha.get(s.fileSha1) ?? null;
     }
     if (!file) {
-      // Puede estar ya en la semilla (aplicada desde otra instancia)
+      // It may already be in the seed (applied from another instance)
       if (s.fileName && (await exists(path.join(dir, 'dats', path.basename(s.fileName))))) file = path.basename(s.fileName);
       else {
         ctx?.log(`DAT file not found for ${s.system.slug} ${s.type} "${s.name}"`);
@@ -142,7 +141,7 @@ export async function exportSeed(ctx?: JobContext) {
   }
   await fs.promises.writeFile(path.join(dir, 'dats', 'manifest.json'), JSON.stringify(manifest, null, 1));
 
-  // Roms retiradas de su fuente: el DAT actual ya no las trae
+  // Roms withdrawn from their source: the current DAT no longer carries them
   const removedRoms = await prisma.rom.findMany({
     where: { removedFromSource: true, datSource: { type: { not: 'USER' } } },
     include: { parts: true, datSource: { select: { type: true, name: true } }, game: { select: { system: { select: { slug: true } } } } },
@@ -171,7 +170,7 @@ export async function exportSeed(ctx?: JobContext) {
     (ra[g.system.slug] ??= []).push({ ID: g.id, Title: g.title, NumAchievements: g.numAchievements, ImageIcon: g.imageIcon, Hashes: g.hashes.map((h) => h.hash) });
   await fs.promises.writeFile(path.join(dir, 'ra.json'), JSON.stringify(ra));
 
-  // Metadatos y multimedia
+  // Metadata and media
   const games = await prisma.game.findMany({
     where: { OR: [{ scrapedAt: { not: null } }, { media: { some: {} } }, { developer: { not: null } }, { releaseYear: { not: null } }, { genre: { not: null } }, { franchiseName: { not: null } }, { tgdbGameId: { not: null } }] },
     include: { system: { select: { slug: true } }, media: true },
@@ -209,7 +208,7 @@ export async function exportSeed(ctx?: JobContext) {
   }
   await fs.promises.writeFile(path.join(dir, 'games.json'), JSON.stringify(out));
 
-  // Agrupacion: evidencias que no se pueden regenerar desde los DATs y decisiones manuales
+  // Grouping: evidence that cannot be regenerated from DATs, and manual decisions
   const romName = new Map<number, { name: string; slug: string }>();
   const loadRoms = async (ids: number[]) => {
     const missing = [...new Set(ids)].filter((id) => !romName.has(id));
@@ -245,7 +244,7 @@ export async function exportSeed(ctx?: JobContext) {
     await fs.promises.writeFile(path.join(dir, 'wikidata.json'), JSON.stringify({ items: wdItems, labels }));
   }
 
-  // Parches
+  // Patches
   const patches = await prisma.romPatch.findMany({ include: { hack: { include: { game: { include: { system: true } } } } } });
   const seedPatches: SeedPatch[] = [];
   const baseNames = new Map((await prisma.rom.findMany({ where: { id: { in: patches.map((p) => p.baseRomId).filter((x): x is number => !!x) } }, select: { id: true, name: true } })).map((r) => [r.id, r.name]));
@@ -257,7 +256,7 @@ export async function exportSeed(ctx?: JobContext) {
   }
   if (seedPatches.length) await fs.promises.writeFile(path.join(dir, 'patches', 'patches.json'), JSON.stringify(seedPatches, null, 1));
 
-  // Retool (congelado): copia de lo descargado
+  // Retool (frozen): copy of what was downloaded
   const retoolDir = path.join(env.dataDir, 'retool');
   for (const f of await fs.promises.readdir(retoolDir).catch(() => [] as string[])) {
     await fs.promises.mkdir(path.join(dir, 'retool'), { recursive: true });
@@ -275,7 +274,7 @@ export async function applySeed(ctx?: JobContext) {
   const systems = new Map((await prisma.system.findMany()).map((s) => [s.slug, s]));
   const res = { datsImported: 0, datsSkipped: 0, removed: 0, raGames: 0, games: 0, media: 0, evidence: 0, wikidata: 0, patches: 0 };
 
-  // 1. DATs (por prioridad y los de hacks al final para enlazarlos con las roms base)
+  // 1. DATs (by priority, hacks last so they link to the base roms)
   const manifest = await readJson<ManifestEntry[]>(path.join(dir, 'dats', 'manifest.json'), []);
   manifest.sort((a, b) => Number(a.type === 'HACKS') - Number(b.type === 'HACKS') || (a.priority ?? 0) - (b.priority ?? 0));
   const touched = new Set<number>();
@@ -289,13 +288,13 @@ export async function applySeed(ctx?: JobContext) {
       res.datsImported++;
       touched.add(system.id);
       ctx?.log(`Imported ${m.file}`);
-      // Copia de trabajo para futuras exportaciones
+      // Working copy for future exports
       await copyIfMissing(file, path.join(env.datsDir, m.file));
     }
     await ctx?.progress(i + 1, manifest.length, m.file);
   }
 
-  // Roms retiradas de su fuente que no esten ya
+  // Roms withdrawn from their source that are not already there
   for (const r of await readJson<SeedRemovedRom[]>(path.join(dir, 'removed.json'), [])) {
     const system = systems.get(r.system);
     if (!system || (await prisma.rom.findFirst({ where: { name: r.name, game: { systemId: system.id } }, select: { id: true } }))) continue;
@@ -330,12 +329,12 @@ export async function applySeed(ctx?: JobContext) {
     res.raGames += (await storeRaGames(s.id, games)).games;
   }
 
-  // Indice nombre de rom -> rom (por sistema)
+  // Index rom name -> rom (per system)
   const romIndex = new Map<string, { id: number; gameId: number }>();
   for (const r of await prisma.rom.findMany({ select: { id: true, gameId: true, name: true, game: { select: { system: { select: { slug: true } } } } } })) romIndex.set(`${r.game.system.slug}|${r.name}`, { id: r.id, gameId: r.gameId });
   const romOf = (slug: string, name: string) => romIndex.get(`${slug}|${name}`);
 
-  // 3. Agrupacion: evidencias externas y reglas manuales, antes de resolver
+  // 3. Grouping: external evidence and manual rules, before resolving
   const grouping = await readJson<SeedGrouping | null>(path.join(dir, 'grouping.json'), null);
   if (grouping) {
     const ev = grouping.evidence
@@ -355,7 +354,7 @@ export async function applySeed(ctx?: JobContext) {
   }
   for (const id of touched) await resolveRomGroups(id);
 
-  // Tras resolver, los juegos ya son los definitivos
+  // After resolving, the games are the final ones
   for (const r of await prisma.rom.findMany({ select: { id: true, gameId: true, name: true, game: { select: { system: { select: { slug: true } } } } } })) romIndex.set(`${r.game.system.slug}|${r.name}`, { id: r.id, gameId: r.gameId });
   if (grouping) {
     for (const w of grouping.workRules) {
@@ -370,7 +369,7 @@ export async function applySeed(ctx?: JobContext) {
     }
   }
 
-  // 4. Metadatos y multimedia: solo se rellena lo que falta
+  // 4. Metadata and media: only what is missing is filled
   const seedGames = await readJson<SeedGame[]>(path.join(dir, 'games.json'), []);
   for (const sg of seedGames) {
     const s = systems.get(sg.system);
@@ -395,7 +394,7 @@ export async function applySeed(ctx?: JobContext) {
       if (game.media.some((x) => x.type === m.type && x.source === m.source)) continue;
       const src = seedMediaPath(dir, m.file);
       if (!(await exists(src))) continue;
-      // La ruta incluye el id del juego de la instancia original: se recoloca con el id local
+      // The path includes the original instance's game id: relocated with the local id
       const large = m.file.startsWith('large/') || m.file.startsWith('large' + path.sep);
       const rel = path.join(...(large ? ['large'] : []), s.slug, String(game.id), path.basename(m.file));
       await copyIfMissing(src, path.join(env.mediaDir, rel));
@@ -418,7 +417,7 @@ export async function applySeed(ctx?: JobContext) {
     }
   }
 
-  // 6. Parches
+  // 6. Patches
   const patches = await readJson<SeedPatch[]>(path.join(dir, 'patches', 'patches.json'), []);
   for (const p of patches) {
     if (await prisma.romPatch.findUnique({ where: { sha1: p.sha1 } })) continue;
@@ -433,7 +432,7 @@ export async function applySeed(ctx?: JobContext) {
     res.patches++;
   }
 
-  // Retool: copia de trabajo
+  // Retool: working copy
   for (const f of await fs.promises.readdir(path.join(dir, 'retool')).catch(() => [] as string[])) await copyIfMissing(path.join(dir, 'retool', f), path.join(env.dataDir, 'retool', f));
 
   if (res.datsImported || res.raGames) await rematchAll();
@@ -445,7 +444,7 @@ export async function applySeed(ctx?: JobContext) {
   return res;
 }
 
-/** Mantiene la semilla al dia tras importar DATs, sincronizar RA o scrapear. */
+/** Keeps the seed up to date after importing DATs, syncing RA or scraping. */
 export async function scheduleSeedExport() {
   if (!env.seedAutoExport) return;
   const pending = await prisma.job.findFirst({ where: { type: 'seed-export', status: 'PENDING' } });

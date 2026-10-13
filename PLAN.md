@@ -1,32 +1,32 @@
-# Rommancer - Plan de implementacion
+# Rommancer - Implementation plan
 
-Fase 1 (abajo) y fase 2 (seccion final). Las decisiones de la fase 2 sustituyen a las de la fase 1 cuando se contradicen.
+Phase 1 (below) and phase 2 (final section). Phase 2 decisions replace those of phase 1 where they contradict.
 
-Gestor multiusuario de roms, listas, dispositivos y saves. Fuente: `/Users/Shared/Proyects/wanda/rommancer/ROMMANCER.md` mas decisiones tomadas en conversacion.
+Multi-user manager for roms, lists, devices and saves. Source: `/Users/Shared/Proyects/wanda/rommancer/ROMMANCER.md` plus decisions made in conversation.
 
-## Decisiones cerradas
+## Closed decisions
 
-| Tema | Decision |
+| Topic | Decision |
 |---|---|
-| Stack | Node 22 + TypeScript, Express, Prisma, MySQL 8. React + TypeScript + Vite + shadcn/ui + Tailwind. Podman (no Docker). |
-| Repo | Monorepo: `/backend`, `/frontend`, `/compose.yaml`, `/data` (volumen app). pnpm workspaces. |
-| Despliegue | 3 contenedores: `mysql`, `api`, `web` (nginx sirve build React y proxy `/api`). Un volumen `/data` (media, saves, uploads, dats). Paths de roms del usuario como bind mounts. Desarrollo: solo mysql en Podman, node local. |
-| Fuentes DAT | No-Intro y Redump (XML .dat subidos por admin), FBNeo (DAT de GitHub), RetroAchievements (API), romhacks (romhacking.net / rhdn archive). |
-| Sistemas fase 1 | NES, SNES, GB, GBC, GBA, N64, NDS, Master System, Game Gear, Mega Drive, PS1, PS2, PSP, GameCube, Wii (ISO/RVZ), Arcade (FBNeo). PS3/360 fuera. |
-| Hash | CRC32 + MD5 + SHA1 del fichero completo y, para NES/FDS/SNES/Lynx/A7800, tambien sin cabecera. Dentro de .zip/.7z se hashea cada fichero interno. CHD: SHA1 del header para single-track (DVD); para CD multi-track extraer con `chdman extractcd` a tmp y hashear pistas, con cache por (path, mtime, size). RVZ: verificacion via `dolphin-tool verify`. |
-| RetroAchievements | Compilar `RAHasher` de rcheevos con soporte CHD en la imagen `api`; se invoca como subproceso por rom. Resultado cacheado en `RomFile.raHash`. |
-| Roms | Varios paths escaneados tal cual, sin mover. Renombrar/ordenar es accion explicita. Un path marcado como destino de subidas. |
-| Renombrado | Nombre canonico No-Intro/Redump. Esquema de carpetas configurable por firmware al exportar a dispositivo. |
-| Scraping | ScreenScraper.fr por API (por hash) con cola y limites; libretro-thumbnails como fallback. Credenciales por usuario con fallback a globales. |
-| Auth | JWT (access + refresh) local, roles `ADMIN` / `USER`. Registro cerrado: admin crea usuarios o invitaciones. |
-| Subidas | Hash en cliente (Web Crypto, SHA1/MD5 en worker), consulta `/api/roms/match` antes de subir; servidor rehashea y guarda en path destino con nombre canonico. |
-| Listas | Niveles privada / compartida / publica. Colaborativas. Clonar. Exportar/importar JSON. Sublistas derivadas por filtro (region, RA compatible). |
-| Dispositivos | Tablas `Console`, `Firmware` (plantilla de rutas y nombres de carpeta por sistema), `Device` = consola + firmware + conexion (path local o SSH). Seeds para muOS, Knulli, Rocknix, Batocera, ES-DE, Android RetroArch, Windows RetroArch. |
-| Saves | Historial versionado por (usuario, juego, emulador/core). Push/pull manual (el cron se sustituye en la fase 2 por eventos). Conflictos: ver fase 2. Conversion: .srm <-> .sav (GBA/SNES/MD), memory cards PS1 (.mcr/.mcd/.srm/.gme/.vmp), reubicacion por nombre de rom. |
-| Transferencia | Path montado, SSH/SFTP (ssh2), descarga zip desde navegador (stream). |
-| i18n | ES + EN con i18next desde el inicio. |
+| Stack | Node 22 + TypeScript, Express, Prisma, MySQL 8. React + TypeScript + Vite + shadcn/ui + Tailwind. Podman (not Docker). |
+| Repo | Monorepo: `/backend`, `/frontend`, `/compose.yaml`, `/data` (app volume). pnpm workspaces. |
+| Deployment | 3 containers: `mysql`, `api`, `web` (nginx serves the React build and proxies `/api`). One `/data` volume (media, saves, uploads, dats). The user's rom paths as bind mounts. Development: only mysql in Podman, node local. |
+| DAT sources | No-Intro and Redump (XML .dat uploaded by admin), FBNeo (DAT from GitHub), RetroAchievements (API), romhacks (romhacking.net / rhdn archive). |
+| Phase 1 systems | NES, SNES, GB, GBC, GBA, N64, NDS, Master System, Game Gear, Mega Drive, PS1, PS2, PSP, GameCube, Wii (ISO/RVZ), Arcade (FBNeo). PS3/360 out. |
+| Hash | CRC32 + MD5 + SHA1 of the whole file and, for NES/FDS/SNES/Lynx/A7800, also without header. Inside .zip/.7z each inner file is hashed. CHD: SHA1 of the header for single-track (DVD); for multi-track CD extract with `chdman extractcd` to tmp and hash the tracks, cached by (path, mtime, size). RVZ: verification via `dolphin-tool verify`. |
+| RetroAchievements | Build `RAHasher` from rcheevos with CHD support into the `api` image; it is invoked as a subprocess per rom. Result cached in `RomFile.raHash`. |
+| Roms | Several paths scanned as they are, without moving anything. Renaming/sorting is an explicit action. One path marked as upload destination. |
+| Renaming | Canonical No-Intro/Redump name. Folder scheme configurable per firmware when exporting to a device. |
+| Scraping | ScreenScraper.fr through its API (by hash) with queue and limits; libretro-thumbnails as fallback. Per-user credentials with fallback to global ones. |
+| Auth | Local JWT (access + refresh), roles `ADMIN` / `USER`. Closed registration: admin creates users or invitations. |
+| Uploads | Client-side hash (Web Crypto, SHA1/MD5 in a worker), query `/api/roms/match` before uploading; the server rehashes and stores in the destination path under the canonical name. |
+| Lists | Private / shared / public levels. Collaborative. Clone. JSON export/import. Sublists derived by filter (region, RA compatible). |
+| Devices | Tables `Console`, `Firmware` (template of paths and folder names per system), `Device` = console + firmware + connection (local path or SSH). Seeds for muOS, Knulli, Rocknix, Batocera, ES-DE, Android RetroArch, Windows RetroArch. |
+| Saves | Versioned history per (user, game, emulator/core). Manual push/pull (the cron is replaced by events in phase 2). Conflicts: see phase 2. Conversion: .srm <-> .sav (GBA/SNES/MD), PS1 memory cards (.mcr/.mcd/.srm/.gme/.vmp), relocation by rom name. |
+| Transfer | Mounted path, SSH/SFTP (ssh2), zip download from the browser (stream). |
+| i18n | ES + EN with i18next from the start. |
 
-## Modelo de datos (Prisma)
+## Data model (Prisma)
 
 ```
 User(id, username, email, passwordHash, role, locale, ssUser?, ssPassword?, raApiKey?, createdAt)
@@ -37,7 +37,7 @@ DatSource(id, type[NOINTRO|REDUMP|FBNEO|RA|ROMHACK], systemId, name, version, im
 
 Game(id, systemId, title, titleNormalized, releaseYear?, developer?, publisher?, genre?, description?, igdbId?, ssId?)
 Rom(id, gameId, datSourceId, name, region[], languages[], version?, revision?, isVerified, isProto, isBeta, isHack, parentRomId?, raHash?, raGameId?)
-RomPart(id, romId, name, size, crc32, md5, sha1, headerlessCrc32?, headerlessMd5?, headerlessSha1?)  -- multi-pista y sets arcade
+RomPart(id, romId, name, size, crc32, md5, sha1, headerlessCrc32?, headerlessMd5?, headerlessSha1?)  -- multi-track and arcade sets
 RomHack(id, gameId, title, author, version, patchFormat, sourceUrl, baseRomId?, resultCrc32?, resultMd5?, resultSha1?)
 
 RomPath(id, label, path, isUploadTarget, readOnly, lastScanAt)
@@ -62,7 +62,7 @@ SaveVersion(id, saveId, path, size, sha1, sourceDeviceId?, createdAt)
 SaveSyncJob(id, deviceId, direction, status, log)
 ```
 
-Prisma usa MySQL; los arrays se guardan como JSON.
+Prisma uses MySQL; arrays are stored as JSON.
 
 ## Backend (`/backend`)
 
@@ -70,104 +70,104 @@ Prisma usa MySQL; los arrays se guardan como JSON.
 src/
   app.ts, server.ts
   config/env.ts
-  lib/prisma.ts, lib/logger.ts (pino), lib/queue.ts (BullMQ? no: cola simple en MySQL + worker en proceso, KISS)
+  lib/prisma.ts, lib/logger.ts (pino), lib/queue.ts (BullMQ? no: simple queue in MySQL + in-process worker, KISS)
   modules/
-    auth/        login, refresh, invitations, middleware roles
+    auth/        login, refresh, invitations, role middleware
     users/
     systems/
-    dats/        parsers XML (fast-xml-parser) No-Intro, Redump, FBNeo; importador idempotente; normalizacion de titulo -> Game
-    ra/          cliente API RA, RAHasher subprocess, mapping raHash -> Rom
-    romhacks/    importador rhdn, asociacion por nombre/base
-    scanner/     walk de paths, hashing streaming (crc32 via zlib, md5/sha1 via crypto), yauzl + 7z (node-7z sobre binario 7zz), cabeceras, chdman, dolphin-tool; emparejado contra RomPart
-    roms/        consulta coleccion, faltantes, rename/organize (dry-run + apply), match por hash
-    uploads/     multer streaming, verificacion hash, colocacion
-    scrape/      ScreenScraper client (rate limit, por hash), libretro-thumbnails fallback, almacenamiento /data/media
-    lists/       CRUD, share, clone, derived (filtros region/RA/version), export/import JSON, descarga zip (archiver stream)
-    devices/     consolas, firmwares (seeds), dispositivos, test de conexion SSH
-    transfer/    copia lista -> dispositivo via fs o sftp, mapeo de carpetas por firmware, renombrado al vuelo
-    saves/       subida, historial, push/pull, cron (node-cron), converters/ (srm-sav, ps1-memcard), relocate
-  jobs/          worker en proceso con tabla Job generica
+    dats/        XML parsers (fast-xml-parser) No-Intro, Redump, FBNeo; idempotent importer; title normalization -> Game
+    ra/          RA API client, RAHasher subprocess, raHash -> Rom mapping
+    romhacks/    rhdn importer, association by name/base
+    scanner/     path walk, streaming hashing (crc32 via zlib, md5/sha1 via crypto), yauzl + 7z (node-7z over the 7zz binary), headers, chdman, dolphin-tool; matching against RomPart
+    roms/        collection queries, missing, rename/organize (dry-run + apply), match by hash
+    uploads/     multer streaming, hash verification, placement
+    scrape/      ScreenScraper client (rate limit, by hash), libretro-thumbnails fallback, storage in /data/media
+    lists/       CRUD, share, clone, derived (region/RA/version filters), JSON export/import, zip download (archiver stream)
+    devices/     consoles, firmwares (seeds), devices, SSH connection test
+    transfer/    list -> device copy via fs or sftp, folder mapping per firmware, on-the-fly renaming
+    saves/       upload, history, push/pull, cron (node-cron), converters/ (srm-sav, ps1-memcard), relocate
+  jobs/          in-process worker with a generic Job table
 ```
 
-API REST bajo `/api/v1`, validacion con zod, errores uniformes. Trabajos largos (scan, scrape, transfer, sync) devuelven jobId y se consultan por polling o SSE (`/api/v1/jobs/:id/events`).
+REST API under `/api/v1`, validation with zod, uniform errors. Long jobs (scan, scrape, transfer, sync) return a jobId and are queried by polling or SSE (`/api/v1/jobs/:id/events`).
 
-Imagen `api` (Containerfile): node:22-bookworm-slim + chdman (paquete `mame-tools`), 7zip (`7zip`), dolphin-tool (build o paquete), RAHasher compilado desde rcheevos con `HAVE_CHD=1`.
+`api` image (Containerfile): node:22-bookworm-slim + chdman (package `mame-tools`), 7zip (`7zip`), dolphin-tool (build or package), RAHasher built from rcheevos with `HAVE_CHD=1`.
 
 ## Frontend (`/frontend`)
 
 Vite + React 18 + TS, shadcn/ui, TanStack Query, TanStack Table, react-router, react-hook-form + zod, i18next.
 
-Paginas:
-- Login / invitacion
-- Dashboard: resumen por sistema (tengo / faltan / verificadas)
-- Sistemas y juegos: tabla con filtro, ficha de juego con roms, romhacks, media, estado RA
-- Coleccion: paths, lanzar escaneo, resultados, desconocidos, renombrar/ordenar (vista dry-run)
-- Subir roms: hash en worker, pre-consulta, barra de progreso
-- Listas: mias, compartidas, publicas; editor; sublista derivada; exportar; enviar a dispositivo; descargar zip
-- Dispositivos: alta con consola/firmware, prueba de conexion, overrides
-- Saves: por juego, historial, restaurar, push/pull a dispositivo, conversion
-- Admin: usuarios, invitaciones, importar DATs, credenciales globales, jobs
+Pages:
+- Login / invitation
+- Dashboard: summary per system (have / missing / verified)
+- Systems and games: table with filter, game page with roms, romhacks, media, RA status
+- Collection: paths, start a scan, results, unknowns, rename/sort (dry-run view)
+- Upload roms: hash in a worker, pre-query, progress bar
+- Lists: mine, shared, public; editor; derived sublist; export; send to device; download zip
+- Devices: registration with console/firmware, connection test, overrides
+- Saves: per game, history, restore, push/pull to a device, conversion
+- Admin: users, invitations, import DATs, global credentials, jobs
 
-## Fases
+## Phases
 
-1. Esqueleto: monorepo, compose, Prisma schema, auth, usuarios, i18n, layout shadcn.
-2. Sistemas + importador DAT (No-Intro, Redump, FBNeo) + Game/Rom/RomPart + UI de juegos.
-3. Escaner: paths, hashing (plano, zip/7z, cabeceras), emparejado, faltantes, UI coleccion.
-4. CHD y RVZ, RAHasher, mapeo RA.
-5. Listas completas (visibilidad, colaborativas, clonar, derivadas, export/import, zip).
-6. Dispositivos, firmwares con seeds, transfer local y SSH, renombrado por firmware.
-7. Subidas de usuarios con validacion por hash.
-8. Scraping ScreenScraper + libretro-thumbnails.
-9. Saves: almacen versionado, push/pull, cron, conversores, reubicacion.
+1. Skeleton: monorepo, compose, Prisma schema, auth, users, i18n, shadcn layout.
+2. Systems + DAT importer (No-Intro, Redump, FBNeo) + Game/Rom/RomPart + games UI.
+3. Scanner: paths, hashing (plain, zip/7z, headers), matching, missing, collection UI.
+4. CHD and RVZ, RAHasher, RA mapping.
+5. Full lists (visibility, collaborative, clone, derived, export/import, zip).
+6. Devices, firmwares with seeds, local and SSH transfer, renaming per firmware.
+7. User uploads with hash validation.
+8. ScreenScraper + libretro-thumbnails scraping.
+9. Saves: versioned store, push/pull, cron, converters, relocation.
 10. Romhacks.
-11. Rename/organize de la coleccion local.
+11. Rename/organize the local collection.
 
-## Riesgos y notas
+## Risks and notes
 
-- ScreenScraper limita hilos y peticiones por cuenta; usar cola secuencial por usuario.
-- Extraer CHD de CD para verificar es lento; se hace una vez y se cachea por mtime/size.
-- Arcade: el hash es por fichero interno del zip; el emparejado es por conjunto, no por fichero. `RomFile` apunta al zip y `RomPart` a cada rom interna.
-- Credenciales SSH y claves de API se cifran en reposo (AES-256-GCM con clave en env).
-- Nada sale a Internet salvo ScreenScraper, RA, GitHub (thumbnails, FBNeo DAT) y rhdn, siempre a peticion del usuario.
+- ScreenScraper limits threads and requests per account; use a sequential queue per user.
+- Extracting a CD CHD to verify it is slow; it is done once and cached by mtime/size.
+- Arcade: the hash is per file inside the zip; matching is by set, not by file. `RomFile` points to the zip and `RomPart` to each inner rom.
+- SSH credentials and API keys are encrypted at rest (AES-256-GCM with the key in env).
+- Nothing goes out to the Internet except ScreenScraper, RA, GitHub (thumbnails, FBNeo DAT) and rhdn, always at the user's request.
 
-## Estado de la implementacion
+## Implementation status
 
-Implementadas las 11 fases. Cambios respecto al plan inicial:
+All 11 phases implemented. Changes from the initial plan:
 
-- npm workspaces en lugar de pnpm (corepack ya no viene con Node 26).
-- RAHasher no se compila: el algoritmo de rcheevos esta portado a TypeScript (`backend/src/lib/rahash.ts`), CHD via `chdman extractcd/extractdvd`.
-- MySQL en el puerto 3317 del host (el 3307 estaba ocupado).
-- Despliegue en Linux con Quadlet (`deploy/quadlet/`) ademas de `compose.yaml`.
-- DATs de No-Intro/Redump obtenidos de libretro-database (copia publica en GitHub); se pueden subir los oficiales.
-- Hash RA de todos los sistemas (incluido Wii) validado contra rcheevos compilado (tools/rahash-cli).
-- RVZ/WIA: lector propio portado de Dolphin (sin dolphin-tool), reconstruye la ISO para verificar contra Redump.
-- Semilla `seed/` con DATs de todas las consolas, RA y scraping; se aplica al arrancar y se actualiza automaticamente.
+- npm workspaces instead of pnpm (corepack no longer ships with Node 26).
+- RAHasher is not built: the rcheevos algorithm is ported to TypeScript (`backend/src/lib/rahash.ts`), CHD via `chdman extractcd/extractdvd`.
+- MySQL on host port 3317 (3307 was taken).
+- Linux deployment with Quadlet (`deploy/quadlet/`) besides `compose.yaml`.
+- No-Intro/Redump DATs taken from libretro-database (public copy on GitHub); the official ones can be uploaded.
+- RA hash for every system (including Wii) validated against compiled rcheevos (tools/rahash-cli).
+- RVZ/WIA: own reader ported from Dolphin (no dolphin-tool), rebuilds the ISO to verify against Redump.
+- `seed/` seed with DATs for every console, RA and scraping; it is applied on startup and updated automatically.
 
-## Fase 2
+## Phase 2
 
-Implementada. Decisiones y estado:
+Implemented. Decisions and status:
 
-| Tema | Decision |
+| Topic | Decision |
 |---|---|
-| Git y esquema | Repositorio git local (seed/ incluido). Prisma con migraciones versionadas (`prisma/migrations`), `migrate deploy` en el contenedor; `npm run migration:new -w backend -- nombre` para nuevas. |
-| Permisos | Por usuario y en invitaciones: ver coleccion, listas, saves, descargar roms (y dispositivos), subir verificadas, subir no verificadas, multimedia de sus listas, scraping masivo. Por defecto: ver, listas, saves y multimedia de listas. Admin: todo. |
-| Seguridad | Limite de login (5 fallos / 15 min por IP y usuario), CORS cerrado (`CORS_ORIGINS`), cabeceras en Express y nginx, no arranca con secretos de ejemplo, tokens de 15 min, token de ficheros aparte para URLs, cambio obligatorio de la contrasena inicial. |
-| Destino de roms nuevas | Rutas destino por sistema con esquema de carpetas; si no, predeterminada; si no, `DATA_DIR/library`. Para subidas, parches generados y contenedores verificados. |
-| Subidas no verificadas | Estado `UNVERIFIED`, con usuario que la subio; no cuentan en porcentajes; pasan a verificadas si un DAT posterior las incluye. WBFS/CISO quedan asi (se identifican por id de disco). |
-| Discos | Lectores propios WBFS (tambien partido), CISO, CSO v1/v2 y ZSO (LZ4 propio). |
-| Parches | IPS/BPS/UPS propios con checksums. Generacion bajo demanda en el destino final. Hash con y sin cabecera. Fusion de romhacks duplicados. Parche BPS creado desde un romhack ya parcheado y su base. |
-| Romhacks | Identificados por contenido (parecido por bloques de 1 KiB con las roms que se tienen; >= 85 % fija la rom base exacta, >= 50 % solo el juego), codigo de cabecera (GBA, NDS, N64, MD) o parche. El nombre solo genera sugerencias en la cola de revision. |
-| Etiquetas | Region, idiomas, version solo si hay varias, no verificada, retirada, serial; romhack con rom base exacta y version propia ("Gran Turismo 4 (USA) v1.01 + Spec II v1.10"). |
-| Agrupacion | Evidencias + union-find: reglas manuales, clones del DAT (FBNeo oficial), Retool, RetroAchievements, ScreenScraper (por hash). Titulo como ultimo recurso marcado como dudoso. Sin paquete P/C de No-Intro (descarga protegida contra automatismos; decision del usuario). |
-| Obras y sagas | Wikidata (CC0): anclas por ids de RA/ScreenScraper, nombre unico en la plataforma, cola de revision si hay varios candidatos. Saga de Wikidata o libretro. Listas con obras y preferencia de plataforma. |
-| Datos permanentes | Nada externo se borra: roms y romhacks retirados se marcan; `seed/removed.json` los conserva para despliegues nuevos. Prioridad de metadatos: manual > ScreenScraper > TheGamesDB > libretro. |
-| Sincronizacion global | `EXTERNAL_SYNC_CRON` semanal: libretro (DATs, metadatos, caratulas de lo que se tiene), Retool, RetroAchievements, Wikidata, en secuencia y con peticiones condicionales. Forzado por fuente y sistema con intervalo minimo. |
-| FBNeo | DAT oficial (libretro/FBNeo, "Arcade only", con clones). El de libretro-database (un zip por set) no crea roms. |
-| Multimedia | Bajo demanda al anadir a listas y desde la ficha; solo con la cuenta propia del usuario (el admin puede usar las globales). Cuotas de ScreenScraper respetadas y reanudacion al dia siguiente; "no encontrado" recordado 6 meses; TheGamesDB como respaldo por nombre exacto y unico; Internet Archive solo como sugerencia. |
-| Saves | Estilo Steam Cloud: base por dispositivo, sin relojes; conflicto si cambian ambos lados (se guardan las dos versiones). Scripts de eventos para ES-DE y Batocera/Knulli/ROCKNIX con token por dispositivo y reintento sin red. SD montadas en el servidor: sincronizacion al conectarse. Sin `SAVE_SYNC_CRON`. |
+| Git and schema | Local git repository (seed/ included). Prisma with versioned migrations (`prisma/migrations`), `migrate deploy` in the container; `npm run migration:new -w backend -- name` for new ones. |
+| Permissions | Per user and in invitations: view collection, lists, saves, download roms (and devices), upload verified, upload unverified, media of their lists, bulk scraping. Default: view, lists, saves and media of lists. Admin: everything. |
+| Security | Login limit (5 failures / 15 min per IP and user), closed CORS (`CORS_ORIGINS`), headers in Express and nginx, refuses to start with example secrets, 15 min tokens, separate files token for URLs, forced change of the initial password. |
+| Destination for new roms | Destination paths per system with a folder scheme; otherwise the default one; otherwise `DATA_DIR/library`. For uploads, generated patches and verified containers. |
+| Unverified uploads | `UNVERIFIED` status, with the user who uploaded it; they do not count in percentages; they become verified if a later DAT includes them. WBFS/CISO stay this way (identified by disc id). |
+| Discs | Own readers for WBFS (also split), CISO, CSO v1/v2 and ZSO (own LZ4). |
+| Patches | Own IPS/BPS/UPS with checksums. On-demand generation at the final destination. Hash with and without header. Merging of duplicate romhacks. BPS patch created from an already patched romhack and its base. |
+| Romhacks | Identified by content (1 KiB block similarity with the roms you have; >= 85% fixes the exact base rom, >= 50% only the game), header code (GBA, NDS, N64, MD) or patch. The name only produces suggestions in the review queue. |
+| Labels | Region, languages, version only if there are several, unverified, removed, serial; romhack with exact base rom and its own version ("Gran Turismo 4 (USA) v1.01 + Spec II v1.10"). |
+| Grouping | Evidence + union-find: manual rules, DAT clones (official FBNeo), Retool, RetroAchievements, ScreenScraper (by hash). Title as a last resort marked as doubtful. No No-Intro P/C pack (download protected against automation; user's decision). |
+| Works and sagas | Wikidata (CC0): anchors by RA/ScreenScraper ids, unique name on the platform, review queue if there are several candidates. Saga from Wikidata or libretro. Lists with works and platform preference. |
+| Permanent data | Nothing external is deleted: removed roms and romhacks are marked; `seed/removed.json` keeps them for new deployments. Metadata priority: manual > ScreenScraper > TheGamesDB > libretro. |
+| Global sync | Weekly `EXTERNAL_SYNC_CRON`: libretro (DATs, metadata, covers of what you have), Retool, RetroAchievements, Wikidata, in sequence and with conditional requests. Forced per source and system with a minimum interval. |
+| FBNeo | Official DAT (libretro/FBNeo, "Arcade only", with clones). The libretro-database one (one zip per set) does not create roms. |
+| Media | On demand when adding to lists and from the game page; only with the user's own account (admin may use the global ones). ScreenScraper quotas respected and resumed the next day; "not found" remembered for 6 months; TheGamesDB as a fallback by exact, unique name; Internet Archive only as a suggestion. |
+| Saves | Steam Cloud style: per-device baseline, no clocks; conflict if both sides change (both versions are kept). Event scripts for ES-DE and Batocera/Knulli/ROCKNIX with a per-device token and retry when offline. SD cards mounted on the server: sync on connection. No `SAVE_SYNC_CRON`. |
 
-Pendiente:
-- Probar ScreenScraper y TheGamesDB reales (faltan credenciales de desarrollador y clave en `.env`).
-- Comprobar en la AYN Thor (Android) acceso a carpetas de saves y `curl`/`wget`.
-- Daijisho (sin eventos documentados): solo sincronizacion manual.
-- Opcional: IGDB para obras que Wikidata no tenga; familias de ScreenScraper para sagas; codigo de cabecera de mas sistemas; juegos "~Hack~" de RetroAchievements.
+Pending:
+- Try the real ScreenScraper and TheGamesDB (developer credentials and key missing in `.env`).
+- Check on the AYN Thor (Android) access to save folders and `curl`/`wget`.
+- Daijisho (no documented events): manual sync only.
+- Optional: IGDB for works Wikidata lacks; ScreenScraper families for sagas; header code for more systems; RetroAchievements "~Hack~" games.

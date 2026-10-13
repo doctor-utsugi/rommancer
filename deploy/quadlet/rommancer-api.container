@@ -11,16 +11,16 @@ NetworkAlias=api
 EnvironmentFile=%h/.config/rommancer/rommancer.env
 Environment=DATA_DIR=/data
 Environment=SEED_DIR=/seed
-# Datos de la app (media, saves, uploads, dats)
+# App data (media, saves, uploads, dats)
 Volume=%h/rommancer/data:/data:Z
-# Semilla (copiar aqui la carpeta seed/ del repositorio)
+# Seed (copy the repository's seed/ folder here)
 Volume=%h/rommancer/seed:/seed:Z
-# Carpetas de roms: se registran en la app como /roms/...
+# Rom folders: registered in the app as /roms/...
 Volume=%h/roms:/roms:z
 
 [Service]
 Restart=always
-# MySQL tarda unos segundos en aceptar conexiones en el primer arranque
+# MySQL takes a few seconds to accept connections on first start
 RestartSec=5
 
 [Install]

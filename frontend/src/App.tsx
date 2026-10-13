@@ -39,7 +39,7 @@ export function App() {
         <Route path="*" element={<LoginPage />} />
       </Routes>
     )
-  // Contrasena inicial o debil: solo se permite cambiarla
+  // Initial or weak password: the only allowed action is changing it
   if (user.mustChangePassword)
     return (
       <div className="mx-auto max-w-2xl p-6">

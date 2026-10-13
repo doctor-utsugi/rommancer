@@ -8,6 +8,7 @@ import { safeFileName } from '../../lib/romname.js';
 import type { AuthUser } from '../auth/middleware.js';
 import { ownedRomIds, pickFromWork, pickRom, type RomPreference } from '../roms/service.js';
 import { materializeHack } from '../patches/service.js';
+import { localePrefs } from '../../lib/locales.js';
 
 export async function loadList(id: number, user: AuthUser, edit = false): Promise<List> {
   const list = await prisma.list.findUnique({ where: { id }, include: { shares: true } });
@@ -37,11 +38,11 @@ export interface TransferItem {
   hackId: number | null;
   // Content of a file nobody identified: a device with it has the item wherever it keeps it
   sha1?: string | null;
-  // Ficheros a copiar
+  // Files to copy
   files: { absPath: string; archiveEntry: string | null; destName: string }[];
 }
 
-/** Resuelve los ficheros a copiar para cada elemento de la lista. Los que no se tienen quedan en missing. */
+/** Resolves the files to copy for each list item. Those not held go to missing. */
 export async function resolveListFiles(listId: number, pref: RomPreference = {}) {
   const list = await prisma.list.findUniqueOrThrow({ where: { id: listId } });
   const effective: RomPreference = { ...((list.derivedFilter as RomPreference | null) ?? {}), ...pref, ownedOnly: true };
@@ -57,7 +58,7 @@ export async function resolveListFiles(listId: number, pref: RomPreference = {})
     },
   });
   const romIds = items.flatMap((i) => (i.rom ? [i.rom.id] : (i.game?.roms.map((r) => r.id) ?? i.work?.games.flatMap((g) => g.roms.map((r) => r.id)) ?? [])));
-  // Listas y dispositivos usan tambien las roms no verificadas
+  // Lists and devices also use unverified roms
   const owned = await ownedRomIds({ romIds, include: 'any' });
   const serverCopy = await unknownFilesOnServer(items.flatMap((i) => (i.unknown ? [i.unknown] : [])));
   const out: TransferItem[] = [];
@@ -65,7 +66,7 @@ export async function resolveListFiles(listId: number, pref: RomPreference = {})
 
   for (const it of items) {
     if (it.hack) {
-      // Sin fichero pero con parche y base: se genera en su destino final
+      // No file but patch and base: generated at its final destination
       const f = it.hack.files[0] ?? (await materializeHack(it.hack.id).catch(() => null));
       if (!f) {
         missing.push({ listItemId: it.id, title: it.hack.title });
@@ -175,7 +176,7 @@ export async function pullUnknownFiles(userId: number, unknownIds: number[]) {
   return out;
 }
 
-/** Ficheros en disco de una rom poseida, con el nombre de destino canonico. */
+/** On-disk files of an owned rom, with the canonical destination name. */
 export async function romFiles(romId: number) {
   const rom = await prisma.rom.findUniqueOrThrow({
     where: { id: romId },
@@ -190,18 +191,18 @@ export async function romFiles(romId: number) {
     const abs = path.join(f.romPath.path, f.relativePath);
     const ext = path.extname(f.relativePath).toLowerCase();
     if (f.archiveEntry && (isArcade || ext === '.chd' || rom.parts.length === 1)) {
-      // Se copia el contenedor completo (zip de arcade, CHD, zip de una sola rom)
+      // The whole container is copied (arcade zip, CHD, single-rom zip)
       if (seen.has(abs)) continue;
       seen.add(abs);
       files.push({ absPath: abs, archiveEntry: null, destName: safeFileName(rom.name + ext) });
     } else if (rom.game.system.mediaType === 'disc' && rom.parts.length > 1) {
-      // Pistas de disco: se conserva el nombre original para que el .cue siga siendo valido
+      // Disc tracks: the original name is kept so the .cue stays valid
       files.push({ absPath: abs, archiveEntry: f.archiveEntry, destName: path.basename(f.archiveEntry ?? f.relativePath) });
     } else {
       files.push({ absPath: abs, archiveEntry: f.archiveEntry, destName: safeFileName(part.name) });
     }
   }
-  // .cue de discos multi-pista: se busca junto a las pistas
+  // .cue of multi-track discs: looked up next to the tracks
   const hasCuePart = rom.parts.some((p) => p.name.toLowerCase().endsWith('.cue'));
   if (hasCuePart && !files.some((f) => f.destName.toLowerCase().endsWith('.cue')) && files[0] && !files[0].archiveEntry) {
     const dir = path.dirname(files[0].absPath);
@@ -268,7 +269,7 @@ export async function convertLegacyItems() {
 export async function favoritesList(userId: number) {
   // Named in the user's language, so every client (desktop app, consoles) shows it right
   const { locale } = await prisma.user.findUniqueOrThrow({ where: { id: userId }, select: { locale: true } });
-  const name = locale === 'es' ? 'Favoritos' : 'Favorites';
+  const name = localePrefs(locale).favorites;
   const existing = await prisma.list.findFirst({ where: { ownerId: userId, kind: 'favorites' } });
   if (existing) return existing.name === name ? existing : prisma.list.update({ where: { id: existing.id }, data: { name } });
   const list = await prisma.list.create({ data: { ownerId: userId, name, kind: 'favorites' } });

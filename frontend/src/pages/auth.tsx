@@ -9,6 +9,8 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Field, errMsg } from '@/components/common'
+import i18n, { setLanguage } from '@/i18n'
+import { LOCALES } from '@/i18n/locales'
 
 function Shell({ title, children }: { title: string; children: React.ReactNode }) {
   const { t } = useTranslation()
@@ -24,6 +26,18 @@ function Shell({ title, children }: { title: string; children: React.ReactNode }
         </CardHeader>
         <CardContent>{children}</CardContent>
       </Card>
+      <select
+        value={i18n.language}
+        onChange={(e) => void setLanguage(e.target.value)}
+        aria-label={t('profile.language')}
+        className="fixed right-4 top-4 h-8 rounded-md border bg-background px-2 text-sm"
+      >
+        {LOCALES.map((l) => (
+          <option key={l.code} value={l.code}>
+            {l.name}
+          </option>
+        ))}
+      </select>
     </div>
   )
 }

@@ -19,7 +19,7 @@ mediaRouter.get('/:id', async (req, res) => {
   const m = await prisma.media.findUnique({ where: { id: intParam(req) } });
   if (!m) throw notFound('Media');
   res.setHeader('Cache-Control', 'private, max-age=86400');
-  // Los manuales PDF se muestran dentro de la ficha
+  // PDF manuals are shown inside the game page
   res.setHeader('X-Frame-Options', 'SAMEORIGIN');
   res.sendFile(path.join(env.mediaDir, m.path));
 });
@@ -42,7 +42,7 @@ registerJob('scrape', async (ctx) => {
   ids = [...new Set(ids)];
   ctx.log(`Scraping ${ids.length} games`);
   const res = await scrapeGames(ids, { userId: p.userId, sources: p.sources, types: p.types, overwrite: p.overwrite }, ctx);
-  // Lo que no cupo por cuota se reanuda cuando termina la pausa
+  // What did not fit in the quota resumes when the pause ends
   if (res.pending.length && res.pausedUntil) {
     await enqueue('scrape', { ...p, listId: undefined, systemId: undefined, gameIds: res.pending, sources: ['screenscraper'] }, p.userId, new Date(res.pausedUntil));
     ctx.log(`Quota reached: ${res.pending.length} games resume at ${res.pausedUntil}`);
@@ -51,7 +51,7 @@ registerJob('scrape', async (ctx) => {
   return res;
 });
 
-/** Encola la multimedia de juegos anadidos a listas: una tarea pendiente por usuario que acumula juegos. */
+/** Queues media for games added to lists: one pending task per user that accumulates games. */
 export async function queueListScrape(user: { id: number; role: string; permissions: string[] }, gameIds: number[]) {
   if (!gameIds.length || !hasPermission(user, 'scrape.lists')) return null;
   const pending = await prisma.job.findFirst({ where: { type: 'scrape', status: 'PENDING', userId: user.id, runAfter: null } });
@@ -64,7 +64,7 @@ export async function queueListScrape(user: { id: number; role: string; permissi
   return enqueue('scrape', { mode: 'lists', userId: user.id, gameIds, types: DEFAULT_MEDIA }, user.id);
 }
 
-// Scraping masivo (sistemas, listas completas o selecciones grandes): solo con permiso especifico
+// Bulk scraping (systems, whole lists or large selections): only with a specific permission
 scrapeRouter.post('/', requirePerm('scrape.bulk'), async (req, res) => {
   const u = me(req);
   const body = z
@@ -82,7 +82,7 @@ scrapeRouter.post('/', requirePerm('scrape.bulk'), async (req, res) => {
   res.status(202).json(await enqueue('scrape', { ...body, mode: 'bulk', userId: u.id }, u.id));
 });
 
-// Multimedia de un juego concreto (ficha): con la cuenta del propio usuario
+// Media for a single game (its page): with the user's own account
 scrapeRouter.post('/game/:id', requirePerm('scrape.lists'), async (req, res) => {
   const u = me(req);
   const gameId = intParam(req);
@@ -103,7 +103,7 @@ scrapeRouter.get('/status', async (req, res) => {
   });
 });
 
-// --- Internet Archive: sugerencias de manual que confirma el admin ---
+// --- Internet Archive: manual suggestions the admin confirms ---
 scrapeRouter.get('/archive-manuals/:gameId', requireAdmin, async (req, res) => {
   const game = await prisma.game.findUniqueOrThrow({ where: { id: intParam(req, 'gameId') }, include: { system: true } });
   const q = `title:(${game.title.replace(/[^\p{L}\p{N} ]/gu, ' ')}) AND mediatype:texts AND (manual OR instruction)`;

@@ -1,8 +1,8 @@
 /**
- * Conversion de saves entre emuladores.
- * - raw: SRAM tal cual (.srm de RetroArch, .sav de mGBA/standalone). Solo cambia extension y, si se pide, el tamano.
- * - ps1card (128 KB: .mcr/.mcd/.srm), ps1gme (DexDrive, cabecera de 3904 bytes), ps1vmp (PSP/PS3, firmado).
- * Algoritmo de firma VMP portado de MemcardRex (GPL-3.0).
+ * Save conversion between emulators.
+ * - raw: SRAM as is (RetroArch .srm, mGBA/standalone .sav). Only the extension and, if asked, the size change.
+ * - ps1card (128 KB: .mcr/.mcd/.srm), ps1gme (DexDrive, 3904-byte header), ps1vmp (PSP/PS3, signed).
+ * VMP signing algorithm ported from MemcardRex (GPL-3.0).
  */
 import crypto from 'node:crypto';
 import { HttpError } from '../../lib/http.js';
@@ -102,7 +102,7 @@ export function verifyVmp(vmp: Buffer): boolean {
 
 const isPs1 = (f: SaveFormat) => f.startsWith('ps1');
 
-/** Convierte un save entre formatos. targetSize permite recortar/rellenar SRAM (raw). */
+/** Converts a save between formats. targetSize trims/pads SRAM (raw). */
 export function convertSave(buf: Buffer, from: SaveFormat, to: SaveFormat, targetSize?: number): Buffer {
   // GameCube, PS2 and PSP cards go entry by entry (cards.ts), never converted whole
   const byEntry = (f: SaveFormat) => f.startsWith('gc') || f === 'ps2card' || f === 'pspdir';

@@ -47,7 +47,7 @@ export async function walk(root: string, failed: string[] = []): Promise<string[
 
 const REUSE_MIN_SIZE = 64 * 1024 * 1024;
 
-/** Huella rapida: sha1 de tamano + primer y ultimo MiB. Identifica el fichero sin leerlo entero. */
+/** Quick fingerprint: sha1 of size + first and last MiB. Identifies the file without reading it whole. */
 export async function quickHash(file: string, size: number): Promise<string> {
   const fd = await fs.promises.open(file, 'r');
   try {
@@ -74,8 +74,8 @@ interface MatchResult {
 const partInclude = { rom: { include: { game: { select: { systemId: true } }, datSource: { select: { type: true } } } } } as const;
 
 /**
- * Busca la rom a la que corresponde un fichero por sus hashes. Las roms de DATs (verificadas) tienen
- * preferencia sobre las subidas sin verificar (fuente USER), que dan estado UNVERIFIED.
+ * Finds the rom a file corresponds to by its hashes. Rom from (verified) DATs take precedence over
+ * unverified uploads (USER source), which give UNVERIFIED status.
  */
 export async function matchHashes(h: { sha1?: string | null; md5?: string | null; crc32: string; size: number; headerless?: { sha1: string; md5: string } }): Promise<MatchResult> {
   const sha1s = [h.sha1, h.headerless?.sha1].filter(Boolean) as string[];
@@ -105,14 +105,14 @@ interface FileRow {
   systemId: number | null;
   container?: string | null;
   discId?: string | null;
-  // id de disco y revision ("GALE01/0")
-  // Formatos que no conservan la imagen original (WBFS, CISO): se emparejan por id de disco como no verificados
+  // disc id and revision ("GALE01/0")
+  // Formats that do not keep the original image (WBFS, CISO): matched by disc id as unverified
   byDiscId?: { id: string; revision: number } | null;
 }
 
 /**
- * Rom de un disco de GameCube/Wii por su id (serial de Redump: DL-DOL-GALE-USA, RVL-RMCP-EUR) y revision.
- * Solo si hay una unica candidata.
+ * Rom of a GameCube/Wii disc by its id (Redump serial: DL-DOL-GALE-USA, RVL-RMCP-EUR) and revision.
+ * Only if there is a single candidate.
  */
 export async function matchByDiscId(systemId: number | null, id: string, revision: number) {
   const id4 = id.slice(0, 4);
@@ -135,7 +135,7 @@ async function raForFile(system: System | null, h: FileHashes | null, file: stri
   return raHashFile(system.slug, file);
 }
 
-/** Procesa un fichero en disco y devuelve una o varias filas (archivos comprimidos y CHD multi-pista). */
+/** Processes a file on disk and returns one or more rows (archives and multi-track CHD). */
 export async function processFile(full: string, rel: string, idx: SystemIndex, forced: System | null, rootName: string, ctx?: JobContext): Promise<FileRow[]> {
   const ext = path.extname(full).toLowerCase();
   const guessRel = path.join(rootName, rel);
@@ -189,7 +189,7 @@ export async function processFile(full: string, rel: string, idx: SystemIndex, f
         rows.push({ archiveEntry: path.basename(out), hashes: await hashFile(out), raHash: null, systemId: sys?.id ?? null });
       }
       if (!ra && !sys) {
-        // Sistema desconocido: se prueban los algoritmos de disco tras el emparejado
+        // Unknown system: disc algorithms are tried after matching
         rows[0].raHash = null;
       } else rows[0].raHash = ra;
       return rows;
@@ -204,7 +204,7 @@ export async function processFile(full: string, rel: string, idx: SystemIndex, f
       try {
         const readAt = (pos: number, len: number) => r.read(pos, len);
         if (r.format === 'wbfs' || r.format === 'ciso') {
-          // No se puede reconstruir la ISO de Redump: se identifica por cabecera y se calcula el hash RA
+          // The Redump ISO cannot be rebuilt: identified by header and the RA hash is computed
           const d = await discId(readAt);
           const discSys = (d.platform ? idx.bySlug.get(d.platform) : null) ?? sys;
           ctx?.log(`${r.format.toUpperCase()} ${rel}: ${d.id} rev ${d.revision}`);
@@ -212,7 +212,7 @@ export async function processFile(full: string, rel: string, idx: SystemIndex, f
           const h = await r.hashIso();
           return [{ archiveEntry: null, hashes: h, raHash: ra, systemId: discSys?.id ?? null, container: r.format, discId: `${d.id}/${d.revision}`, byDiscId: { id: d.id, revision: d.revision } }];
         }
-        // CSO/ZSO conservan la ISO completa: verificable contra Redump
+        // CSO/ZSO keep the whole ISO: verifiable against Redump
         ctx?.log(`Rebuilding ${rel} (${r.format.toUpperCase()}, ${r.isoSize} bytes)`);
         const h = await r.hashIso();
         return [{ archiveEntry: null, hashes: h, raHash: null, systemId: sys?.id ?? null, container: r.format }];
@@ -223,7 +223,7 @@ export async function processFile(full: string, rel: string, idx: SystemIndex, f
   }
 
   if (ext === '.rvz' || ext === '.wia') {
-    // Se reconstruye la ISO original en memoria por bloques para obtener los hashes de Redump
+    // The original ISO is rebuilt in memory by blocks to obtain the Redump hashes
     const r = await RvzReader.open(full);
     try {
       ctx?.log(`Rebuilding ${rel} (${r.discType === 2 ? 'Wii' : 'GameCube'}, ${r.isoSize} bytes)`);
@@ -289,8 +289,8 @@ export async function scanPath(romPathId: number, ctx?: JobContext, force = fals
     }
     try {
       const qh = await quickHash(full, st.size);
-      // Fichero grande ya hasheado en otra ruta o con otro nombre (movido o renombrado conserva la fecha):
-      // se reutilizan sus hashes. Los pequenos se hashean siempre, es mas barato que arriesgarse.
+      // Large file already hashed under another path or name (moved or renamed files keep their date):
+      // its hashes are reused. Small ones are always hashed, which is cheaper than risking it.
       // Same size and quick hash: copies to another disk usually change the date, so it is not compared
       const known =
         st.size > REUSE_MIN_SIZE && !force
@@ -325,7 +325,7 @@ export async function scanPath(romPathId: number, ctx?: JobContext, force = fals
         }
         let raHash = r.raHash;
         const systemId = m.systemId ?? r.systemId;
-        // Si el sistema solo se conoce tras emparejar, se calcula el hash RA ahora
+        // If the system is only known after matching, the RA hash is computed now
         if (!raHash && m.systemId && !r.systemId && !r.archiveEntry) {
           raHash = await raForFile(idx.byId.get(m.systemId) ?? null, r.hashes.md5 ? (r.hashes as FileHashes) : null, full);
         }
@@ -402,7 +402,7 @@ function fromGone(data: unknown): RomFile {
   return JSON.parse(JSON.stringify(data), (_k, v) => (typeof v === 'string' && /^\d+n$/.test(v) ? BigInt(v.slice(0, -1)) : v)) as RomFile;
 }
 
-/** Re-empareja todos los ficheros contra la base de datos (tras importar un DAT). */
+/** Rematches all files against the database (after importing a DAT). */
 export async function rematchAll(): Promise<{ matched: number; hacks: number }> {
   const before = await prisma.romFile.count({ where: { status: { in: ['MATCHED', 'HACK'] } } });
   await prisma.$executeRaw`UPDATE RomFile f LEFT JOIN RomPart p ON p.id = f.romPartId SET f.status = 'UNKNOWN', f.romPartId = NULL WHERE f.status = 'MATCHED' AND p.id IS NULL`;
@@ -424,7 +424,7 @@ export async function rematchAll(): Promise<{ matched: number; hacks: number }> 
      SET f.status = 'MATCHED', f.romPartId = p.id, f.systemId = g.systemId
      WHERE f.status <> 'MATCHED' AND f.sha1 IS NULL AND d.type <> 'USER'`,
   );
-  // Subidas sin verificar: se enlazan con su rom de usuario si no hay coincidencia verificada
+  // Unverified uploads: linked to their user rom if there is no verified match
   await prisma.$executeRawUnsafe(
     `UPDATE RomFile f JOIN RomPart p ON p.sha1 = f.sha1 JOIN Rom r ON r.id = p.romId JOIN DatSource d ON d.id = r.datSourceId
      SET f.status = 'UNVERIFIED', f.romPartId = p.id
@@ -438,7 +438,7 @@ export async function rematchAll(): Promise<{ matched: number; hacks: number }> 
     );
   }
   await prisma.$executeRaw`UPDATE RomFile f LEFT JOIN RomPart p ON p.id = f.romPartId SET f.status = 'UNKNOWN', f.romPartId = NULL WHERE f.status = 'UNVERIFIED' AND p.id IS NULL`;
-  // Imagenes WBFS/CISO: por id de disco (los serial llegan con los DATs)
+  // WBFS/CISO images: by disc id (serials arrive with the DATs)
   for (const f of await prisma.romFile.findMany({ where: { status: 'UNKNOWN', discId: { not: null } } })) {
     const [id, rev] = f.discId!.split('/');
     const d = await matchByDiscId(f.systemId, id, Number(rev ?? 0));
@@ -450,7 +450,7 @@ export async function rematchAll(): Promise<{ matched: number; hacks: number }> 
   return { matched: after, hacks: after - before };
 }
 
-/** Enlaza Rom.raGameId usando los hashes RA conocidos (del DAT o de ficheros escaneados). */
+/** Links Rom.raGameId using the known RA hashes (from the DAT or scanned files). */
 export async function linkRaGames() {
   await prisma.$executeRaw`UPDATE Rom r JOIN RaHash h ON h.hash = r.raHash SET r.raGameId = h.raGameId WHERE r.raGameId IS NULL OR r.raGameId <> h.raGameId`;
   await prisma.$executeRaw`UPDATE Rom r JOIN RomPart p ON p.romId = r.id JOIN RomFile f ON f.romPartId = p.id JOIN RaHash h ON h.hash = f.raHash SET r.raGameId = h.raGameId WHERE r.raGameId IS NULL`;

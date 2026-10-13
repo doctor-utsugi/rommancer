@@ -1,10 +1,10 @@
 /**
- * Lectores con acceso aleatorio de imagenes de disco comprimidas o recortadas:
- *  - WBFS (Wii, incluido partido en .wbfs/.wbf1/.wbf2...) y CISO (GameCube): solo guardan los bloques
- *    usados. No conservan la particion de actualizacion ni el relleno, asi que la ISO reconstruida no
- *    coincide con Redump: se identifican por id de disco y quedan como no verificadas.
- *  - CSO v1/v2 y ZSO (PSP, PS2): conservan la ISO completa; verificables contra Redump.
- * Formatos segun libwbfs (WBFS), Dolphin CISOBlob (CISO) y maxcso/README_CSO.md (CSO v2 y ZSO).
+ * Random-access readers for compressed or trimmed disc images:
+ *  - WBFS (Wii, including split .wbfs/.wbf1/.wbf2...) and CISO (GameCube): only keep the used
+ *    blocks. They drop the update partition and the padding, so the rebuilt ISO does not
+ *    match Redump: they are identified by disc id and stay unverified.
+ *  - CSO v1/v2 and ZSO (PSP, PS2): keep the whole ISO; verifiable against Redump.
+ * Formats per libwbfs (WBFS), Dolphin CISOBlob (CISO) and maxcso/README_CSO.md (CSO v2 and ZSO).
  */
 import fs from 'node:fs';
 import path from 'node:path';
@@ -26,7 +26,7 @@ const WII_SECTORS_PER_DISC = 143432 * 2;
 const WII_SL_SIZE = 4699979776;
 const WII_DL_SIZE = 8511160320;
 
-/** Conjunto de ficheros leidos como uno solo (WBFS partido). */
+/** Files read as one (split WBFS). */
 class MultiFile {
   constructor(private parts: { fd: fs.promises.FileHandle; start: number; size: number }[]) {}
   static async open(files: string[]) {
@@ -82,7 +82,7 @@ abstract class BlockReader implements DiscReader {
       const inBlock = pos - index * this.blockSize;
       const n = Math.min(size - done, this.blockSize - inBlock);
       if (this.cache?.index !== index) this.cache = { index, data: await this.readBlock(index) };
-      // Bloque no almacenado: ceros (ya en el buffer)
+      // Block not stored: zeros (already in the buffer)
       this.cache.data?.copy(out, done, inBlock, inBlock + n);
       done += n;
     }
@@ -119,7 +119,7 @@ class WbfsReader extends BlockReader {
     const wbfsSecShift = h[9];
     this.blockSize = 2 ** wbfsSecShift;
     const blocksPerDisc = Math.ceil((WII_SECTORS_PER_DISC * WII_SECTOR_SIZE) / this.blockSize);
-    // Primer disco: informacion en el sector siguiente a la cabecera (copia de la cabecera + tabla de bloques)
+    // First disc: info in the sector after the header (header copy + block table)
     const info = await this.file.read(hdSecSize, 0x100 + blocksPerDisc * 2);
     let last = -1;
     for (let i = 0; i < blocksPerDisc; i++) {
@@ -127,7 +127,7 @@ class WbfsReader extends BlockReader {
       this.table.push(v);
       if (v) last = i;
     }
-    // Se reconstruye hasta el ultimo bloque usado (el resto del disco serian ceros)
+    // Rebuilt up to the last used block (the rest of the disc would be zeros)
     const used = (last + 1) * this.blockSize;
     this.isoSize = Math.min(used, used <= WII_SL_SIZE ? WII_SL_SIZE : WII_DL_SIZE);
   }
@@ -163,7 +163,7 @@ class GcCisoReader extends BlockReader {
         last = i;
       } else this.offsets.push(null);
     }
-    // Tamano de un disco de GameCube salvo que los bloques usados lleguen mas lejos
+    // Size of a GameCube disc unless used blocks reach further
     this.isoSize = Math.max(GC_DISC_SIZE, (last + 1) * this.blockSize);
   }
   protected async readBlock(index: number) {
@@ -221,7 +221,7 @@ class CsoReader extends BlockReader {
       plain = flag;
       lz4 = !flag;
     } else if (this.version >= 2) {
-      // CSO v2: almacenado sin comprimir si ocupa el bloque entero; el bit alto indica LZ4 en vez de deflate
+      // CSO v2: stored uncompressed if it fills the whole block; the high bit means LZ4 instead of deflate
       plain = raw.length >= this.blockSize;
       lz4 = flag;
     } else {
@@ -237,7 +237,7 @@ class CsoReader extends BlockReader {
   }
 }
 
-/** Descompresor de bloque LZ4 (formato de bloque, sin cabecera de frame). */
+/** LZ4 block decompressor (block format, no frame header). */
 export function lz4BlockDecompress(src: Buffer, maxOut: number): Buffer {
   const out = Buffer.alloc(maxOut);
   let s = 0;
@@ -256,7 +256,7 @@ export function lz4BlockDecompress(src: Buffer, maxOut: number): Buffer {
     src.copy(out, d, s, s + lit);
     s += lit;
     d += lit;
-    // El ultimo bloque de secuencias termina tras los literales
+    // The last sequence block ends after the literals
     if (s >= src.length) break;
     const off = src[s] | (src[s + 1] << 8);
     s += 2;
@@ -271,7 +271,7 @@ export function lz4BlockDecompress(src: Buffer, maxOut: number): Buffer {
     }
     len += 4;
     if (d + len > maxOut) throw new Error('LZ4: match overflow');
-    // Copia byte a byte: puede solaparse
+    // Byte-by-byte copy: may overlap
     for (let k = 0; k < len; k++) out[d + k] = out[d - off + k];
     d += len;
   }
@@ -309,7 +309,7 @@ export async function openDiscImage(file: string): Promise<DiscReader | null> {
     const m = magic.toString('latin1', 0, 4);
     let r: GcCisoReader | CsoReader;
     if (m === 'ZISO') r = new CsoReader(fd, 'zso');
-    // CISO de GameCube y CSO comparten magic: el CSO lleva header_size 0x18 y el tamano total en 8..16
+    // GameCube CISO and CSO share a magic: CSO has header_size 0x18 and the total size at 8..16
     else if (m === 'CISO' && magic.readUInt32LE(4) <= 0x18 && magic.readBigUInt64LE(8) > 0n) r = new CsoReader(fd, 'cso');
     else if (m === 'CISO') r = new GcCisoReader(fd);
     else {
@@ -324,7 +324,7 @@ export async function openDiscImage(file: string): Promise<DiscReader | null> {
   }
 }
 
-/** Identificacion de un disco de GameCube/Wii por su cabecera. */
+/** Identifies a GameCube/Wii disc from its header. */
 export async function discId(readAt: (pos: number, len: number) => Promise<Buffer>) {
   const h = await readAt(0, 0x60);
   const id = h.toString('latin1', 0, 6).replace(/\0/g, '');

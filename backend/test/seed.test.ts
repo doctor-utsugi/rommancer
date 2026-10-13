@@ -1,6 +1,6 @@
 /**
- * Aplica la semilla del repositorio (seed/) sobre una base de datos vacia y comprueba
- * que se cargan los DATs de todas las consolas y el scraping sin descargar nada.
+ * Applies the repository seed (seed/) to an empty database and checks that
+ * the DATs of every console and the scraping load without downloading anything.
  */
 import { after, before, test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -26,12 +26,12 @@ after(async () => {
   fs.rmSync(DATA, { recursive: true, force: true });
 });
 
-test('semilla: DATs de todas las consolas, RA y scraping sin red', { skip: !fs.existsSync(path.join(SEED, 'dats', 'manifest.json')) }, async () => {
+test('seed: DATs of every console, RA and scraping without network', { skip: !fs.existsSync(path.join(SEED, 'dats', 'manifest.json')) }, async () => {
   const { seed } = await import('../src/seed/seed.js');
   const { applySeed } = await import('../src/modules/seed/service.js');
   const { prisma } = await import('../src/lib/prisma.js');
   await seed();
-  // Sin red: cualquier fetch fallaria la prueba
+  // No network: any fetch would fail the test
   const realFetch = globalThis.fetch;
   globalThis.fetch = (() => Promise.reject(new Error('network disabled'))) as typeof fetch;
   try {
@@ -40,7 +40,7 @@ test('semilla: DATs de todas las consolas, RA y scraping sin red', { skip: !fs.e
     assert.equal(r1.datsImported, manifest.length);
     const systems = await prisma.system.findMany({ include: { _count: { select: { games: true } } } });
     for (const slug of new Set(manifest.map((m) => m.system))) {
-      assert.ok(systems.find((s) => s.slug === slug)!._count.games > 0, `${slug} sin juegos`);
+      assert.ok(systems.find((s) => s.slug === slug)!._count.games > 0, `${slug} has no games`);
     }
     const games = JSON.parse(fs.readFileSync(path.join(SEED, 'games.json'), 'utf8')) as unknown[];
     if (games.length) {
@@ -49,7 +49,7 @@ test('semilla: DATs de todas las consolas, RA y scraping sin red', { skip: !fs.e
       const m = await prisma.media.findFirstOrThrow();
       assert.ok(fs.existsSync(path.join(DATA, 'media', m.path)));
     }
-    // Segunda aplicacion: no hay nada nuevo
+    // Second application: nothing new
     const r2 = await applySeed();
     assert.equal(r2.datsImported, 0);
     assert.equal(r2.media, 0);

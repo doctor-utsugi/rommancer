@@ -27,7 +27,7 @@ export async function detectSystem(dat: DatFile, fileName?: string): Promise<Sys
   const systems = await prisma.system.findMany();
   const candidates = [dat.name, dat.description, fileName?.replace(/\.(dat|xml)$/i, '')].filter(Boolean) as string[];
   for (const c of candidates) {
-    // Sin sufijos entre parentesis: (Parent-Clone), (Headered), (Decrypted), (LNX), (20261002-002752)...
+    // No parenthesized suffixes: (Parent-Clone), (Headered), (Decrypted), (LNX), (20261002-002752)...
     const clean = c.replace(/(\s*\([^)]*\))+\s*$/g, '').trim().toLowerCase();
     for (const s of systems) {
       const names = [s.datName, ...((s.datAliases as string[] | null) ?? [])].map((n) => n.toLowerCase());
@@ -54,7 +54,7 @@ function detectType(dat: DatFile, fileName?: string): DatType {
   return 'NOINTRO';
 }
 
-/** Agrupa entradas con el mismo nombre (libretro separa .nes y .unh) y fusiona las versiones sin cabecera. */
+/** Groups entries with the same name (libretro splits .nes and .unh) and merges the headerless versions. */
 function mergeGames(games: DatGame[]): Map<string, DatGame> {
   const map = new Map<string, DatGame>();
   for (const g of games) {
@@ -102,16 +102,15 @@ export interface ImportOptions {
   type?: DatType;
   fileName?: string;
   force?: boolean;
-  // Fuente principal (No-Intro oficial) frente a copias (libretro)
+  // Main source (official No-Intro) versus copies (libretro)
   priority?: number;
-  // Recalcular agrupaciones al terminar (por defecto si)
+  // Recompute groupings when done (default yes)
   resolve?: boolean;
 }
 
 /**
- * Importa un DAT. Los datos son permanentes: nada se borra; las roms que desaparecen de la fuente
- * se marcan como retiradas. Una rom con el mismo nombre en el mismo sistema es la misma rom aunque
- * venga de otra fuente: se actualiza en lugar de duplicarse.
+ * Imports a DAT. Data is permanent: nothing is deleted; roms that vanish from the source are marked withdrawn.
+ * A rom with the same name in the same system is the same rom even from another source: it is updated, not duplicated.
  */
 export async function importDat(text: string, opts: ImportOptions = {}): Promise<ImportResult> {
   const fileSha1 = crypto.createHash('sha1').update(text).digest('hex');
@@ -126,15 +125,15 @@ export async function importDat(text: string, opts: ImportOptions = {}): Promise
   if (existing && existing.fileSha1 === fileSha1 && !opts.force) {
     return { datSourceId: existing.id, system: system.slug, type, name, games: 0, roms: existing.romCount, hacks: 0, skipped: true };
   }
-  // DAT de arcade con un unico fichero por set (hash del zip entero, como el de libretro-database):
-  // describe los mismos juegos que el DAT oficial con otros nombres y no verifica el contenido. No se usa.
+  // Single-file-per-set arcade DAT (whole-zip hash, like libretro-database): it describes the same games as the
+  // official DAT under other names and does not verify content. Not used.
   if (system.mediaType === 'arcade' && dat.games.length && dat.games.every((g) => g.roms.length === 1 && /\.(zip|7z)$/i.test(g.roms[0].name))) {
     return { datSourceId: existing?.id ?? 0, system: system.slug, type, name, games: 0, roms: 0, hacks: 0, skipped: true };
   }
   const source = existing
     ? await prisma.datSource.update({ where: { id: existing.id }, data: { fileSha1: '', version: dat.version ?? null, importedAt: new Date(), fileName: opts.fileName ?? existing.fileName, priority } })
     : await prisma.datSource.create({ data: { systemId: system.id, type, name, version: dat.version ?? null, fileSha1: '', fileName: opts.fileName ?? null, priority } });
-  // El sha1 se fija al terminar: si la importacion falla a medias, se reintentara entera
+  // The sha1 is set at the end: if the import fails midway, it is retried whole
   const done = () => prisma.datSource.update({ where: { id: source.id }, data: { fileSha1 } });
 
   if (type === 'HACKS') {
@@ -147,7 +146,7 @@ export async function importDat(text: string, opts: ImportOptions = {}): Promise
   const isArcade = system.mediaType === 'arcade';
   const now = new Date();
 
-  // Roms ya conocidas del sistema (de cualquier fuente), por nombre
+  // System's already known roms (from any source), by name
   type Known = { id: number; gameId: number; datSourceId: number; priority: number; fields: Record<string, unknown> };
   const known = new Map<string, Known>();
   for (const r of await prisma.rom.findMany({
@@ -158,7 +157,7 @@ export async function importDat(text: string, opts: ImportOptions = {}): Promise
     known.set(name, { id, gameId, datSourceId, priority: datSource.priority, fields });
   }
 
-  // Juego provisional por titulo para las roms nuevas; el resolvedor de agrupaciones decide despues
+  // Provisional game by title for new roms; the grouping resolver decides later
   const gameByTitle = new Map<string, number>();
   for (const g of await prisma.game.findMany({ where: { systemId: system.id }, select: { id: true, titleNormalized: true }, orderBy: { id: 'asc' } }))
     if (!gameByTitle.has(g.titleNormalized)) gameByTitle.set(g.titleNormalized, g.id);
@@ -207,7 +206,7 @@ export async function importDat(text: string, opts: ImportOptions = {}): Promise
     partsByName.set(romName, parts);
     const k = known.get(romName);
     if (k) {
-      // Solo se escribe lo que cambia; una fuente de mayor o igual prioridad pasa a ser la duena de la rom
+      // Only changed values are written; a source of equal or higher priority becomes the rom owner
       const data: Record<string, unknown> = {};
       for (const [key, v] of Object.entries(fields)) {
         if ((key === 'serial' || key === 'raHash' || key === 'parentName' || key === 'description') && v == null) continue;
@@ -230,7 +229,7 @@ export async function importDat(text: string, opts: ImportOptions = {}): Promise
       for (const r of await prisma.rom.findMany({ where: { name: { in: c }, game: { systemId: system.id } }, select: { id: true, name: true, gameId: true } }))
         known.set(r.name, { id: r.id, gameId: r.gameId, datSourceId: source.id, priority, fields: {} });
   }
-  // Fecha de ultima comprobacion de todas las roms presentes en la fuente
+  // Last-checked date of every rom present in the source
   const presentIds = merged.map((g) => known.get(g.name.slice(0, 255))?.id).filter((x): x is number => !!x);
   for (const c of chunk(presentIds, 5000)) await prisma.rom.updateMany({ where: { id: { in: c } }, data: { checkedAt: now } });
   const partsByRom = new Map<number, PartRow[]>();
@@ -239,7 +238,7 @@ export async function importDat(text: string, opts: ImportOptions = {}): Promise
     if (k) partsByRom.set(k.id, parts);
   }
 
-  // Partes: se actualizan por nombre sin borrar (los ficheros escaneados siguen enlazados)
+  // Parts: updated by name without deleting (scanned files stay linked)
   const existingParts = await prisma.romPart.findMany({ where: { romId: { in: [...partsByRom.keys()] } } });
   const partIndex = new Map(existingParts.map((p) => [`${p.romId}|${p.name}`, p]));
   const toCreate: (PartRow & { romId: number })[] = [];
@@ -267,13 +266,13 @@ export async function importDat(text: string, opts: ImportOptions = {}): Promise
   }
   for (const c of chunk(toCreate, 2000)) await prisma.romPart.createMany({ data: c });
 
-  // Retiradas de la fuente: se conservan marcadas
+  // Withdrawn from the source: kept, marked
   const names = new Set(merged.map((g) => g.name.slice(0, 255)));
   const owned = await prisma.rom.findMany({ where: { datSourceId: source.id }, select: { id: true, name: true } });
   const removed = owned.filter((r) => !names.has(r.name)).map((r) => r.id);
   for (const c of chunk(removed, 1000)) await prisma.rom.updateMany({ where: { id: { in: c } }, data: { removedFromSource: true } });
 
-  // Evidencias Parent/Clone: la clave es el padre (o la propia rom si es padre)
+  // Parent/Clone evidence: the key is the parent (or the rom itself if it is a parent)
   const pcSource = 'dat-clone';
   const hasCloneInfo = merged.some((g) => g.cloneOf);
   if (hasCloneInfo) {
@@ -312,7 +311,7 @@ async function importHacks(dat: DatFile, system: System, datSourceId: number, na
     const by = g.name.match(/\[Hack by ([^\]]+)\]/);
     const ver = g.description?.match(/version \(([^)]+)\)/);
     const title = g.name.replace(/\s*\[Hack by [^\]]+\]/, '').slice(0, 255);
-    // Nombre corto del hack: lo que sigue al titulo del juego base ("Metroid - Rogue Dawn" -> "Rogue Dawn")
+    // Short hack name: what follows the base game title ("Metroid - Rogue Dawn" -> "Rogue Dawn")
     const baseTitle = parseRomName(baseName).title;
     const hackName = title.startsWith(baseTitle + ' - ') ? title.slice(baseTitle.length + 3) : title;
     const data = {

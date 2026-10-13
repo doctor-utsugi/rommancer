@@ -1,6 +1,6 @@
 /**
- * Parches de romhacks (IPS/BPS/UPS). Un romhack sin fichero pero con parche y rom base en la coleccion
- * se genera bajo demanda en su ruta destino final y queda registrado como fichero escaneado.
+ * Romhack patches (IPS/BPS/UPS). A romhack without a file but with a patch and a base rom in the collection is generated
+ * on demand at its final destination path and registered as a scanned file.
  */
 import fs from 'node:fs';
 import path from 'node:path';
@@ -30,7 +30,7 @@ async function readStream(s: NodeJS.ReadableStream): Promise<Buffer> {
   return Buffer.concat(chunks);
 }
 
-/** Contenido de una rom de un solo fichero que se tiene en disco. */
+/** Content of a single-file rom held on disk. */
 export async function readOwnedRom(romId: number): Promise<Buffer> {
   const part = await prisma.romPart.findFirst({ where: { romId }, include: { files: { where: { status: { in: ['MATCHED', 'UNVERIFIED'] } }, include: { romPath: true } } } });
   const f = part?.files[0];
@@ -40,8 +40,8 @@ export async function readOwnedRom(romId: number): Promise<Buffer> {
 }
 
 /**
- * Crea y guarda un parche BPS desde el fichero del romhack y su rom base. Asi el romhack se puede
- * regenerar aunque se pierda el fichero, y el parche viaja en la semilla.
+ * Creates and stores a BPS patch from the romhack file and its base rom, so the romhack can be regenerated even if
+ * the file is lost and the patch travels in the seed.
  */
 export async function makePatch(hackId: number, userId?: number) {
   const hack = await prisma.romHack.findUniqueOrThrow({ where: { id: hackId }, include: { files: { include: { romPath: true } } } });
@@ -54,7 +54,7 @@ export async function makePatch(hackId: number, userId?: number) {
   return addPatch(hackId, createBps(source, target), { baseRomId: hack.baseRomId, userId });
 }
 
-/** Registra un parche para un romhack. Busca la rom base por CRC (BPS/UPS) o usa la indicada. */
+/** Registers a patch for a romhack. Looks up the base rom by CRC (BPS/UPS) or uses the given one. */
 export async function addPatch(hackId: number, patch: Buffer, opts: { baseRomId?: number; sourceUrl?: string; userId?: number } = {}) {
   const format = detectPatchFormat(patch);
   if (!format) throw new HttpError(400, 'Unknown patch format');
@@ -66,7 +66,7 @@ export async function addPatch(hackId: number, patch: Buffer, opts: { baseRomId?
       where: { OR: [{ crc32: info.sourceCrc32 }, { headerlessCrc: info.sourceCrc32 }], rom: { game: { systemId: hack.game.systemId } } },
     });
     baseRomId = part?.romId ?? null;
-    // El parche puede estar hecho sobre la copia que se tiene (p.ej. con otra cabecera): se busca por el fichero
+    // The patch may be made on the copy held (e.g. with another header): looked up by file
     if (!baseRomId) {
       const f = await prisma.romFile.findFirst({
         where: { OR: [{ crc32: info.sourceCrc32 }, { headerlessCrc: info.sourceCrc32 }], romPartId: { not: null }, systemId: hack.game.systemId },
@@ -86,25 +86,25 @@ export async function addPatch(hackId: number, patch: Buffer, opts: { baseRomId?
   });
   if (baseRomId && (!hack.baseRomId || hack.baseEvidence === 'title' || !hack.baseEvidence))
     await prisma.romHack.update({ where: { id: hackId }, data: { baseRomId, baseEvidence: 'patch' } });
-  // Si la base esta en la coleccion se calcula ya el resultado: sus hashes permiten reconocer el hack ya
-  // parcheado que haya en disco (tambien sin o con otra cabecera)
+  // If the base is in the collection the result is computed now: its hashes recognize an already patched hack on
+  // disk (also with or without another header)
   if (baseRomId && (await ownedRomIds({ romIds: [baseRomId], include: 'any' })).has(baseRomId)) {
     try {
       await setResultHashes(hackId, await patchedContent(p.id));
     } catch {
-      // Base distinta de la esperada: el parche queda registrado igualmente
+      // Base differs from the expected one: the patch is registered anyway
     }
   }
   return p;
 }
 
 export interface Patched {
-  // Fichero completo (con la cabecera de la base si la tiene) y contenido sin cabecera
+  // Whole file (with the base's header if it has one) and headerless content
   file: Buffer;
   headerless: Buffer | null;
 }
 
-/** Aplica un parche a su rom base. Prueba con la rom tal cual y sin cabecera (NES, SNES...). */
+/** Applies a patch to its base rom. Tries the rom as is and headerless (NES, SNES...). */
 export async function patchedContent(patchId: number): Promise<Patched> {
   const p = await prisma.romPatch.findUniqueOrThrow({ where: { id: patchId }, include: { hack: { include: { game: { include: { system: true } } } } } });
   if (!p.baseRomId) throw new HttpError(409, 'Patch without base rom');
@@ -121,7 +121,7 @@ export async function patchedContent(patchId: number): Promise<Patched> {
   }
   if (header) {
     try {
-      // Parche hecho sobre la rom sin cabecera: el fichero final conserva la cabecera de la base
+      // Patch made on the headerless rom: the final file keeps the base's header
       const out = applyPatch(base.subarray(header), patch);
       return { file: Buffer.concat([base.subarray(0, header), out]), headerless: out };
     } catch (e) {
@@ -132,12 +132,12 @@ export async function patchedContent(patchId: number): Promise<Patched> {
   throw new HttpError(409, `Patch does not apply: ${last instanceof Error ? last.message : last}`);
 }
 
-/** Guarda los hashes del resultado en el romhack y enlaza los ficheros que ya lo tengan parcheado. */
+/** Stores the result hashes on the romhack and links the files that already have it patched. */
 async function setResultHashes(hackId: number, r: Patched) {
   const h = hashesOf(r.file);
   const hl = r.headerless ? hashesOf(r.headerless).sha1 : null;
   const hack = await prisma.romHack.findUniqueOrThrow({ where: { id: hackId } });
-  // Si el romhack ya tenia hash (de un DAT) se respeta; se anade la variante que falte
+  // If the romhack already had a hash (from a DAT) it is respected; the missing variant is added
   const data: Record<string, unknown> = { headerlessSha1: hack.headerlessSha1 ?? (hl && hl !== hack.sha1 ? hl : null) };
   if (!hack.sha1) Object.assign(data, { sha1: h.sha1, md5: h.md5, crc32: h.crc32, size: BigInt(h.size) });
   await prisma.romHack.update({ where: { id: hackId }, data });
@@ -145,8 +145,8 @@ async function setResultHashes(hackId: number, r: Patched) {
 }
 
 /**
- * Tras conocer los hashes de un romhack: fusiona los romhacks duplicados creados a partir de ficheros
- * (mismo resultado) y enlaza los ficheros desconocidos que coincidan.
+ * Once a romhack's hashes are known: merges duplicate romhacks created from files (same result)
+ * and links the matching unknown files.
  */
 export async function relinkHack(hackId: number) {
   const hack = await prisma.romHack.findUniqueOrThrow({ where: { id: hackId } });
@@ -172,8 +172,8 @@ export async function relinkHack(hackId: number) {
 }
 
 /**
- * Genera el fichero de un romhack aplicando su parche y lo coloca en la ruta destino de su sistema.
- * Devuelve el fichero existente si ya lo hay.
+ * Generates a romhack file by applying its patch and places it at its system's destination path.
+ * Returns the existing file if there is one.
  */
 export async function materializeHack(hackId: number, userId?: number) {
   const hack = await prisma.romHack.findUniqueOrThrow({ where: { id: hackId }, include: { files: { include: { romPath: true } }, patches: true, game: { include: { system: true } }, baseRom: { include: { parts: { take: 1 } } } } });
@@ -186,7 +186,7 @@ export async function materializeHack(hackId: number, userId?: number) {
   const known = [hack.sha1, hack.headerlessSha1].filter(Boolean);
   if (known.length && !known.includes(h.sha1) && !(hl && known.includes(hl))) throw new HttpError(409, 'Patched rom does not match the hack checksum');
   await setResultHashes(hackId, r);
-  // Puede que ya hubiera un fichero parcheado en disco que ahora se ha enlazado
+  // A patched file may already be on disk and now linked
   const linked = await prisma.romFile.findFirst({ where: { romHackId: hackId }, include: { romPath: true } });
   if (linked) return linked;
   const out = r.file;

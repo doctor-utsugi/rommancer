@@ -1,9 +1,10 @@
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
-import { patch, tokens } from '@/lib/api'
+import { patch, put, tokens } from '@/lib/api'
 import { useAuth } from '@/lib/auth'
-import i18n from '@/i18n'
+import i18n, { setLanguage } from '@/i18n'
+import { LOCALES } from '@/i18n/locales'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
@@ -21,7 +22,7 @@ export function ProfilePage() {
   const save = async (body: Record<string, unknown>) => {
     try {
       const r = await patch<{ accessToken?: string; refreshToken?: string; filesToken?: string } | null>('/users/me', body)
-      // Al cambiar la contrasena se cierran las otras sesiones y llegan tokens nuevos
+      // Changing the password closes other sessions and issues new tokens
       if (r?.accessToken && r.refreshToken) tokens.set(r.accessToken, r.refreshToken, r.filesToken)
       toast.success(t('common.saved'))
       await reload()
@@ -56,12 +57,16 @@ export function ProfilePage() {
                 <NativeSelect
                   value={i18n.language}
                   onChange={async (e) => {
-                    await i18n.changeLanguage(e.target.value)
+                    await setLanguage(e.target.value)
                     await save({ locale: e.target.value })
+                    if (locked && user?.role === 'ADMIN') await put('/admin/settings/locale', { locale: e.target.value }).catch(() => {})
                   }}
                 >
-                  <option value="es">Español</option>
-                  <option value="en">English</option>
+                  {LOCALES.map((l) => (
+                    <option key={l.code} value={l.code}>
+                      {l.name}
+                    </option>
+                  ))}
                 </NativeSelect>
               </Field>
             </div>

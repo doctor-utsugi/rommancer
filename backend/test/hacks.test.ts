@@ -6,16 +6,16 @@ import { decide, headerCode, rankBases, sampleChunks, type Signature } from '../
 const KB = 1024;
 const sig = (romId: number, gameId: number, buf: Buffer): Signature => ({ romId, gameId, name: `rom${romId}`, sample: sampleChunks(buf) });
 
-// Cambia n bloques de 1 KiB elegidos al azar
+// Changes n randomly chosen 1 KiB blocks
 function mutate(buf: Buffer, blocks: number) {
   const out = Buffer.from(buf);
   for (let i = 0; i < blocks; i++) crypto.randomBytes(KB).copy(out, crypto.randomInt(0, buf.length / KB) * KB);
   return out;
 }
 
-test('romhacks: la traduccion se enlaza con su rom base exacta por contenido', () => {
+test('romhacks: the translation links to its exact base rom by content', () => {
   const japan = crypto.randomBytes(512 * KB);
-  // Otra region del mismo juego: comparte casi todo
+  // Another region of the same game: shares almost everything
   const usa = mutate(japan, 40);
   const other = crypto.randomBytes(512 * KB);
   const sigs = [sig(1, 10, japan), sig(2, 10, usa), sig(3, 20, other)];
@@ -26,7 +26,7 @@ test('romhacks: la traduccion se enlaza con su rom base exacta por contenido', (
   assert.deepEqual(decide(ranked, [], true), { base: { romId: 1, gameId: 10 }, evidence: 'content' });
 });
 
-test('romhacks: hack ampliado con datos desplazados y relleno', () => {
+test('romhacks: expanded hack with shifted data and padding', () => {
   const base = crypto.randomBytes(256 * KB);
   const expanded = Buffer.concat([crypto.randomBytes(7 * KB), mutate(base, 30), Buffer.alloc(256 * KB, 0xff)]);
   const ranked = rankBases(sampleChunks(expanded), [sig(1, 10, base), sig(2, 20, crypto.randomBytes(256 * KB))]);
@@ -34,7 +34,7 @@ test('romhacks: hack ampliado con datos desplazados y relleno', () => {
   assert.ok(ranked[0].score >= 0.5);
 });
 
-test('romhacks: parecido medio enlaza el juego pero no fija la rom base', () => {
+test('romhacks: medium similarity links the game but does not fix the base rom', () => {
   const usa = crypto.randomBytes(256 * KB);
   const japanTranslation = mutate(usa, 90);
   const ranked = rankBases(sampleChunks(japanTranslation), [sig(1, 10, usa)]);
@@ -42,14 +42,14 @@ test('romhacks: parecido medio enlaza el juego pero no fija la rom base', () => 
   assert.deepEqual(decide(ranked, [], true), { base: { romId: null, gameId: 10 }, evidence: 'content' });
 });
 
-test('romhacks: el relleno no cuenta como parecido', () => {
+test('romhacks: padding does not count as similarity', () => {
   const a = Buffer.concat([crypto.randomBytes(16 * KB), Buffer.alloc(240 * KB, 0xff)]);
   const b = Buffer.concat([crypto.randomBytes(16 * KB), Buffer.alloc(240 * KB, 0xff)]);
   const ranked = rankBases(sampleChunks(b), [sig(1, 10, a)]);
   assert.ok(!ranked.length || ranked[0].score < 0.2);
 });
 
-test('romhacks: dos juegos distintos casi iguales van a revision', () => {
+test('romhacks: two near-identical distinct games go to review', () => {
   const a = crypto.randomBytes(256 * KB);
   const b = mutate(a, 2);
   const ranked = rankBases(sampleChunks(mutate(a, 1)), [sig(1, 10, a), sig(2, 20, b)]);
@@ -57,13 +57,13 @@ test('romhacks: dos juegos distintos casi iguales van a revision', () => {
   assert.ok(d && 'review' in d);
 });
 
-test('romhacks: el nombre solo genera revision y sin marcas no se hace nada', () => {
+test('romhacks: the name alone only raises a review and without marks nothing happens', () => {
   const d = decide([], [], true);
   assert.ok(d && 'review' in d);
   assert.equal(decide([], [], false), null);
 });
 
-test('romhacks: codigo de cabecera (GBA, NDS, N64, Mega Drive)', () => {
+test('romhacks: header code (GBA, NDS, N64, Mega Drive)', () => {
   const gba = Buffer.alloc(0x200);
   gba.write('BPEE', 0xac, 'latin1');
   assert.equal(headerCode('gba', gba), 'BPEE');
@@ -78,6 +78,6 @@ test('romhacks: codigo de cabecera (GBA, NDS, N64, Mega Drive)', () => {
   md.write('GM T-48073-00', 0x180, 'latin1');
   assert.equal(headerCode('md', md), 'T-48073-00');
   assert.equal(headerCode('snes', gba), null);
-  // Codigo de cabecera con un unico juego: enlace aunque no se tenga la base
+  // Header code with a single game: linked even without the base
   assert.deepEqual(decide([], [{ romId: 5, gameId: 50, name: 'x' }], false), { base: { romId: 5, gameId: 50 }, evidence: 'header' });
 });

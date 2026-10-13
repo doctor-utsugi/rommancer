@@ -34,7 +34,7 @@ const store = {
   get refresh() {
     return read('refreshToken')
   },
-  // Token solo para ficheros (imagenes y descargas por URL)
+  // File-only token (images and URL downloads)
   get files() {
     return read('filesToken')
   },
@@ -115,14 +115,14 @@ export const patch = <T = any>(p: string, b: unknown) => api<T>('PATCH', p, b)
 export const put = <T = any>(p: string, b: unknown) => api<T>('PUT', p, b)
 export const del = <T = any>(p: string) => api<T>('DELETE', p)
 
-/** URL con token para descargas directas e imagenes. */
+/** URL with token for direct downloads and images. */
 export function authUrl(path: string) {
   const full = path.startsWith('/api/') ? path : `${BASE}${path}`
   const sep = full.includes('?') ? '&' : '?'
   return `${full}${sep}token=${encodeURIComponent(store.files ?? '')}`
 }
 
-/** Subida con progreso (XHR). */
+/** Upload with progress (XHR). */
 export function upload<T = any>(path: string, form: FormData, onProgress?: (pct: number) => void): Promise<T> {
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest()

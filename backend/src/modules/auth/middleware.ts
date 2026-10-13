@@ -30,7 +30,7 @@ interface TokenUser {
 }
 
 const ACCESS_TTL = '15m';
-// Token para descargas e imagenes por URL (?token=): solo GET y solo rutas de ficheros
+// Token for downloads and images by URL (?token=): GET only and file routes only
 const FILES_TTL = '12h';
 
 export function signAccess(user: TokenUser): string {
@@ -60,7 +60,7 @@ function toUser(p: Claims): AuthUser {
   return { id: Number(p.sub), username: p.username, role: p.role, permissions: normalizePermissions(p.perms), mustChangePassword: !!p.pwc };
 }
 
-// Rutas que aceptan el token de ficheros en la URL
+// Routes that accept the file token in the URL
 const FILE_ROUTES = [/^\/media\/\d+$/, /^\/lists\/\d+\/(download|export)$/, /^\/saves\/\d+\/versions\/\d+\/download$/, /^\/saves\/\d+\/rom$/, /^\/saves\/\d+\/versions\/\d+\/thumb$/, /^\/saves\/shared\/\d+\/(thumb|download)$/, /^\/saves\/cards\/\d+\/snapshots\/\d+$/, /^\/hacks\/\d+\/download$/, /^\/roms\/\d+\/download$/, /^\/link\/package\/[a-z]+$/, /^\/devices\/\d+\/config\/versions\/\d+\/(zip|file)$/];
 
 export function requireAuth(req: Request, _res: Response, next: NextFunction) {
@@ -80,7 +80,7 @@ export function requireAuth(req: Request, _res: Response, next: NextFunction) {
   } catch {
     return next(new HttpError(401, 'Unauthorized'));
   }
-  // Mientras haya que cambiar la contrasena solo se permite consultar y editar el propio perfil
+  // While the password must be changed, only viewing and editing one's own profile is allowed
   if (req.user.mustChangePassword && !(req.path === '/users/me' && (req.method === 'GET' || req.method === 'PATCH'))) {
     return next(new HttpError(403, 'PASSWORD_CHANGE_REQUIRED'));
   }

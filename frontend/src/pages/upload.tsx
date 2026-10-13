@@ -107,7 +107,7 @@ export function VerifiedUpload({
           return
         }
         if (!m.accepted) {
-          // Puede coincidir con RetroAchievements (hash md5 calculado en el servidor)
+          // May match RetroAchievements (md5 hash computed on the server)
           update(file, { state: 'unknown' })
         } else update(file, { state: 'matched', info: m.rom?.name })
       } else update(file, { state: 'tooBig' })

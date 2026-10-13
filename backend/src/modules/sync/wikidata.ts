@@ -1,7 +1,6 @@
 /**
- * Obras multiplataforma con Wikidata (CC0): se guarda localmente el subconjunto de videojuegos de las
- * plataformas soportadas y se enlaza cada juego con su elemento por anclas exactas (ids de
- * RetroAchievements o ScreenScraper) o por coincidencia de nombre unica en la plataforma.
+ * Cross-platform works via Wikidata (CC0): the video games of the supported platforms are stored locally and each game is
+ * linked to its item by exact anchors (RetroAchievements or ScreenScraper ids) or by a unique name match on the platform.
  */
 import { Prisma } from '@prisma/client';
 import { env } from '../../config/env.js';
@@ -29,7 +28,7 @@ async function sparql<T = Record<string, { value: string }>>(query: string): Pro
 
 const qid = (uri?: string) => (uri ? uri.split('/').pop()! : null);
 
-/** Descarga (o actualiza) los videojuegos de una plataforma. */
+/** Downloads (or updates) the video games of a platform. */
 export async function syncWikidataPlatform(slug: string, ctx?: JobContext) {
   const platform = WIKIDATA_PLATFORM[slug];
   if (!platform) return { items: 0, changed: 0 };
@@ -77,7 +76,7 @@ export async function syncWikidataPlatform(slug: string, ctx?: JobContext) {
   return { items: props.length, changed };
 }
 
-/** Etiquetas de sagas y franquicias referenciadas. */
+/** Labels of the referenced sagas and franchises. */
 export async function syncWikidataLabels() {
   const refs = await prisma.wikidataItem.findMany({ where: { OR: [{ seriesQid: { not: null } }, { franchiseQid: { not: null } }] }, select: { seriesQid: true, franchiseQid: true } });
   const known = new Set((await prisma.wikidataLabel.findMany({ select: { qid: true } })).map((l) => l.qid));
@@ -93,7 +92,7 @@ export async function syncWikidataLabels() {
   return ids.length;
 }
 
-// Normalizacion que conserva escrituras no latinas (titulos japoneses)
+// Normalization that keeps non-Latin scripts (Japanese titles)
 const uniNorm = (s: string) => s.normalize('NFKC').toLowerCase().replace(/[\p{P}\p{S}\s]+/gu, '');
 const keysOf = (s: string) => [normalizeTitle(s).replace(/ /g, ''), uniNorm(s)].filter((k) => k.length > 1);
 
@@ -104,7 +103,7 @@ export interface WorkStats {
   works: number;
 }
 
-/** Enlaza juegos con elementos de Wikidata y crea/actualiza las obras y sagas. */
+/** Links games to Wikidata items and creates/updates the works and sagas. */
 export async function resolveWorks(systemId?: number, ctx?: JobContext): Promise<WorkStats> {
   const stats: WorkStats = { linked: 0, anchored: 0, review: 0, works: 0 };
   const systems = await prisma.system.findMany({ where: systemId ? { id: systemId } : {} });
@@ -152,7 +151,7 @@ export async function resolveWorks(systemId?: number, ctx?: JobContext): Promise
           const close = list.filter((it) => it.year && Math.abs(it.year - g.releaseYear!) <= 1);
           if (close.length) list = close;
         }
-        // Con un solo candidato se toleran diferencias regionales de fecha (Japon suele salir antes)
+        // With a single candidate, regional date differences are tolerated (Japan usually comes first)
         const yearClash = list.length === 1 && g.releaseYear && list[0].year && Math.abs(list[0].year - g.releaseYear) > 3;
         if (list.length === 1 && !yearClash) target = list[0].qid;
         else if (list.length > 1 || yearClash) {
@@ -183,7 +182,7 @@ export async function resolveWorks(systemId?: number, ctx?: JobContext): Promise
     }
     ctx?.log(`works ${system.slug}: ${games.length} games`);
   }
-  // Saga de libretro para obras sin saga de Wikidata
+  // Libretro saga for works without a Wikidata saga
   const orphan = await prisma.game.findMany({ where: { franchiseName: { not: null }, work: { franchiseId: null } }, select: { workId: true, franchiseName: true } });
   for (const o of orphan) {
     if (!o.workId) continue;

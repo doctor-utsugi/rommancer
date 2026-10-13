@@ -86,7 +86,7 @@ async function tick() {
   });
   for (const job of pending) {
     if (running.size >= MAX_CONCURRENT) break;
-    // Un trabajo de cada tipo a la vez para no saturar disco ni APIs externas
+    // One job per type at a time, to avoid overloading disk and external APIs
     if (running.has(job.type)) continue;
     const claimed = await prisma.job.updateMany({ where: { id: job.id, status: 'PENDING' }, data: { status: 'RUNNING', startedAt: new Date() } });
     if (!claimed.count) continue;

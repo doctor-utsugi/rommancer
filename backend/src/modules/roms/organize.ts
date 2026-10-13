@@ -39,8 +39,8 @@ async function companionsOf(root: string, rel: string) {
 }
 
 /**
- * scheme: 'rename' (solo renombra en su carpeta), 'system' (carpeta = slug del sistema),
- * o el slug de un firmware (carpeta = la que usa ese firmware para el sistema).
+ * scheme: 'rename' (only renames within its folder), 'system' (folder = system slug),
+ * or a firmware slug (folder = the one that firmware uses for the system).
  */
 export async function planOrganize(romPathId: number, scheme: string): Promise<MovePlan[]> {
   const rp = await prisma.romPath.findUniqueOrThrow({ where: { id: romPathId } });
@@ -69,7 +69,7 @@ export async function planOrganize(romPathId: number, scheme: string): Promise<M
       const romIds = new Set(rows.map((r) => r.romPart?.romId));
       if (romIds.size !== 1) continue;
       base = first.archiveEntry ? first.romPart.rom.name + ext : first.romPart.name;
-      // Contenedores (CHD, RVZ, WIA, CSO...) conservan su extension con el nombre de la rom
+      // Containers (CHD, RVZ, WIA, CSO...) keep their extension with the rom name
       if (ext.toLowerCase() !== path.extname(first.romPart.name).toLowerCase()) base = first.romPart.rom.name + ext;
     } else {
       base = path.basename(rel);

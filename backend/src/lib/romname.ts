@@ -1,4 +1,4 @@
-// Utilidades para nombres No-Intro / Redump / GoodTools
+// Helpers for No-Intro / Redump / GoodTools names
 
 export const REGIONS = [
   'World', 'USA', 'Europe', 'Japan', 'Spain', 'France', 'Germany', 'Italy', 'UK', 'Australia', 'Korea', 'China', 'Taiwan',
@@ -29,7 +29,7 @@ export interface ParsedName {
   languages: string[];
   revision: string | null;
   flags: string[];
-  // Marcas GoodTools: [T+Spa], [h], [!]...
+  // GoodTools marks: [T+Spa], [h], [!]...
   tags: string[];
   hack: { type: 'TRANSLATION' | 'HACK'; language?: string; author?: string; version?: string } | null;
 }
@@ -79,7 +79,7 @@ export function parseRomName(raw: string): ParsedName {
   return { title, regions, languages, revision, flags, tags, hack };
 }
 
-/** Clave de agrupacion de juego: minusculas, sin articulos movidos ni puntuacion. */
+/** Game grouping key: lowercase, no moved articles or punctuation. */
 export function normalizeTitle(title: string): string {
   let t = title.toLowerCase();
   const art = t.match(/^(.*), (the|a|an|el|la|los|las|le|les|der|die|das)( - .*)?$/);
@@ -92,18 +92,18 @@ export function normalizeTitle(title: string): string {
     .trim();
 }
 
-/** Nombre seguro para sistema de ficheros (FAT/exFAT de tarjetas SD). */
+/** Filesystem-safe name (FAT/exFAT of SD cards). */
 export function safeFileName(name: string): string {
   return name.replace(/[<>:"/\\|?*\u0000-\u001f]/g, '_').replace(/[. ]+$/, '');
 }
 
-/** Nombre de la rom base de un nombre con marcas GoodTools: "Contra (Japan) [T+Eng1.0_MadHacker]" -> "Contra (Japan)". */
+/** Base rom name of a name with GoodTools marks: "Contra (Japan) [T+Eng1.0_MadHacker]" -> "Contra (Japan)". */
 export function baseRomName(raw: string): string {
   return raw.replace(/\.[a-z0-9]{1,5}$/i, '').replace(/\s*\[[^\]]*\]/g, '').trim();
 }
 
 /**
- * Etiqueta de un romhack con su rom base exacta y su propia version, separada de la del juego:
+ * Label of a romhack with its exact base rom and its own version, apart from the game's:
  * "Gran Turismo 4 (USA) v1.01 + Spec II v1.10", "Contra (Japan) + T-Eng v1.0 (MadHacker)".
  */
 export function hackLabel(base: { name: string } | null, hack: { type: string; hackName?: string | null; title: string; version?: string | null; language?: string | null; author?: string | null }): string {

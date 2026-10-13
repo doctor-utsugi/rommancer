@@ -2,137 +2,152 @@
 
 # Rommancer
 
-Gestor multiusuario de colecciones de roms: base de datos de juegos y roms a partir de DATs (No-Intro, Redump, FBNeo, hacks), verificación por checksum, agrupación por evidencias (regiones, plataformas y sagas), listas compartibles, copia a dispositivos (SD o SSH), parches de romhacks, multimedia bajo demanda y saves sincronizados al estilo Steam Cloud.
+Multi-user ROM collection manager: a database of games and roms built from DATs (No-Intro, Redump, FBNeo, hacks), checksum verification, grouping by evidence (regions, platforms and sagas), shareable lists, copying to devices (SD or SSH), romhack patches, on-demand media and Steam Cloud style synced saves.
 
 Stack: Node 22 + Express + Prisma + MySQL 8.4 · React + TypeScript + Vite + shadcn/ui · Podman.
 
 ## Rommancer Sync
 
-Sincronización de saves entre consolas (Onion, Knulli, Batocera, ROCKNIX, muOS, ArkOS, NextUI, PC): ver [docs/sync.md](docs/sync.md). Almacenamiento en el servidor (carpetas, discos, destinos): [docs/storage.md](docs/storage.md). Configuración de las consolas (RetroAchievements, WiFi, copias): [docs/device-config.md](docs/device-config.md). Listas, favoritos y sublistas: [docs/lists.md](docs/lists.md).
+Save syncing between consoles (Onion, Knulli, Batocera, ROCKNIX, muOS, ArkOS, NextUI, PC): see [docs/sync.md](docs/sync.md). Storage on the server (folders, disks, destinations): [docs/storage.md](docs/storage.md). Console configuration (RetroAchievements, WiFi, copies): [docs/device-config.md](docs/device-config.md). Lists, favourites and sublists: [docs/lists.md](docs/lists.md).
 
-## Estructura
+## Structure
 
 ```
 backend/            API (Express + Prisma)
-  prisma/           esquema y migraciones versionadas
-  src/lib/          hashing, hash RetroAchievements (port de rcheevos), lectores RVZ/WBFS/CISO/CSO/ZSO, parches IPS/BPS/UPS, cola de trabajos
+  prisma/           schema and versioned migrations
+  src/lib/          hashing, RetroAchievements hash (rcheevos port), RVZ/WBFS/CISO/CSO/ZSO readers, IPS/BPS/UPS patches, job queue
   src/modules/      auth, users, dats, scanner, roms, lists, devices, uploads, scrape, ra, saves, grouping, patches, sync, seed
-  test/e2e.test.ts  prueba de extremo a extremo de todos los flujos
-frontend/           SPA React (i18n ES/EN)
-deploy/quadlet/     unidades Quadlet para un servidor Linux con systemd
-compose.yaml        mysql (desarrollo) y pila completa (perfil "full")
-data/               datos de la app: dats, media, saves, uploads, tmp
-seed/               semilla para nuevos despliegues: DATs, hashes RA, metadatos y multimedia
+  test/e2e.test.ts  end-to-end test of every flow
+frontend/           React SPA (i18n EN/ES)
+deploy/quadlet/     Quadlet units for a Linux server with systemd
+compose.yaml        mysql (development) and the full stack ("full" profile)
+data/               app data: dats, media, saves, uploads, tmp
+seed/               seed for new deployments: DATs, RA hashes, metadata and media
 ```
 
-## Requisitos
+## Requirements
 
-- Node 22 o superior, Podman y podman-compose.
-- `chdman` (paquete `rom-tools` en Homebrew, `mame-tools` en Debian) para CHD.
-- `7zz` (paquete `sevenzip` en Homebrew, `7zip` en Debian) para zip/7z.
+- Node 22 or later, Podman and podman-compose.
+- `chdman` (package `rom-tools` on Homebrew, `mame-tools` on Debian) for CHD.
+- `7zz` (package `sevenzip` on Homebrew, `7zip` on Debian) for zip/7z.
 
-En macOS Podman necesita su máquina virtual: `podman machine init` y `podman machine start`. Al crearla se comparte la carpeta del proyecto con `--volume`.
+On macOS Podman needs its virtual machine: `podman machine init` and `podman machine start`. Share the project folder with `--volume` when creating it.
 
-## Configuración
+## Configuration
 
 ```bash
-cp .env.example .env    # rellenar contraseñas, JWT_SECRET y ENCRYPTION_KEY (openssl rand -hex 32)
+cp .env.example .env    # fill in passwords, JWT_SECRET and ENCRYPTION_KEY (openssl rand -hex 32)
 npm install
-npm run db:up           # MySQL en Podman (puerto 127.0.0.1:3317)
+npm run db:up           # MySQL in Podman (port 127.0.0.1:3317)
 npm run db:migrate -w backend
 ```
 
-Cambios de esquema: editar `backend/prisma/schema.prisma` y crear la migración con `npm run migration:new -w backend -- <nombre>` (necesita la base `rommancer_shadow` con permisos para el usuario de MySQL). El contenedor de la API aplica las migraciones al arrancar (`prisma migrate deploy`).
+Schema changes: edit `backend/prisma/schema.prisma` and create the migration with `npm run migration:new -w backend -- <name>` (it needs the `rommancer_shadow` database, with permissions for the MySQL user). The API container applies migrations on startup (`prisma migrate deploy`).
 
-`JWT_SECRET` y `ENCRYPTION_KEY` no pueden tener el valor de ejemplo: la API no arranca. El administrador inicial debe cambiar su contraseña en el primer acceso.
+`JWT_SECRET` and `ENCRYPTION_KEY` must not keep the example value: the API will not start. The initial administrator must change their password on first login.
 
-Credenciales externas en `.env` (opcionales). Las globales solo las usa el administrador; el resto de usuarios usan las suyas, configuradas en su perfil:
+External credentials in `.env` (optional). The global ones are only used by the administrator; every other user uses their own, set in their profile:
 
-- `SCREENSCRAPER_DEV_ID` / `SCREENSCRAPER_DEV_PASSWORD`: credenciales de desarrollador de ScreenScraper.
-- `SCREENSCRAPER_USER` / `SCREENSCRAPER_PASSWORD`: cuenta de usuario de ScreenScraper.
-- `RA_USERNAME` / `RA_API_KEY`: Web API Key de RetroAchievements (sincronización global).
-- `THEGAMESDB_API_KEY`: respaldo de multimedia (contraportadas, fanart, logos, capturas).
-- `EXTERNAL_SYNC_CRON`: sincronización global de fuentes externas (por defecto domingos a las 4:00; vacío = desactivada).
-- `CORS_ORIGINS`: orígenes web permitidos (vacío = solo el mismo origen).
+- `SCREENSCRAPER_DEV_ID` / `SCREENSCRAPER_DEV_PASSWORD`: ScreenScraper developer credentials.
+- `SCREENSCRAPER_USER` / `SCREENSCRAPER_PASSWORD`: ScreenScraper user account.
+- `RA_USERNAME` / `RA_API_KEY`: RetroAchievements Web API Key (global sync).
+- `THEGAMESDB_API_KEY`: media fallback (back covers, fanart, logos, screenshots).
+- `EXTERNAL_SYNC_CRON`: global sync of external sources (default Sundays at 4:00; empty = disabled).
+- `CORS_ORIGINS`: allowed web origins (empty = same origin only).
 
-Sin ScreenScraper se usan las carátulas de libretro-thumbnails.
+Without ScreenScraper, covers come from libretro-thumbnails.
 
-## Desarrollo
+## Language
+
+The web app ships in English and Spanish.
+
+- `DEFAULT_LOCALE` (`en` or `es`, default `en`) sets the language the app starts in.
+- The administrator chooses the language on first login.
+- Every user can switch their own language afterwards.
+
+To add a language:
+
+1. Copy `frontend/src/i18n/locales/en.json` to `frontend/src/i18n/locales/<code>.json` and translate it.
+2. Add the language to `frontend/src/i18n/locales.ts`.
+3. Add an entry to `LOCALES` in `backend/src/lib/locales.ts`.
+4. Run `npm run i18n:check -w frontend`.
+
+## Development
 
 ```bash
 npm run dev:api   # http://localhost:3000
 npm run dev:web   # http://localhost:5173 (proxy /api -> 3000)
 ```
 
-El primer arranque crea el usuario administrador definido en `ADMIN_USERNAME` / `ADMIN_PASSWORD`.
+The first start creates the administrator user defined in `ADMIN_USERNAME` / `ADMIN_PASSWORD`.
 
-## Pruebas
+## Tests
 
 ```bash
-# Opcional: servidor SFTP de prueba para dispositivos SSH
+# Optional: test SFTP server for SSH devices
 podman build -t rommancer-test-sshd backend/test/sshd
 podman run -d --rm --name rommancer-sshd -p 127.0.0.1:2222:22 rommancer-test-sshd
 
 npm test
 ```
 
-Validación del hash de RetroAchievements contra la implementación oficial: `make -C tools/rahash-cli` descarga rcheevos y compila un CLI de referencia; `test/rahash.test.ts` compara ambos (se omite si no está compilado).
+RetroAchievements hash validation against the official implementation: `make -C tools/rahash-cli` downloads rcheevos and builds a reference CLI; `test/rahash.test.ts` compares both (skipped if it is not built).
 
-La prueba usa la base de datos `rommancer_test` (hay que crearla y dar permisos al usuario de MySQL), las roms de `roms/nes` y `roms/snes` y los DATs de `data/dats`. Todos los servicios externos (ScreenScraper, TheGamesDB, GitHub, Wikidata, RetroAchievements) se simulan con un servidor local. Cubre: autenticación e invitaciones, importación de DATs, escaneo con y sin cabecera, romhacks y traducciones, hash RetroAchievements, listas (compartir, colaborar, clonar, sublistas, exportar, importar, zip), dispositivos locales y SSH, subidas validadas por hash, scraping, saves (historial, restauración, conversión .srm/.sav y tarjetas PS1 .mcd/.gme/.vmp, tarjetas de memoria partida a partida (PS1 y GameCube), sincronización y reubicación), renombrado y ordenación, CHD de PS1, sets arcade FBNeo, RVZ, permisos, cambio de contraseña obligatorio, límite de login, CORS, destino final, subidas no verificadas, parches, agrupación por evidencias y revisión, obras de Wikidata, sincronización global con ETag, permanencia de datos, cuotas de ScreenScraper, TheGamesDB, saves por eventos con el script real y semilla acumulada.
+The test uses the `rommancer_test` database (create it and grant permissions to the MySQL user), the roms in `roms/nes` and `roms/snes` and the DATs in `data/dats`. All external services (ScreenScraper, TheGamesDB, GitHub, Wikidata, RetroAchievements) are simulated with a local server. It covers: authentication and invitations, DAT import, scanning with and without header, romhacks and translations, RetroAchievements hash, lists (sharing, collaborating, cloning, sublists, export, import, zip), local and SSH devices, hash-validated uploads, scraping, saves (history, restore, .srm/.sav conversion and PS1 .mcd/.gme/.vmp cards, per-game memory cards (PS1 and GameCube), sync and relocation), renaming and organizing, PS1 CHD, FBNeo arcade sets, RVZ, permissions, forced password change, login limit, CORS, final destination, unverified uploads, patches, grouping by evidence and review, Wikidata works, global sync with ETag, data permanence, ScreenScraper quotas, TheGamesDB, event-driven saves with the real script and accumulated seed.
 
 ```sql
 CREATE DATABASE rommancer_test; GRANT ALL ON rommancer_test.* TO 'rommancer'@'%';
 ```
 
-## Pila completa con Podman
+## Full stack with Podman
 
 ```bash
-ROMS_DIR=/ruta/a/mis/roms podman-compose --profile full up -d --build
+ROMS_DIR=/path/to/my/roms podman-compose --profile full up -d --build
 ```
 
-Web en http://localhost:8080. Las roms quedan montadas en `/roms` dentro del contenedor: las rutas se registran en Administración como `/roms/...`.
+Web at http://localhost:8080. The roms are mounted at `/roms` inside the container: register paths in Administration as `/roms/...`.
 
-## Servidor Linux con Quadlet
+## Linux server with Quadlet
 
 ```bash
 podman build -t rommancer-api -f backend/Containerfile .
 podman build -t rommancer-web -f frontend/Containerfile .
 mkdir -p ~/.config/rommancer ~/.config/containers/systemd ~/rommancer/data
-cp .env.example ~/.config/rommancer/rommancer.env   # DATABASE_URL=mysql://USUARIO:PASS@mysql:3306/rommancer
+cp .env.example ~/.config/rommancer/rommancer.env   # DATABASE_URL=mysql://USER:PASS@mysql:3306/rommancer
 cp deploy/quadlet/* ~/.config/containers/systemd/
 systemctl --user daemon-reload
 systemctl --user start rommancer-web
 ```
 
-Las roms se montan desde `~/roms` (editar `rommancer-api.container` para cambiarlo).
+The roms are mounted from `~/roms` (edit `rommancer-api.container` to change it).
 
-## Semilla de datos
+## Data seed
 
-La carpeta `seed/` contiene los DATs de todas las consolas soportadas (No-Intro, Redump, FBNeo y hacks de libretro-database), los hashes de RetroAchievements sincronizados y lo scrapeado (metadatos y multimedia).
+The `seed/` folder holds the DATs for every supported console (No-Intro, Redump, FBNeo and libretro-database hacks), the synced RetroAchievements hashes and everything scraped (metadata and media).
 
-- Al arrancar, la API aplica la semilla (`SEED_ON_START=true`): importa los DATs que falten, los hashes RA y rellena metadatos y carátulas de los juegos que no los tengan. Lo ya importado se omite, así que el arranque normal no tarda.
-- Tras importar DATs, sincronizar o scrapear, la semilla se actualiza sola (`SEED_AUTO_EXPORT=true`). También se puede exportar o aplicar a mano en Administración > Integraciones.
-- Contiene el total acumulado: nada obtenido de fuentes externas se borra aunque desaparezca del origen. Incluye además evidencias de agrupación (Retool, ScreenScraper), decisiones manuales, "no encontrados", el subconjunto local de Wikidata, parches (`seed/patches`), listas de Retool y la multimedia (`seed/media` imágenes, `seed/media-large` manuales y vídeos).
-- Con contenido de ScreenScraper la semilla es solo para uso privado: no publicar el repositorio con esos datos.
-- En contenedores se monta en `/seed` (`compose.yaml` y Quadlet). Para un despliegue nuevo basta con copiar la carpeta.
+- On startup the API applies the seed (`SEED_ON_START=true`): it imports the DATs that are missing and the RA hashes, and fills in metadata and covers for games that lack them. Anything already imported is skipped, so a normal start is quick.
+- After importing DATs, syncing or scraping, the seed updates itself (`SEED_AUTO_EXPORT=true`). It can also be exported or applied by hand in Administration > Integrations.
+- It holds the accumulated total: nothing obtained from external sources is deleted even if it disappears from the origin. It also includes grouping evidence (Retool, ScreenScraper), manual decisions, "not found" entries, the local Wikidata subset, patches (`seed/patches`), Retool lists and the media (`seed/media` images, `seed/media-large` manuals and videos).
+- With ScreenScraper content the seed is for private use only: do not publish the repository with that data.
+- In containers it is mounted at `/seed` (`compose.yaml` and Quadlet). For a new deployment, just copy the folder.
 
-## Uso
+## Usage
 
-1. Administración > Bases de datos: los DATs de todas las consolas se cargan desde la semilla. La sincronización global (semanal) comprueba libretro-database, Retool, RetroAchievements y Wikidata y solo descarga lo cambiado; se puede forzar por fuente y por sistema.
-2. Administración > Rutas: registrar las carpetas de roms y escanear. Se detecta el sistema por carpeta o extensión. Cada ruta puede ser destino de roms nuevas (subidas, parches) de uno o varios sistemas; si no hay destino se usa la predeterminada o `DATA_DIR/library`.
-3. Juegos / Faltantes: ver qué se tiene y qué falta. Añadir juegos, roms o romhacks a listas.
-4. Listas: compartir, crear sublistas con alternativas por región, idioma o compatibilidad RetroAchievements, descargar en zip o enviar a un dispositivo.
-5. Dispositivos: registrar consola + firmware (plantillas para Knulli, Batocera, ROCKNIX, muOS, ArkOS, NextUI, Onion, Android, RetroArch) y su ruta local o SSH. Los que ejecutan scripts de eventos (ES-DE en Android y Linux, Batocera, Knulli, ROCKNIX) se dan de alta como "agente": Rommancer genera los scripts con un token propio; al iniciar un juego bajan el save adaptado y al cerrarlo lo suben. Si cambian el servidor y el dispositivo a la vez se guardan ambas versiones y se avisa. Las SD montadas en el servidor se sincronizan al conectarse; el resto, a mano.
-6. Subir roms: con permiso, las que coinciden por hash con la base de datos o con RetroAchievements; con otro permiso, roms no verificadas (homebrew, hacks, traducciones), que no cuentan en los porcentajes y pasan a verificadas si un DAT posterior las incluye.
-7. Permisos por usuario en Administración > Usuarios (también en invitaciones). Por defecto: ver colección, listas, saves y multimedia de sus listas con su propia cuenta.
-8. Revisión de agrupaciones: conflictos entre fuentes y enlaces dudosos con Wikidata.
+1. Administration > Databases: the DATs for every console are loaded from the seed. The global (weekly) sync checks libretro-database, Retool, RetroAchievements and Wikidata and only downloads what changed; it can be forced per source and per system.
+2. Administration > Paths: register the rom folders and scan. The system is detected by folder or extension. Each path can be the destination for new roms (uploads, patches) of one or several systems; with no destination, the default one or `DATA_DIR/library` is used.
+3. Games / Missing: see what you have and what you lack. Add games, roms or romhacks to lists.
+4. Lists: share, create sublists with alternatives by region, language or RetroAchievements compatibility, download as zip or send to a device.
+5. Devices: register console + firmware (templates for Knulli, Batocera, ROCKNIX, muOS, ArkOS, NextUI, Onion, Android, RetroArch) and their local or SSH path. Those that run event scripts (ES-DE on Android and Linux, Batocera, Knulli, ROCKNIX) are registered as "agent": Rommancer generates the scripts with their own token; when a game starts they download the adapted save and when it closes they upload it. If the server and the device both change, both versions are kept and a warning is shown. SD cards mounted on the server sync when they connect; the rest, by hand.
+6. Uploading roms: with permission, those that match the database or RetroAchievements by hash; with another permission, unverified roms (homebrew, hacks, translations), which do not count in the percentages and become verified if a later DAT includes them.
+7. Per-user permissions in Administration > Users (also in invitations). By default: view the collection, lists, saves and media of their lists with their own account.
+8. Grouping review: conflicts between sources and doubtful Wikidata links.
 
-## Limitaciones conocidas
+## Known limitations
 
-- RVZ/WIA se leen con un port propio del código de Dolphin (`backend/src/lib/rvz.ts`): se reconstruye la ISO original, incluido el cifrado y los hashes de las particiones Wii, sin necesidad de `dolphin-tool`.
-- RVZ/WIA: se soportan las compresiones Zstandard y sin comprimir (RVZ) y PURGE (WIA). Los WIA con bzip2/LZMA no se leen.
-- WBFS y CISO de GameCube no conservan la imagen original: se identifican por id de disco y revisión y quedan como no verificados. CSO/ZSO sí se verifican contra Redump.
-- Daijishō no tiene eventos de juego documentados: sus dispositivos se sincronizan a mano.
-- Tarjetas de memoria: PS1 y GameCube (Dolphin, carpetas GCI e imágenes `.raw`); PS2 y PSP vendrán después. La app de Android sube sus tarjetas de PS1 pero no las escribe, porque no puede saber si hay un emulador abierto. Las partidas de Dolphin para Android (archivos `.gci`) sí se sincronizan en los dos sentidos, tras darle acceso a la carpeta de Dolphin desde el menú de la app. Las de Dolphin de escritorio todavía no se buscan.
-- Los savestates no se convierten entre emuladores (solo se sincronizan entre dispositivos con el mismo emulador). Cada uno guarda la versión del core que lo hizo y se avisa si otra consola tiene otra; las capturas solo llegan de RetroArch y NextUI.
-- PS3 y Xbox 360 quedan fuera.
+- RVZ/WIA are read with a port of Dolphin's code (`backend/src/lib/rvz.ts`): the original ISO is rebuilt, including the encryption and the hashes of Wii partitions, without needing `dolphin-tool`.
+- RVZ/WIA: Zstandard and uncompressed (RVZ) and PURGE (WIA) compression are supported. WIA files with bzip2/LZMA cannot be read.
+- GameCube WBFS and CISO do not keep the original image: they are identified by disc id and revision and stay unverified. CSO/ZSO are verified against Redump.
+- Daijishō has no documented game events: its devices sync by hand.
+- Memory cards: PS1 and GameCube (Dolphin, GCI folders and `.raw` images); PS2 and PSP will come later. The Android app uploads its PS1 cards but does not write them, because it cannot know whether an emulator is open. Dolphin saves for Android (`.gci` files) do sync both ways, once you give it access to the Dolphin folder from the app menu. Desktop Dolphin's are not searched for yet.
+- Savestates are not converted between emulators (they only sync between devices with the same emulator). Each one stores the version of the core that made it, and a warning is shown if another console has a different one; screenshots only come from RetroArch and NextUI.
+- PS3 and Xbox 360 are out of scope.

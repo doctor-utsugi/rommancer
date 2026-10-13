@@ -55,7 +55,7 @@ enum Visibility {
 enum ConnType {
   LOCAL
   SSH
-  // El dispositivo ejecuta scripts de eventos (ES-DE, EmulationStation) y habla con la API
+  // The device runs event scripts (ES-DE, EmulationStation) and talks to the API
   AGENT
 }
 
@@ -86,8 +86,8 @@ model User {
   email              String    @unique @db.VarChar(191)
   passwordHash       String
   role               Role      @default(USER)
-  locale             String    @default("es") @db.VarChar(8)
-  // Credenciales externas cifradas (AES-256-GCM)
+  locale             String    @default("en") @db.VarChar(8)
+  // Encrypted external credentials (AES-256-GCM)
   ssUser             String?   @db.Text
   ssPassword         String?   @db.Text
   raUser             String?   @db.Text
@@ -99,7 +99,7 @@ model User {
   raProfile          Json?
   raProgressAt       DateTime?
   tgdbApiKey         String?   @db.Text
-  // Lista de permisos (ver lib/permissions.ts). El admin los tiene todos.
+  // Permission list (see lib/permissions.ts). Admins have them all.
   permissions        Json?
   mustChangePassword Boolean   @default(false)
   createdAt          DateTime  @default(now())
@@ -150,7 +150,7 @@ model System {
   slug         String @unique @db.VarChar(32)
   name         String @db.VarChar(128)
   manufacturer String @db.VarChar(64)
-  // Nombre usado por No-Intro/Redump/libretro, p.ej. "Nintendo - Nintendo Entertainment System"
+  // Name used by No-Intro/Redump/libretro, e.g. "Nintendo - Nintendo Entertainment System"
   datName      String @unique @db.VarChar(191)
   datAliases   Json?
   extensions   Json
@@ -175,9 +175,9 @@ model DatSource {
   name       String    @db.VarChar(191)
   version    String?   @db.VarChar(64)
   fileSha1   String    @db.VarChar(40)
-  // Nombre del fichero en DATA_DIR/dats o SEED_DIR/dats
+  // File name in DATA_DIR/dats or SEED_DIR/dats
   fileName   String?   @db.VarChar(255)
-  // Mayor prioridad: fuente principal de los nombres y datos (No-Intro oficial sobre copias de libretro)
+  // Highest priority: main source of names and data (official No-Intro over libretro copies)
   priority   Int       @default(0)
   importedAt DateTime  @default(now())
   romCount   Int       @default(0)
@@ -201,12 +201,12 @@ model Game {
   description     String?    @db.Text
   ssGameId        Int?
   tgdbGameId      Int?
-  // Saga segun libretro (se usa si Wikidata no la da)
+  // Franchise according to libretro (used when Wikidata gives none)
   franchiseName   String?    @db.VarChar(255)
   scrapedAt       DateTime?
-  // Procedencia de cada campo: { campo: fuente }. Prioridad manual > screenscraper > thegamesdb > libretro
+  // Provenance of each field: { field: source }. Priority manual > screenscraper > thegamesdb > libretro
   metaSources     Json?
-  // Agrupacion: obra multiplataforma, elemento de Wikidata y confianza de la agrupacion regional
+  // Grouping: cross-platform work, Wikidata item and confidence of the regional grouping
   workId          Int?
   wikidataId      String?    @db.VarChar(16)
   groupConfidence String     @default("high") @db.VarChar(8)
@@ -235,17 +235,17 @@ model Rom {
   revision          String?       @db.VarChar(32)
   flags             Json
   isBios            Boolean       @default(false)
-  // Hash RA precalculado a partir del DAT cuando el algoritmo lo permite
+  // RA hash precomputed from the DAT when the algorithm allows it
   raHash            String?       @db.Char(32)
   raGameId          Int?
   serial            String?       @db.VarChar(64)
-  // Titulo original (p.ej. japones) segun Retool
+  // Original title (e.g. Japanese) according to Retool
   localTitle        String?       @db.VarChar(255)
-  // Descripcion del DAT (en arcade es el titulo; el nombre es el del set)
+  // DAT description (for arcade it is the title; the name is the set's)
   description       String?       @db.VarChar(255)
-  // Padre segun No-Intro Parent/Clone
+  // Parent according to No-Intro Parent/Clone
   parentName        String?       @db.VarChar(255)
-  // La fuente ya no la contiene; se conserva (datos permanentes)
+  // The source no longer contains it; kept (permanent data)
   removedFromSource Boolean       @default(false)
   checkedAt         DateTime?
   createdById       Int?
@@ -294,7 +294,7 @@ model RomHack {
   datSourceId       Int?
   type              HackType   @default(HACK)
   title             String     @db.VarChar(255)
-  // Nombre corto del hack ("Spec II"); version es la del hack, no la del juego
+  // Short name of the hack ("Spec II"); version is the hack's, not the game's
   hackName          String?    @db.VarChar(255)
   author            String?    @db.VarChar(255)
   version           String?    @db.VarChar(64)
@@ -305,9 +305,9 @@ model RomHack {
   crc32             String?    @db.Char(8)
   md5               String?    @db.Char(32)
   sha1              String?    @db.Char(40)
-  // Hash del contenido sin cabecera (NES, SNES...), para reconocer el fichero con o sin ella
+  // Hash of the content without header (NES, SNES...), to recognise the file with or without it
   headerlessSha1    String?    @db.Char(40)
-  // Como se enlazo con su rom base: dat | patch | content | header | manual | title
+  // How it was linked to its base rom: dat | patch | content | header | manual | title
   baseEvidence      String?    @db.VarChar(16)
   removedFromSource Boolean    @default(false)
   createdAt         DateTime   @default(now())
@@ -327,12 +327,12 @@ model RomPath {
   id              Int       @id @default(autoincrement())
   label           String    @db.VarChar(128)
   path            String    @unique @db.VarChar(700)
-  // Si se fija, todo lo escaneado se asume de ese sistema; si no, se deduce por carpeta/extension
+  // If set, everything scanned is assumed to be of that system; otherwise it is inferred from folder/extension
   systemId        Int?
-  // Destino de roms nuevas (subidas, parches): sistemas (slugs) que recibe y esquema de carpetas
+  // Destination for new roms (uploads, patches): systems (slugs) it receives and folder scheme
   targetSystems   Json?
   isDefaultTarget Boolean   @default(false)
-  // system | flat | <slug de firmware>
+  // system | flat | <firmware slug>
   targetScheme    String    @default("system") @db.VarChar(32)
   readOnly        Boolean   @default(false)
   lastScanAt      DateTime?
@@ -370,14 +370,14 @@ model RomFileGone {
 model RomFile {
   id             Int         @id @default(autoincrement())
   romPathId      Int
-  // sha1(relativePath + "\0" + archiveEntry) para indice unico
+  // sha1(relativePath + "\0" + archiveEntry) for a unique index
   pathKey        String      @db.Char(40)
   relativePath   String      @db.VarChar(1024)
   archiveEntry   String?     @db.VarChar(512)
   size           BigInt
-  // Tamano y fecha del fichero en disco (deteccion de cambios; size es el del contenido)
+  // Size and date of the file on disk (change detection; size is the content's)
   fileSize       BigInt      @default(0)
-  // sha1(tamano + primer MiB + ultimo MiB): reutiliza hashes de ficheros movidos o renombrados
+  // sha1(size + first MiB + last MiB): reuses hashes of moved or renamed files
   quickHash      String?     @db.Char(40)
   mtimeMs        BigInt
   crc32          String      @db.Char(8)
@@ -392,10 +392,10 @@ model RomFile {
   romPartId      Int?
   romHackId      Int?
   uploadedById   Int?
-  // Formato contenedor (rvz, wbfs, cso...) e id de disco si aplica
+  // Container format (rvz, wbfs, cso...) and disc id if applicable
   container      String?     @db.VarChar(8)
   discId         String?     @db.VarChar(16)
-  // Ya evaluado como posible romhack por contenido
+  // Already evaluated as a possible romhack by content
   hackCheckedAt  DateTime?
   scannedAt      DateTime    @default(now())
   romPath        RomPath     @relation(fields: [romPathId], references: [id], onDelete: Cascade)
@@ -456,7 +456,7 @@ model ListItem {
   hackId   Int?
   workId   Int?
   unknownId Int?
-  // Clave unica: r<id> | h<id> | u<id> (game and work items are turned into one of their roms)
+  // Unique key: r<id> | h<id> | u<id> (game and work items are turned into one of their roms)
   itemKey  String   @db.VarChar(24)
   position Int      @default(0)
   note     String?  @db.VarChar(512)
@@ -514,14 +514,14 @@ model Firmware {
   id          Int      @id @default(autoincrement())
   slug        String   @unique @db.VarChar(32)
   name        String   @db.VarChar(128)
-  // Rutas relativas a la raiz del dispositivo
+  // Paths relative to the device root
   romsRoot    String   @db.VarChar(255)
   savesRoot   String   @db.VarChar(255)
   statesRoot  String   @db.VarChar(255)
   biosRoot    String   @db.VarChar(255)
   // { systemSlug: { folder, emulator } }
   systemMap   Json
-  // flat: savesRoot/<rom>.srm | system: savesRoot/<folder>/ | core: savesRoot/<core>/ | rom: junto a la rom
+  // flat: savesRoot/<rom>.srm | system: savesRoot/<folder>/ | core: savesRoot/<core>/ | rom: next to the rom
   savesLayout String   @default("flat") @db.VarChar(16)
   devices     Device[]
 }
@@ -533,19 +533,19 @@ model Device {
   consoleId       Int
   firmwareId      Int
   connType        ConnType
-  // Raiz del dispositivo: path local (SD montada) o path remoto via SSH
+  // Device root: local path (mounted SD) or remote path over SSH
   rootPath        String                @db.VarChar(512)
   sshHost         String?               @db.VarChar(255)
   sshPort         Int?                  @default(22)
   sshUser         String?               @db.VarChar(64)
-  // Cifrado
+  // Encrypted
   sshPassword     String?               @db.Text
   sshKey          String?               @db.Text
-  // Sobrescribe campos de Firmware: { romsRoot, savesRoot, statesRoot, systemMap }
+  // Overrides Firmware fields: { romsRoot, savesRoot, statesRoot, systemMap }
   overrides       Json?
   syncSaves       Boolean               @default(false)
   lastSyncAt      DateTime?
-  // Token para scripts del dispositivo (sha256); null = sin token
+  // Token for the device's scripts (sha256); null = no token
   tokenHash       String?               @unique @db.Char(64)
   tokenCreatedAt  DateTime?
   lastSeenAt      DateTime?
@@ -629,9 +629,9 @@ model Emulator {
   id         Int     @id @default(autoincrement())
   slug       String  @unique @db.VarChar(64)
   name       String  @db.VarChar(128)
-  // Core de RetroArch si aplica
+  // RetroArch core if any
   core       String? @db.VarChar(64)
-  // Formato logico de save: raw | ps1card
+  // Logical save format: raw | ps1card
   saveFormat String  @default("raw") @db.VarChar(16)
   saveExt    String  @db.VarChar(16)
   stateExt   String? @db.VarChar(16)
@@ -647,7 +647,7 @@ model Save {
   emulatorId       Int
   kind             SaveKind
   slot             Int               @default(0)
-  // Nombre base del fichero (sin extension) tal y como se encontro; ENTRY: the entry's name in the card's directory
+  // Base file name (no extension) as found; ENTRY: the entry's name in the card's directory
   baseName         String            @db.VarChar(255)
   // ENTRY: the user's memory card it belongs to (slot holds the same id, so the key above stays unique per card)
   cardId           Int?
@@ -752,7 +752,7 @@ model SaveVersion {
   path           String   @db.VarChar(512)
   size           Int
   sha1           String   @db.Char(40)
-  // mtime del fichero en origen
+  // mtime of the source file
   fileMtime      DateTime
   sourceDeviceId Int?
   note           String?  @db.VarChar(255)
@@ -802,7 +802,7 @@ model Job {
   message    String?   @db.VarChar(512)
   log        String?   @db.MediumText
   result     Json?
-  // No ejecutar antes de esta fecha (reanudaciones por cuota)
+  // Do not run before this date (quota resumptions)
   runAfter   DateTime?
   createdAt  DateTime  @default(now())
   startedAt  DateTime?
@@ -830,10 +830,10 @@ model Franchise {
   works      Work[]
 }
 
-// Evidencia de agrupacion: roms (o juegos) con la misma clave pertenecen al mismo grupo
+// Grouping evidence: roms (or games) with the same key belong to the same group
 model GroupingEvidence {
   id         Int      @id @default(autoincrement())
-  // rom-game: agrupa roms en juegos; game-work: enlaza juegos con elementos de Wikidata
+  // rom-game: groups roms into games; game-work: links games to Wikidata items
   kind       String   @db.VarChar(12)
   romId      Int?
   gameId     Int?
@@ -850,7 +850,7 @@ model GroupingEvidence {
   @@index([gameId])
 }
 
-// Decisiones manuales que el resolvedor respeta
+// Manual decisions the resolver honours
 model GroupingRule {
   id         Int      @id @default(autoincrement())
   kind       String   @db.VarChar(12)
@@ -882,7 +882,7 @@ model ReviewItem {
   @@index([status, kind])
 }
 
-// Subconjunto local de Wikidata: videojuegos de las plataformas soportadas
+// Local subset of Wikidata: video games of the supported platforms
 model WikidataItem {
   qid          String    @id @db.VarChar(16)
   label        String    @db.VarChar(255)
@@ -906,7 +906,7 @@ model RomPatch {
   id          Int      @id @default(autoincrement())
   hackId      Int
   format      String   @db.VarChar(4)
-  // Ruta relativa en DATA_DIR/patches
+  // Path relative to DATA_DIR/patches
   path        String   @db.VarChar(255)
   size        Int
   sha1        String   @unique @db.Char(40)
@@ -919,7 +919,7 @@ model RomPatch {
   hack        RomHack  @relation(fields: [hackId], references: [id], onDelete: Cascade)
 }
 
-// Estado conocido de cada fuente externa (ETag, version, fechas)
+// Known state of each external source (ETag, version, dates)
 model SourceState {
   key          String    @id @db.VarChar(191)
   etag         String?   @db.VarChar(255)
@@ -929,7 +929,7 @@ model SourceState {
   changedAt    DateTime?
 }
 
-// "No encontrado" en un servicio externo, para no repetir la consulta en meses
+// "Not found" in an external service, so the lookup is not repeated for months
 model ScrapeMiss {
   id     Int      @id @default(autoincrement())
   gameId Int
@@ -939,7 +939,7 @@ model ScrapeMiss {
   @@unique([gameId, source])
 }
 
-// Cuota diaria por credencial de ScreenScraper/TheGamesDB
+// Daily quota per ScreenScraper/TheGamesDB credential
 model ScrapeQuota {
   key         String    @id @db.VarChar(64)
   day         String    @db.VarChar(10)
@@ -952,12 +952,12 @@ model ScrapeQuota {
   updatedAt   DateTime  @updatedAt
 }
 
-// Ultima version de un save sincronizada con cada dispositivo (base para detectar conflictos)
+// Last version of a save synced with each device (basis for detecting conflicts)
 model SaveDeviceState {
   saveId     Int
   deviceId   Int
   versionId  Int?
-  // sha1 del fichero tal como quedo en el dispositivo (ya convertido)
+  // sha1 of the file as it ended up on the device (already converted)
   deviceSha1 String?  @db.Char(40)
   syncedAt   DateTime @default(now())
   save       Save     @relation(fields: [saveId], references: [id], onDelete: Cascade)
@@ -980,8 +980,8 @@ model SaveConflict {
   device          Device    @relation(fields: [deviceId], references: [id], onDelete: Cascade)
 }
 
-// Huella del contenido de una rom que se tiene: crc32 de bloques de 1 KiB (sin cabecera), muestreados
-// por contenido. Sirve para encontrar la rom base de un romhack por parecido.
+// Fingerprint of the content of a rom we hold: crc32 of 1 KiB blocks (no header), sampled
+// by content. Used to find the base rom of a romhack by similarity.
 model RomSignature {
   romId     Int      @id
   fileSha1  String   @db.Char(40)

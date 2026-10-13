@@ -1,6 +1,6 @@
 /**
- * Aplicacion de parches de romhacks: IPS, BPS (beat) y UPS. Sin dependencias externas.
- * BPS y UPS llevan crc32 de origen, destino y del propio parche: se validan los tres.
+ * Romhack patch application: IPS, BPS (beat) and UPS. No external dependencies.
+ * BPS and UPS carry crc32s of source, target and the patch itself: all three are checked.
  */
 import zlib from 'node:zlib';
 
@@ -28,7 +28,7 @@ export function detectPatchFormat(patch: Buffer): PatchFormat | null {
   return null;
 }
 
-/** Lector de enteros de longitud variable de beat (BPS) y UPS. */
+/** Reader of beat's variable-length integers (BPS and UPS). */
 class Reader {
   pos: number;
   constructor(
@@ -105,7 +105,7 @@ function applyIps(source: Buffer, patch: Buffer): Buffer {
       patch.copy(out, offset, pos, pos + size);
       pos += size;
     } else {
-      // RLE: repeticiones + valor
+      // RLE: repeat count + value
       if (pos + 3 > patch.length) throw new PatchError('Unexpected end of IPS patch');
       const count = patch.readUInt16BE(pos);
       const value = patch[pos + 2];
@@ -114,7 +114,7 @@ function applyIps(source: Buffer, patch: Buffer): Buffer {
       out.fill(value, offset, offset + count);
     }
   }
-  // Extension opcional: tamano final (truncado)
+  // Optional extension: final size (truncation)
   if (pos + 3 <= patch.length) {
     const size = patch.readUIntBE(pos, 3);
     if (size < out.length) out = out.subarray(0, size);
@@ -158,7 +158,7 @@ function applyBps(source: Buffer, patch: Buffer): Buffer {
       } else {
         tgtRel += delta;
         if (tgtRel < 0 || tgtRel >= outPos + len) throw new PatchError('BPS target copy out of range');
-        // Byte a byte: la copia puede solaparse con lo que se esta escribiendo
+        // Byte-by-byte: the copy may overlap what is being written
         for (let i = 0; i < len; i++) out[outPos + i] = out[tgtRel++];
       }
     }
@@ -216,9 +216,9 @@ function varint(n: number, out: number[]) {
 }
 
 /**
- * Crea un parche BPS que convierte `source` en `target`. Codificacion sencilla: los tramos que
- * coinciden en la misma posicion se copian del origen (SourceRead) y el resto va literal (TargetRead).
- * Suficiente para hacks y traducciones, que cambian zonas concretas de la rom.
+ * Builds a BPS patch turning `source` into `target`. Simple encoding: runs that
+ * match at the same position are copied from the source (SourceRead), the rest goes literal (TargetRead).
+ * Enough for hacks and translations, which change specific areas of the rom.
  */
 export function createBps(source: Buffer, target: Buffer): Buffer {
   const out: number[] = [];
@@ -228,7 +228,7 @@ export function createBps(source: Buffer, target: Buffer): Buffer {
   varint(0, out);
   const chunks: Buffer[] = [head, Buffer.from(out)];
   out.length = 0;
-  // Un tramo igual corto no compensa: se exige un minimo para cortar el literal
+  // A short matching run does not pay off: a minimum is required to break the literal
   const MIN_RUN = 8;
   let pos = 0;
   const emit = (cmd: number, len: number, literal?: Buffer) => {
@@ -245,7 +245,7 @@ export function createBps(source: Buffer, target: Buffer): Buffer {
       pos += same;
       continue;
     }
-    // Literal hasta el siguiente tramo igual suficientemente largo
+    // Literal until the next matching run that is long enough
     let end = pos + Math.max(same, 1);
     while (end < target.length) {
       let run = 0;

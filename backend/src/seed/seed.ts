@@ -3,8 +3,9 @@ import { env } from '../config/env.js';
 import { prisma } from '../lib/prisma.js';
 import { consoles, emulators, firmwares, systems } from './data.js';
 import { PERMISSIONS } from '../lib/permissions.js';
+import { defaultLocale } from '../lib/locales.js';
 
-// Idempotente: crea o actualiza datos de referencia. No toca datos de usuario.
+// Idempotent: creates or updates reference data. Leaves user data alone.
 export async function seed() {
   for (const [i, s] of systems.entries()) {
     const data = {
@@ -41,11 +42,12 @@ export async function seed() {
         passwordHash: await bcrypt.hash(env.admin.password, 10),
         permissions: [...PERMISSIONS],
         mustChangePassword: true,
+        locale: await defaultLocale(),
       },
     });
     console.log(`Admin user "${env.admin.username}" created (password change required on first login)`);
   }
-  // Administradores que siguen con la contrasena inicial de .env o con una debil conocida
+  // Admins still on the initial .env password or a known weak one
   if (env.admin.password) {
     for (const u of await prisma.user.findMany({ where: { role: 'ADMIN', mustChangePassword: false } })) {
       if (await bcrypt.compare(env.admin.password, u.passwordHash)) await prisma.user.update({ where: { id: u.id }, data: { mustChangePassword: true } });

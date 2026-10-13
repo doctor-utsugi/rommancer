@@ -1,4 +1,4 @@
-// DATs publicos de libretro-database para todos los sistemas soportados
+// Public libretro-database DATs for every supported system
 import { env } from '../../config/env.js';
 
 const BASE = `${env.github.rawUrl}/libretro/libretro-database/master/metadat`;
@@ -126,14 +126,14 @@ const url = (dir: string, name: string) => `${BASE}/${dir}/${encodeURIComponent(
 export const DAT_PRESETS: DatPreset[] = [
   ...NOINTRO.map(([system, n]) => ({ id: `nointro-${system}`, system, type: 'NOINTRO' as const, label: `No-Intro · ${n}`, url: url('no-intro', n) })),
   ...REDUMP.map(([system, n]) => ({ id: `redump-${system}`, system, type: 'REDUMP' as const, label: `Redump · ${n}`, url: url('redump', n) })),
-  // DAT oficial del equipo de FBNeo (incluye clones, a diferencia de la copia de libretro-database)
+  // Official FBNeo team DAT (includes clones, unlike the libretro-database copy)
   {
     id: 'fbneo',
     system: 'fbneo',
     type: 'FBNEO',
-    label: 'FBNeo · Arcade (oficial)',
+    label: 'FBNeo · Arcade (official)',
     url: `${env.github.rawUrl}/libretro/FBNeo/master/dats/${encodeURIComponent('FinalBurn Neo (ClrMame Pro XML, Arcade only)')}.dat`,
   },
-  // Los hacks al final: se enlazan con las roms base ya importadas
+  // Hacks last: they link to the base roms already imported
   ...HACKS.map(([system, n]) => ({ id: `hacks-${system}`, system, type: 'HACKS' as const, label: `Hacks · ${n}`, url: url('hacks', n) })),
 ];

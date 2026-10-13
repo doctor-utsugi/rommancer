@@ -99,7 +99,7 @@ listsRouter.get('/:id', async (req, res) => {
   const serverCopy = await unknownFilesOnServer(full.items.flatMap((i) => (i.unknown ? [i.unknown] : [])));
   const romIds = full.items.flatMap((i) => (i.rom ? [i.rom.id] : (i.game?.roms.map((r) => r.id) ?? i.work?.games.flatMap((g) => g.roms.map((r) => r.id)) ?? [])));
   const owned = await ownedRomIds({ romIds, include: 'any' });
-  // Multimedia pendiente: juegos de la lista sin portada con una tarea de scraping en cola
+  // Pending media: list games without a cover that have a queued scraping task
   const pendingScrape = await prisma.job.findMany({ where: { type: 'scrape', status: { in: ['PENDING', 'RUNNING'] }, userId: u.id }, select: { params: true } });
   const pendingGames = new Set(pendingScrape.flatMap((j) => ((j.params as { gameIds?: number[] }).gameIds ?? [])));
   const pref = { ...((full.derivedFilter as RomPreference | null) ?? {}) };
@@ -154,7 +154,7 @@ listsRouter.patch('/:id', async (req, res) => {
   const u = me(req);
   const list = await loadList(intParam(req), u, true);
   const body = listBody.partial().parse(req.body);
-  // Solo el propietario cambia visibilidad y modo colaborativo
+  // Only the owner changes visibility and collaborative mode
   if (list.ownerId !== u.id && (body.visibility || body.isCollaborative !== undefined)) throw badRequest('Only the owner can change sharing');
   if (list.kind === 'favorites' && body.name && body.name !== list.name) throw badRequest('FAVORITES_FIXED');
   res.json(await prisma.list.update({ where: { id: list.id }, data: body }));
@@ -197,7 +197,7 @@ async function addItems(listId: number, given: z.infer<typeof itemSchema>[], use
   }));
   const r = await prisma.listItem.createMany({ data, skipDuplicates: true });
   await prisma.list.update({ where: { id: listId }, data: { updatedAt: new Date() } });
-  // Multimedia de lo anadido, con la cuenta del propio usuario
+  // Media for what was added, with the user's own account
   if (user && r.count) {
     const gameIds = new Set<number>(items.map((i) => i.gameId).filter((x): x is number => !!x));
     const romIds = items.map((i) => i.romId).filter((x): x is number => !!x);
@@ -511,7 +511,7 @@ listsRouter.get('/:id/files', requirePerm('roms.download'), async (req, res) => 
   res.json(await resolveListFiles(list.id, pref));
 });
 
-// Descarga zip de las roms de la lista, organizadas por carpeta de sistema o de firmware
+// Zip download of the list's roms, organized by system or firmware folder
 listsRouter.get('/:id/download', requirePerm('roms.download'), async (req, res) => {
   const list = await loadList(intParam(req), me(req));
   const fwSlug = typeof req.query.firmware === 'string' ? req.query.firmware : null;

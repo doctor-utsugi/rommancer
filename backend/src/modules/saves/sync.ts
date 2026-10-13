@@ -78,7 +78,7 @@ async function takeThumb(sink: Sink, statePath: string, emu: Emulator, savesLayo
   }
 }
 
-/** Nombre base de la rom en el dispositivo (para que el emulador encuentre el save). */
+/** Base name of the rom on the device (so the emulator finds the save). */
 /** withExt: NextUI names saves after the rom's whole file name, so the match keeps its extension */
 async function deviceRomBase(sink: Sink, romsDir: string, romName: string | null, fallback: string, cache: Map<string, string[]>, withExt = false): Promise<string | null> {
   if (!cache.has(romsDir)) cache.set(romsDir, (await sink.list(romsDir)).filter((e) => !e.isDir).map((e) => e.name));
@@ -91,7 +91,7 @@ async function deviceRomBase(sink: Sink, romsDir: string, romName: string | null
   return hit ? noExt(hit) : (romName ?? fallback);
 }
 
-/** Sincronizacion de saves con un dispositivo accesible por SD montada o SSH. */
+/** Save sync with a device reachable by mounted SD or SSH. */
 export async function syncDeviceSaves(deviceId: number, direction: 'pull' | 'push' | 'both', ctx?: JobContext) {
   const device = await prisma.device.findUniqueOrThrow({ where: { id: deviceId }, include: { firmware: true } });
   if (device.connType === 'AGENT') throw new Error('This device syncs by itself with its event scripts');
@@ -132,7 +132,7 @@ export async function syncDeviceSaves(deviceId: number, direction: 'pull' | 'pus
               continue;
             }
             if (!parsed) continue;
-            // En carpetas compartidas por varios sistemas se decide por la rom
+            // In folders shared by several systems the rom decides
             if (layout.savesLayout === 'flat') {
               const ident = await identifyRom(parsed.baseName);
               if (ident && ident.systemId !== systemId) continue;
@@ -229,13 +229,13 @@ export async function syncDeviceSaves(deviceId: number, direction: 'pull' | 'pus
 registerJob('save-sync', async (ctx) => syncDeviceSaves(ctx.params.deviceId, ctx.params.direction ?? 'both', ctx));
 
 /**
- * SD montadas en el servidor: al aparecer la carpeta del dispositivo se sincroniza una vez.
- * Solo comprueba rutas locales; no hay sondeos por red.
+ * SD cards mounted on the server: when the device's folder appears it is synced once.
+ * Only local paths are checked; there is no network polling.
  */
 const present = new Map<number, boolean>();
 let watcher: NodeJS.Timeout | null = null;
 
-/** Comprueba que dispositivos locales han aparecido desde la ultima vez y encola su sincronizacion. */
+/** Checks which local devices appeared since the last time and queues their sync. */
 export async function checkLocalDevices() {
   const devices = await prisma.device.findMany({ where: { connType: 'LOCAL', syncSaves: true } });
   const queued: number[] = [];

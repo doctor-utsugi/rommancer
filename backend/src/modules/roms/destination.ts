@@ -43,7 +43,7 @@ export async function resolveDestination(system: System, size = 0): Promise<{ ro
     await fs.promises.mkdir(env.libraryDir, { recursive: true });
     const rp =
       (await prisma.romPath.findUnique({ where: { path: env.libraryDir } })) ??
-      (await registerIdentity(await prisma.romPath.create({ data: { label: 'Biblioteca', path: env.libraryDir, isDefaultTarget: true } })));
+      (await registerIdentity(await prisma.romPath.create({ data: { label: 'Library', path: env.libraryDir, isDefaultTarget: true } })));
     return { romPath: rp, dir: await schemeDir(rp, system), volume: await volumeKey(rp.path) };
   }
   const reasons: string[] = [];
@@ -86,7 +86,7 @@ export interface PlaceOptions {
   container?: string | null;
 }
 
-/** Copia (o escribe) un fichero en su destino final y lo registra como fichero escaneado. */
+/** Copies (or writes) a file to its final destination and registers it as a scanned file. */
 export async function placeFile(src: string | Buffer, opts: PlaceOptions) {
   const size = typeof src === 'string' ? (await fs.promises.stat(src)).size : src.length;
   const { romPath, dir, volume } = await resolveDestination(opts.system, size);
@@ -142,7 +142,7 @@ export async function placeFile(src: string | Buffer, opts: PlaceOptions) {
   return { file, rel, romPath };
 }
 
-/** DAT interno para roms subidas sin verificar en un sistema. */
+/** Internal DAT for roms uploaded unverified into a system. */
 export async function userDatSource(systemId: number) {
   const name = 'Rommancer (no verificado)';
   return (

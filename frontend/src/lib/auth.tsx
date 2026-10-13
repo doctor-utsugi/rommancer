@@ -1,6 +1,6 @@
 import { createContext, useContext, useEffect, useState, type ReactNode } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
-import i18n from '@/i18n'
+import i18n, { setLanguage } from '@/i18n'
 import { api, get, post, tokens } from './api'
 
 export interface Me {
@@ -46,7 +46,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     try {
       const me = await get<Me>('/users/me')
       setUser(me)
-      if (me.locale && me.locale !== i18n.language) await i18n.changeLanguage(me.locale)
+      if (me.locale && me.locale !== i18n.language) await setLanguage(me.locale)
     } catch {
       setUser(null)
     } finally {

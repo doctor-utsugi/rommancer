@@ -92,7 +92,7 @@ export async function chdInfo(file: string): Promise<ChdInfo> {
   };
 }
 
-/** Extrae un CHD a cue/bin (CD) o iso (DVD) en un directorio temporal. Devuelve la ruta del cue o del iso. */
+/** Extracts a CHD to cue/bin (CD) or iso (DVD) in a temp directory. Returns the cue or iso path. */
 export async function extractChd(file: string, dir: string, info: ChdInfo): Promise<string> {
   if (info.isCd) {
     const cue = path.join(dir, 'disc.cue');

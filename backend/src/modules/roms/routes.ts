@@ -152,7 +152,7 @@ collectionRouter.get('/games/:id', async (req, res) => {
   const ownedAny = await ownedRomIds({ romIds, include: 'any' });
   const raGames = await prisma.raGame.findMany({ where: { id: { in: g.roms.map((r) => r.raGameId).filter((x): x is number => !!x) } } });
   const progress = await progressFor(me(req).id, raGames.map((x) => x.id));
-  // La version solo se muestra si el juego tiene varias
+  // The version is shown only if the game has several
   const revisions = new Set(g.roms.map((r) => r.revision ?? ''));
   const uploaders = new Map((await prisma.user.findMany({ where: { id: { in: g.roms.map((r) => r.createdById).filter((x): x is number => !!x) } }, select: { id: true, username: true } })).map((u) => [u.id, u.username]));
   res.json({
@@ -217,7 +217,7 @@ collectionRouter.get('/franchises/:id', async (req, res) => {
     works: f.works.map((w) => ({
       ...w,
       games: w.games.map((g) => ({ id: g.id, title: g.title, system: g.system, owned: g.roms.some((r) => owned.has(r.id)) })),
-      // "Me falta en alguna plataforma"
+      // "Missing on some platform"
       missingPlatforms: w.games.filter((g) => !g.roms.some((r) => owned.has(r.id))).map((g) => g.system.slug),
     })),
   });
@@ -237,16 +237,16 @@ collectionRouter.patch('/games/:id', requireAdmin, async (req, res) => {
     .parse(req.body);
   const id = intParam(req);
   const { title, ...meta } = body;
-  // Edicion manual: prioridad maxima sobre cualquier fuente externa
+  // Manual edit: maximum priority over any external source
   await applyMeta(id, 'manual', { ...meta, ...(title ? { title } : {}) } as Parameters<typeof applyMeta>[2]);
-  // Vaciar un campo a mano tambien es una decision manual
+  // Clearing a field by hand is also a manual decision
   const cleared = Object.fromEntries(Object.entries(meta).filter(([, v]) => v === null));
   if (Object.keys(cleared).length) await prisma.game.update({ where: { id }, data: cleared });
   if (title) await prisma.game.update({ where: { id }, data: { title } });
   res.json(await prisma.game.findUniqueOrThrow({ where: { id } }));
 });
 
-// Une un juego con otro (p.ej. "Rockman" dentro de "Mega Man")
+// Merges a game into another (e.g. "Rockman" into "Mega Man")
 /**
  * Removes a game (or one rom of it) from the collection: its files on the server, its list entries
  * and, for hand-uploaded roms, their records. Catalogue (DAT) records stay, now as not owned, since the
@@ -293,7 +293,7 @@ collectionRouter.post('/games/:id/merge', requireAdmin, async (req, res) => {
   if (id === intoGameId) throw badRequest('Same game');
   const [from, into] = await Promise.all([prisma.game.findUniqueOrThrow({ where: { id } }), prisma.game.findUniqueOrThrow({ where: { id: intoGameId } })]);
   if (from.systemId !== into.systemId) throw badRequest('Different systems');
-  // Regla manual permanente para que el resolvedor no los vuelva a separar
+  // Permanent manual rule so the resolver does not split them again
   const a = await prisma.rom.findFirst({ where: { gameId: id }, orderBy: { id: 'asc' } });
   const b = await prisma.rom.findFirst({ where: { gameId: intoGameId }, orderBy: { id: 'asc' } });
   if (a && b) await addRomRule('same', [b.id, a.id], me(req).id);
@@ -301,7 +301,7 @@ collectionRouter.post('/games/:id/merge', requireAdmin, async (req, res) => {
   res.status(204).end();
 });
 
-// Separa roms de un juego: quedan marcadas como juego distinto del resto
+// Splits roms from a game: they are marked as a different game from the rest
 collectionRouter.post('/games/:id/split', requireAdmin, async (req, res) => {
   const { romIds } = z.object({ romIds: z.array(z.number().int()).min(1) }).parse(req.body);
   const id = intParam(req);
@@ -311,7 +311,7 @@ collectionRouter.post('/games/:id/split', requireAdmin, async (req, res) => {
   if (!moving.length || !staying.length) throw badRequest('Nothing to split');
   for (const m of moving) await addRomRule('different', [staying[0], m], me(req).id);
   for (let i = 1; i < moving.length; i++) await addRomRule('same', [moving[0], moving[i]], me(req).id);
-  // Las evidencias de union entre ambos lados quedan anuladas por las reglas
+  // Join evidence between both sides is voided by the rules
   res.json(await resolveRomGroups(game.systemId));
 });
 
@@ -366,7 +366,7 @@ collectionRouter.get('/missing', async (req, res) => {
   });
 });
 
-// Comprobacion previa de una rom por hash (subidas)
+// Pre-check of a rom by hash (uploads)
 collectionRouter.post('/roms/match', async (req, res) => {
   const h = z
     .object({
@@ -425,7 +425,7 @@ collectionRouter.get('/files', async (req, res) => {
   res.json({ total, page: q.page, pageSize: q.pageSize, items: items.map((i) => ({ ...i, uploadedBy: i.uploadedById ? uploaders.get(i.uploadedById) ?? null : null })) });
 });
 
-// Asociacion manual de un fichero desconocido a una rom: queda como no verificado
+// Manual association of an unknown file to a rom: stays unverified
 collectionRouter.post('/files/:id/link-rom', requireAdmin, async (req, res) => {
   const { romId } = z.object({ romId: z.number().int() }).parse(req.body);
   const f = await prisma.romFile.findUniqueOrThrow({ where: { id: intParam(req) } });
@@ -434,7 +434,7 @@ collectionRouter.post('/files/:id/link-rom', requireAdmin, async (req, res) => {
   res.json(await prisma.romFile.update({ where: { id: f.id }, data: { status: 'UNVERIFIED', romPartId: rom.parts[0].id, systemId: rom.game.systemId } }));
 });
 
-// Registra manualmente un fichero desconocido como romhack/traduccion de un juego
+// Manually registers an unknown file as a romhack/translation of a game
 collectionRouter.post('/files/:id/link-hack', requireAdmin, async (req, res) => {
   const body = z
     .object({
@@ -520,7 +520,7 @@ collectionRouter.delete('/hacks/:id', requireAdmin, async (req, res) => {
   res.status(204).end();
 });
 
-// Edicion manual de etiquetas de un romhack
+// Manual edit of a romhack's tags
 collectionRouter.patch('/hacks/:id', requireAdmin, async (req, res) => {
   const body = z
     .object({
@@ -537,7 +537,7 @@ collectionRouter.patch('/hacks/:id', requireAdmin, async (req, res) => {
   res.json(await prisma.romHack.update({ where: { id: intParam(req) }, data: { ...body, ...(body.baseRomId !== undefined ? { baseEvidence: 'manual' } : {}) } }));
 });
 
-// Parche de un romhack (IPS/BPS/UPS), subido por el admin
+// Romhack patch (IPS/BPS/UPS), uploaded by the admin
 collectionRouter.post('/hacks/:id/patches', requireAdmin, patchUpload.single('file'), async (req, res) => {
   if (!req.file) throw badRequest('Missing file');
   try {
@@ -549,7 +549,7 @@ collectionRouter.post('/hacks/:id/patches', requireAdmin, patchUpload.single('fi
   }
 });
 
-// Parche BPS generado desde el romhack que se tiene y su rom base
+// BPS patch generated from the romhack held and its base rom
 collectionRouter.post('/hacks/:id/make-patch', requireAdmin, async (req, res) => {
   res.status(201).json(await makePatch(intParam(req), me(req).id));
 });
@@ -567,14 +567,14 @@ export async function sendRomFile(res: import('express').Response, f: { relative
   else res.sendFile(abs);
 }
 
-// Descarga de un romhack: si solo hay parche y base, se genera en su destino final
+// Romhack download: if only patch and base exist, it is generated at its final destination
 collectionRouter.get('/hacks/:id/download', requirePerm('roms.download'), async (req, res) => {
   const f = await materializeHack(intParam(req), me(req).id);
   if (!f) throw notFound('Hack file');
   await sendRomFile(res, f, path.basename(f.archiveEntry ?? f.relativePath));
 });
 
-// Descarga de una rom de un solo fichero
+// Download of a single-file rom
 collectionRouter.get('/roms/:id/download', requirePerm('roms.download'), async (req, res) => {
   const part = await prisma.romPart.findFirst({ where: { romId: intParam(req) }, include: { files: { where: { status: { in: ['MATCHED', 'UNVERIFIED'] } }, include: { romPath: true } } } });
   const f = part?.files[0];

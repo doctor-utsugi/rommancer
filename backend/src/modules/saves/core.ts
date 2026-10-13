@@ -1,11 +1,11 @@
 /**
- * Sincronizacion de saves estilo Steam Cloud.
+ * Steam Cloud-style save sync.
  *
- * Para cada save y dispositivo se recuerda la ultima version sincronizada (base) y el sha1 del fichero
- * tal como quedo en el dispositivo. Asi se sabe que lado ha cambiado sin mirar relojes:
- *   - solo cambio el dispositivo -> se sube y pasa a ser la version actual
- *   - solo cambio el servidor    -> se baja, convertida al formato del emulador del dispositivo
- *   - cambiaron los dos          -> conflicto: se guardan ambas, el dispositivo conserva la suya y el usuario elige
+ * For each save and device the last synced version (base) and the sha1 of the file as it was left on the
+ * device are remembered. That tells which side changed without looking at clocks:
+ *   - only the device changed -> uploaded, becomes the current version
+ *   - only the server changed -> downloaded, converted to the device emulator's format
+ *   - both changed            -> conflict: both are kept, the device keeps its own and the user picks
  */
 import crypto from 'node:crypto';
 import path from 'node:path';
@@ -62,7 +62,7 @@ export function saveDirs(layout: DeviceLayout, slug: string, emu: Emulator, romR
   return { saves: sub(layout.savesRoot, layout.savesLayout), states: sub(layout.statesRoot, layout.statesLayout ?? layout.savesLayout), roms: path.posix.join(layout.romsRoot, folder) };
 }
 
-/** Nombre del fichero en el dispositivo para un save de un tipo y ranura. */
+/** File name on the device for a save of a kind and slot. */
 export function deviceFileName(base: string, emu: Emulator, kind: SaveKind, slot: number, minui = false) {
   if (kind === 'SAVE') return base + emu.saveExt;
   // minarch: base is the rom's whole file name; slots 0-7 by number, 9 the auto-resume one
@@ -96,9 +96,8 @@ export function coreVersionOf(device: Device, emu: Emulator): string | null {
 }
 
 /**
- * Save logico de un juego para un emulador: el del propio emulador o, si no existe, uno de formato
- * compatible de otro emulador (asi un save de SNES de Snes9x sirve en cualquier dispositivo).
- * Los savestates solo valen para el mismo emulador.
+ * Logical save of a game for an emulator: the emulator's own or, failing that, one in a compatible format
+ * from another emulator (so a Snes9x SNES save works on any device). Savestates only fit the same emulator.
  */
 /**
  * DEVICE_ID: the device the file is on. A save found by its game, not by its name, is not this file's when the
@@ -124,7 +123,7 @@ async function deviceHasRomNamed(deviceId: number, name: string) {
   return rows.some((r) => path.posix.basename(r.path).replace(/\.[^.]+$/, '') === name);
 }
 
-/** Contenido del save convertido al formato que espera el emulador del dispositivo. */
+/** The save's content converted to the format the device's emulator expects. */
 export async function contentFor(save: Save & { emulator: Emulator }, versionId: number, emu: Emulator) {
   const buf = await readVersion(versionId);
   if (save.kind === 'STATE' || save.emulator.saveFormat === emu.saveFormat) return buf;
@@ -142,7 +141,7 @@ export interface DeviceFileInfo {
   sha1: string;
 }
 
-/** Decide que hacer con un save en un dispositivo. */
+/** Decides what to do with a save on a device. */
 export async function decide(save: (Save & { emulator: Emulator }) | null, device: Device, emu: Emulator, deviceFile: DeviceFileInfo | null): Promise<Decision> {
   if (!save) return deviceFile ? { action: 'upload' } : { action: 'none' };
   const open = await prisma.saveConflict.findFirst({ where: { saveId: save.id, deviceId: device.id, resolvedAt: null } });
@@ -156,7 +155,7 @@ export async function decide(save: (Save & { emulator: Emulator }) | null, devic
   if (!deviceChanged && !serverChanged) return { action: 'none' };
   if (deviceChanged && !serverChanged) return { action: 'upload' };
   if (!deviceChanged && serverChanged) return { action: 'download', versionId: current };
-  // Los dos lados "cambiaron": si el contenido ya coincide solo se anota la base
+  // Both sides "changed": if the content already matches, only the base is recorded
   const serverContent = await contentFor(save, current, emu).catch(() => null);
   if (serverContent && sha1(serverContent) === deviceFile.sha1) return { action: 'adopt' };
   return { action: 'conflict' };
@@ -171,8 +170,8 @@ export async function setBase(saveId: number, deviceId: number, versionId: numbe
 }
 
 /**
- * Procesa un fichero recibido del dispositivo (subida al cerrar un juego o lectura por SD/SSH).
- * Devuelve el resultado para registro.
+ * Processes a file received from the device (upload on game close, or a read over SD/SSH).
+ * Returns the result for logging.
  */
 export async function receiveFromDevice(
   device: Device,
@@ -190,7 +189,7 @@ export async function receiveFromDevice(
   const save = await findLogicalSave(device.userId, emu, kind, slot, baseName, ident?.gameId ?? null, exactOnly, device.id);
   const deviceSha1 = sha1(buf);
   const d = await decide(save, device, emu, { sha1: deviceSha1 });
-  // Se guarda en el formato del save logico (si es de otro emulador compatible se convierte)
+  // Stored in the logical save's format (converted if it comes from another compatible emulator)
   const toSaveFormat = (target: Save & { emulator: Emulator }) =>
     kind === 'STATE' || target.emulator.saveFormat === emu.saveFormat ? buf : convertSave(buf, emu.saveFormat as SaveFormat, target.emulator.saveFormat as SaveFormat);
   const keyFor = (target: (Save & { emulator: Emulator }) | null) =>
@@ -209,7 +208,7 @@ export async function receiveFromDevice(
   if (d.action === 'conflict' && save) {
     const r = await storeVersion(keyFor(save), toSaveFormat(save), new Date(), { sourceDeviceId: device.id, note: 'conflict', makeCurrent: false, force: true, coreVersion });
     await prisma.saveConflict.create({ data: { saveId: save.id, deviceId: device.id, deviceVersionId: r.version.id, serverVersionId: save.currentVersionId! } });
-    // El dispositivo conserva su fichero; se anota lo que tiene para no repetir el conflicto
+    // The device keeps its file; what it holds is recorded so the conflict is not repeated
     const base = await prisma.saveDeviceState.findUnique({ where: { saveId_deviceId: { saveId: save.id, deviceId: device.id } } });
     await setBase(save.id, device.id, base?.versionId ?? null, deviceSha1);
     return { action: 'conflict' as const, saveId: save.id, versionId: r.version.id };
@@ -217,7 +216,7 @@ export async function receiveFromDevice(
   return { action: d.action === 'download' ? ('server-newer' as const) : ('unchanged' as const), saveId: save?.id ?? null, versionId: null };
 }
 
-/** Resuelve un conflicto quedandose con la version del dispositivo o con la del servidor. */
+/** Settles a conflict by keeping the device's version or the server's. */
 export async function resolveConflict(conflictId: number, keep: 'device' | 'server', userId: number) {
   const c = await prisma.saveConflict.findUniqueOrThrow({ where: { id: conflictId }, include: { save: true } });
   if (c.save.userId !== userId) throw new Error('Forbidden');
@@ -226,7 +225,7 @@ export async function resolveConflict(conflictId: number, keep: 'device' | 'serv
     await prisma.save.update({ where: { id: c.saveId }, data: { currentVersionId: c.deviceVersionId } });
     await setBase(c.saveId, c.deviceId, c.deviceVersionId, base?.deviceSha1 ?? '');
   } else {
-    // La base queda en la version anterior: en la siguiente sincronizacion se baja la del servidor
+    // The base stays at the previous version: the next sync downloads the server's
     await setBase(c.saveId, c.deviceId, null, base?.deviceSha1 ?? '');
   }
   await prisma.saveConflict.update({ where: { id: c.id }, data: { resolvedAt: new Date(), resolution: keep } });

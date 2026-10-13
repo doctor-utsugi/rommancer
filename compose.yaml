@@ -35,9 +35,9 @@ services:
         condition: service_healthy
     volumes:
       - ./data:/data
-      # Semilla: DATs, RetroAchievements y scraping exportados de otra instancia
+      # Seed: DATs, RetroAchievements and scraping exported from another instance
       - ./seed:/seed
-      # Carpetas de roms: se montan tal cual y se registran en la app como /roms/...
+      # Rom folders: mounted as-is and registered in the app as /roms/...
       - ${ROMS_DIR:-./roms}:/roms
 
   web:

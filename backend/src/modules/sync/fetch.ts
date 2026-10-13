@@ -2,8 +2,8 @@ import { env } from '../../config/env.js';
 import { prisma } from '../../lib/prisma.js';
 
 /**
- * Descarga condicional: solo baja el recurso si ha cambiado desde la ultima vez (ETag / Last-Modified).
- * Devuelve null si no hay cambios o si no existe (404).
+ * Conditional download: fetches the resource only if it changed since last time (ETag / Last-Modified).
+ * Returns null if unchanged or if it does not exist (404).
  */
 export async function conditionalFetch(key: string, url: string, force = false): Promise<{ text: string; buf: Buffer } | null> {
   const state = await prisma.sourceState.findUnique({ where: { key } });
