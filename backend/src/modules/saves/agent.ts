@@ -1298,6 +1298,9 @@ async function romsWhereTold<D extends AgentDevice>(device: D, told: string): Pr
 
 agentRouter.get('/roots', async (req, res) => {
   const device = await romsWhereTold(await deviceFromToken(req), b64(req.header('x-device-roms-b64')));
+  // Clients that send no log say their version here
+  const version = (req.header('x-client-version') ?? '').slice(0, 32);
+  if (version && version !== device.clientVersion) await prisma.device.update({ where: { id: device.id }, data: { clientVersion: version, clientUpdatedAt: new Date() } });
   const layout = layoutOf(device);
   const abs = (p: string) => path.posix.join(device.rootPath, p);
   // Saves and states each next to the roms or in their own folder

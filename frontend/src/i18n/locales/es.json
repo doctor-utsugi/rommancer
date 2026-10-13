@@ -1048,7 +1048,7 @@
         "failed": "Error"
       },
       "open": "Ver consola",
-      "noRoms": "La consola ha enviado su lista vacía: no hay juegos en {{dir}}. Si los tiene en otra carpeta (una tarjeta SD), la versión nueva de la app la busca sola: actualízala y sincroniza."
+      "noRoms": "La consola ha enviado su lista vacía: no hay juegos en {{dir}}. La app de Android 0.9.19 o posterior busca sola la carpeta de ES-DE o una carpeta ROMs en la tarjeta SD: actualízala y sincroniza. También puedes indicarla en Dispositivos › Editar › Carpeta de roms, con su ruta completa (por ejemplo /storage/XXXX-XXXX/ROMs)."
     },
     "listUpload": {
       "help": "Arrastra roms a cualquier parte de la página: las nuevas se guardan en la colección, las que ya tienes no se suben, y todas se añaden a esta lista.",

@@ -105,8 +105,11 @@ const deviceBody = z.object({
   syncSaves: z.boolean().optional(),
 });
 
-function deviceData(body: Partial<z.infer<typeof deviceBody>>) {
+/** ROOT: the device's root, for a roms folder given as a full path (an SD card): kept relative to the root */
+function deviceData(body: Partial<z.infer<typeof deviceBody>>, root = body.rootPath) {
   const data: Record<string, unknown> = { ...body };
+  const roms = body.overrides?.romsRoot;
+  if (roms?.startsWith('/') && root) data.overrides = { ...body.overrides, romsRoot: path.posix.relative(root, roms) };
   if (body.sshPassword !== undefined) data.sshPassword = encrypt(body.sshPassword);
   if (body.sshKey !== undefined) data.sshKey = encrypt(body.sshKey);
   if (body.overrides === null) data.overrides = undefined;
@@ -298,8 +301,6 @@ async function listsPending(d: Awaited<ReturnType<typeof ownDevice>>) {
     copyBytes: missing.reduce((n, f) => n + f.size, 0),
     delete: prune ? prune.del.length + prune.upload.length : 0,
     inventoryAt: d.inventoryAt,
-    // Where its client looks for roms, to tell when it found none
-    romsDir: path.posix.join(d.rootPath, layoutOf(d).romsRoot),
     downloading: live?.current ? { done: live.done, total: Math.max(live.expected, live.done + 1) } : null,
   };
 }
@@ -307,7 +308,7 @@ async function listsPending(d: Awaited<ReturnType<typeof ownDevice>>) {
 devicesRouter.patch('/:id', async (req, res) => {
   const d = await ownDevice(intParam(req), me(req));
   const body = deviceBody.partial().parse(req.body);
-  res.json(await prisma.device.update({ where: { id: d.id }, data: deviceData(body) as Prisma.DeviceUncheckedUpdateInput, omit: publicDevice }));
+  res.json(await prisma.device.update({ where: { id: d.id }, data: deviceData(body, body.rootPath ?? d.rootPath) as Prisma.DeviceUncheckedUpdateInput, omit: publicDevice }));
 });
 
 // ---------- what a sync client has, and what the server asks of it ----------
@@ -388,6 +389,8 @@ devicesRouter.get('/:id/inventory', async (req, res) => {
   res.json({
     allowPull: d.allowPull,
     inventoryAt: d.inventoryAt,
+    // Where its client looks for roms, to tell when it found none
+    romsDir: path.posix.join(d.rootPath, layoutOf(d).romsRoot),
     summary: {
       newGames: newGames.size,
       newFiles: helpful.length,

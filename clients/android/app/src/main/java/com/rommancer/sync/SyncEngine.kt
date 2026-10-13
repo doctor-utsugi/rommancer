@@ -86,8 +86,9 @@ class SyncEngine(private val context: Context, private val store: Store, private
         val api = Api(server, store.token ?: error("Not linked"))
         report(Progress("connecting"))
         loadCache()
-        // The server keeps where the roms are, as found here
-        val found = romsFolder()?.let { mapOf("X-Device-Roms-B64" to Api.b64(it.path)) }.orEmpty()
+        // The server keeps where the roms are, as found here, and which version of the app this is
+        val version = runCatching { context.packageManager.getPackageInfo(context.packageName, 0).versionName }.getOrNull()
+        val found = listOfNotNull(romsFolder()?.let { "X-Device-Roms-B64" to Api.b64(it.path) }, version?.let { "X-Client-Version" to it }).toMap()
         val roots = api.text("/agent/roots", headers = found).lines().mapNotNull { l -> l.split('\t', limit = 2).takeIf { it.size == 2 } }
         val romsDir = roots.firstOrNull { it[0] == "roms" }?.get(1)?.let(::File)
         val saveDirs = roots.filter { it[0] == "saves" }.map { File(it[1]) }

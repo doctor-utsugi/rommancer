@@ -1048,7 +1048,7 @@
         "failed": "Error"
       },
       "open": "Open console",
-      "noRoms": "The console sent an empty list: there are no games in {{dir}}. If it keeps them in another folder (an SD card), the new version of the app finds it: update it and sync."
+      "noRoms": "The console sent an empty list: there are no games in {{dir}}. Android app 0.9.19 or later finds ES-DE's folder or a ROMs folder on the SD card by itself: update it and sync. You can also set it in Devices › Edit › Roms folder, as a full path (for example /storage/XXXX-XXXX/ROMs)."
     },
     "listUpload": {
       "help": "Drop roms anywhere on the page: new ones are stored in the collection, ones you already have are not uploaded, and all of them are added to this list.",
