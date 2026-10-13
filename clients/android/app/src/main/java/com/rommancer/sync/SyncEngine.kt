@@ -72,14 +72,19 @@ class SyncEngine(private val context: Context, private val store: Store, private
 
     /**
      * What the server needs to tell where the roms are: the folder ES-DE names, else every folder of every volume
-     * (three levels down, hidden ones and Android/ left out) with two subfolders or more, and their names
+     * (three levels down, hidden ones and Android/ left out) with two subfolders or more, and what those hold
      */
     private fun romsFolderReport(): String {
         esdeRoms()?.let { return "told\t${it.path}\n" }
         val out = StringBuilder()
         fun visit(dir: File, depth: Int) {
             val subs = dir.listFiles()?.filter { it.isDirectory && !it.name.startsWith(".") }.orEmpty()
-            if (subs.size >= 2) out.append("dir\t").append(dir.path).append('\t').append(subs.joinToString("/") { it.name }).append('\n')
+            if (subs.size >= 2) out.append("dir\t").append(dir.path).append('\t').append(subs.joinToString("/") { sub ->
+                // name|files|ext=n,...: what the folder holds tells a system's folder from one only named like it
+                val files = sub.listFiles()?.filter { it.isFile && !it.name.startsWith(".") }.orEmpty()
+                val exts = files.groupingBy { it.extension.lowercase() }.eachCount().entries.sortedByDescending { it.value }.take(5)
+                "${sub.name}|${files.size}|${exts.joinToString(",") { "${it.key}=${it.value}" }}"
+            }).append('\n')
             if (depth < 3) subs.filter { it.name != "Android" }.forEach { visit(it, depth + 1) }
         }
         volumes().forEach { visit(it, 1) }

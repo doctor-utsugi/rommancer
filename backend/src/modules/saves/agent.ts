@@ -1292,15 +1292,17 @@ async function romsWhereTold<D extends AgentDevice>(device: D, told: string): Pr
   const layout = layoutOf(device);
   if (trimRoot(told) === trimRoot(path.posix.join(device.rootPath, layout.romsRoot))) return device;
   const overrides = { ...((device.overrides ?? {}) as Record<string, unknown>), romsRoot: path.posix.relative(device.rootPath, trimRoot(told)) };
-  await prisma.device.update({ where: { id: device.id }, data: { overrides } });
+  // Another roms folder makes another inventory: roms in no list are not deleted until the user turns it on again
+  await prisma.device.update({ where: { id: device.id }, data: { overrides, ...(device.pruneRoms ? { pruneRoms: false, pruneRemote: true, pruneHeld: null } : {}) } });
   return { ...device, overrides };
 }
 
 /**
  * Where a device keeps its roms, from what its client sees: "told<TAB>path" when its frontend names the folder (ES-DE),
- * else "dir<TAB>path<TAB>sub/sub/..." per folder of its storage with the names of its subfolders. The folder whose
- * subfolders are named as systems are (by any firmware's names) the most is the roms folder; it needs two at least.
- * Answers "roms<TAB>path" when one was found; nothing changes otherwise
+ * else "dir<TAB>path<TAB>sub/sub/..." per folder of its storage, each subfolder as "name|files|ext=n,ext=n" (its file
+ * count and its most common extensions). A subfolder is a system's when it is named as one (by any firmware's names)
+ * and half its files at least have that system's extensions or are archives; the folder with the most such
+ * subfolders is the roms folder, with two at least. Answers "roms<TAB>path" when one was found; nothing changes otherwise
  */
 agentRouter.post('/roms-folder', express.text({ limit: '1mb', type: '*/*' }), async (req, res) => {
   const device = await deviceFromToken(req);
@@ -1308,11 +1310,20 @@ agentRouter.post('/roms-folder', express.text({ limit: '1mb', type: '*/*' }), as
   let chosen = lines.find((l) => l.startsWith('told\t'))?.slice(5).trim();
   if (!chosen) {
     const { byFolder } = await systemIndex();
+    const isSystem = (sub: string) => {
+      const [name, files, counts = ''] = sub.split('|');
+      const exts = new Set([...((byFolder.get(name.toLowerCase())?.extensions as string[] | undefined) ?? []), '.zip', '.7z']);
+      const fit = counts.split(',').reduce((n, c) => {
+        const [ext, k] = c.split('=');
+        return n + (exts.has(`.${ext.toLowerCase()}`) ? Number(k) || 0 : 0);
+      }, 0);
+      return byFolder.has(name.toLowerCase()) && fit > 0 && fit * 2 >= (Number(files) || 0);
+    };
     let best = { path: '', score: 1 };
     for (const l of lines) {
       const [kind, dir, subs = ''] = l.split('\t');
       if (kind !== 'dir' || !dir) continue;
-      const score = subs.split('/').filter((n) => byFolder.has(n.toLowerCase())).length;
+      const score = subs.split('/').filter(isSystem).length;
       if (score > best.score || (score === best.score && dir.length < best.path.length)) best = { path: dir, score };
     }
     chosen = best.path;
