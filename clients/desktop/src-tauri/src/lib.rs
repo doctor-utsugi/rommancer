@@ -3,6 +3,7 @@
 
 mod api;
 mod card;
+mod folder;
 mod game;
 mod hook;
 mod launchbox;

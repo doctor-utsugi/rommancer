@@ -250,6 +250,20 @@ fn setup_of_standalone(exe: &Path, name: &str) -> Option<(String, Setup)> {
         let cfg = if dir.join("portable").is_dir() { dir.join("portable") } else { dir.clone() };
         let path = ini_get(&cfg.join("melonDS.toml"), "Instance0", "SaveFilePath").or_else(|| ini_get(&cfg.join("melonDS.ini"), "", "SaveFilePath"));
         plain("melonds", setting_dir(path, &dir))
+    } else if name.starts_with("pcsx2") {
+        // Portable next to the program, else Documents; its first slot's card, every game's saves in it
+        let root = if dir.join("portable.ini").is_file() || dir.join("portable.txt").is_file() { dir.clone() } else { documents().join("PCSX2") };
+        let ini = [root.join("inis").join("PCSX2.ini"), root.join("inis").join("PCSX2_ui.ini")].into_iter().find(|p| p.is_file()).unwrap_or_default();
+        let cards = setting_dir(ini_get(&ini, "Folders", "MemoryCards"), &root).unwrap_or_else(|| root.join("memcards"));
+        Setup { emulator: "pcsx2".into(), saves: Some(cards), states: None, saves_layout: "card-shared".into(), states_layout: "none".into() }
+    } else if name.starts_with("ppsspp") {
+        // installed.txt names the memory stick (empty: Documents\PPSSPP); without it, the memstick folder beside it
+        let stick = match fs::read_to_string(dir.join("installed.txt")) {
+            Ok(text) => setting_dir(text.lines().next().map(|l| l.trim_start_matches('\u{feff}').to_string()), &dir).unwrap_or_else(|| documents().join("PPSSPP")),
+            Err(_) => dir.join("memstick"),
+        };
+        // A folder per save in SAVEDATA, each synced whole
+        Setup { emulator: "ppsspp".into(), saves: Some(stick.join("PSP").join("SAVEDATA")), states: None, saves_layout: "card-folder".into(), states_layout: "none".into() }
     } else if name.starts_with("snes9x") {
         let path = ini_get(&dir.join("snes9x.conf"), "Settings\\Win\\Files", "Dir:SRAM").or_else(|| Some(".\\Saves".into()));
         plain("snes9x", setting_dir(path, &dir))
@@ -465,6 +479,14 @@ impl Library {
         self.setups.iter().map(|(k, s)| format!("setup\t{k}\t{}\t{}\t{}\t{}\t{}\n", s.emulator, dir(&s.saves), dir(&s.states), s.saves_layout, s.states_layout)).collect()
     }
 
+    /// Folders whose every subfolder is one save (PPSSPP's SAVEDATA), synced whole as one file
+    pub fn folder_saves(&self) -> Vec<PathBuf> {
+        let mut v: Vec<PathBuf> = self.setups.values().filter(|s| s.saves_layout == "card-folder").filter_map(|s| s.saves.clone()).collect();
+        v.sort();
+        v.dedup();
+        v
+    }
+
     /// Folders where the emulators write saves and states, with how deep to look: their own folders fully, the
     /// folders of games whose saves sit next to them only at their top
     pub fn watched(&self) -> Vec<(PathBuf, u32)> {
@@ -527,8 +549,10 @@ mod tests {
             r#"<LaunchBox><Game><ApplicationPath>D:\PS2\Ico.iso</ApplicationPath><Platform>Sony Playstation 2</Platform></Game>
 <Game><ApplicationPath>D:\PS2\Okami.iso</ApplicationPath><Platform>Sony Playstation 2</Platform><Emulator>aaa</Emulator></Game></LaunchBox>"#,
         );
+        write(&lb.join("Emulators/PCSX2/portable.ini"), "");
+        write(&lb.join("Emulators/PCSX2/inis/PCSX2.ini"), "[Folders]\nMemoryCards = cards\n");
         let lib = read(&lb);
-        assert_eq!(lib.games.len(), 2, "{lib:?}");
+        assert_eq!(lib.games.len(), 3, "{lib:?}");
         let zelda = lib.games.iter().find(|g| g.rom.ends_with("Zelda.sfc")).unwrap();
         assert_eq!(zelda.rom, dir.join("Roms/SNES/Zelda.sfc"));
         assert_eq!(zelda.platform, "Super Nintendo Entertainment System");
@@ -538,7 +562,11 @@ mod tests {
         assert_eq!((s.saves_layout.as_str(), s.states.is_none()), ("core", true));
         let okami = lib.games.iter().find(|g| g.rom.to_string_lossy().ends_with("Okami.iso")).unwrap();
         assert_eq!(lib.setups[&okami.setup].emulator, "core:pcsx2");
-        assert_eq!(lib.unsupported.get("PCSX2"), Some(&1));
+        let ico = lib.games.iter().find(|g| g.rom.to_string_lossy().ends_with("Ico.iso")).unwrap();
+        let s = &lib.setups[&ico.setup];
+        assert_eq!((s.emulator.as_str(), s.saves_layout.as_str()), ("pcsx2", "card-shared"));
+        assert_eq!(s.saves.as_deref(), Some(lb.join("Emulators/PCSX2/cards").as_path()));
+        assert!(lib.unsupported.is_empty());
         let _ = fs::remove_dir_all(&dir);
     }
 }

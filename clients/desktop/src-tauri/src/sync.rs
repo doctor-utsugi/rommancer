@@ -213,6 +213,14 @@ fn walk(dir: &Path, out: &mut Vec<PathBuf>) {
     }
 }
 
+/// A save file's content to upload; a path ending in "/" is a save folder, sent as its tar
+pub fn read_save(path: &str) -> Result<Vec<u8>> {
+    match path.strip_suffix('/') {
+        Some(dir) => crate::folder::pack(Path::new(dir)),
+        None => Ok(fs::read(path)?),
+    }
+}
+
 /// Paths travel with forward slashes, as the server builds them from the root it was given
 fn wire(p: &Path) -> String {
     p.to_string_lossy().replace('\\', "/")
@@ -377,6 +385,9 @@ impl<'a> Engine<'a> {
             }
         }
         saves.retain(|p| p.file_name().map(|n| is_save(&n.to_string_lossy(), &exts)).unwrap_or(false));
+        // Saves that are whole folders go as one file each, never their files
+        let folder_roots = library.as_ref().map(|l| l.folder_saves()).unwrap_or_default();
+        saves.retain(|p| !folder_roots.iter().any(|r| p.starts_with(r)));
         saves.sort();
         saves.dedup();
         for (i, s) in saves.iter().enumerate() {
@@ -386,6 +397,16 @@ impl<'a> Engine<'a> {
             }
             let h = self.sha1(s, 0)?;
             request.push_str(&format!("file\t{}\t{h}\n", wire(s)));
+        }
+        for root in &folder_roots {
+            let mut dirs: Vec<PathBuf> = fs::read_dir(root).into_iter().flatten().flatten().filter(|e| e.file_type().is_ok_and(|t| t.is_dir()) && !e.file_name().to_string_lossy().starts_with('.')).map(|e| e.path()).collect();
+            dirs.sort();
+            for d in dirs {
+                self.check()?;
+                if let Ok(h) = self.folder_sha1(&d) {
+                    request.push_str(&format!("file\t{}/\t{h}\n", wire(&d)));
+                }
+            }
         }
         self.save_cache();
 
@@ -415,7 +436,7 @@ impl<'a> Engine<'a> {
             self.progress("transfer", n as u64 + 1, steps.len() as u64);
             let r = match s[0].as_str() {
                 // put <file> <rom> [exact]
-                "put" => fs::read(&s[1]).map_err(anyhow::Error::from).and_then(|body| {
+                "put" => read_save(&s[1]).and_then(|body| {
                     let headers = [
                         ("X-Rom-B64", b64(&s[2])),
                         ("X-Path-B64", b64(&s[1])),
@@ -482,6 +503,9 @@ impl<'a> Engine<'a> {
     /// Swaps in a memory card the server built from the file it last read, only if the file is still that one
     /// (EXPECT, "-" for none). An SD card in a computer has no emulator running on it.
     fn card_get(&mut self, path: &str, expect: &str) -> Result<bool> {
+        if let Some(dir) = path.strip_suffix('/') {
+            return self.folder_get(path, Path::new(dir), expect);
+        }
         let target = Path::new(path);
         let tmp = target.with_file_name(format!("{}.rommancer-card", target.file_name().and_then(|n| n.to_str()).unwrap_or("card")));
         self.api.download(&format!("/agent/card?expect={expect}"), &[("X-Path-B64", b64(path))], &tmp, &mut |_| {}, self.cancelled)?;
@@ -499,6 +523,42 @@ impl<'a> Engine<'a> {
         let sent = self.sha1(target, 0)?;
         let _ = self.api.post_text(&format!("/agent/card/ack?sha={sent}"), Vec::new(), &[("X-Path-B64", b64(path))]);
         Ok(true)
+    }
+
+    /// A save folder the server sent, written only if the folder is still the one it last read (EXPECT)
+    fn folder_get(&mut self, path: &str, dir: &Path, expect: &str) -> Result<bool> {
+        let tmp = dir.with_file_name(format!(".{}.rommancer-tar", dir.file_name().and_then(|n| n.to_str()).unwrap_or("save")));
+        self.api.download(&format!("/agent/card?expect={expect}"), &[("X-Path-B64", b64(path))], &tmp, &mut |_| {}, self.cancelled)?;
+        let tar = fs::read(&tmp).unwrap_or_default();
+        let _ = fs::remove_file(&tmp);
+        let key = format!("{}/", wire(dir));
+        self.cache.remove(&key);
+        let now = if dir.is_dir() { self.folder_sha1(dir)? } else { "-".into() };
+        if tar.is_empty() || now != expect {
+            return Ok(false);
+        }
+        crate::folder::unpack(&tar, dir)?;
+        self.cache.remove(&key);
+        let sent = self.folder_sha1(dir)?;
+        let _ = self.api.post_text(&format!("/agent/card/ack?sha={sent}"), Vec::new(), &[("X-Path-B64", b64(path))]);
+        Ok(true)
+    }
+
+    /// sha1 of a save folder's tar; cached by its files' sizes and newest change
+    fn folder_sha1(&mut self, dir: &Path) -> Result<String> {
+        let key = format!("{}/", wire(dir));
+        let sig = crate::folder::signature(dir);
+        if let (Some((s, m)), Some((cs, cm, h))) = (sig, self.cache.get(&key)) {
+            if s == *cs && m == *cm {
+                return Ok(h.clone());
+            }
+        }
+        let tar = crate::folder::pack(dir)?;
+        let hex = sha1_smol::Sha1::from(&tar).digest().to_string();
+        if let Some((s, m)) = sig {
+            self.cache.insert(key, (s, m, hex.clone()));
+        }
+        Ok(hex)
     }
 
     fn thumb_put(&self, path: &str, version: &str) -> Result<()> {
