@@ -28,6 +28,12 @@ pub struct PcLink {
     /// LaunchBox's folder when the user picked one; none: found by itself in its usual places
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub launchbox: Option<String>,
+    /// ES-DE's data folder (the one holding settings) when the user picked one
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub esde: Option<String>,
+    /// Pegasus's configuration folder (the one holding game_dirs.txt) when the user picked one
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pegasus: Option<String>,
 }
 
 /// What a retroarch.cfg says about where saves and states go

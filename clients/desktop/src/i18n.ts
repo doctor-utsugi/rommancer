@@ -297,6 +297,7 @@ const en = {
   launchboxOther: 'Not synced yet: {list}',
   launchboxPick: 'Choose its folder',
   launchboxRestart: 'Close LaunchBox and open it again to finish setting up Rommancer in it.',
+  frontendNone: 'Not found. If you use {name}, choose its folder.',
   frontendRestart: 'Close {name} to finish setting up Rommancer in it.',
   layout_flat: 'all in one folder',
   layout_core: 'a folder per core',

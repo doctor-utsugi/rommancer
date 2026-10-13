@@ -2,7 +2,7 @@
 //! each system's folder and the emulator each game runs with (the game's own pick, else its system's, else the
 //! system's first command). RetroArch games are synced; games of other emulators are counted as not synced yet
 
-use crate::frontend::{child, home, normalize, path_in, retroarch_command, Game, Library, Setup};
+use crate::frontend::{child, home, normalize, path_in, retroarch_command, standalone_of_command, Game, Library, Setup};
 use crate::pc;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fs;
@@ -182,18 +182,24 @@ fn retroarch_cfg(dir: &Path) -> Option<PathBuf> {
 
 /// The setup of a command: RetroArch's core (from -L), the label for other emulators; none for shortcuts and
 /// scripts, which are no games
-fn setup_of(command: &str, label: &str, cfg: Option<&Path>, setups: &mut BTreeMap<String, Setup>) -> Option<Result<String, String>> {
+fn setup_of(dir: &Path, command: &str, label: &str, cfg: Option<&Path>, setups: &mut BTreeMap<String, Setup>) -> Option<Result<String, String>> {
     if command.contains("%EMULATOR_OS-SHELL%") {
         return None;
     }
-    let Some(default_cfg) = cfg else {
-        return Some(Err(if command.contains("%EMULATOR_RETROARCH%") { format!("{label} (no retroarch.cfg found)") } else { label.to_string() }));
+    let found = if command.contains("%EMULATOR_RETROARCH%") {
+        cfg.and_then(|c| retroarch_command(command, "%EMULATOR_RETROARCH%", c))
+    } else {
+        // Where ES-DE looks for emulators on Windows: its own Emulators folder, EmuDeck's
+        let mut exe_dirs: Vec<PathBuf> = es_path(dir).map(|o| o.join("Emulators")).into_iter().collect();
+        exe_dirs.extend(std::env::var_os("APPDATA").map(|a| PathBuf::from(a).join("EmuDeck").join("Emulators")));
+        standalone_of_command(command, &exe_dirs)
     };
-    match retroarch_command(command, "%EMULATOR_RETROARCH%", default_cfg) {
+    match found {
         Some((key, setup)) => {
             setups.entry(key.clone()).or_insert(setup);
             Some(Ok(key))
         }
+        None if cfg.is_none() && command.contains("%EMULATOR_RETROARCH%") => Some(Err(format!("{label} (no retroarch.cfg found)"))),
         None => Some(Err(label.to_string())),
     }
 }
@@ -218,7 +224,7 @@ pub fn read(dir: &Path) -> Library {
         let mut setup_by_label: HashMap<String, Option<Result<String, String>>> = HashMap::new();
         for rom in files {
             let (label, cmd) = command(games.get(&rom).or(whole.as_ref()));
-            let got = setup_by_label.entry(label.clone()).or_insert_with(|| setup_of(&cmd, &label, cfg.as_deref(), &mut lib.setups)).clone();
+            let got = setup_by_label.entry(label.clone()).or_insert_with(|| setup_of(dir, &cmd, &label, cfg.as_deref(), &mut lib.setups)).clone();
             match got {
                 Some(Ok(setup)) => lib.games.push(Game { rom, platform: sys.name.clone(), setup }),
                 Some(Err(emulator)) => *lib.unsupported.entry(emulator).or_default() += 1,
@@ -322,11 +328,18 @@ pub struct Cache {
 }
 
 impl Cache {
-    pub fn get(&mut self) -> Option<Arc<Library>> {
-        if self.found.as_ref().is_none_or(|(at, _)| at.elapsed() >= std::time::Duration::from_secs(60)) {
-            self.found = Some((std::time::Instant::now(), detect()));
-        }
-        let Some(dir) = self.found.as_ref().and_then(|(_, d)| d.clone()) else {
+    /// CHOSEN: the folder the user picked (none: found by itself)
+    pub fn get(&mut self, chosen: Option<&str>) -> Option<Arc<Library>> {
+        let dir = match chosen {
+            Some(c) => Some(PathBuf::from(c)).filter(|d| is_esde(d)),
+            None => {
+                if self.found.as_ref().is_none_or(|(at, _)| at.elapsed() >= std::time::Duration::from_secs(60)) {
+                    self.found = Some((std::time::Instant::now(), detect()));
+                }
+                self.found.as_ref().and_then(|(_, d)| d.clone())
+            }
+        };
+        let Some(dir) = dir else {
             self.read = None;
             return None;
         };

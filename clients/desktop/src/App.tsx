@@ -1026,7 +1026,8 @@ function StatusView({
         {card && row(t(card.removable ? 'sdCard' : 'folder'), card.root)}
       </div>
       {pc && <LaunchBox status={status} />}
-      {pc && status.frontends.map((f) => <FrontendPanel key={f.name} frontend={f} />)}
+      {pc && ['ES-DE', 'Pegasus'].map((name) => <FrontendPanel key={name} name={name} frontend={status.frontends.find((f) => f.name === name) ?? null} pickable />)}
+      {pc && status.frontends.filter((f) => f.name !== 'ES-DE' && f.name !== 'Pegasus').map((f) => <FrontendPanel key={f.name} name={f.name} frontend={f} />)}
       {result && <LastSync result={result} onDetails={() => {}} />}
       <div className="panel">
         <h2>{t('statusLog')}</h2>
@@ -1077,15 +1078,41 @@ function LaunchBox({ status }: { status: Status }) {
   )
 }
 
-/** A frontend found by itself (ES-DE, Pegasus, Playnite), synced with the emulator each game opens with */
-function FrontendPanel({ frontend: f }: { frontend: Frontend }) {
+/** A frontend found by itself or in the folder the user picked (ES-DE, Pegasus), or set up through Rommancer's
+ * extension (Playnite), synced with the emulator each game opens with */
+function FrontendPanel({ name, frontend: f, pickable }: { name: string; frontend: Frontend | null; pickable?: boolean }) {
+  const [error, setError] = useState('')
+  const set = async (dir: string | null) => {
+    setError('')
+    try {
+      await invoke('frontend_set', { name, dir })
+    } catch (e) {
+      setError(String(e))
+    }
+  }
+  const pick = async () => {
+    const dir = await open({ directory: true, defaultPath: f?.dir || undefined })
+    if (typeof dir === 'string') await set(dir)
+  }
   return (
     <div className="panel">
-      <h2>{f.name}</h2>
-      <p className="small mono">{f.dir}</p>
-      {f.restart && <p className="small warn">{t('frontendRestart', { name: f.name })}</p>}
-      <p className="small">{t('launchboxGames', { synced: String(f.synced), games: String(f.games) })}</p>
-      {f.unsupported.length > 0 && <p className="small muted">{t('launchboxOther', { list: f.unsupported.map(([e, n]) => `${e} (${n})`).join(', ') })}</p>}
+      <h2>{name}</h2>
+      {f ? (
+        <>
+          <p className="small mono">{f.dir}</p>
+          {f.restart && <p className="small warn">{t('frontendRestart', { name })}</p>}
+          <p className="small">{t('launchboxGames', { synced: String(f.synced), games: String(f.games) })}</p>
+          {f.unsupported.length > 0 && <p className="small muted">{t('launchboxOther', { list: f.unsupported.map(([e, n]) => `${e} (${n})`).join(', ') })}</p>}
+        </>
+      ) : (
+        <p className="small muted">{t('frontendNone', { name })}</p>
+      )}
+      {pickable && (
+        <div className="row">
+          <button onClick={pick}>{t('launchboxPick')}</button>
+        </div>
+      )}
+      {error && <p className="small error">{error}</p>}
     </div>
   )
 }

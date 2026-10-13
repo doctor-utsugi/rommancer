@@ -209,6 +209,49 @@ pub fn plain(emulator: &str, dir: Option<PathBuf>) -> Setup {
     Setup { emulator: emulator.into(), saves: dir, states: None, saves_layout: "flat".into(), states_layout: "none".into() }
 }
 
+/// DuckStation's settings in ROOT: where its cards are and how it names a game's card
+fn duckstation_in(root: &Path) -> Option<Setup> {
+    let ini = root.join("settings.ini");
+    let cards = setting_dir(ini_get(&ini, "MemoryCards", "Directory"), root).unwrap_or_else(|| root.join("memcards"));
+    // How it names a game's card: by title (its default), the rom file's title, the disc serial or one shared card
+    let kind = match ini_get(&ini, "MemoryCards", "Card1Type").unwrap_or_default().as_str() {
+        "PerGameFileTitle" => "card-filetitle",
+        "PerGame" => "card-serial",
+        "Shared" => "card-shared",
+        "None" | "NonPersistent" => return None,
+        _ => "card-title",
+    };
+    Some(Setup { emulator: "duckstation".into(), saves: Some(cards), states: None, saves_layout: kind.into(), states_layout: "none".into() })
+}
+
+/// GameCube cards in Dolphin's user folder: GC\<region>\Card A folders (its default) or MemoryCardA.<region>.raw images
+fn dolphin_in(user: &Path) -> Setup {
+    Setup { emulator: "dolphin-gci".into(), saves: Some(user.join("GC")), states: None, saves_layout: "card-gc".into(), states_layout: "none".into() }
+}
+
+fn mgba_in(cfg: &Path) -> Setup {
+    let ini = cfg.join("config.ini");
+    let path = ini_get(&ini, "ports.qt", "savegamePath").filter(|v| !v.is_empty()).or_else(|| ini_get(&ini, "", "savegamePath"));
+    plain("mgba", setting_dir(path, cfg))
+}
+
+fn melonds_in(cfg: &Path, base: &Path) -> Setup {
+    let path = ini_get(&cfg.join("melonDS.toml"), "Instance0", "SaveFilePath").or_else(|| ini_get(&cfg.join("melonDS.ini"), "", "SaveFilePath"));
+    plain("melonds", setting_dir(path, base))
+}
+
+/// PCSX2's first slot's card, every game's saves in it
+fn pcsx2_in(root: &Path) -> Setup {
+    let ini = [root.join("inis").join("PCSX2.ini"), root.join("inis").join("PCSX2_ui.ini")].into_iter().find(|p| p.is_file()).unwrap_or_default();
+    let cards = setting_dir(ini_get(&ini, "Folders", "MemoryCards"), root).unwrap_or_else(|| root.join("memcards"));
+    Setup { emulator: "pcsx2".into(), saves: Some(cards), states: None, saves_layout: "card-shared".into(), states_layout: "none".into() }
+}
+
+/// A folder per save in the memory stick's SAVEDATA, each synced whole
+fn ppsspp_in(stick: &Path) -> Setup {
+    Setup { emulator: "ppsspp".into(), saves: Some(stick.join("PSP").join("SAVEDATA")), states: None, saves_layout: "card-folder".into(), states_layout: "none".into() }
+}
+
 /// Emulators other than RetroArch, by their program's name, each read from its own settings
 pub fn setup_of_standalone(exe: &Path, name: &str) -> Option<(String, Setup)> {
     let dir = exe.parent()?.to_path_buf();
@@ -221,17 +264,7 @@ pub fn setup_of_standalone(exe: &Path, name: &str) -> Option<(String, Setup)> {
         } else {
             env_dir("LOCALAPPDATA").unwrap_or_else(|| home().join("AppData").join("Local")).join("DuckStation")
         };
-        let ini = root.join("settings.ini");
-        let cards = setting_dir(ini_get(&ini, "MemoryCards", "Directory"), &root).unwrap_or_else(|| root.join("memcards"));
-        // How it names a game's card: by title (its default), the rom file's title, the disc serial or one shared card
-        let kind = match ini_get(&ini, "MemoryCards", "Card1Type").unwrap_or_default().as_str() {
-            "PerGameFileTitle" => "card-filetitle",
-            "PerGame" => "card-serial",
-            "Shared" => "card-shared",
-            "None" | "NonPersistent" => return None,
-            _ => "card-title",
-        };
-        Setup { emulator: "duckstation".into(), saves: Some(cards), states: None, saves_layout: kind.into(), states_layout: "none".into() }
+        duckstation_in(&root)?
     } else if name == "dolphin.exe" {
         let user = if dir.join("portable.txt").is_file() {
             dir.join("User")
@@ -242,31 +275,24 @@ pub fn setup_of_standalone(exe: &Path, name: &str) -> Option<(String, Setup)> {
         } else {
             env_dir("APPDATA").map(|a| a.join("Dolphin Emulator")).filter(|d| d.is_dir()).unwrap_or_else(|| dir.join("User"))
         };
-        // GameCube cards: GC\<region>\Card A folders (its default) or MemoryCardA.<region>.raw images
-        Setup { emulator: "dolphin-gci".into(), saves: Some(user.join("GC")), states: None, saves_layout: "card-gc".into(), states_layout: "none".into() }
+        dolphin_in(&user)
     } else if name == "mgba.exe" {
         let cfg = if dir.join("portable.ini").is_file() { dir.clone() } else { env_dir("APPDATA").unwrap_or_else(|| home().join("AppData").join("Roaming")).join("mGBA") };
-        let ini = cfg.join("config.ini");
-        let path = ini_get(&ini, "ports.qt", "savegamePath").filter(|v| !v.is_empty()).or_else(|| ini_get(&ini, "", "savegamePath"));
-        plain("mgba", setting_dir(path, &cfg))
+        mgba_in(&cfg)
     } else if name == "melonds.exe" {
         let cfg = if dir.join("portable").is_dir() { dir.join("portable") } else { dir.clone() };
-        let path = ini_get(&cfg.join("melonDS.toml"), "Instance0", "SaveFilePath").or_else(|| ini_get(&cfg.join("melonDS.ini"), "", "SaveFilePath"));
-        plain("melonds", setting_dir(path, &dir))
+        melonds_in(&cfg, &dir)
     } else if name.starts_with("pcsx2") {
-        // Portable next to the program, else Documents; its first slot's card, every game's saves in it
+        // Portable next to the program, else Documents
         let root = if dir.join("portable.ini").is_file() || dir.join("portable.txt").is_file() { dir.clone() } else { documents().join("PCSX2") };
-        let ini = [root.join("inis").join("PCSX2.ini"), root.join("inis").join("PCSX2_ui.ini")].into_iter().find(|p| p.is_file()).unwrap_or_default();
-        let cards = setting_dir(ini_get(&ini, "Folders", "MemoryCards"), &root).unwrap_or_else(|| root.join("memcards"));
-        Setup { emulator: "pcsx2".into(), saves: Some(cards), states: None, saves_layout: "card-shared".into(), states_layout: "none".into() }
+        pcsx2_in(&root)
     } else if name.starts_with("ppsspp") {
         // installed.txt names the memory stick (empty: Documents\PPSSPP); without it, the memstick folder beside it
         let stick = match fs::read_to_string(dir.join("installed.txt")) {
             Ok(text) => setting_dir(text.lines().next().map(|l| l.trim_start_matches('\u{feff}').to_string()), &dir).unwrap_or_else(|| documents().join("PPSSPP")),
             Err(_) => dir.join("memstick"),
         };
-        // A folder per save in SAVEDATA, each synced whole
-        Setup { emulator: "ppsspp".into(), saves: Some(stick.join("PSP").join("SAVEDATA")), states: None, saves_layout: "card-folder".into(), states_layout: "none".into() }
+        ppsspp_in(&stick)
     } else if name.starts_with("snes9x") {
         let path = ini_get(&dir.join("snes9x.conf"), "Settings\\Win\\Files", "Dir:SRAM").or_else(|| Some(".\\Saves".into()));
         plain("snes9x", setting_dir(path, &dir))
@@ -274,6 +300,82 @@ pub fn setup_of_standalone(exe: &Path, name: &str) -> Option<(String, Setup)> {
         return None;
     };
     Some((format!("{}|{}", setup.emulator, pc::wire(exe)), setup))
+}
+
+/// The standalone emulators Rommancer reads, as a frontend's command names them (ES-DE's %EMULATOR_PCSX2%, a
+/// program's name or a flatpak's id), which their program's name starts with on Windows
+const STANDALONE: &[&str] = &["duckstation", "pcsx2", "ppsspp", "dolphin", "mgba", "melonds", "snes9x"];
+
+/// The settings of an emulator installed on Linux, as RetroDECK, its flatpak or its own package keeps them
+fn installed_on_linux(emu: &str) -> Option<(String, Setup)> {
+    let h = home();
+    let config = env_dir("XDG_CONFIG_HOME").unwrap_or_else(|| h.join(".config"));
+    let data = env_dir("XDG_DATA_HOME").unwrap_or_else(|| h.join(".local/share"));
+    let rd = h.join(".var/app/net.retrodeck.retrodeck");
+    let flat = |id: &str, kind: &str, name: &str| h.join(".var/app").join(id).join(kind).join(name);
+    let first = |dirs: Vec<PathBuf>, has: &dyn Fn(&Path) -> bool| dirs.into_iter().find(|d| has(d));
+    let (dir, setup) = match emu {
+        "duckstation" => {
+            let d = first(
+                vec![rd.join("config/duckstation"), flat("org.duckstation.DuckStation", "config", "duckstation"), flat("org.duckstation.DuckStation", "data", "duckstation"), data.join("duckstation")],
+                &|d| d.join("settings.ini").is_file(),
+            )?;
+            let s = duckstation_in(&d)?;
+            (d, s)
+        }
+        "pcsx2" => {
+            let d = first(vec![rd.join("config/PCSX2"), flat("net.pcsx2.PCSX2", "config", "PCSX2"), config.join("PCSX2")], &|d| d.join("inis").is_dir())?;
+            let s = pcsx2_in(&d);
+            (d, s)
+        }
+        "ppsspp" => {
+            let d = first(vec![rd.join("config/ppsspp"), flat("org.ppsspp.PPSSPP", "config", "ppsspp"), config.join("ppsspp")], &|d| d.join("PSP").is_dir())?;
+            let s = ppsspp_in(&d);
+            (d, s)
+        }
+        "dolphin" => {
+            let d = first(
+                vec![rd.join("data/dolphin-emu"), flat("org.DolphinEmu.dolphin-emu", "data", "dolphin-emu"), data.join("dolphin-emu"), h.join(".dolphin-emu")],
+                &|d| d.join("GC").is_dir(),
+            )?;
+            let s = dolphin_in(&d);
+            (d, s)
+        }
+        "mgba" => {
+            let d = first(vec![flat("io.mgba.mGBA", "config", "mgba"), config.join("mgba")], &|d| d.is_dir()).unwrap_or_else(|| config.join("mgba"));
+            let s = mgba_in(&d);
+            (d, s)
+        }
+        "melonds" => {
+            let d = first(vec![rd.join("config/melonDS"), flat("net.kuribo64.melonDS", "config", "melonDS"), config.join("melonDS")], &|d| d.is_dir()).unwrap_or_else(|| config.join("melonDS"));
+            let s = melonds_in(&d, &d);
+            (d, s)
+        }
+        _ => return None,
+    };
+    Some((format!("{}|{}", setup.emulator, pc::wire(&dir)), setup))
+}
+
+/// The setup of a frontend's command that runs a standalone emulator: on Windows its program (the one named, else
+/// one found in EXE_DIRS' emulator folders), on Linux its settings where it keeps them
+pub fn standalone_of_command(command: &str, exe_dirs: &[PathBuf]) -> Option<(String, Setup)> {
+    let lower = command.to_lowercase();
+    let emu = STANDALONE.iter().find(|e| lower.contains(*e))?;
+    if !cfg!(windows) {
+        return if cfg!(target_os = "macos") { None } else { installed_on_linux(emu) };
+    }
+    let named = args(command).into_iter().next().map(PathBuf::from).filter(|p| p.is_file());
+    let found = || {
+        exe_dirs.iter().flat_map(|d| fs::read_dir(d).into_iter().flatten().flatten()).filter(|e| e.path().is_dir()).find_map(|e| {
+            fs::read_dir(e.path()).into_iter().flatten().flatten().map(|f| f.path()).find(|f| {
+                let n = f.file_name().map(|n| n.to_string_lossy().to_lowercase()).unwrap_or_default();
+                n.starts_with(emu) && n.ends_with(".exe")
+            })
+        })
+    };
+    let exe = named.or_else(found)?;
+    let name = exe.file_name()?.to_string_lossy().to_lowercase();
+    setup_of_standalone(&exe, &name)
 }
 
 /// A value of the Windows registry (none elsewhere, or when missing)
@@ -358,3 +460,22 @@ impl Library {
     }
 }
 
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn standalone_emulators_are_read_from_their_settings() {
+        let dir = std::env::temp_dir().join(format!("rommancer-standalone-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(dir.join("settings.ini"), "[MemoryCards]\nCard1Type = PerGame\nDirectory = cards\n").unwrap();
+        let s = duckstation_in(&dir).unwrap();
+        assert_eq!((s.saves.unwrap(), s.saves_layout.as_str()), (dir.join("cards"), "card-serial"));
+        assert_eq!(ppsspp_in(&dir).saves.unwrap(), dir.join("PSP/SAVEDATA"));
+        // An emulator Rommancer does not read
+        assert!(standalone_of_command("%EMULATOR_MAME% %ROM%", &[]).is_none());
+        let _ = fs::remove_dir_all(&dir);
+    }
+}

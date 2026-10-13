@@ -169,9 +169,16 @@ fn launchbox_library(state: &AppState) -> Option<Arc<frontend::Library>> {
     state.launchbox.lock().unwrap().get(chosen.as_deref())
 }
 
+/// The folders the user picked for ES-DE and Pegasus (none: found by themselves)
+fn chosen(state: &AppState) -> (Option<String>, Option<String>) {
+    let s = state.settings.lock().unwrap();
+    s.pc.as_ref().map(|p| (p.esde.clone(), p.pegasus.clone())).unwrap_or_default()
+}
+
 /// Every frontend found on this PC
 fn libraries(state: &AppState) -> Vec<Arc<frontend::Library>> {
-    launchbox_library(state).into_iter().chain(state.esde.lock().unwrap().get()).chain(state.pegasus.lock().unwrap().get()).chain(state.playnite.lock().unwrap().get()).collect()
+    let (esde, pegasus) = chosen(state);
+    launchbox_library(state).into_iter().chain(state.esde.lock().unwrap().get(esde.as_deref())).chain(state.pegasus.lock().unwrap().get(pegasus.as_deref())).chain(state.playnite.lock().unwrap().get()).collect()
 }
 
 /// The games of every frontend on this PC, merged again only when one of them was read again
@@ -271,11 +278,12 @@ fn status(state: State<AppState>) -> Status {
     let linked = state.settings.lock().unwrap().pc.is_some();
     let launchbox = if linked { launchbox_library(&state).map(|l| frontend::Summary { restart: state.launchbox.lock().unwrap().needs_restart(&l.dir), ..l.summary() }) } else { None };
     let frontends = if linked {
+        let (esde_dir, pegasus_dir) = chosen(&state);
         let mut esde = state.esde.lock().unwrap();
-        let esde = esde.get().map(|l| frontend::Summary { restart: esde.needs_restart(&l.dir), ..l.summary() });
+        let esde = esde.get(esde_dir.as_deref()).map(|l| frontend::Summary { restart: esde.needs_restart(&l.dir), ..l.summary() });
         let mut playnite = state.playnite.lock().unwrap();
         let playnite = playnite.get().map(|l| frontend::Summary { restart: playnite.needs_restart(), ..l.summary() });
-        esde.into_iter().chain(state.pegasus.lock().unwrap().get().map(|l| l.summary())).chain(playnite).collect()
+        esde.into_iter().chain(state.pegasus.lock().unwrap().get(pegasus_dir.as_deref()).map(|l| l.summary())).chain(playnite).collect()
     } else {
         vec![]
     };
@@ -320,6 +328,34 @@ fn launchbox_set(app: AppHandle, state: State<AppState>, dir: Option<String>) ->
         let mut s = state.settings.lock().unwrap();
         let Some(pc) = s.pc.as_mut() else { return Err("this PC is not set up".into()) };
         pc.launchbox = dir;
+        save_settings(&app, &s);
+    }
+    let _ = app.emit("pc-state", ());
+    let _ = start_sync(&app, &state, pc::KEY.into(), Mode::Full, None);
+    Ok(())
+}
+
+/// A frontend's folder ("ES-DE" or "Pegasus"), picked by the user (none: found by itself again)
+#[tauri::command]
+fn frontend_set(app: AppHandle, state: State<AppState>, name: String, dir: Option<String>) -> Result<(), String> {
+    if let Some(d) = &dir {
+        let ok = match name.as_str() {
+            "ES-DE" => esde::is_esde(Path::new(d)),
+            "Pegasus" => pegasus::is_pegasus(Path::new(d)),
+            _ => return Err(format!("unknown frontend {name}")),
+        };
+        if !ok {
+            return Err(if name == "ES-DE" { "no ES-DE there (settings/es_settings.xml is missing)".into() } else { "no Pegasus there (game_dirs.txt is missing)".into() });
+        }
+    }
+    {
+        let mut s = state.settings.lock().unwrap();
+        let Some(pc) = s.pc.as_mut() else { return Err("this PC is not set up".into()) };
+        if name == "ES-DE" {
+            pc.esde = dir;
+        } else {
+            pc.pegasus = dir;
+        }
         save_settings(&app, &s);
     }
     let _ = app.emit("pc-state", ());
@@ -907,7 +943,7 @@ async fn pc_setup(
     let id = claim.get("deviceId").and_then(|v| v.as_u64()).ok_or("no device id")?;
     {
         let mut s = state.settings.lock().unwrap();
-        s.pc = Some(pc::PcLink { server: u.server.clone(), token, device_id: id, name, root, saves_dir: saves, states_dir: states, roms_dir, saves_layout, states_layout, cfg, launchbox: None });
+        s.pc = Some(pc::PcLink { server: u.server.clone(), token, device_id: id, name, root, saves_dir: saves, states_dir: states, roms_dir, saves_layout, states_layout, cfg, launchbox: None, esde: None, pegasus: None });
         save_settings(&app, &s);
     }
     *state.pc_conflicts.lock().unwrap() = 0;
@@ -1194,6 +1230,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             status,
             launchbox_set,
+            frontend_set,
             game_answer,
             login,
             logout,

@@ -2,12 +2,16 @@
 //! folder), the roms each one holds and the command each runs them with (a game's own, else its collection's).
 //! RetroArch games are synced; games of other emulators are counted as not synced yet
 
-use crate::frontend::{args, home, normalize, path_in, retroarch_command, Game, Library, Setup};
+use crate::frontend::{args, home, normalize, path_in, retroarch_command, standalone_of_command, Game, Library, Setup};
 use crate::pc;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+
+pub fn is_pegasus(dir: &Path) -> bool {
+    dir.join("game_dirs.txt").is_file() || dir.join("metafiles").is_dir()
+}
 
 /// Pegasus's configuration folder on this OS (its flatpak's on Linux too)
 pub fn detect() -> Option<PathBuf> {
@@ -20,7 +24,7 @@ pub fn detect() -> Option<PathBuf> {
         let config = std::env::var_os("XDG_CONFIG_HOME").map(PathBuf::from).unwrap_or_else(|| h.join(".config"));
         vec![config.join("pegasus-frontend"), h.join(".var/app/org.pegasus_frontend.Pegasus/config/pegasus-frontend")]
     };
-    dirs.into_iter().find(|d| d.join("game_dirs.txt").is_file() || d.join("metafiles").is_dir())
+    dirs.into_iter().find(|d| is_pegasus(d))
 }
 
 /// A metadata file's entries: (key, value), a value's indented lines joined to it
@@ -157,8 +161,8 @@ fn default_cfg(command: &str) -> Option<PathBuf> {
 /// What runs a command: the RetroArch setup's key, or the emulator's name when Rommancer cannot read it
 fn setup_of(command: &str, setups: &mut BTreeMap<String, Setup>) -> Result<String, String> {
     let program = || args(command).into_iter().next().map(|p| normalize(Path::new(&p.replace('\\', "/"))).file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or(p)).unwrap_or_default();
-    let Some(cfg) = default_cfg(command) else { return Err(program()) };
-    match retroarch_command(command, "org.libretro.RetroArch", &cfg) {
+    let retroarch = default_cfg(command).and_then(|cfg| retroarch_command(command, "org.libretro.RetroArch", &cfg));
+    match retroarch.or_else(|| standalone_of_command(command, &[])) {
         Some((key, setup)) => {
             setups.entry(key.clone()).or_insert(setup);
             Ok(key)
@@ -229,11 +233,18 @@ pub struct Cache {
 }
 
 impl Cache {
-    pub fn get(&mut self) -> Option<Arc<Library>> {
-        if self.found.as_ref().is_none_or(|(at, _)| at.elapsed() >= std::time::Duration::from_secs(60)) {
-            self.found = Some((std::time::Instant::now(), detect()));
-        }
-        let Some(dir) = self.found.as_ref().and_then(|(_, d)| d.clone()) else {
+    /// CHOSEN: the folder the user picked (none: found by itself)
+    pub fn get(&mut self, chosen: Option<&str>) -> Option<Arc<Library>> {
+        let dir = match chosen {
+            Some(c) => Some(PathBuf::from(c)).filter(|d| is_pegasus(d)),
+            None => {
+                if self.found.as_ref().is_none_or(|(at, _)| at.elapsed() >= std::time::Duration::from_secs(60)) {
+                    self.found = Some((std::time::Instant::now(), detect()));
+                }
+                self.found.as_ref().and_then(|(_, d)| d.clone())
+            }
+        };
+        let Some(dir) = dir else {
             self.read = None;
             return None;
         };
