@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <!-- Loads in LaunchBox on .NET Framework (12 and older) and on .NET (13 and newer) -->
+    <TargetFramework>netstandard2.0</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <Nullable>disable</Nullable>
+    <AssemblyName>Rommancer.LaunchBox</AssemblyName>
+    <Version>1.0.0</Version>
+  </PropertyGroup>
+  <ItemGroup>
+    <!-- From LaunchBox's own install (LaunchBox\Core); LaunchBox provides it at run time -->
+    <Reference Include="Unbroken.LaunchBox.Plugins">
+      <HintPath>lib\Unbroken.LaunchBox.Plugins.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+  </ItemGroup>
+</Project>

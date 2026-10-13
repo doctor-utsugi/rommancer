@@ -99,6 +99,27 @@ pub struct Conflict {
     pub newer: String,
 }
 
+/// A "conflict" line of the server (its conflictLine)
+pub fn conflict_of(l: &[String]) -> Option<Conflict> {
+    if l.len() < 7 || l[0] != "conflict" {
+        return None;
+    }
+    let f = |i: usize| l.get(i).filter(|v| v.as_str() != "-").cloned().unwrap_or_default();
+    Some(Conflict {
+        id: l[1].parse().ok()?,
+        game: l[2].clone(),
+        kind: l[3].clone(),
+        device_date: l[4].clone(),
+        server_date: l[5].clone(),
+        server_device: l[6].clone(),
+        device_when: f(8),
+        server_when: f(9),
+        zone: f(10),
+        since: f(11),
+        newer: f(12),
+    })
+}
+
 pub struct Engine<'a> {
     pub api: DeviceApi,
     /// Name of this sync in progress events: the card's root, or "pc"
@@ -117,6 +138,8 @@ pub struct Engine<'a> {
     pub prune: Option<PruneStore>,
     /// The roms folder this device knows for itself (this PC): deletions stay inside it whatever the server says
     pub roms_dir: Option<String>,
+    /// The games LaunchBox launches on this PC, synced with the emulator each one opens with
+    pub library: Option<std::sync::Arc<crate::launchbox::Library>>,
     cache: HashMap<String, (u64, u64, String)>,
 }
 
@@ -208,7 +231,7 @@ impl<'a> Engine<'a> {
                 }
             }
         }
-        Self { api, key, root, cache_file, report, cancelled, log, steps: vec!["saves"], allow_pull: true, prune: None, roms_dir: None, cache }
+        Self { api, key, root, cache_file, report, cancelled, log, steps: vec!["saves"], allow_pull: true, prune: None, roms_dir: None, library: None, cache }
     }
 
     /// A progress event with its step filled in
@@ -227,26 +250,7 @@ impl<'a> Engine<'a> {
 
     /// Saves of this device waiting for the user's choice
     pub fn conflicts(&self) -> Result<Vec<Conflict>> {
-        Ok(pairs(&self.api.get_text("/agent/conflicts")?)
-            .into_iter()
-            .filter(|l| l.len() >= 7 && l[0] == "conflict")
-            .filter_map(|l| {
-                let f = |i: usize| l.get(i).filter(|v| v.as_str() != "-").cloned().unwrap_or_default();
-                Some(Conflict {
-                    id: l[1].parse().ok()?,
-                    game: l[2].clone(),
-                    kind: l[3].clone(),
-                    device_date: l[4].clone(),
-                    server_date: l[5].clone(),
-                    server_device: l[6].clone(),
-                    device_when: f(8),
-                    server_when: f(9),
-                    zone: f(10),
-                    since: f(11),
-                    newer: f(12),
-                })
-            })
-            .collect())
+        Ok(pairs(&self.api.get_text("/agent/conflicts")?).iter().filter_map(|l| conflict_of(l)).collect())
     }
 
     fn check(&self) -> Result<()> {
@@ -323,6 +327,17 @@ impl<'a> Engine<'a> {
                 }
             }
         }
+        // LaunchBox's games, each with its platform and emulator setup (the server reads its saves there)
+        let library = self.library.clone();
+        let mut launched: HashMap<PathBuf, (String, String)> = HashMap::new();
+        if let Some(lib) = &library {
+            request.push_str(&lib.setup_lines());
+            for g in &lib.games {
+                if g.rom.is_file() && !g.rom.to_string_lossy().contains('\t') && launched.insert(g.rom.clone(), (g.platform.clone(), g.setup.clone())).is_none() && !roms.contains(&g.rom) {
+                    roms.push(g.rom.clone());
+                }
+            }
+        }
         for (i, rom) in roms.iter().enumerate() {
             self.check()?;
             if i % 10 == 0 {
@@ -340,11 +355,26 @@ impl<'a> Engine<'a> {
             rom_hashes.insert(wire(rom), hashes.join(","));
             // rom, path, sha1, headerless sha1, size
             let h = |i: usize| hashes.get(i).cloned().unwrap_or_default();
-            request.push_str(&format!("rom\t{}\t{}\t{}\t{size}\n", wire(rom), h(0), h(1)));
+            match launched.get(rom) {
+                Some((platform, setup)) => request.push_str(&format!("rom\t{}\t{}\t{}\t{size}\t{platform}\t{setup}\n", wire(rom), h(0), h(1))),
+                None => request.push_str(&format!("rom\t{}\t{}\t{}\t{size}\n", wire(rom), h(0), h(1))),
+            }
         }
         let mut saves = Vec::new();
         for d in &save_dirs {
             walk(d, &mut saves);
+        }
+        let mut exts = exts;
+        if let Some(lib) = &library {
+            // RetroArch's own, whatever the server listed for this PC's layout
+            exts.extend([".srm", ".state"].map(String::from));
+            for (d, depth) in lib.watched() {
+                if depth > 0 {
+                    walk(&d, &mut saves);
+                } else {
+                    saves.extend(fs::read_dir(&d).into_iter().flatten().flatten().filter(|e| e.file_type().is_ok_and(|t| t.is_file())).map(|e| e.path()));
+                }
+            }
         }
         saves.retain(|p| p.file_name().map(|n| is_save(&n.to_string_lossy(), &exts)).unwrap_or(false));
         saves.sort();

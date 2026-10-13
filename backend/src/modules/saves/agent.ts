@@ -322,8 +322,14 @@ function candidatePaths(ctx: RomCtx, emu: Emulator = ctx.emu) {
   const minui = ctx.layout.savesLayout === 'minui';
   const base = minui ? path.posix.basename(ctx.rel) : ctx.baseName;
   const files: { kind: 'SAVE' | 'STATE'; slot: number; path: string }[] = [{ kind: 'SAVE', slot: 0, path: abs(path.posix.join(dirs.saves, deviceFileName(base, ctx.emu, 'SAVE', 0))) }];
+  // Memory cards of a frontend's emulator, named by it: after the rom's file ("<name>_1.mcd", DuckStation's "file
+  // title"); cards named after a title, a serial or shared by all are found in their folder (launcherCard, namedCard)
+  if (ctx.layout.savesLayout.startsWith('card-')) {
+    files.length = 0;
+    if (ctx.layout.savesLayout === 'card-filetitle') files.push({ kind: 'SAVE', slot: 0, path: abs(path.posix.join(dirs.saves, `${base}_1${ctx.emu.saveExt}`)) });
+  }
   const slots = minui ? [-1, 0, 1, 2, 3, 4, 5, 6, 7] : [-1, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9];
-  if (ctx.emu.stateExt) for (const slot of slots) files.push({ kind: 'STATE', slot, path: abs(path.posix.join(dirs.states, deviceFileName(base, ctx.emu, 'STATE', slot, minui))) });
+  if (ctx.emu.stateExt && ctx.layout.statesLayout !== 'none') for (const slot of slots) files.push({ kind: 'STATE', slot, path: abs(path.posix.join(dirs.states, deviceFileName(base, ctx.emu, 'STATE', slot, minui))) });
   return files;
 }
 

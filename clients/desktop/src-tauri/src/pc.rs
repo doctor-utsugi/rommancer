@@ -25,6 +25,9 @@ pub struct PcLink {
     pub saves_layout: String,
     pub states_layout: String,
     pub cfg: Option<String>,
+    /// LaunchBox's folder when the user picked one; none: found by itself in its usual places
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub launchbox: Option<String>,
 }
 
 /// What a retroarch.cfg says about where saves and states go
@@ -123,7 +126,8 @@ fn resolve(value: Option<&String>, cfg_dir: &Path) -> Option<PathBuf> {
     } else if let Some(r) = v.strip_prefix(':') {
         cfg_dir.join(rest(r))
     } else {
-        PathBuf::from(v)
+        // A relative folder is RetroArch's own (LaunchBox starts it there)
+        cfg_dir.join(v)
     })
 }
 
@@ -205,9 +209,9 @@ pub fn layout_of(saves: &str, states: &str, roms: &str) -> Result<(String, Strin
 
 /// Files that look like saves or states in the watched folders, with their size and date: a change means RetroArch
 /// wrote one. Folders next to the roms are looked at for saves and states only
-pub fn signature(dirs: &[PathBuf]) -> u64 {
+pub fn signature(dirs: &[(PathBuf, u32)]) -> u64 {
     let mut acc: u64 = 0;
-    let mut stack: Vec<(PathBuf, u32)> = dirs.iter().map(|d| (d.clone(), 0)).collect();
+    let mut stack: Vec<(PathBuf, u32)> = dirs.iter().map(|(d, max)| (d.clone(), 4u32.saturating_sub(*max))).collect();
     while let Some((dir, depth)) = stack.pop() {
         let Ok(entries) = fs::read_dir(&dir) else { continue };
         for e in entries.flatten() {
@@ -239,10 +243,10 @@ pub fn signature(dirs: &[PathBuf]) -> u64 {
 
 impl PcLink {
     /// Folders RetroArch writes saves and states to (the games folder when they go next to the games)
-    pub fn watched(&self) -> Vec<PathBuf> {
-        let mut v = vec![PathBuf::from(&self.saves_dir)];
+    pub fn watched(&self) -> Vec<(PathBuf, u32)> {
+        let mut v = vec![(PathBuf::from(&self.saves_dir), 4)];
         if self.states_dir != self.saves_dir {
-            v.push(PathBuf::from(&self.states_dir));
+            v.push((PathBuf::from(&self.states_dir), 4));
         }
         v
     }

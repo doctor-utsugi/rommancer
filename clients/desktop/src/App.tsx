@@ -32,6 +32,9 @@ interface Status {
   pc: PcInfo | null
   pc_conflicts: number
   pc_offline_since: number | null
+  game_sync: boolean
+  game_ask: boolean
+  launchbox: { dir: string; restart: boolean; games: number; synced: number; unsupported: [string, number][] } | null
 }
 
 interface Card {
@@ -157,7 +160,50 @@ export function App() {
   const refresh = useCallback(() => void invoke<Status>('status').then(setStatus), [])
   useEffect(refresh, [refresh])
   if (!status) return null
-  return status.signed_in ? <Main status={status} onChange={refresh} /> : <Login server={status.server} onDone={refresh} />
+  return (
+    <>
+      {status.signed_in ? <Main status={status} onChange={refresh} /> : <Login server={status.server} onDone={refresh} />}
+      <GameConflicts />
+    </>
+  )
+}
+
+/** Before a LaunchBox game starts: its conflicts, each kept one side or left for later (the game waits meanwhile) */
+function GameConflicts() {
+  const [ask, setAsk] = useState<{ game: string; conflicts: Conflict[] } | null>(null)
+  const [answers, setAnswers] = useState<Record<number, 'device' | 'server' | 'later'>>({})
+  useEffect(() => {
+    const un = [
+      listen<{ game: string; conflicts: Conflict[] }>('game-conflicts', (e) => {
+        setAnswers({})
+        setAsk(e.payload)
+      }),
+      listen('game-conflicts-done', () => setAsk(null)),
+    ]
+    return () => un.forEach((u) => void u.then((f) => f()))
+  }, [])
+  if (!ask) return null
+  const answer = (id: number, keep: 'device' | 'server' | 'later') => {
+    const next = { ...answers, [id]: keep }
+    setAnswers(next)
+    if (ask.conflicts.every((c) => next[c.id])) {
+      void invoke('game_answer', { answers: Object.entries(next).filter(([, k]) => k !== 'later').map(([id, k]) => [Number(id), k]) })
+      setAsk(null)
+    }
+  }
+  return (
+    <div className="overlay">
+      <div className="panel">
+        <h2>{t('gameConflictTitle', { game: ask.game })}</h2>
+        <p className="muted small">{t('gameConflictHelp')}</p>
+        {ask.conflicts
+          .filter((c) => !answers[c.id])
+          .map((c) => (
+            <ConflictCard key={c.id} c={c} isPc onKeep={(side) => answer(c.id, side)} onLater={() => answer(c.id, 'later')} />
+          ))}
+      </div>
+    </div>
+  )
 }
 
 function Login({ server: initial, onDone }: { server: string; onDone: () => void }) {
@@ -442,6 +488,8 @@ function AppSettings({ status, onChange }: { status: Status; onChange: () => voi
         {toggle(status.auto_sync, (v) => void set({ autoSync: v }), 'autoSync', 'autoSyncHelp')}
         {toggle(status.auto_roms, (v) => void set({ autoRoms: v }), 'autoRoms', 'autoRomsHelp')}
         {toggle(status.allow_pull, (v) => void set({ allowPull: v }), 'allowPull', 'allowPullHelp')}
+        {status.launchbox && toggle(status.game_sync, (v) => void set({ gameSync: v }), 'gameSync', 'gameSyncHelp')}
+        {status.launchbox && status.game_sync && toggle(status.game_ask, (v) => void set({ gameAsk: v }), 'gameAsk', 'gameAskHelp')}
         {toggle(
           auto,
           async (v) => {
@@ -839,7 +887,6 @@ function Conflicts({ syncKey, isPc }: { syncKey: string; isPc: boolean }) {
   const [error, setError] = useState('')
   const load = useCallback(() => void invoke<Conflict[]>('conflicts', { key: syncKey }).then(setRows, (e) => setError(String(e))), [syncKey])
   useEffect(load, [load])
-  const date = (iso: string) => (iso && iso !== '-' ? when(new Date(iso).getTime()) : '—')
   const keep = async (id: number, which: 'device' | 'server') => {
     setBusy(true)
     setError('')
@@ -859,32 +906,42 @@ function Conflicts({ syncKey, isPc }: { syncKey: string; isPc: boolean }) {
       <p className="muted small">{t('conflictsHelp')}</p>
       {error && <p className="error">{error}</p>}
       {!rows.length && <p className="muted">{t('conflictNone')}</p>}
-      {rows.map((c) => {
-        // Both saves side by side, the newer first: where and when each was made, and a button under each
-        const newer = c.newer || (c.device_date >= c.server_date ? 'device' : 'server')
-        const here = { side: 'device' as const, who: t(isPc ? 'thisPc' : 'thisCard'), at: c.device_when || date(c.device_date) }
-        const there = { side: 'server' as const, who: c.server_device === '-' ? 'web' : c.server_device, at: c.server_when || date(c.server_date) }
-        const cards = newer === 'device' ? [here, there] : [there, here]
-        return (
-          <div key={c.id} className="conflict">
-            <strong>{c.game}</strong> <span className="muted small">· {t(c.kind === 'STATE' ? 'kindState' : 'kindSave')}</span>
-            {c.since && <p className="muted small">{t('conflictSince', { date: c.since })}</p>}
-            <div className="versions">
-              {cards.map((k, i) => (
-                <div key={k.side} className={'version' + (i === 0 ? ' newer' : '')}>
-                  <span className="tag">{t(i === 0 ? 'newer' : 'older')}</span>
-                  <span className="who">{k.who}</span>
-                  <span className="at">{k.at}</span>
-                  {c.zone && <span className="muted small">{c.zone}</span>}
-                  <button className={i === 0 ? 'primary' : ''} disabled={busy} onClick={() => void keep(c.id, k.side)}>
-                    {t('keepThis')}
-                  </button>
-                </div>
-              ))}
-            </div>
+      {rows.map((c) => (
+        <ConflictCard key={c.id} c={c} isPc={isPc} busy={busy} onKeep={(side) => void keep(c.id, side)} />
+      ))}
+    </div>
+  )
+}
+
+/** Both saves side by side, the newer first: where and when each was made, and a button under each */
+function ConflictCard({ c, isPc, busy, onKeep, onLater }: { c: Conflict; isPc: boolean; busy?: boolean; onKeep: (side: 'device' | 'server') => void; onLater?: () => void }) {
+  const date = (iso: string) => (iso && iso !== '-' ? when(new Date(iso).getTime()) : '—')
+  const newer = c.newer || (c.device_date >= c.server_date ? 'device' : 'server')
+  const here = { side: 'device' as const, who: t(isPc ? 'thisPc' : 'thisCard'), at: c.device_when || date(c.device_date) }
+  const there = { side: 'server' as const, who: c.server_device === '-' ? 'web' : c.server_device, at: c.server_when || date(c.server_date) }
+  const cards = newer === 'device' ? [here, there] : [there, here]
+  return (
+    <div className="conflict">
+      <strong>{c.game}</strong> <span className="muted small">· {t(c.kind === 'STATE' ? 'kindState' : 'kindSave')}</span>
+      {c.since && <p className="muted small">{t('conflictSince', { date: c.since })}</p>}
+      <div className="versions">
+        {cards.map((k, i) => (
+          <div key={k.side} className={'version' + (i === 0 ? ' newer' : '')}>
+            <span className="tag">{t(i === 0 ? 'newer' : 'older')}</span>
+            <span className="who">{k.who}</span>
+            <span className="at">{k.at}</span>
+            {c.zone && <span className="muted small">{c.zone}</span>}
+            <button className={i === 0 ? 'primary' : ''} disabled={busy} onClick={() => onKeep(k.side)}>
+              {t('keepThis')}
+            </button>
           </div>
-        )
-      })}
+        ))}
+      </div>
+      {onLater && (
+        <div className="row end">
+          <button onClick={onLater}>{t('decideLater')}</button>
+        </div>
+      )}
     </div>
   )
 }
@@ -933,6 +990,7 @@ function StatusView({
         )}
         {card && row(t(card.removable ? 'sdCard' : 'folder'), card.root)}
       </div>
+      {pc && <LaunchBox status={status} />}
       {result && <LastSync result={result} onDetails={() => {}} />}
       <div className="panel">
         <h2>{t('statusLog')}</h2>
@@ -943,6 +1001,43 @@ function StatusView({
         )}
       </div>
     </>
+  )
+}
+
+/** LaunchBox's games, synced with the emulator each one opens with */
+function LaunchBox({ status }: { status: Status }) {
+  const lb = status.launchbox
+  const [error, setError] = useState('')
+  const set = async (dir: string | null) => {
+    setError('')
+    try {
+      await invoke('launchbox_set', { dir })
+    } catch (e) {
+      setError(String(e))
+    }
+  }
+  const pick = async () => {
+    const dir = await open({ directory: true, defaultPath: lb?.dir || undefined })
+    if (typeof dir === 'string') await set(dir)
+  }
+  return (
+    <div className="panel">
+      <h2>{t('launchbox')}</h2>
+      {lb ? (
+        <>
+          <p className="small mono">{lb.dir}</p>
+          {lb.restart && <p className="small warn">{t('launchboxRestart')}</p>}
+          <p className="small">{t('launchboxGames', { synced: String(lb.synced), games: String(lb.games) })}</p>
+          {lb.unsupported.length > 0 && <p className="small muted">{t('launchboxOther', { list: lb.unsupported.map(([e, n]) => `${e} (${n})`).join(', ') })}</p>}
+        </>
+      ) : (
+        <p className="small muted">{t('launchboxNone')}</p>
+      )}
+      <div className="row">
+        <button onClick={pick}>{t('launchboxPick')}</button>
+      </div>
+      {error && <p className="small error">{error}</p>}
+    </div>
   )
 }
 

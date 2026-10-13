@@ -3,6 +3,9 @@
 
 mod api;
 mod card;
+mod game;
+mod hook;
+mod launchbox;
 mod pc;
 mod prune;
 mod sync;
@@ -35,11 +38,14 @@ struct Settings {
     folders: Vec<String>,
     /// This PC as a device, once set up
     pc: Option<pc::PcLink>,
+    /// Before a LaunchBox game starts: its saves synced, and its conflicts asked about
+    game_sync: bool,
+    game_ask: bool,
 }
 
 impl Default for Settings {
     fn default() -> Self {
-        Self { server: "https://".into(), username: None, refresh_token: None, auto_sync: true, auto_roms: true, allow_pull: true, folders: vec![], pc: None }
+        Self { server: "https://".into(), username: None, refresh_token: None, auto_sync: true, auto_roms: true, allow_pull: true, folders: vec![], pc: None, game_sync: true, game_ask: true }
     }
 }
 
@@ -58,6 +64,99 @@ struct AppState {
     last: Mutex<HashMap<String, Finished>>,
     pc_conflicts: Mutex<u32>,
     pc_offline: Mutex<Option<u64>>,
+    launchbox: Mutex<launchbox::Cache>,
+    /// The LaunchBox game being played since then: no sync writes its saves meanwhile
+    playing: Mutex<Option<(String, Instant)>>,
+    /// Where the conflict screen before a game sends its answers
+    answer: Mutex<Option<std::sync::mpsc::Sender<Vec<(u64, String)>>>>,
+}
+
+/// A game stays "playing" this long at most when LaunchBox never says it ended
+const PLAYING_MAX: Duration = Duration::from_secs(6 * 3600);
+
+fn playing(state: &AppState) -> bool {
+    let mut p = state.playing.lock().unwrap();
+    if p.as_ref().is_some_and(|(_, at)| at.elapsed() >= PLAYING_MAX) {
+        *p = None;
+    }
+    p.is_some()
+}
+
+/// What LaunchBox's plugin tells: a game about to start (answered once its saves are ready) or one that ended
+fn game_hook(app: &AppHandle, req: hook::Request) -> String {
+    let state = app.state::<AppState>();
+    let rom = pc::wire(Path::new(req.body.trim()));
+    let log = |line: String| push_log(app, pc::KEY, line);
+    match req.path.as_str() {
+        "/game-start" => {
+            log(format!("game-start: {rom}"));
+            *state.playing.lock().unwrap() = Some((rom.clone(), Instant::now()));
+            let (link, on, ask_on) = {
+                let s = state.settings.lock().unwrap();
+                (s.pc.clone(), s.game_sync, s.game_ask)
+            };
+            let Some(link) = link.filter(|_| on && state.user.lock().unwrap().is_some()) else { return "ok".into() };
+            if state.pc_offline.lock().unwrap().is_some() {
+                log("game-start: offline, playing the local save".into());
+                return "ok".into();
+            }
+            // A sync under way ends first; none starts while this one works
+            let since = Instant::now();
+            loop {
+                {
+                    let mut running = state.running.lock().unwrap();
+                    if !running.contains_key(pc::KEY) || since.elapsed() >= Duration::from_secs(60) {
+                        running.insert(pc::KEY.into(), Arc::new(AtomicBool::new(false)));
+                        break;
+                    }
+                }
+                std::thread::sleep(Duration::from_millis(200));
+            }
+            let game = Path::new(&rom).file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_default();
+            let ask = |c: &[sync::Conflict]| -> Vec<(u64, String)> {
+                if !ask_on {
+                    return vec![];
+                }
+                let (tx, rx) = std::sync::mpsc::channel();
+                *state.answer.lock().unwrap() = Some(tx);
+                let _ = app.emit("game-conflicts", serde_json::json!({ "game": game, "conflicts": c }));
+                show(app);
+                let got = rx.recv_timeout(Duration::from_secs(180)).unwrap_or_default();
+                *state.answer.lock().unwrap() = None;
+                let _ = app.emit("game-conflicts-done", ());
+                got
+            };
+            if let Err(e) = game::start(&Target::Pc(link).api(), &rom, &ask, &log) {
+                log(format!("game-start: {e:#}"));
+            }
+            state.running.lock().unwrap().remove(pc::KEY);
+            "ok".into()
+        }
+        "/game-end" => {
+            log(format!("game-end: {rom}"));
+            *state.playing.lock().unwrap() = None;
+            if state.settings.lock().unwrap().pc.is_some() {
+                let _ = start_sync(app, &state, pc::KEY.into(), Mode::Saves, None);
+            }
+            "ok".into()
+        }
+        _ => "unknown".into(),
+    }
+}
+
+/// The answers of the conflict screen shown before a game: the kept side of each conflict answered
+#[tauri::command]
+fn game_answer(state: State<AppState>, answers: Vec<(u64, String)>) {
+    let answers = answers.into_iter().filter(|(_, k)| k == "device" || k == "server").collect();
+    if let Some(tx) = state.answer.lock().unwrap().take() {
+        let _ = tx.send(answers);
+    }
+}
+
+/// LaunchBox's library on this PC (the folder the user picked, else the one found)
+fn library(state: &AppState) -> Option<Arc<launchbox::Library>> {
+    let chosen = state.settings.lock().unwrap().pc.as_ref().and_then(|p| p.launchbox.clone());
+    state.launchbox.lock().unwrap().get(chosen.as_deref())
 }
 
 fn now_ms() -> u64 {
@@ -134,10 +233,18 @@ struct Status {
     pc_conflicts: u32,
     /// Milliseconds since the epoch of the first failed contact in a row; none while the server answers
     pc_offline_since: Option<u64>,
+    launchbox: Option<launchbox::Summary>,
+    game_sync: bool,
+    game_ask: bool,
 }
 
 #[tauri::command]
 fn status(state: State<AppState>) -> Status {
+    let launchbox = if state.settings.lock().unwrap().pc.is_some() {
+        library(&state).map(|l| launchbox::Summary { restart: state.launchbox.lock().unwrap().needs_restart(&l.dir), ..l.summary() })
+    } else {
+        None
+    };
     let s = state.settings.lock().unwrap();
     Status {
         server: s.server.clone(),
@@ -160,7 +267,29 @@ fn status(state: State<AppState>) -> Status {
         }),
         pc_conflicts: *state.pc_conflicts.lock().unwrap(),
         pc_offline_since: *state.pc_offline.lock().unwrap(),
+        launchbox,
+        game_sync: s.game_sync,
+        game_ask: s.game_ask,
     }
+}
+
+/// LaunchBox's folder, picked by the user (none: found by itself again)
+#[tauri::command]
+fn launchbox_set(app: AppHandle, state: State<AppState>, dir: Option<String>) -> Result<(), String> {
+    if let Some(d) = &dir {
+        if !launchbox::is_launchbox(Path::new(d)) {
+            return Err("no LaunchBox there (Data\\Emulators.xml is missing)".into());
+        }
+    }
+    {
+        let mut s = state.settings.lock().unwrap();
+        let Some(pc) = s.pc.as_mut() else { return Err("this PC is not set up".into()) };
+        pc.launchbox = dir;
+        save_settings(&app, &s);
+    }
+    let _ = app.emit("pc-state", ());
+    let _ = start_sync(&app, &state, pc::KEY.into(), Mode::Full, None);
+    Ok(())
 }
 
 #[tauri::command]
@@ -212,8 +341,15 @@ fn cards(state: State<AppState>) -> Vec<card::Card> {
 }
 
 #[tauri::command]
-fn set_options(app: AppHandle, state: State<AppState>, auto_sync: Option<bool>, auto_roms: Option<bool>, allow_pull: Option<bool>) {
+#[allow(clippy::too_many_arguments)]
+fn set_options(app: AppHandle, state: State<AppState>, auto_sync: Option<bool>, auto_roms: Option<bool>, allow_pull: Option<bool>, game_sync: Option<bool>, game_ask: Option<bool>) {
     let mut s = state.settings.lock().unwrap();
+    if let Some(v) = game_sync {
+        s.game_sync = v;
+    }
+    if let Some(v) = game_ask {
+        s.game_ask = v;
+    }
     if let Some(v) = auto_sync {
         s.auto_sync = v;
     }
@@ -483,6 +619,9 @@ fn start_sync(app: &AppHandle, state: &AppState, key: String, mode: Mode, roms: 
         engine.allow_pull = allow_pull;
         engine.prune = t.prune_store(&app);
         engine.roms_dir = t.roms_dir();
+        if is_pc {
+            engine.library = library(&app.state::<AppState>());
+        }
         let pruning = engine.prune.as_ref().is_some_and(|p| p.active());
         engine.steps = match mode {
             Mode::Full => {
@@ -733,7 +872,7 @@ async fn pc_setup(
     let id = claim.get("deviceId").and_then(|v| v.as_u64()).ok_or("no device id")?;
     {
         let mut s = state.settings.lock().unwrap();
-        s.pc = Some(pc::PcLink { server: u.server.clone(), token, device_id: id, name, root, saves_dir: saves, states_dir: states, roms_dir, saves_layout, states_layout, cfg });
+        s.pc = Some(pc::PcLink { server: u.server.clone(), token, device_id: id, name, root, saves_dir: saves, states_dir: states, roms_dir, saves_layout, states_layout, cfg, launchbox: None });
         save_settings(&app, &s);
     }
     *state.pc_conflicts.lock().unwrap() = 0;
@@ -821,7 +960,11 @@ fn watch_pc(app: AppHandle) {
             let running = state.running.lock().unwrap().contains_key(pc::KEY);
             if last_scan.is_none_or(|t| t.elapsed() >= SCAN) {
                 last_scan = Some(Instant::now());
-                let sig = pc::signature(&link.watched());
+                let mut dirs = link.watched();
+                if let Some(lib) = library(&state) {
+                    dirs.extend(lib.watched());
+                }
+                let sig = pc::signature(&dirs);
                 if running || was_running || baseline.is_none() {
                     // What a sync writes is not RetroArch saving
                     changed_at = None;
@@ -831,7 +974,8 @@ fn watch_pc(app: AppHandle) {
                 baseline = Some(sig);
                 was_running = running;
             }
-            if running {
+            // A LaunchBox game is being played: its saves sync when it ends
+            if running || playing(&state) {
                 continue;
             }
             if last_full.is_none_or(|t| t.elapsed() >= FULL) {
@@ -965,7 +1109,14 @@ pub fn run() {
                 last: Mutex::new(last),
                 pc_conflicts: Mutex::new(0),
                 pc_offline: Mutex::new(None),
+                launchbox: Mutex::new(launchbox::Cache::default()),
+                playing: Mutex::new(None),
+                answer: Mutex::new(None),
             });
+            {
+                let h = handle.clone();
+                hook::serve(move |req| game_hook(&h, req));
+            }
 
             let open = MenuItem::with_id(app, "open", "Rommancer", true, None::<&str>)?;
             let sync_all = MenuItem::with_id(app, "sync", "Sync now", true, None::<&str>)?;
@@ -1003,6 +1154,8 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             status,
+            launchbox_set,
+            game_answer,
             login,
             logout,
             api,
