@@ -140,6 +140,29 @@ pub fn retroarch_setup(cfg: &Path, info_dirs: &[PathBuf], core_stem: &str) -> (S
     (format!("{}|{name}", pc::wire(cfg)), setup)
 }
 
+/// Where a RetroArch's core info files are: its libretro_info_path, its own info folder, the system's
+pub fn info_dirs(cfg: &Path) -> Vec<PathBuf> {
+    let mut v: Vec<PathBuf> = pc::cfg_folder(cfg, "libretro_info_path").into_iter().collect();
+    if let Some(d) = cfg.parent() {
+        v.push(d.join("info"));
+    }
+    v.push(PathBuf::from("/usr/share/libretro/info"));
+    v
+}
+
+/// A frontend's command that runs RetroArch (its program named with "retroarch", or MARKER in it) with a core: the
+/// setup with its own -c config, else with DEFAULT_CFG
+pub fn retroarch_command(command: &str, marker: &str, default_cfg: &Path) -> Option<(String, Setup)> {
+    let a = args(command);
+    let retroarch = command.contains(marker) || a.iter().take(3).any(|e| e.to_lowercase().contains("retroarch"));
+    let core = flag(&a, &["-L", "--libretro"]).filter(|_| retroarch)?.replace('\\', "/");
+    let own_cfg = flag(&a, &["-c", "--config"]).filter(|c| !c.contains('%') && !c.contains('{')).map(PathBuf::from).filter(|p| p.is_file());
+    let cfg = own_cfg.as_deref().unwrap_or(default_cfg);
+    let stem = Path::new(&core).file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_default();
+    let stem = if stem.ends_with("_libretro") { stem } else { format!("{stem}_libretro") };
+    Some(retroarch_setup(cfg, &info_dirs(cfg), &stem))
+}
+
 pub fn setup_of_retroarch(exe: &Path, command: &str) -> Option<(String, Setup)> {
     let ra_dir = exe.parent()?.to_path_buf();
     let a = args(command);

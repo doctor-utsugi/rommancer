@@ -2,7 +2,7 @@
 //! each system's folder and the emulator each game runs with (the game's own pick, else its system's, else the
 //! system's first command). RetroArch games are synced; games of other emulators are counted as not synced yet
 
-use crate::frontend::{args, child, flag, home, normalize, path_in, retroarch_setup, Game, Library, Setup};
+use crate::frontend::{child, home, normalize, path_in, retroarch_command, Game, Library, Setup};
 use crate::pc;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fs;
@@ -180,34 +180,22 @@ fn retroarch_cfg(dir: &Path) -> Option<PathBuf> {
     cfgs.into_iter().map(|p| normalize(&p)).find(|p| p.is_file()).or_else(|| pc::retroarch_cfgs().into_iter().next())
 }
 
-/// Where a RetroArch's core info files are: its libretro_info_path, its own info folder, the system's
-fn info_dirs(cfg: &Path) -> Vec<PathBuf> {
-    let mut v: Vec<PathBuf> = pc::cfg_folder(cfg, "libretro_info_path").into_iter().collect();
-    if let Some(d) = cfg.parent() {
-        v.push(d.join("info"));
-    }
-    v.push(PathBuf::from("/usr/share/libretro/info"));
-    v
-}
-
 /// The setup of a command: RetroArch's core (from -L), the label for other emulators; none for shortcuts and
 /// scripts, which are no games
 fn setup_of(command: &str, label: &str, cfg: Option<&Path>, setups: &mut BTreeMap<String, Setup>) -> Option<Result<String, String>> {
     if command.contains("%EMULATOR_OS-SHELL%") {
         return None;
     }
-    let a = args(command);
-    let retroarch = command.contains("%EMULATOR_RETROARCH%") || a.first().is_some_and(|e| e.to_lowercase().contains("retroarch"));
-    let core = flag(&a, &["-L", "--libretro"]).filter(|_| retroarch);
-    let Some(core) = core else { return Some(Err(label.to_string())) };
-    let Some(default_cfg) = cfg else { return Some(Err(format!("{label} (no retroarch.cfg found)"))) };
-    let own_cfg = flag(&a, &["-c", "--config"]).filter(|c| !c.contains('%')).map(PathBuf::from).filter(|p| p.is_file());
-    let cfg = own_cfg.as_deref().unwrap_or(default_cfg);
-    let core = core.replace('\\', "/");
-    let stem = Path::new(&core).file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_default();
-    let (key, setup) = retroarch_setup(cfg, &info_dirs(cfg), &stem);
-    setups.entry(key.clone()).or_insert(setup);
-    Some(Ok(key))
+    let Some(default_cfg) = cfg else {
+        return Some(Err(if command.contains("%EMULATOR_RETROARCH%") { format!("{label} (no retroarch.cfg found)") } else { label.to_string() }));
+    };
+    match retroarch_command(command, "%EMULATOR_RETROARCH%", default_cfg) {
+        Some((key, setup)) => {
+            setups.entry(key.clone()).or_insert(setup);
+            Some(Ok(key))
+        }
+        None => Some(Err(label.to_string())),
+    }
 }
 
 pub fn read(dir: &Path) -> Library {
@@ -402,7 +390,7 @@ mod tests {
         got.sort();
         let cfg_path = base.join("config/retroarch/retroarch.cfg");
         let cfg = pc::wire(&cfg_path);
-        let name = |stem: &str| crate::frontend::core_name(&info_dirs(&cfg_path), stem);
+        let name = |stem: &str| crate::frontend::core_name(&crate::frontend::info_dirs(&cfg_path), stem);
         assert_eq!(got.len(), 4, "{got:?}");
         assert_eq!(got[0], ("Crash.chd".into(), "psx".into(), format!("{cfg}|{}", name("mednafen_psx_libretro"))));
         assert_eq!(got[1], ("Mario.sfc".into(), "snes".into(), format!("{cfg}|Snes9x")));

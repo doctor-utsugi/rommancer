@@ -35,7 +35,7 @@ interface Status {
   game_sync: boolean
   game_ask: boolean
   launchbox: Frontend | null
-  /** The other frontends found (ES-DE) */
+  /** The other frontends found (ES-DE, Pegasus) */
   frontends: Frontend[]
 }
 
@@ -1077,7 +1077,7 @@ function LaunchBox({ status }: { status: Status }) {
   )
 }
 
-/** A frontend found by itself (ES-DE), synced with the emulator each game opens with */
+/** A frontend found by itself (ES-DE, Pegasus), synced with the emulator each game opens with */
 function FrontendPanel({ frontend: f }: { frontend: Frontend }) {
   return (
     <div className="panel">
