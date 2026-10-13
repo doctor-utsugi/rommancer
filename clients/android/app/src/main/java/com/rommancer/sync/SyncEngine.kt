@@ -37,6 +37,7 @@ class SyncEngine(private val context: Context, private val store: Store, private
 
     private val root: File = Environment.getExternalStorageDirectory()
     private val dolphin = Dolphin(context, store)
+    private val psp = PspSaves(root)
     private val cacheFile = File(context.filesDir, "hashes.tsv")
     private val cache = HashMap<String, Triple<Long, Long, String>>()
 
@@ -91,7 +92,8 @@ class SyncEngine(private val context: Context, private val store: Store, private
         }
         val listed = HashSet<String>()
         saveDirs.forEach { dir ->
-            dir.walkTopDown().filter { it.isFile && !it.name.startsWith(".") && isSave(it.name, exts) }.forEach { save ->
+            // PSP save folders go whole, below
+            dir.walkTopDown().filter { it.isFile && !it.name.startsWith(".") && isSave(it.name, exts) && !it.path.contains("/PSP/SAVEDATA/", ignoreCase = true) }.forEach { save ->
                 // file, path, sha1, mtime (the server tells which emulator folder is in use by the newest one)
                 if (listed.add(save.path)) request.append("file\t").append(save.path).append('\t').append(sha1(save, 0)).append('\t').append(save.lastModified() / 1000).append('\n')
             }
@@ -112,6 +114,20 @@ class SyncEngine(private val context: Context, private val store: Store, private
             }
             Dolphin.legacySaves(root).forEach { save ->
                 if (listed.add(save.path)) request.append("file\t").append(save.path).append('\t').append(sha1(save, 0)).append('\n')
+            }
+        }
+        // PSP saves: one line per save folder ("<path>/"), and the SAVEDATA folders even when empty
+        for (stick in runCatching { psp.sticks(saveDirs) }.getOrDefault(emptyList())) {
+            request.append("dir\t").append(stick).append('\n')
+            for (folder in psp.folders(stick)) runCatching { folderHash(folder) }.getOrNull()?.let { request.append("file\t").append(folder).append("/\t").append(it).append('\n') }
+        }
+        // AetherSX2's and NetherSX2's PS2 cards, in their own folder: through Shizuku
+        if (Privileged.ready) for (dir in PS2_CARDS) {
+            for ((path, size, time) in Privileged.stats(File(root, dir).path).filter { it.first.lowercase().endsWith(".ps2") }) {
+                if (!listed.add(path)) continue
+                val hash = cache[path]?.takeIf { it.first == size && it.second == time }?.third
+                    ?: Privileged.read(path)?.let { sha1Of(it) }?.also { cache[path] = Triple(size, time, it) } ?: continue
+                request.append("file\t").append(path).append('\t').append(hash).append('\n')
             }
         }
         saveCache()
@@ -247,15 +263,55 @@ class SyncEngine(private val context: Context, private val store: Store, private
         }
     }
 
-    private fun readSave(path: String): ByteArray = if (Dolphin.isVirtual(path)) dolphin.read(path) else File(path).readBytes()
+    private fun readSave(path: String): ByteArray = when {
+        Dolphin.isVirtual(path) -> dolphin.read(path)
+        path.endsWith("/") -> psp.pack(path)
+        path.contains("/Android/data/") -> Privileged.read(path) ?: throw java.io.FileNotFoundException(path)
+        else -> File(path).readBytes()
+    }
+
+    /** A PSP save folder's manifest hash, kept while its files' sizes and times do not change; null when it is empty */
+    private fun folderHash(folder: String): String? {
+        val entries = psp.entries(folder)
+        val sig = psp.signature(entries) ?: return null
+        val key = "${folder.trimEnd('/')}/"
+        cache[key]?.let { (size, time, hash) -> if (size == sig.first && time == sig.second) return hash }
+        return psp.hash(entries)?.also { cache[key] = Triple(sig.first, sig.second, it) }
+    }
+
+    /**
+     * Whether a whole memory card may be written: only when Shizuku can tell that no emulator that may hold it is
+     * running (the app owning its folder in Android/data, RetroArch for the shared storage)
+     */
+    private fun cardFree(path: String): Boolean {
+        if (!Privileged.ready) return false
+        val owner = Regex("/Android/data/([^/]+)/").find(path)?.groupValues?.get(1)
+        return (listOfNotNull(owner) + RETROARCH).none { Privileged.running(it) }
+    }
+
+    /** A PSP save folder the server sent, written only if the folder is still the one it read (EXPECT) */
+    private fun folderGet(api: Api, path: String, expect: String, rom: String): Boolean {
+        val data = api.bytes("/agent/card?expect=$expect", mapOf("X-Path-B64" to Api.b64(path), "X-Rom-B64" to Api.b64(rom)))
+        if (data == null || data.isEmpty()) return false
+        cache.remove(path)
+        val now = folderHash(path) ?: "-"
+        if (now != expect) return false
+        if (now != "-") runCatching { backup(File(path.trimEnd('/')).name + ".tar", psp.pack(path)) }
+        psp.write(path, data)
+        cache.remove(path)
+        runCatching { api.text("/agent/card/ack?sha=${folderHash(path)}", "POST", ByteArray(0), mapOf("X-Path-B64" to Api.b64(path))) }
+        return true
+    }
 
     /**
      * A memory card file with the server's newer saves ("cget"), written only if it is still the one the server
-     * read (EXPECT, "-" for none). Only Dolphin's .gci files, one save each: Android cannot tell whether an
-     * emulator holds a whole card (PS1, Dolphin's .raw images), and Dolphin only writes back the saves a game changed.
+     * read (EXPECT, "-" for none). Dolphin's .gci files (one save each: Dolphin only writes back the saves a game
+     * changed) and PSP save folders always; whole cards (PS1, PS2, Dolphin's .raw images) only when no emulator that
+     * may hold one is running (cardFree).
      */
     private fun cardGet(api: Api, path: String, expect: String, rom: String): Boolean {
-        if (!path.lowercase().endsWith(".gci")) return false
+        if (path.endsWith("/")) return folderGet(api, path, expect, rom)
+        if (!path.lowercase().endsWith(".gci") && !cardFree(path)) return false
         val data = api.bytes("/agent/card?expect=$expect", mapOf("X-Path-B64" to Api.b64(path), "X-Rom-B64" to Api.b64(rom)))
         if (data == null || data.isEmpty()) return false
         val now = try {
@@ -265,7 +321,9 @@ class SyncEngine(private val context: Context, private val store: Store, private
         }
         if (now != expect) return false
         if (now != "-") runCatching { backup(path.substringAfterLast('/'), readSave(path)) }
-        if (Dolphin.isVirtual(path)) dolphin.write(path, data) else {
+        if (Dolphin.isVirtual(path)) dolphin.write(path, data)
+        else if (path.contains("/Android/data/")) { if (!Privileged.write(path, data)) return false }
+        else {
             val file = File(path)
             file.parentFile?.mkdirs()
             val tmp = File("$path.rommancer-tmp")
@@ -610,6 +668,11 @@ class SyncEngine(private val context: Context, private val store: Store, private
         private val STOP_ROMS = java.util.concurrent.atomic.AtomicBoolean(false)
 
         private val HOLD = setOf("get", "aside", "cget")
+
+        /** AetherSX2's (and NetherSX2's, the same app) memory cards */
+        private val PS2_CARDS = listOf("Android/data/xyz.aethersx2.android/files/memcards")
+
+        private val RETROARCH = listOf("com.retroarch", "com.retroarch.aarch64", "com.retroarch.ra32")
 
         /** The last pass left saves to fetch until the game in front closes */
         @Volatile var HELD = false

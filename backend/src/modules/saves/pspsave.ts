@@ -1,7 +1,8 @@
 /**
  * PSP saves: a folder per save under SAVEDATA, named by the game's product code and a suffix of the game's
  * ("ULUS10336DATA00"), holding PARAM.SFO, the game's files and its icons. A folder travels as a tar of it (its files
- * under "<folder>/", sorted, with no dates or owners) so the same folder is the same tar on every device.
+ * under "<folder>/", sorted, with no dates or owners). A device tells a folder by its manifest, a line "<path>\t<sha1>"
+ * per file sorted by path, hashed: any tar of the same files has the same one, so clients need no exact tar.
  */
 import crypto from 'node:crypto';
 
@@ -103,6 +104,21 @@ function sfoValue(sfo: Buffer | undefined, key: string): string | null {
   return null;
 }
 
+const sha1 = (b: Buffer | string) => crypto.createHash('sha1').update(b).digest('hex');
+
+/** The hash a device reports for a save folder holding FILES (paths inside the folder) */
+export function manifestHash(files: { path: string; data: Buffer }[]) {
+  const lines = files.map((f) => `${f.path}\t${sha1(f.data)}\n`);
+  return sha1(lines.sort((a, b) => Buffer.compare(Buffer.from(a), Buffer.from(b))).join(''));
+}
+
+/** The manifest hash of a save folder's tar ("-" style empty folder for an empty file) */
+export function folderHash(tar: Buffer) {
+  if (!tar.length) return sha1(tar);
+  const name = readPspFolder(tar).name;
+  return manifestHash(unpack(tar).map((f) => ({ path: f.path.slice(name.length + 1), data: f.data })));
+}
+
 /** A save folder from its tar; the folder is the tar's single top-level directory */
 export function readPspFolder(tar: Buffer): PspEntry {
   const files = unpack(tar);
@@ -118,6 +134,6 @@ export function readPspFolder(tar: Buffer): PspEntry {
     title: sfoValue(sfo, 'TITLE') ?? sfoValue(sfo, 'SAVEDATA_TITLE'),
     blocks: Math.ceil(inner.reduce((n, f) => n + f.data.length, 0) / 1024),
     tar: canonical,
-    sha1: crypto.createHash('sha1').update(canonical).digest('hex'),
+    sha1: sha1(canonical),
   };
 }

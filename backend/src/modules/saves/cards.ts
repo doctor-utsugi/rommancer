@@ -25,6 +25,8 @@ import { readVersion, storeVersion } from './service.js';
 
 export const cardFamily = (emu: Pick<Emulator, 'saveFormat'>) => codecFor(emu)?.family ?? null;
 export const isCardEmulator = (emu: Pick<Emulator, 'saveFormat'>) => cardFamily(emu) !== null;
+/** A card file's hash as its device reports it (a PSP save folder's is its manifest's) */
+export const cardHash = (emu: Pick<Emulator, 'saveFormat'>, buf: Buffer) => codecFor(emu)?.hash?.(buf) ?? sha1(buf);
 
 /** Card files every game shares, by name, and the emulator that writes them */
 const SHARED_CARDS: [RegExp, string][] = [
@@ -32,7 +34,8 @@ const SHARED_CARDS: [RegExp, string][] = [
   [/^duckstation_shared_card_[1-8]\.mcd$/i, 'ra-swanstation'],
   [/^shared_card_[1-8]\.mcd$/i, 'duckstation'],
   [/^mednafen_psx_libretro_shared\.\d\.mcr$/i, 'ra-beetle-psx'],
-  [/^Mcd00[1-8]\.ps2$/i, 'pcsx2'],
+  // PS2 cards (PCSX2, AetherSX2, NetherSX2, LRPS2) hold every game's saves, whatever they are named
+  [/\.ps2$/i, 'pcsx2'],
 ];
 /** Per-game cards named after the disc's serial (PCSX-ReARMed "serial", SwanStation and DuckStation "PerGame") */
 const SERIAL_CARD = /^([A-Z]{4}-\d{5})_[1-8]\.mcd$/i;
@@ -114,8 +117,7 @@ export async function deviceCard(device: Device, rel: string, emu: Emulator, opt
   });
 }
 
-async function snapshot(dc: DeviceCard, userId: number, buf: Buffer, kind: 'seen' | 'sent') {
-  const s = sha1(buf);
+async function snapshot(dc: DeviceCard, userId: number, buf: Buffer, kind: 'seen' | 'sent', s: string) {
   const known = await prisma.cardSnapshot.findFirst({ where: { deviceCardId: dc.id, sha1: s } });
   if (known) return known;
   const row = await prisma.cardSnapshot.create({ data: { deviceCardId: dc.id, sha1: s, path: '', size: buf.length, kind } });
@@ -193,8 +195,8 @@ async function firstBase(device: Device, dc: DeviceCard, save: Save, entrySha1: 
 /** Reads a card file the device sent: every entry is uploaded, adopted or kept as a conflict, as any save */
 export async function observeCard(device: Device, dc: DeviceCard, emu: Emulator, buf: Buffer) {
   const result = { uploaded: 0, conflicts: 0, removed: 0, problems: [] as string[] };
-  const deviceSha1 = sha1(buf);
-  await snapshot(dc, device.userId, buf, 'seen');
+  const deviceSha1 = cardHash(emu, buf);
+  await snapshot(dc, device.userId, buf, 'seen', deviceSha1);
   let card: ReadCard;
   try {
     card = parseCard(buf, emu);
@@ -466,7 +468,7 @@ export async function prepareCard(device: Device, dc: DeviceCard, emu: Emulator,
   if (warning !== dc.warning) await prisma.deviceCard.update({ where: { id: dc.id }, data: { warning } });
   if (!sent.length) return null;
   const offer: OfferEntry[] = sent.map((p) => ({ saveId: p.save.id, versionId: p.save.currentVersionId!, name: p.entry.name, entrySha1: p.entry.sha1 }));
-  return { file, sha1: sha1(file), offer, freeBlocks: codec.read(file).freeBlocks };
+  return { file, sha1: codec.hash?.(file) ?? sha1(file), offer, freeBlocks: codec.read(file).freeBlocks };
 }
 
 /** Keeps what was sent: it counts as synced when the device is next seen with it */
@@ -475,7 +477,7 @@ export async function recordOffer(device: Device, dc: DeviceCard, prepared: NonN
     where: { id: dc.id },
     data: { offerSha1: prepared.sha1, offer: prepared.offer as unknown as Prisma.InputJsonValue },
   });
-  await snapshot(updated, device.userId, prepared.file, 'sent');
+  await snapshot(updated, device.userId, prepared.file, 'sent', prepared.sha1);
   return updated;
 }
 

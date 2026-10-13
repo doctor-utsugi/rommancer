@@ -44,6 +44,23 @@ object Privileged {
 
     fun delete(path: String) = exec("rm -f ${q(path)}").first == 0
 
+    fun isDir(path: String) = exec("[ -d ${q(path)} ]").first == 0
+
+    /** The folders right inside DIR */
+    fun dirs(dir: String): List<String> = exec("find ${q(dir)} -mindepth 1 -maxdepth 1 -type d 2>/dev/null").second.toString(Charsets.UTF_8).lines().filter { it.isNotBlank() }
+
+    /** Every file under DIR with its size and time in seconds */
+    fun stats(dir: String): List<Triple<String, Long, Long>> =
+        exec("find ${q(dir)} -type f -exec stat -c '%s %Y %n' {} + 2>/dev/null").second.toString(Charsets.UTF_8).lines().mapNotNull { l ->
+            val f = l.split(' ', limit = 3)
+            if (f.size == 3) Triple(f[2], f[0].toLongOrNull() ?: return@mapNotNull null, f[1].toLongOrNull() ?: 0L) else null
+        }
+
+    /** Puts folder FROM in the place of folder TO, whatever TO held */
+    fun replaceDir(from: String, to: String) = exec("rm -rf ${q(to)} && mv ${q(from)} ${q(to)}").first == 0
+
+    fun removeDir(path: String) = exec("rm -rf ${q(path)}").first == 0
+
     fun running(pkg: String) = exec("pidof ${q(pkg)}").first == 0
 
     /** The package of the activity in front ("topResumedActivity=ActivityRecord{... u0 pkg/.Activity ...}") */

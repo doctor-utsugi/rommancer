@@ -22,7 +22,7 @@
 #                                   Menu++...) mounted on this computer; the link lives on the card itself,
 #                                   so any computer with this script can sync it. Without a command: sync.
 set -u
-CLIENT_VERSION=20261064
+CLIENT_VERSION=20261065
 # A clock before this date is surely wrong (no battery-backed clock); kept apart from the version, which may run ahead
 CLOCK_MIN=20261001
 # Onion keeps curl (with TLS) and friends outside the default PATH
@@ -375,7 +375,7 @@ known_lines() {
       ne = split(tolower(exts), ex, " ")
       while ((getline l < cache) > 0) if (split(l, a, FS) == 3) c[a[1] FS a[2]] = a[3]
     }
-    NF != 2 || index($2, "/.") { next }
+    NF != 2 || index($2, "/.") || index(tolower($2), "/psp/savedata/") { next }
     {
       f = $2; n = tolower(f)
       if (kind == "file") {
@@ -429,9 +429,45 @@ build_request() {
     mt="${meta#* }"; mt="${mt%% *}"
     s="$(fresh_sha1 "$f" "$meta")" && printf 'file\t%s\t%s\t%s\n' "$f" "$s" "$mt" >> "$out"
   done < "$WORK/saves"
+  printf '%s\n' "$roots" | sed -n "s/^saves$TAB//p" | while IFS= read -r d; do psp_lines "$d"; done >> "$out"
   nested_lines "$out" > "$WORK/nested" && cat "$WORK/nested" >> "$out"
   core_lines >> "$out" 2>/dev/null
   save_cache
+}
+
+# PSP saves (PPSSPP, its RetroArch core) are folders, PSP/SAVEDATA/<game code + suffix>: each goes as one file whose
+# path ends in "/", told apart by its manifest (folder_hash); the SAVEDATA folders themselves as "dir" lines
+psp_lines() {
+  find "$1" -type d -name SAVEDATA 2>/dev/null | while IFS= read -r sd; do
+    [ "$(basename "$(dirname "$sd")")" = PSP ] || continue
+    printf 'dir\t%s\n' "$sd"
+    for f in "$sd"/*/; do
+      [ -d "$f" ] || continue
+      h="$(folder_hash "${f%/}")" && [ -n "$h" ] && printf 'file\t%s\t%s\n' "$f" "$h"
+    done
+  done
+}
+
+# A save folder's hash: sha1 of its "<path><TAB><sha1>" lines sorted by path (the server reads its tars the same
+# way), cached by its files' sizes and times; nothing for an empty folder
+folder_hash() {
+  sig="$(find "$1" -type f -exec stat -c '%s %Y' {} + 2>/dev/null | awk '{ n++; s += $1; if ($2 > m) m = $2 } END { if (n) printf "%d %d %d", n, s, m }')"
+  [ -n "$sig" ] || return 1
+  k="$1/"
+  h="$(grep -F "$k$TAB$sig$TAB" "$CACHE" 2>/dev/null | tail -n 1 | cut -f3)"
+  if [ -z "$h" ]; then
+    h="$(cd "$1" && find . -type f | sed 's|^\./||' | LC_ALL=C sort | while IFS= read -r x; do printf '%s\t%s\n' "$x" "$(sha1 "$x")"; done | sha1sum | cut -d' ' -f1)"
+    [ -n "$h" ] && printf '%s\t%s\t%s\n' "$k" "$sig" "$h" >> "$CACHE"
+  fi
+  printf '%s' "$h"
+}
+
+# A save's content to upload: the file, or for a save folder ("<path>/") a tar of it
+upload_body() {
+  case "$1" in
+    */) rm -f "$WORK/folder.tar"; d="${1%/}"; tar -cf "$WORK/folder.tar" -C "$(dirname "$d")" "$(basename "$d")" 2>/dev/null && printf '%s' "$WORK/folder.tar" ;;
+    *) printf '%s' "$1" ;;
+  esac
 }
 
 # Roms kept in a folder of their own under their system (roms/snes/CURADA/game.smc): sent as "srom<TAB>path" when a
@@ -498,7 +534,7 @@ thumb_get() {
 # because emulators keep the card in memory and write it back whole
 emu_running() {
   # Every process (busybox ps lists them all and has no -e)
-  { ps -e -o args= 2>/dev/null || ps 2>/dev/null; } | grep -q '[r]etroarch\|[d]olphin-emu\|[m]inarch\|[d]uckstation\|[e]mulatorlauncher\|[p]csx\|[s]wanstation\|[e]psxe\|[r]etrorun'
+  { ps -e -o args= 2>/dev/null || ps 2>/dev/null; } | grep -qi '[r]etroarch\|[d]olphin-emu\|[m]inarch\|[d]uckstation\|[e]mulatorlauncher\|[p]csx\|[s]wanstation\|[e]psxe\|[r]etrorun\|[p]psspp\|[a]ethersx2'
 }
 
 # A memory card with the server's newer saves put in ("cget"): swapped in only if the file is still the one
@@ -536,6 +572,7 @@ set_aside() {
 card_get() {
   cp_="$1"; ce_="$2"; cr_="$3"; cw_="${4:-}"
   if [ -z "$SD" ] && [ "$cw_" != start ] && emu_running; then log "card: an emulator is running, $(basename "$cp_") later"; return 1; fi
+  case "$cp_" in */) folder_get "$@"; return ;; esac
   mkdir -p "$(dirname "$cp_")"
   rm -f "$cp_.rommancer-tmp"
   http_once GET "$SERVER/api/v1/agent/card?expect=$ce_" - "$cp_.rommancer-tmp" "X-Path-B64: $(b64 "$cp_")" "X-Rom-B64: $(b64 "$cr_")" || { rm -f "$cp_.rommancer-tmp"; return 1; }
@@ -547,6 +584,29 @@ card_get() {
   replace_save "$cp_.rommancer-tmp" "$cp_"
   # Tell the server at once: a game saved on this card before the next sync is then this console's newer save
   http_once POST "$SERVER/api/v1/agent/card/ack?sha=$(sha1 "$cp_")" - - "X-Path-B64: $(b64 "$cp_")" >/dev/null 2>&1 || log "card: $(basename "$cp_") written, server not told yet"
+}
+
+# A PSP save folder the server sent (a tar of it), put in place only if the folder is still the one it read; the
+# folder it replaces is kept in the backups as a tar
+folder_get() {
+  fd_="${1%/}"; fe_="$2"; ft_="$WORK/folder-get.tar"; fx_="$(dirname "$fd_")/.rommancer-$(basename "$fd_")"
+  rm -f "$ft_"
+  http_once GET "$SERVER/api/v1/agent/card?expect=$fe_" - "$ft_" "X-Path-B64: $(b64 "$1")" "X-Rom-B64: $(b64 "$3")" || { rm -f "$ft_"; return 1; }
+  [ -s "$ft_" ] || { rm -f "$ft_"; return 1; }
+  fn_=-; [ -d "$fd_" ] && fn_="$(folder_hash "$fd_")"
+  [ -n "$fn_" ] || fn_=-
+  if [ "$fn_" != "$fe_" ]; then rm -f "$ft_"; log "card: $(basename "$fd_") changed meanwhile, later"; return 1; fi
+  rm -rf "$fx_"; mkdir -p "$fx_" && tar -xf "$ft_" -C "$fx_" 2>/dev/null || { rm -rf "$fx_" "$ft_"; return 1; }
+  src_="$(find "$fx_" -mindepth 1 -maxdepth 1 -type d | head -n 1)"
+  [ -n "$src_" ] || { rm -rf "$fx_" "$ft_"; return 1; }
+  if [ -d "$fd_" ]; then
+    mkdir -p "$STATE/backups"
+    tar -cf "$STATE/backups/$(date +%Y%m%d-%H%M%S)-$(basename "$fd_").tar" -C "$(dirname "$fd_")" "$(basename "$fd_")" 2>/dev/null || log "backup of $(basename "$fd_") failed"
+    trim_backups
+    rm -rf "$fd_"
+  fi
+  mv "$src_" "$fd_" && rm -rf "$fx_" "$ft_" || return 1
+  http_once POST "$SERVER/api/v1/agent/card/ack?sha=$(folder_hash "$fd_")" - - "X-Path-B64: $(b64 "$1")" >/dev/null 2>&1 || log "card: $(basename "$fd_") written, server not told yet"
 }
 
 # A short note on screen when saves arrived: EmulationStation's popup (Knulli, Batocera), the desktop's
@@ -764,7 +824,7 @@ cmd_sync() {
     case "$action" in
       put)
         rh="$(grep -F "rom$TAB$a$TAB" "$req" | head -n 1 | cut -f3,4 | tr '\t' ',')"
-        if http POST "$SERVER/api/v1/agent/upload" "$p" "$WORK/uploaded" "X-Rom-B64: $(b64 "$a")" "X-Path-B64: $(b64 "$p")" "X-Rom-Sha1: $rh" "X-Save-Exact: ${b:-0}"; then
+        if body="$(upload_body "$p")" && http POST "$SERVER/api/v1/agent/upload" "$body" "$WORK/uploaded" "X-Rom-B64: $(b64 "$a")" "X-Path-B64: $(b64 "$p")" "X-Rom-Sha1: $rh" "X-Save-Exact: ${b:-0}"; then
           ups=$((ups + 1)); if is_state "$p"; then stup=$((stup + 1)); else sup=$((sup + 1)); fi
           # A new savestate: the server asks for its screenshot; a memory card may come back with the server's saves in it
           while IFS="$TAB" read -r tk tp tv tr; do
