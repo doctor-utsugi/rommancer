@@ -44,6 +44,7 @@
     <string name="no">no</string>
 
     <!-- Conflicts -->
+    <string name="conflicts_later">Later</string>
     <string name="no_conflicts">No conflicts</string>
     <string name="save_conflict">SAVE CONFLICT</string>
     <string name="kind_save">Save</string>

@@ -193,13 +193,14 @@ private fun SavePoint() {
  * dimmed line what it does
  */
 @Composable
-private fun MenuItem(text: String, focus: FocusRequester? = null, sub: String? = null, color: Color = Color.White, onClick: () -> Unit) {
+private fun MenuItem(text: String, focus: FocusRequester? = null, sub: String? = null, color: Color = Color.White, alert: Boolean = false, onClick: () -> Unit) {
     var focused by remember { mutableStateOf(false) }
     TextButton(
         onClick = onClick,
         contentPadding = PaddingValues(horizontal = 14.dp, vertical = 8.dp),
         modifier = Modifier
             .fillMaxWidth()
+            .then(if (alert) Modifier.background(color.copy(alpha = 0.18f), RoundedCornerShape(10.dp)) else Modifier)
             .then(if (focus != null) Modifier.focusRequester(focus) else Modifier)
             .onFocusChanged { focused = it.isFocused }
             .border(2.dp, if (focused) Accent else Color.Transparent, RoundedCornerShape(10.dp)),
@@ -378,8 +379,13 @@ private fun Linked(store: Store, onUnlinked: () -> Unit) {
             val result = withContext(Dispatchers.IO) {
                 runCatching { work(SyncEngine(context, store) { progress = it }) }
             }
+            // A sync the user started that ends with saves in conflict goes straight to choosing; Back means later
+            val found = result.getOrNull()?.let {
+                withContext(Dispatchers.IO) { runCatching { SyncEngine(context, store).conflicts() }.getOrNull() }
+            }
+            if (found != null) conflicts = found
             screen = result.fold(
-                { Screen.Result(title, it) },
+                { found?.firstOrNull()?.takeIf { _ -> result.getOrNull()?.conflicts?.let { it > 0 } == true }?.let { c -> Screen.Conflict(c) } ?: Screen.Result(title, it) },
                 { e -> Failure.describe(context, store, e).let { (why, details) -> Screen.Message(why, details) } },
             )
         }
@@ -560,9 +566,12 @@ private fun Linked(store: Store, onUnlinked: () -> Unit) {
             update?.let { u ->
                 MenuItem(stringResource(R.string.update_app, u.name)) { runText(titleUpdate) { Updater.install(context, store); "" } }
             }
+            // Saves in conflict come first, one tap from choosing: straight to the save when there is one
+            if (n > 0) MenuItem(stringResource(R.string.conflicts, n), firstItem, color = Warn, alert = true) {
+                screen = conflicts?.singleOrNull()?.let { Screen.Conflict(it) } ?: Screen.Conflicts
+            }
             // Asked on screen: the roms download again even after a stop
-            MenuItem(titleSync, firstItem) { run(titleSync) { it.all(roms = true) } }
-            if (n > 0) MenuItem(stringResource(R.string.conflicts, n), color = Warn) { screen = Screen.Conflicts }
+            MenuItem(titleSync, if (n > 0) null else firstItem) { run(titleSync) { it.all(roms = true) } }
             if (live != null) MenuItem(titleWatchRoms) { screen = Screen.Watch(titleWatchRoms, pulls = false) }
             if (pullLive != null) MenuItem(titleWatchPulls) { screen = Screen.Watch(titleWatchPulls, pulls = true) }
             MenuItem(stringResource(R.string.lists)) { lists = null; listsError = null; listAt = null; screen = Screen.Lists; loadLists() }
@@ -707,7 +716,7 @@ private fun Linked(store: Store, onUnlinked: () -> Unit) {
             val list = conflicts.orEmpty()
             if (list.isEmpty()) Text(stringResource(R.string.no_conflicts), color = Dim)
             list.forEachIndexed { i, c -> MenuItem(c.game, if (i == 0) firstItem else null) { screen = Screen.Conflict(c) } }
-            MenuItem(stringResource(R.string.press_back), if (list.isEmpty()) firstItem else null) { screen = Screen.Menu }
+            MenuItem(stringResource(if (list.isEmpty()) R.string.press_back else R.string.conflicts_later), if (list.isEmpty()) firstItem else null) { screen = Screen.Menu }
             LaunchedEffect(Unit) { runCatching { firstItem.requestFocus() } }
         }
         is Screen.Conflict -> {

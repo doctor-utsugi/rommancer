@@ -685,7 +685,23 @@ function DeviceHome({
 }) {
   const [view, setView] = useState<View>('home')
   const [error, setError] = useState('')
-  const sync = (mode = 'full', roms?: boolean) => void invoke('sync_device', { key: syncKey, mode, roms: roms ?? null }).catch((e) => setError(String(e)))
+  // A sync started on this screen that ends with saves in conflict opens the conflicts; background syncs do not
+  const userSync = useRef(false)
+  const latestConflicts = useRef(conflicts)
+  latestConflicts.current = conflicts
+  const sync = (mode = 'full', roms?: boolean) => {
+    userSync.current = true
+    void invoke('sync_device', { key: syncKey, mode, roms: roms ?? null }).catch((e) => setError(String(e)))
+  }
+  useEffect(() => {
+    if (syncing || !userSync.current) return
+    // The count arrives a moment after the sync ends
+    const timer = setTimeout(() => {
+      userSync.current = false
+      if (latestConflicts.current > 0) setView('conflicts')
+    }, 1500)
+    return () => clearTimeout(timer)
+  }, [syncing, result])
   useEffect(() => {
     if (view === 'conflicts' && conflicts === 0) setView('home')
   }, [view, conflicts])
@@ -770,6 +786,11 @@ function DeviceHome({
       )}
       {view === 'home' && (
         <>
+          {conflicts > 0 && !syncing && (
+            <button className="conflict-banner" onClick={() => setView('conflicts')}>
+              {tn('conflictsResolve', conflicts)}
+            </button>
+          )}
           {question && !syncing && <PruneQuestion q={question} />}
           {syncing && <ProgressBox p={progress} />}
           {result && <LastSync result={result} onDetails={() => setView('status')} />}
@@ -777,7 +798,7 @@ function DeviceHome({
           {children}
         </>
       )}
-      {view === 'conflicts' && <Conflicts syncKey={syncKey} isPc={!!pc} />}
+      {view === 'conflicts' && <Conflicts syncKey={syncKey} isPc={!!pc} onLater={() => setView('home')} />}
       {view === 'lists' && deviceId && <Lists deviceId={deviceId} name={title} onCopy={() => sync('full', true)} />}
       {view === 'games' && deviceId && <Games deviceId={deviceId} refreshKey={result} onSend={() => sync('pulls')} />}
       {view === 'add' && deviceId && <AddGames deviceId={deviceId} onAdded={() => sync('full', true)} />}
@@ -881,7 +902,7 @@ function LastSync({ result, onDetails }: { result: Finished; onDetails: () => vo
 }
 
 /** Saves that changed here and on the server: keep one version or the other */
-function Conflicts({ syncKey, isPc }: { syncKey: string; isPc: boolean }) {
+function Conflicts({ syncKey, isPc, onLater }: { syncKey: string; isPc: boolean; onLater: () => void }) {
   const [rows, setRows] = useState<Conflict[] | null>(null)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
@@ -909,6 +930,9 @@ function Conflicts({ syncKey, isPc }: { syncKey: string; isPc: boolean }) {
       {rows.map((c) => (
         <ConflictCard key={c.id} c={c} isPc={isPc} busy={busy} onKeep={(side) => void keep(c.id, side)} />
       ))}
+      <div className="row end">
+        <button onClick={onLater}>{t('decideLater')}</button>
+      </div>
     </div>
   )
 }

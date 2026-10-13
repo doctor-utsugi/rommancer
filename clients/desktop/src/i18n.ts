@@ -271,6 +271,8 @@ const en = {
   older: 'Older',
   keepThis: 'Keep this one',
   thisCard: 'This card',
+  conflictsResolve: '⚠ Resolve {n} saves in conflict',
+  conflictsResolve_one: '⚠ Resolve 1 save in conflict',
   conflictNone: 'No conflicts.',
   kindSave: 'save',
   kindState: 'savestate',

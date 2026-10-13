@@ -631,3 +631,14 @@ ul.cards.top-device {
 .tabs button.warn {
   color: var(--warn);
 }
+
+/* Saves in conflict, one click from choosing */
+button.conflict-banner {
+  width: 100%;
+  margin-bottom: 12px;
+  padding: 12px 16px;
+  font-weight: 600;
+  color: var(--warn);
+  border-color: var(--warn);
+  background: color-mix(in srgb, var(--warn) 14%, transparent);
+}

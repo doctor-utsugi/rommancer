@@ -33,7 +33,9 @@ Header, one fact per line:
 
 Items:
 1. **Sync now**: everything (saves, settings, deletions, list games, sending games).
-2. **Conflicts (N)**: only when N > 0.
+2. **Conflicts (N)**: only when N > 0. Warning colour and prominent (Android: a tinted button above Sync now; desktop: a
+   banner at the top of Home besides the tab), one tap from choosing. N is refreshed as soon as a sync ends, so the
+   entry is there right after it. With a single conflict, Android opens its screen directly.
 3. **Watch game download** / **Watch games being sent**: only while one runs.
 4. **Game lists**: tick lists; leaving after a change syncs. The screen also has **Download the lists' games now**.
 5. **Settings** (submenu, see below).
@@ -71,6 +73,12 @@ renders them, **one fact per line, only facts that are not zero**:
 | `games-nospace` name | No room for "name" |
 | `conflicts` n | ⚠ n saves in conflict |
 | `errors` n | ⚠ n errors (Show details) |
+
+A sync the user started on screen (Sync now, a list change, a conflict choice) that ends with `conflicts` n > 0 goes
+straight to the conflict screens at the end of the same window instead of the summary (the summary stays in Status),
+and after each choice shows the next one until none are left. Android opens the first conflict; the desktop app opens
+Conflicts. **Later** (Android: Back, then Later; desktop: Decide later) leaves them for the home entry. Syncs nobody
+is watching (watch service, background, polling) never open anything: they keep the notification and the state line.
 
 Nothing at all: **All up to date**. Title of the result screen: the action (`Sync now`). Errors keep the existing
 reason + **Show details**.
