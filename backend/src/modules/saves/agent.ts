@@ -103,7 +103,8 @@ async function emulatorBySlug(slug: string) {
 /** The emulator of a RetroArch core by the name it gives its save folder, made on first sight like registerUnknownCores */
 async function emulatorForCore(core: string) {
   const slug = 'ra-' + core.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
-  const known = (await prisma.emulator.findFirst({ where: { core } })) ?? (await emulatorBySlug(slug).catch(() => null));
+  // A folder named after a standalone emulator ("melonDS (standalone)") is that emulator's, not a core's
+  const known = (await prisma.emulator.findFirst({ where: { OR: [{ core }, { core: null, name: core }] } })) ?? (await emulatorBySlug(slug).catch(() => null));
   if (known) return known;
   const ps1 = /psx|pcsx|swanstation|duckstation/i.test(core);
   return prisma.emulator.upsert({ where: { slug }, create: { slug, name: `RetroArch ${core}`, core, saveFormat: ps1 ? 'ps1card' : 'raw', saveExt: '.srm', stateExt: '.state' }, update: {} });
@@ -431,7 +432,8 @@ async function nameIndex(names: string[]) {
  */
 async function registerUnknownCores(layout: DeviceLayout, root: string, files: Iterable<string>) {
   if (!coreLayout(layout)) return;
-  const known = new Set((await prisma.emulator.findMany({ where: { core: { not: null } }, select: { core: true } })).map((e) => e.core));
+  // Cores already known, and standalone emulators' names (a folder named after one is not a core)
+  const known = new Set((await prisma.emulator.findMany({ select: { core: true, name: true } })).map((e) => e.core ?? e.name));
   const systemFolders = new Map(Object.entries(layout.systemMap).map(([slug, v]) => [v.folder, slug]));
   // rom-core: <roms>/<system>/<core>/<file>; content-core: <saves>/<rom folder>/<core>/<file>; core: <saves>/<core>/<file>
   const bases = [

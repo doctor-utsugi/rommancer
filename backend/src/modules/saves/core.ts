@@ -38,13 +38,14 @@ export function saveDirs(layout: DeviceLayout, slug: string, emu: Emulator, romR
     switch (kind) {
       case 'system':
         return path.posix.join(root, folder);
+      // A standalone emulator (no core) has no folder among RetroArch's per-core ones: its saves sit next to the rom
       case 'core':
-        return path.posix.join(root, emu.core ?? emu.name);
+        return emu.core ? path.posix.join(root, emu.core) : path.posix.join(layout.romsRoot, folder);
       // RetroArch sorting by content directory: the folder the rom is in, then (content-core) the core
       case 'content':
         return path.posix.join(root, content);
       case 'content-core':
-        return path.posix.join(root, content, emu.core ?? emu.name);
+        return emu.core ? path.posix.join(root, content, emu.core) : path.posix.join(layout.romsRoot, folder);
       case 'rom':
         return path.posix.join(layout.romsRoot, folder);
       // TWiLight Menu++ and some flashcarts: a "saves" folder inside each rom folder
