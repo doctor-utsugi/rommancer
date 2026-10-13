@@ -1296,8 +1296,33 @@ async function romsWhereTold<D extends AgentDevice>(device: D, told: string): Pr
   return { ...device, overrides };
 }
 
+/**
+ * Where a device keeps its roms, from what its client sees: "told<TAB>path" when its frontend names the folder (ES-DE),
+ * else "dir<TAB>path<TAB>sub/sub/..." per folder of its storage with the names of its subfolders. The folder whose
+ * subfolders are named as systems are (by any firmware's names) the most is the roms folder; it needs two at least.
+ * Answers "roms<TAB>path" when one was found; nothing changes otherwise
+ */
+agentRouter.post('/roms-folder', express.text({ limit: '1mb', type: '*/*' }), async (req, res) => {
+  const device = await deviceFromToken(req);
+  const lines = String(req.body ?? '').split('\n');
+  let chosen = lines.find((l) => l.startsWith('told\t'))?.slice(5).trim();
+  if (!chosen) {
+    const { byFolder } = await systemIndex();
+    let best = { path: '', score: 1 };
+    for (const l of lines) {
+      const [kind, dir, subs = ''] = l.split('\t');
+      if (kind !== 'dir' || !dir) continue;
+      const score = subs.split('/').filter((n) => byFolder.has(n.toLowerCase())).length;
+      if (score > best.score || (score === best.score && dir.length < best.path.length)) best = { path: dir, score };
+    }
+    chosen = best.path;
+  }
+  if (chosen) await romsWhereTold(device, chosen);
+  res.type('text/plain').send(chosen ? `roms\t${chosen}\n` : '');
+});
+
 agentRouter.get('/roots', async (req, res) => {
-  const device = await romsWhereTold(await deviceFromToken(req), b64(req.header('x-device-roms-b64')));
+  const device = await deviceFromToken(req);
   // Clients that send no log say their version here
   const version = (req.header('x-client-version') ?? '').slice(0, 32);
   if (version && version !== device.clientVersion) await prisma.device.update({ where: { id: device.id }, data: { clientVersion: version, clientUpdatedAt: new Date() } });
