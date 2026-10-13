@@ -213,6 +213,22 @@ fn walk(dir: &Path, out: &mut Vec<PathBuf>) {
     }
 }
 
+/// PSP memory sticks' SAVEDATA folders under DIR (a few levels down)
+fn savedata_dirs(dir: &Path, depth: u32, out: &mut Vec<PathBuf>) {
+    let Ok(entries) = fs::read_dir(dir) else { return };
+    for e in entries.flatten() {
+        if !e.file_type().is_ok_and(|t| t.is_dir()) || e.file_name().to_string_lossy().starts_with('.') {
+            continue;
+        }
+        let p = e.path();
+        if e.file_name() == "SAVEDATA" && dir.file_name().is_some_and(|n| n == "PSP") {
+            out.push(p);
+        } else if depth < 4 {
+            savedata_dirs(&p, depth + 1, out);
+        }
+    }
+}
+
 /// A save file's content to upload; a path ending in "/" is a save folder, sent as its tar
 pub fn read_save(path: &str) -> Result<Vec<u8>> {
     match path.strip_suffix('/') {
@@ -385,8 +401,14 @@ impl<'a> Engine<'a> {
             }
         }
         saves.retain(|p| p.file_name().map(|n| is_save(&n.to_string_lossy(), &exts)).unwrap_or(false));
-        // Saves that are whole folders go as one file each, never their files
-        let folder_roots = library.as_ref().map(|l| l.folder_saves()).unwrap_or_default();
+        // Saves that are whole folders go as one file each, never their files: PSP/SAVEDATA under the save folders
+        // (PPSSPP's RetroArch core) and LaunchBox's PPSSPP setups
+        let mut folder_roots = library.as_ref().map(|l| l.folder_saves()).unwrap_or_default();
+        for d in &save_dirs {
+            savedata_dirs(d, 0, &mut folder_roots);
+        }
+        folder_roots.sort();
+        folder_roots.dedup();
         saves.retain(|p| !folder_roots.iter().any(|r| p.starts_with(r)));
         saves.sort();
         saves.dedup();
@@ -399,11 +421,12 @@ impl<'a> Engine<'a> {
             request.push_str(&format!("file\t{}\t{h}\n", wire(s)));
         }
         for root in &folder_roots {
+            request.push_str(&format!("dir\t{}\n", wire(root)));
             let mut dirs: Vec<PathBuf> = fs::read_dir(root).into_iter().flatten().flatten().filter(|e| e.file_type().is_ok_and(|t| t.is_dir()) && !e.file_name().to_string_lossy().starts_with('.')).map(|e| e.path()).collect();
             dirs.sort();
             for d in dirs {
                 self.check()?;
-                if let Ok(h) = self.folder_sha1(&d) {
+                if let Ok(Some(h)) = self.folder_sha1(&d) {
                     request.push_str(&format!("file\t{}/\t{h}\n", wire(&d)));
                 }
             }
@@ -533,30 +556,29 @@ impl<'a> Engine<'a> {
         let _ = fs::remove_file(&tmp);
         let key = format!("{}/", wire(dir));
         self.cache.remove(&key);
-        let now = if dir.is_dir() { self.folder_sha1(dir)? } else { "-".into() };
+        let now = if dir.is_dir() { self.folder_sha1(dir)?.unwrap_or_else(|| "-".into()) } else { "-".into() };
         if tar.is_empty() || now != expect {
             return Ok(false);
         }
         crate::folder::unpack(&tar, dir)?;
         self.cache.remove(&key);
-        let sent = self.folder_sha1(dir)?;
+        let sent = self.folder_sha1(dir)?.unwrap_or_default();
         let _ = self.api.post_text(&format!("/agent/card/ack?sha={sent}"), Vec::new(), &[("X-Path-B64", b64(path))]);
         Ok(true)
     }
 
-    /// sha1 of a save folder's tar; cached by its files' sizes and newest change
-    fn folder_sha1(&mut self, dir: &Path) -> Result<String> {
+    /// A save folder's manifest hash (none when it has no files); cached by its files' sizes and newest change
+    fn folder_sha1(&mut self, dir: &Path) -> Result<Option<String>> {
         let key = format!("{}/", wire(dir));
         let sig = crate::folder::signature(dir);
         if let (Some((s, m)), Some((cs, cm, h))) = (sig, self.cache.get(&key)) {
             if s == *cs && m == *cm {
-                return Ok(h.clone());
+                return Ok(Some(h.clone()));
             }
         }
-        let tar = crate::folder::pack(dir)?;
-        let hex = sha1_smol::Sha1::from(&tar).digest().to_string();
-        if let Some((s, m)) = sig {
-            self.cache.insert(key, (s, m, hex.clone()));
+        let hex = crate::folder::hash(dir)?;
+        if let (Some((s, m)), Some(h)) = (sig, &hex) {
+            self.cache.insert(key, (s, m, h.clone()));
         }
         Ok(hex)
     }

@@ -1,5 +1,6 @@
 //! Saves that are whole folders (PPSSPP's SAVEDATA/<game code + suffix>): one travels as a tar of it, its files under
-//! "<folder>/", sorted, with no dates or owners, the same tar the server makes of it. Their paths end in "/".
+//! "<folder>/", sorted, with no dates or owners, the same tar the server makes of it. Their paths end in "/". A folder
+//! is told apart by its manifest's hash (a "<path>\t<sha1>" line per file, sorted), as every client reports it.
 
 use anyhow::{bail, Context, Result};
 use std::fs;
@@ -62,6 +63,21 @@ pub fn pack(dir: &Path) -> Result<Vec<u8>> {
     }
     out.resize(out.len() + BLOCK * 2, 0);
     Ok(out)
+}
+
+/// The folder's manifest hash; none for a folder without files
+pub fn hash(dir: &Path) -> Result<Option<String>> {
+    let mut files = Vec::new();
+    files_of(dir, "", &mut files)?;
+    if files.is_empty() {
+        return Ok(None);
+    }
+    let mut lines = Vec::new();
+    for (rel, path) in files {
+        lines.push(format!("{rel}\t{}\n", sha1_smol::Sha1::from(fs::read(&path)?).digest()));
+    }
+    lines.sort();
+    Ok(Some(sha1_smol::Sha1::from(lines.concat()).digest().to_string()))
 }
 
 /// Sizes and newest change of a folder's files: unchanged means its tar is too
@@ -139,6 +155,10 @@ mod tests {
         unpack(&tar, &dest).unwrap();
         assert_eq!(pack(&dest).unwrap(), tar);
         assert!(!dest.join("OLD.BIN").exists());
+        // printf 'DATA.BIN\t<sha1>\nPARAM.SFO\t<sha1>\n' | sha1sum, as the console client and the server compute it
+        let line = |n: &str, d: &[u8]| format!("{n}\t{}\n", sha1_smol::Sha1::from(d).digest());
+        let want = sha1_smol::Sha1::from(line("DATA.BIN", &[7u8; 1500]) + &line("PARAM.SFO", b"sfo")).digest().to_string();
+        assert_eq!(hash(&dest).unwrap(), Some(want));
         fs::remove_dir_all(&base).unwrap();
     }
 }
