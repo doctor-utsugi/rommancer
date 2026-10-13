@@ -56,6 +56,17 @@ object Privileged {
         return p.waitFor() to bytes
     }
 
+    /** A file of another app's private data, which only root reads; none without root */
+    fun rootRead(path: String): ByteArray? {
+        if (!root) return null
+        return runCatching {
+            val p = ProcessBuilder("su", "-c", "cat ${q(path)}").start()
+            p.outputStream.close()
+            val bytes = p.inputStream.use { it.readBytes() }
+            if (p.waitFor() == 0) bytes else null
+        }.getOrNull()
+    }
+
     fun read(path: String): ByteArray? = exec("[ -f ${q(path)} ] && cat ${q(path)}").let { (code, out) -> if (code == 0) out else null }
 
     fun list(dir: String): List<String> = exec("find ${q(dir)} -type f 2>/dev/null | head -n 200").second.toString(Charsets.UTF_8).lines().filter { it.isNotBlank() }

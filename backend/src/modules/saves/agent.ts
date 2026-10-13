@@ -32,6 +32,7 @@ import { storeWifiBands } from '../devconfig/service.js';
 import { cardAction, cardHash, commitOffer, deviceCard, entryFolderState, findDeviceCard, gameForSerial, gcCardFile, gciFolder, hasWantedSaves, isCardEmulator, namedCard, observeCard, prepareCard, pspFolder, recordOffer, type EntryFolder } from './cards.js';
 import { codecFor } from './cardcodec.js';
 import { takeNudge } from './nudge.js';
+import { CORE_NAMES } from './core-names.js';
 import { systemForFolder, systemForPlatform, systemIndex } from '../scanner/systems.js';
 import { FAN_WORK, FIRST_ASK, normTitle, probeRound, probesOf, serialMatch, wantsProbe } from './probe.js';
 
@@ -161,6 +162,41 @@ async function learnCores(device: AgentDevice, present: Map<string, string>, mti
   device.systemCores = systems;
   device.romCores = romCores;
   await prisma.device.update({ where: { id: device.id }, data: { systemCores: systems, romCores } });
+}
+
+/** A RetroArch core as a frontend names it (a file, "mgba_libretro_android.so", or "mgba"): the name of its save folder */
+function coreName(core: string) {
+  const stem = path.posix.basename(core.replace(/\\/g, '/')).replace(/\.(so|dll|dylib)$/i, '').replace(/_android$/i, '').replace(/_libretro$/i, '');
+  return CORE_NAMES[stem] ?? null;
+}
+
+/**
+ * The cores a frontend on the device runs games with (Daijishō's players, ES-DE's emulators): "fsys<TAB>folder<TAB>
+ * core<TAB>platform" for a system's games, "fgame<TAB>rom<TAB>core" for a game with one of its own. Taken only for
+ * systems and games whose saves were never seen here (learnCores tells those), so a save arriving for a game not
+ * played here yet goes to the folder of the core that will open it
+ */
+async function learnFrontendCores(device: AgentDevice, systems: string[][], games: string[][]) {
+  if ((!systems.length && !games.length) || !coreLayout(layoutOf(device))) return;
+  const idx = await systemIndex();
+  const sysBefore = (device.systemCores ?? {}) as Record<string, string>;
+  const romBefore = (device.romCores ?? {}) as Record<string, string>;
+  const sys = { ...sysBefore };
+  const roms = { ...romBefore };
+  for (const [folder, core, platform] of systems) {
+    const name = coreName(core ?? '');
+    const slug = systemForFolder(idx, path.posix.basename(folder ?? ''))?.slug ?? (platform ? await systemForPlatform(platform) : null);
+    if (name && slug && !(slug in sys)) sys[slug] = name;
+  }
+  for (const [rom, core] of games) {
+    const name = coreName(core ?? '');
+    const base = path.posix.basename(rom ?? '').replace(/\.[^.]+$/, '');
+    if (name && base && !(base in roms)) roms[base] = name;
+  }
+  if (JSON.stringify([sys, roms]) === JSON.stringify([sysBefore, romBefore])) return;
+  device.systemCores = sys;
+  device.romCores = roms;
+  await prisma.device.update({ where: { id: device.id }, data: { systemCores: sys, romCores: roms } });
 }
 
 /** Extensions that belong to one system only (".gb", ".sfc"...), to tell a rom's system without its folder */
@@ -721,6 +757,9 @@ agentRouter.post('/sync', express.text({ limit: '16mb', type: '*/*' }), async (r
   const launched: { path: string; platform: string; setup: string }[] = [];
   // "dir<TAB>path": a PSP memory stick's SAVEDATA folder, listed even when empty so saves can be written there
   const savedata: string[] = [];
+  // The cores a frontend runs systems and games with (see learnFrontendCores)
+  const frontendSystems: string[][] = [];
+  const frontendGames: string[][] = [];
   for (const line of String(req.body ?? '').split('\n')) {
     const [kind, p, h, h2, size, platform, setup] = line.replace(/\r$/, '').split('\t');
     if (kind === 'rom' && p) roms.push({ path: p, hashes: [h ?? '', h2 ?? ''].filter(Boolean), size: Number(size) || 0 });
@@ -733,6 +772,8 @@ agentRouter.post('/sync', express.text({ limit: '16mb', type: '*/*' }), async (r
       if (Number(h2) > 0) mtimes.set(p, Number(h2));
     }
     else if (kind === 'core' && p && h) cores.set(p, h);
+    else if (kind === 'fsys' && p && h) frontendSystems.push([p, h, h2 ?? '']);
+    else if (kind === 'fgame' && p && h) frontendGames.push([p, h]);
   }
   await storeCoreVersions(device, cores);
   if (typeof req.body === 'string' && req.body.length) device = await storeLauncher(device, await readLauncher(setups, launched));
@@ -756,6 +797,7 @@ agentRouter.post('/sync', express.text({ limit: '16mb', type: '*/*' }), async (r
   const systemIds = new Map<string, number | undefined>();
   await registerUnknownCores(layoutOf(device), device.rootPath, present.keys());
   await learnCores(device, present, mtimes, [...roms, ...nested].map((r) => r.path));
+  await learnFrontendCores(device, frontendSystems, frontendGames);
   const coreEmus = (await prisma.emulator.findMany({ where: { core: { not: null } } })) as Emulator[];
   const out: string[] = [];
   const cardFiles = new Set<string>();

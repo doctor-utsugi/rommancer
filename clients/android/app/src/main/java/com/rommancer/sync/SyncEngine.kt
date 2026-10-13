@@ -145,7 +145,11 @@ class SyncEngine(private val context: Context, private val store: Store, private
         val romHashes = HashMap<String, String>()
         val romFiles = romsDir?.listFiles()?.filter { it.isDirectory && !it.name.startsWith(".") }
             ?.flatMap { system -> system.listFiles()?.filter { it.isFile && !it.name.startsWith(".") && isRom(it.name, exts) }.orEmpty() }.orEmpty()
-        runCatching { api.text("/agent/log", "POST", romsReport(romsDir, romFiles, version, chosen).toByteArray(), listOfNotNull(version?.let { "X-Client-Version" to it }).toMap()) }
+        // What the frontends here run each system and game with (see Frontends)
+        val frontends = Frontends(context, root)
+        val frontendLines = runCatching { frontends.lines(romsDir) }.getOrDefault("")
+        val log = romsReport(romsDir, romFiles, version, chosen) + frontends.notes.joinToString("") { "$it\n" }
+        runCatching { api.text("/agent/log", "POST", log.toByteArray(), listOfNotNull(version?.let { "X-Client-Version" to it }).toMap()) }
         romFiles.forEachIndexed { index, rom ->
             if (index % 10 == 0) report(Progress("roms", index, romFiles.size))
             run {
@@ -155,6 +159,7 @@ class SyncEngine(private val context: Context, private val store: Store, private
                 request.append("rom\t").append(rom.path).append('\t').append(hashes.getOrElse(0) { "" }).append('\t').append(hashes.getOrElse(1) { "" }).append('\t').append(rom.length()).append('\n')
             }
         }
+        request.append(frontendLines)
         val listed = HashSet<String>()
         saveDirs.forEach { dir ->
             // PSP save folders go whole, below

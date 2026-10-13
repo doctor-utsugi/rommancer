@@ -1,0 +1,749 @@
+# ES-DE for Android's bundled systems (resources/systems/android/es_systems.xml): system, rom folder, emulator label and the
+# RetroArch core it runs ("-" for other emulators); a system's first line is its default
+3do	3do	Opera	opera_libretro_android.so
+3do	3do	Real3DOPlayer (Standalone)	-
+adam	adam	MAME4droid Current [Diskette] (Standalone)	-
+adam	adam	MAME4droid Current [Tape] (Standalone)	-
+adam	adam	MAME4droid Current [Cartridge] (Standalone)	-
+adam	adam	MAME4droid Current [Software list] (Standalone)	-
+adam	adam	ColEm (Standalone)	-
+ags	ags	None	-
+amiga	amiga	PUAE	puae_libretro_android.so
+amiga	amiga	PUAE 2021	puae2021_libretro_android.so
+amiga	amiga	Amiberry	amiberry_libretro_android.so
+amiga1200	amiga1200	PUAE	puae_libretro_android.so
+amiga1200	amiga1200	PUAE 2021	puae2021_libretro_android.so
+amiga1200	amiga1200	Amiberry	amiberry_libretro_android.so
+amiga600	amiga600	PUAE	puae_libretro_android.so
+amiga600	amiga600	PUAE 2021	puae2021_libretro_android.so
+amiga600	amiga600	Amiberry	amiberry_libretro_android.so
+amigacd32	amigacd32	PUAE	puae_libretro_android.so
+amigacd32	amigacd32	PUAE 2021	puae2021_libretro_android.so
+amigacd32	amigacd32	Amiberry	amiberry_libretro_android.so
+amstradcpc	amstradcpc	Caprice32	cap32_libretro_android.so
+amstradcpc	amstradcpc	CrocoDS	crocods_libretro_android.so
+amstradcpc	amstradcpc	MAME4droid Current (Standalone)	-
+android	android	None	-
+androidapps	androidapps	Android App	-
+androidgames	androidgames	Android Game	-
+apple2	apple2	AppleWin	applewin_libretro_android.so
+apple2	apple2	MAME4droid Current (Standalone)	-
+apple2gs	apple2gs	MAME4droid Current (Standalone)	-
+apple2gs	apple2gs	MAME4droid Current [Software list] (Standalone)	-
+arcade	arcade	MAME - Current	mamearcade_libretro_android.so
+arcade	arcade	MAME 2010	mame2010_libretro_android.so
+arcade	arcade	MAME 2003-Plus	mame2003_plus_libretro_android.so
+arcade	arcade	MAME 2003	mame2003_libretro_android.so
+arcade	arcade	MAME 2000	mame2000_libretro_android.so
+arcade	arcade	HBMAME	hbmame_libretro_android.so
+arcade	arcade	MAME4droid Current (Standalone)	-
+arcade	arcade	MAME4droid (Standalone)	-
+arcade	arcade	NEO.emu (Standalone)	-
+arcade	arcade	FinalBurn Neo	fbneo_libretro_android.so
+arcade	arcade	FB Alpha 2012	fbalpha2012_libretro_android.so
+arcade	arcade	Geolith	geolith_libretro_android.so
+arcade	arcade	Flycast	flycast_libretro_android.so
+arcade	arcade	Flycast (Standalone)	-
+arcade	arcade	DICE	dice_libretro_android.so
+arcade	arcade	Supermodel	supermodel_libretro_android.so
+arcade	arcade	SUPER3 (Standalone)	-
+arcadia	arcadia	AmiArcadia	amiarcadia_libretro_android.so
+arcadia	arcadia	DroidArcadia	-
+arcadia	arcadia	MAME4droid Current (Standalone)	-
+archimedes	archimedes	MAME4droid Current [Model A440/1] (Standalone)	-
+archimedes	archimedes	MAME4droid Current [Model A3000] (Standalone)	-
+archimedes	archimedes	MAME4droid Current [Model A310] (Standalone)	-
+archimedes	archimedes	MAME4droid Current [Model A540] (Standalone)	-
+arduboy	arduboy	Arduous	arduous_libretro_android.so
+arduboy	arduboy	Ardens	ardens_libretro_android.so
+astrocde	astrocde	MAME4droid Current (Standalone)	-
+atari2600	atari2600	Stella	stella_libretro_android.so
+atari2600	atari2600	Stella 2014	stella2014_libretro_android.so
+atari2600	atari2600	Stella 2023	stella2023_libretro_android.so
+atari2600	atari2600	Tia	tia_libretro_android.so
+atari2600	atari2600	2600.emu (Standalone)	-
+atari5200	atari5200	a5200	a5200_libretro_android.so
+atari5200	atari5200	Atari800	atari800_libretro_android.so
+atari7800	atari7800	ProSystem	prosystem_libretro_android.so
+atari7800	atari7800	MAME4droid Current (Standalone)	-
+atari800	atari800	Atari800	atari800_libretro_android.so
+atarijaguar	atarijaguar	Virtual Jaguar	virtualjaguar_libretro_android.so
+atarijaguar	atarijaguar	IrataJaguar (Standalone)	-
+atarijaguar	atarijaguar	MAME4droid Current (Standalone)	-
+atarijaguarcd	atarijaguarcd	Virtual Jaguar	virtualjaguar_libretro_android.so
+atarilynx	atarilynx	Handy	handy_libretro_android.so
+atarilynx	atarilynx	Beetle Lynx	mednafen_lynx_libretro_android.so
+atarilynx	atarilynx	Gearlynx	gearlynx_libretro_android.so
+atarilynx	atarilynx	Holani	holani_libretro_android.so
+atarilynx	atarilynx	Lynx.emu (Standalone)	-
+atarist	atarist	Hatari	hatari_libretro_android.so
+atarist	atarist	Hatari 2014	hatari2014_libretro_android.so
+atarixe	atarixe	Atari800	atari800_libretro_android.so
+atomiswave	atomiswave	Flycast	flycast_libretro_android.so
+atomiswave	atomiswave	Flycast (Standalone)	-
+bbcmicro	bbcmicro	MAME4droid Current (Standalone)	-
+bbcmicro	bbcmicro	b2	b2_libretro_android.so
+c64	c64	VICE x64sc Accurate	vice_x64sc_libretro_android.so
+c64	c64	VICE x64 Fast	vice_x64_libretro_android.so
+c64	c64	VICE x64 SuperCPU	vice_xscpu64_libretro_android.so
+c64	c64	VICE x128	vice_x128_libretro_android.so
+c64	c64	C64.emu (Standalone)	-
+cdimono1	cdimono1	SAME CDi	same_cdi_libretro_android.so
+cdimono1	cdimono1	MAME4droid Current (Standalone)	-
+cdtv	cdtv	PUAE	puae_libretro_android.so
+cdtv	cdtv	PUAE 2021	puae2021_libretro_android.so
+cdtv	cdtv	Amiberry	amiberry_libretro_android.so
+chailove	chailove	ChaiLove	chailove_libretro_android.so
+channelf	channelf	FreeChaF	freechaf_libretro_android.so
+channelf	channelf	MAME4droid Current (Standalone)	-
+coco	coco	MAME4droid Current [Cartridge] (Standalone)	-
+coco	coco	MAME4droid Current [Tape] (Standalone)	-
+colecovision	colecovision	blueMSX	bluemsx_libretro_android.so
+colecovision	colecovision	Gearcoleco	gearcoleco_libretro_android.so
+colecovision	colecovision	JollyCV	jollycv_libretro_android.so
+colecovision	colecovision	BlastEm	blastem_libretro_android.so
+colecovision	colecovision	MSX.emu (Standalone)	-
+colecovision	colecovision	ColEm (Standalone)	-
+consolearcade	consolearcade	MAME - Current	mamearcade_libretro_android.so
+consolearcade	consolearcade	MAME4droid Current (Standalone)	-
+consolearcade	consolearcade	Flycast	flycast_libretro_android.so
+consolearcade	consolearcade	Flycast (Standalone)	-
+consolearcade	consolearcade	Play! (Standalone)	-
+consolearcade	consolearcade	aPS3e Game Serial (Standalone)	-
+consolearcade	consolearcade	aPS3e Directory (Standalone)	-
+consolearcade	consolearcade	aPS3e ISO (Standalone)	-
+consolearcade	consolearcade	ARMSX3 Game Serial (Standalone)	-
+consolearcade	consolearcade	ARMSX3 Directory or ISO (Standalone)	-
+consolearcade	consolearcade	EmuCoreC Directory or ISO (Standalone)	-
+consolearcade	consolearcade	Dolphin	dolphin_libretro_android.so
+consolearcade	consolearcade	Dolphin (Standalone)	-
+cps	cps	MAME - Current	mamearcade_libretro_android.so
+cps	cps	MAME 2010	mame2010_libretro_android.so
+cps	cps	MAME 2003-Plus	mame2003_plus_libretro_android.so
+cps	cps	MAME 2003	mame2003_libretro_android.so
+cps	cps	MAME 2000	mame2000_libretro_android.so
+cps	cps	MAME4droid Current (Standalone)	-
+cps	cps	MAME4droid (Standalone)	-
+cps	cps	FinalBurn Neo	fbneo_libretro_android.so
+cps	cps	FB Alpha 2012	fbalpha2012_libretro_android.so
+cps	cps	FB Alpha 2012 CPS-1	fbalpha2012_cps1_libretro_android.so
+cps	cps	FB Alpha 2012 CPS-2	fbalpha2012_cps2_libretro_android.so
+cps	cps	FB Alpha 2012 CPS-3	fbalpha2012_cps3_libretro_android.so
+cps1	cps1	MAME - Current	mamearcade_libretro_android.so
+cps1	cps1	MAME 2010	mame2010_libretro_android.so
+cps1	cps1	MAME 2003-Plus	mame2003_plus_libretro_android.so
+cps1	cps1	MAME 2003	mame2003_libretro_android.so
+cps1	cps1	MAME 2000	mame2000_libretro_android.so
+cps1	cps1	MAME4droid Current (Standalone)	-
+cps1	cps1	MAME4droid (Standalone)	-
+cps1	cps1	FinalBurn Neo	fbneo_libretro_android.so
+cps1	cps1	FB Alpha 2012	fbalpha2012_libretro_android.so
+cps1	cps1	FB Alpha 2012 CPS-1	fbalpha2012_cps1_libretro_android.so
+cps2	cps2	MAME - Current	mamearcade_libretro_android.so
+cps2	cps2	MAME 2010	mame2010_libretro_android.so
+cps2	cps2	MAME 2003-Plus	mame2003_plus_libretro_android.so
+cps2	cps2	MAME 2003	mame2003_libretro_android.so
+cps2	cps2	MAME 2000	mame2000_libretro_android.so
+cps2	cps2	MAME4droid Current (Standalone)	-
+cps2	cps2	MAME4droid (Standalone)	-
+cps2	cps2	FinalBurn Neo	fbneo_libretro_android.so
+cps2	cps2	FB Alpha 2012	fbalpha2012_libretro_android.so
+cps2	cps2	FB Alpha 2012 CPS-2	fbalpha2012_cps2_libretro_android.so
+cps3	cps3	MAME - Current	mamearcade_libretro_android.so
+cps3	cps3	MAME 2010	mame2010_libretro_android.so
+cps3	cps3	MAME 2003-Plus	mame2003_plus_libretro_android.so
+cps3	cps3	MAME 2003	mame2003_libretro_android.so
+cps3	cps3	MAME 2000	mame2000_libretro_android.so
+cps3	cps3	MAME4droid Current (Standalone)	-
+cps3	cps3	MAME4droid (Standalone)	-
+cps3	cps3	FinalBurn Neo	fbneo_libretro_android.so
+cps3	cps3	FB Alpha 2012	fbalpha2012_libretro_android.so
+cps3	cps3	FB Alpha 2012 CPS-3	fbalpha2012_cps3_libretro_android.so
+crvision	crvision	JollyCV	jollycv_libretro_android.so
+crvision	crvision	MAME4droid Current (Standalone)	-
+daphne	daphne	MAME4droid Current (Standalone)	-
+daphne	daphne	DirkSimple	dirksimple_libretro_android.so
+desktop	desktop	None	-
+doom	doom	PrBoom	prboom_libretro_android.so
+doom	doom	Boom 3	boom3_libretro_android.so
+doom	doom	idTech4A++ (Standalone)	-
+dos	dos	DOSBox-Pure	dosbox_pure_libretro_android.so
+dos	dos	DOSBox-Core	dosbox_core_libretro_android.so
+dos	dos	DOSBox-SVN	dosbox_svn_libretro_android.so
+dos	dos	VirtualXT	virtualxt_libretro_android.so
+dragon32	dragon32	MAME4droid Current Dragon 32 [Tape] (Standalone)	-
+dragon32	dragon32	MAME4droid Current Dragon 32 [Cartridge] (Standalone)	-
+dragon32	dragon32	MAME4droid Current Dragon 64 [Tape] (Standalone)	-
+dragon32	dragon32	MAME4droid Current Dragon 64 [Cartridge] (Standalone)	-
+dreamcast	dreamcast	Flycast	flycast_libretro_android.so
+dreamcast	dreamcast	Flycast (Standalone)	-
+dreamcast	dreamcast	Redream (Standalone)	-
+easyrpg	easyrpg	EasyRPG	easyrpg_libretro_android.so
+electron	electron	MAME4droid Current [Tape] (Standalone)	-
+electron	electron	MAME4droid Current [Diskette DFS] (Standalone)	-
+electron	electron	MAME4droid Current [Diskette ADFS] (Standalone)	-
+emulators	emulators	Android Emulators	-
+epic	epic	Android Game	-
+epic	epic	GameNative (Standalone)	-
+epic	epic	WinNative (Standalone)	-
+famicom	famicom	Mesen	mesen_libretro_android.so
+famicom	famicom	MesenCE	mesen2_libretro_android.so
+famicom	famicom	Nestopia UE	nestopia_libretro_android.so
+famicom	famicom	FCEUmm	fceumm_libretro_android.so
+famicom	famicom	QuickNES	quicknes_libretro_android.so
+famicom	famicom	RustyNES	rustynes_libretro_android.so
+famicom	famicom	NES.emu (Standalone)	-
+famicom	famicom	iNES (Standalone)	-
+famicom	famicom	Nesoid (Standalone)	-
+fba	fba	FB Alpha 2012	fbalpha2012_libretro_android.so
+fba	fba	FB Alpha 2012 Neo Geo	fbalpha2012_neogeo_libretro_android.so
+fba	fba	FB Alpha 2012 CPS-1	fbalpha2012_cps1_libretro_android.so
+fba	fba	FB Alpha 2012 CPS-2	fbalpha2012_cps2_libretro_android.so
+fba	fba	FB Alpha 2012 CPS-3	fbalpha2012_cps3_libretro_android.so
+fbneo	fbneo	FinalBurn Neo	fbneo_libretro_android.so
+fds	fds	Mesen	mesen_libretro_android.so
+fds	fds	MesenCE	mesen2_libretro_android.so
+fds	fds	Nestopia UE	nestopia_libretro_android.so
+fds	fds	FCEUmm	fceumm_libretro_android.so
+fds	fds	RustyNES	rustynes_libretro_android.so
+fds	fds	NES.emu (Standalone)	-
+fds	fds	iNES (Standalone)	-
+fds	fds	Nesoid (Standalone)	-
+flash	flash	Ruffle (Standalone)	-
+flash	flash	SWF Player (Standalone)	-
+fm7	fm7	MAME4droid Current [FM-7 Diskette] (Standalone)	-
+fm7	fm7	MAME4droid Current [FM-7 Tape] (Standalone)	-
+fm7	fm7	MAME4droid Current [FM-7 Software list] (Standalone)	-
+fm7	fm7	MAME4droid Current [FM77AV Diskette] (Standalone)	-
+fm7	fm7	MAME4droid Current [FM77AV Tape] (Standalone)	-
+fm7	fm7	MAME4droid Current [FM77AV Software list] (Standalone)	-
+fmtowns	fmtowns	MAME4droid Current (Standalone)	-
+fpinball	fpinball	None	-
+gamate	gamate	MAME4droid Current (Standalone)	-
+gameandwatch	gameandwatch	Multi (MESS)	mamemess_libretro_android.so
+gameandwatch	gameandwatch	MAME4droid Current Local Artwork (Standalone)	-
+gameandwatch	gameandwatch	MAME4droid Current (Standalone)	-
+gameandwatch	gameandwatch	Handheld Electronic (GW)	gw_libretro_android.so
+gamecom	gamecom	MAME4droid Current (Standalone)	-
+gamegear	gamegear	Genesis Plus GX	genesis_plus_gx_libretro_android.so
+gamegear	gamegear	Genesis Plus GX Wide	genesis_plus_gx_wide_libretro_android.so
+gamegear	gamegear	Gearsystem	gearsystem_libretro_android.so
+gamegear	gamegear	SMS Plus GX	smsplus_libretro_android.so
+gamegear	gamegear	PicoDrive	picodrive_libretro_android.so
+gamegear	gamegear	BlastEm	blastem_libretro_android.so
+gamegear	gamegear	MesenCE	mesen2_libretro_android.so
+gamegear	gamegear	Pizza Boy SC (Standalone)	-
+gamegear	gamegear	MasterGear (Standalone)	-
+gb	gb	Gambatte	gambatte_libretro_android.so
+gb	gb	SameBoy	sameboy_libretro_android.so
+gb	gb	Gearboy	gearboy_libretro_android.so
+gb	gb	TGB Dual	tgbdual_libretro_android.so
+gb	gb	DoubleCherryGB	DoubleCherryGB_libretro_android.so
+gb	gb	IroGB	irogb_libretro_android.so
+gb	gb	Mesen-S	mesen-s_libretro_android.so
+gb	gb	MesenCE	mesen2_libretro_android.so
+gb	gb	bsnes	bsnes_libretro_android.so
+gb	gb	mGBA	mgba_libretro_android.so
+gb	gb	VBA-M	vbam_libretro_android.so
+gb	gb	SkyEmu	skyemu_libretro_android.so
+gb	gb	SkyEmu (Standalone)	-
+gb	gb	GBC.emu (Standalone)	-
+gb	gb	My OldBoy! (Standalone)	-
+gb	gb	Linkboy (Standalone)	-
+gb	gb	Pizza Boy GBC (Standalone)	-
+gba	gba	mGBA	mgba_libretro_android.so
+gba	gba	VBA-M	vbam_libretro_android.so
+gba	gba	VBA Next	vba_next_libretro_android.so
+gba	gba	gpSP	gpsp_libretro_android.so
+gba	gba	NooDS	noods_libretro_android.so
+gba	gba	NooDS (Standalone)	-
+gba	gba	SkyEmu	skyemu_libretro_android.so
+gba	gba	SkyEmu (Standalone)	-
+gba	gba	MesenCE	mesen2_libretro_android.so
+gba	gba	GBA.emu (Standalone)	-
+gba	gba	My Boy! (Standalone)	-
+gba	gba	Linkboy (Standalone)	-
+gba	gba	Pizza Boy GBA (Standalone)	-
+gbc	gbc	Gambatte	gambatte_libretro_android.so
+gbc	gbc	SameBoy	sameboy_libretro_android.so
+gbc	gbc	Gearboy	gearboy_libretro_android.so
+gbc	gbc	TGB Dual	tgbdual_libretro_android.so
+gbc	gbc	DoubleCherryGB	DoubleCherryGB_libretro_android.so
+gbc	gbc	IroGB	irogb_libretro_android.so
+gbc	gbc	Mesen-S	mesen-s_libretro_android.so
+gbc	gbc	MesenCE	mesen2_libretro_android.so
+gbc	gbc	bsnes	bsnes_libretro_android.so
+gbc	gbc	mGBA	mgba_libretro_android.so
+gbc	gbc	VBA-M	vbam_libretro_android.so
+gbc	gbc	SkyEmu	skyemu_libretro_android.so
+gbc	gbc	SkyEmu (Standalone)	-
+gbc	gbc	GBC.emu (Standalone)	-
+gbc	gbc	My OldBoy! (Standalone)	-
+gbc	gbc	Linkboy (Standalone)	-
+gbc	gbc	Pizza Boy GBC (Standalone)	-
+gc	gc	Dolphin	dolphin_libretro_android.so
+gc	gc	Dolphin (Standalone)	-
+gc	gc	Dolphin MMJR (Standalone)	-
+gc	gc	Dolphin MMJR2 (Standalone)	-
+genesis	genesis	Genesis Plus GX	genesis_plus_gx_libretro_android.so
+genesis	genesis	Genesis Plus GX Wide	genesis_plus_gx_wide_libretro_android.so
+genesis	genesis	PicoDrive	picodrive_libretro_android.so
+genesis	genesis	BlastEm	blastem_libretro_android.so
+genesis	genesis	ClownMDEmu	clownmdemu_libretro_android.so
+genesis	genesis	MD.emu (Standalone)	-
+genesis	genesis	Pizza Boy SC (Standalone)	-
+gmaster	gmaster	MAME4droid Current (Standalone)	-
+gx4000	gx4000	Caprice32	cap32_libretro_android.so
+gx4000	gx4000	CrocoDS	crocods_libretro_android.so
+gx4000	gx4000	MAME4droid Current (Standalone)	-
+intellivision	intellivision	FreeIntv	freeintv_libretro_android.so
+intellivision	intellivision	MAME4droid Current (Standalone)	-
+j2me	j2me	J2ME Loader (Standalone)	-
+j2me	j2me	JL-Mod (Standalone)	-
+j2me	j2me	SquirrelJME	squirreljme_libretro_android.so
+kodi	kodi	None	-
+laserdisc	laserdisc	MAME4droid Current (Standalone)	-
+laserdisc	laserdisc	DirkSimple	dirksimple_libretro_android.so
+lcdgames	lcdgames	Multi (MESS)	mamemess_libretro_android.so
+lcdgames	lcdgames	MAME4droid Current Local Artwork (Standalone)	-
+lcdgames	lcdgames	MAME4droid Current (Standalone)	-
+lcdgames	lcdgames	Handheld Electronic (GW)	gw_libretro_android.so
+lowresnx	lowresnx	LowRes NX	lowresnx_libretro_android.so
+lutris	lutris	None	-
+lutro	lutro	Lutro	lutro_libretro_android.so
+macintosh	macintosh	MAME4droid Current Mac SE Bootable (Standalone)	-
+macintosh	macintosh	MAME4droid Current Mac SE Boot Disk (Standalone)	-
+macintosh	macintosh	MAME4droid Current Mac Plus Bootable (Standalone)	-
+macintosh	macintosh	MAME4droid Current Mac Plus Boot Disk (Standalone)	-
+macintosh	macintosh	Mini vMac	minivmac_libretro_android.so
+mame	mame	MAME - Current	mamearcade_libretro_android.so
+mame	mame	MAME 2010	mame2010_libretro_android.so
+mame	mame	MAME 2003-Plus	mame2003_plus_libretro_android.so
+mame	mame	MAME 2003	mame2003_libretro_android.so
+mame	mame	MAME 2000	mame2000_libretro_android.so
+mame	mame	HBMAME	hbmame_libretro_android.so
+mame	mame	MAME4droid Current (Standalone)	-
+mame	mame	MAME4droid (Standalone)	-
+mame	mame	NEO.emu (Standalone)	-
+mame	mame	FinalBurn Neo	fbneo_libretro_android.so
+mame	mame	FB Alpha 2012	fbalpha2012_libretro_android.so
+mame	mame	Geolith	geolith_libretro_android.so
+mame	mame	Flycast	flycast_libretro_android.so
+mame	mame	Flycast (Standalone)	-
+mame	mame	DICE	dice_libretro_android.so
+mame	mame	Supermodel	supermodel_libretro_android.so
+mame	mame	SUPER3 (Standalone)	-
+mame-advmame	mame-advmame	None	-
+mark3	mark3	Genesis Plus GX	genesis_plus_gx_libretro_android.so
+mark3	mark3	Genesis Plus GX Wide	genesis_plus_gx_wide_libretro_android.so
+mark3	mark3	SMS Plus GX	smsplus_libretro_android.so
+mark3	mark3	Gearsystem	gearsystem_libretro_android.so
+mark3	mark3	PicoDrive	picodrive_libretro_android.so
+mark3	mark3	BlastEm	blastem_libretro_android.so
+mark3	mark3	MesenCE	mesen2_libretro_android.so
+mark3	mark3	MD.emu (Standalone)	-
+mark3	mark3	Pizza Boy SC (Standalone)	-
+mark3	mark3	MasterGear (Standalone)	-
+mastersystem	mastersystem	Genesis Plus GX	genesis_plus_gx_libretro_android.so
+mastersystem	mastersystem	Genesis Plus GX Wide	genesis_plus_gx_wide_libretro_android.so
+mastersystem	mastersystem	SMS Plus GX	smsplus_libretro_android.so
+mastersystem	mastersystem	Gearsystem	gearsystem_libretro_android.so
+mastersystem	mastersystem	PicoDrive	picodrive_libretro_android.so
+mastersystem	mastersystem	BlastEm	blastem_libretro_android.so
+mastersystem	mastersystem	MesenCE	mesen2_libretro_android.so
+mastersystem	mastersystem	MD.emu (Standalone)	-
+mastersystem	mastersystem	Pizza Boy SC (Standalone)	-
+mastersystem	mastersystem	MasterGear (Standalone)	-
+megacd	megacd	Genesis Plus GX	genesis_plus_gx_libretro_android.so
+megacd	megacd	Genesis Plus GX Wide	genesis_plus_gx_wide_libretro_android.so
+megacd	megacd	PicoDrive	picodrive_libretro_android.so
+megacd	megacd	BlastEm	blastem_libretro_android.so
+megacd	megacd	ClownMDEmu	clownmdemu_libretro_android.so
+megacd	megacd	MD.emu (Standalone)	-
+megacd	megacd	Pizza Boy SC (Standalone)	-
+megacdjp	megacdjp	Genesis Plus GX	genesis_plus_gx_libretro_android.so
+megacdjp	megacdjp	Genesis Plus GX Wide	genesis_plus_gx_wide_libretro_android.so
+megacdjp	megacdjp	PicoDrive	picodrive_libretro_android.so
+megacdjp	megacdjp	BlastEm	blastem_libretro_android.so
+megacdjp	megacdjp	ClownMDEmu	clownmdemu_libretro_android.so
+megacdjp	megacdjp	MD.emu (Standalone)	-
+megacdjp	megacdjp	Pizza Boy SC (Standalone)	-
+megadrive	megadrive	Genesis Plus GX	genesis_plus_gx_libretro_android.so
+megadrive	megadrive	Genesis Plus GX Wide	genesis_plus_gx_wide_libretro_android.so
+megadrive	megadrive	PicoDrive	picodrive_libretro_android.so
+megadrive	megadrive	BlastEm	blastem_libretro_android.so
+megadrive	megadrive	ClownMDEmu	clownmdemu_libretro_android.so
+megadrive	megadrive	MD.emu (Standalone)	-
+megadrive	megadrive	Pizza Boy SC (Standalone)	-
+megadrivejp	megadrivejp	Genesis Plus GX	genesis_plus_gx_libretro_android.so
+megadrivejp	megadrivejp	Genesis Plus GX Wide	genesis_plus_gx_wide_libretro_android.so
+megadrivejp	megadrivejp	PicoDrive	picodrive_libretro_android.so
+megadrivejp	megadrivejp	BlastEm	blastem_libretro_android.so
+megadrivejp	megadrivejp	ClownMDEmu	clownmdemu_libretro_android.so
+megadrivejp	megadrivejp	MD.emu (Standalone)	-
+megadrivejp	megadrivejp	Pizza Boy SC (Standalone)	-
+megaduck	megaduck	SameDuck	sameduck_libretro_android.so
+megaduck	megaduck	MAME4droid Current (Standalone)	-
+mess	mess	Multi (MESS)	mamemess_libretro_android.so
+model2	model2	MAME - Current	mamearcade_libretro_android.so
+model2	model2	MAME4droid Current (Standalone)	-
+model3	model3	Supermodel	supermodel_libretro_android.so
+model3	model3	SUPER3 (Standalone)	-
+model3	model3	MAME - Current	mamearcade_libretro_android.so
+model3	model3	MAME4droid Current (Standalone)	-
+moto	moto	Theodore	theodore_libretro_android.so
+msx	msx	blueMSX	bluemsx_libretro_android.so
+msx	msx	fMSX	fmsx_libretro_android.so
+msx	msx	fMSX (Standalone)	-
+msx	msx	MSX.emu (Standalone)	-
+msx1	msx1	blueMSX	bluemsx_libretro_android.so
+msx1	msx1	fMSX	fmsx_libretro_android.so
+msx1	msx1	fMSX (Standalone)	-
+msx1	msx1	MSX.emu (Standalone)	-
+msx2	msx2	blueMSX	bluemsx_libretro_android.so
+msx2	msx2	fMSX	fmsx_libretro_android.so
+msx2	msx2	fMSX (Standalone)	-
+msx2	msx2	MSX.emu (Standalone)	-
+msxturbor	msxturbor	blueMSX	bluemsx_libretro_android.so
+msxturbor	msxturbor	MSX.emu (Standalone)	-
+mugen	mugen	None	-
+multivision	multivision	Gearsystem	gearsystem_libretro_android.so
+multivision	multivision	MasterGear (Standalone)	-
+n3ds	n3ds	Azahar	azahar_libretro.so
+n3ds	n3ds	Azahar (Standalone)	-
+n3ds	n3ds	AzaharPlus (Standalone)	-
+n3ds	n3ds	Citra	citra_libretro_android.so
+n3ds	n3ds	Citra 2018	citra2018_libretro_android.so
+n3ds	n3ds	Citra (Standalone)	-
+n3ds	n3ds	Citra Canary (Standalone)	-
+n3ds	n3ds	Citra MMJ (Standalone)	-
+n3ds	n3ds	Mandarine (Standalone)	-
+n3ds	n3ds	Lime3DS (Standalone)	-
+n3ds	n3ds	Panda3DS (Standalone)	-
+n64	n64	Mupen64Plus-Next	mupen64plus_next_gles3_libretro_android.so
+n64	n64	M64Plus FZ (Standalone)	-
+n64	n64	Mupen64Plus AE (Standalone)	-
+n64	n64	ParaLLEl N64	parallel_n64_libretro_android.so
+n64	n64	Native port	-
+n64dd	n64dd	Mupen64Plus-Next	mupen64plus_next_gles3_libretro_android.so
+n64dd	n64dd	M64Plus FZ (Standalone)	-
+n64dd	n64dd	Mupen64Plus AE (Standalone)	-
+n64dd	n64dd	ParaLLEl N64	parallel_n64_libretro_android.so
+naomi	naomi	Flycast	flycast_libretro_android.so
+naomi	naomi	Flycast (Standalone)	-
+naomi2	naomi2	Flycast	flycast_libretro_android.so
+naomi2	naomi2	Flycast (Standalone)	-
+naomigd	naomigd	Flycast	flycast_libretro_android.so
+naomigd	naomigd	Flycast (Standalone)	-
+nds	nds	melonDS DS	melondsds_libretro_android.so
+nds	nds	melonDS	melonds_libretro_android.so
+nds	nds	melonDS (Standalone)	-
+nds	nds	melonDS Nightly (Standalone)	-
+nds	nds	WatermelonDS (Standalone)	-
+nds	nds	SeedlessDS (Standalone)	-
+nds	nds	DeSmuME	desmume_libretro_android.so
+nds	nds	DeSmuME 2015	desmume2015_libretro_android.so
+nds	nds	NooDS	noods_libretro_android.so
+nds	nds	NooDS (Standalone)	-
+nds	nds	DraStic (Standalone)	-
+nds	nds	SkyEmu	skyemu_libretro_android.so
+nds	nds	SkyEmu (Standalone)	-
+neogeo	neogeo	FinalBurn Neo	fbneo_libretro_android.so
+neogeo	neogeo	Geolith	geolith_libretro_android.so
+neogeo	neogeo	NEO.emu (Standalone)	-
+neogeo	neogeo	MAME - Current	mamearcade_libretro_android.so
+neogeo	neogeo	MAME4droid Current (Standalone)	-
+neogeo	neogeo	MAME4droid (Standalone)	-
+neogeocd	neogeocd	NeoCD	neocd_libretro_android.so
+neogeocd	neogeocd	Geolith	geolith_libretro_android.so
+neogeocd	neogeocd	MAME4droid Current (Standalone)	-
+neogeocdjp	neogeocdjp	NeoCD	neocd_libretro_android.so
+neogeocdjp	neogeocdjp	Geolith	geolith_libretro_android.so
+neogeocdjp	neogeocdjp	MAME4droid Current (Standalone)	-
+nes	nes	Mesen	mesen_libretro_android.so
+nes	nes	MesenCE	mesen2_libretro_android.so
+nes	nes	Nestopia UE	nestopia_libretro_android.so
+nes	nes	FCEUmm	fceumm_libretro_android.so
+nes	nes	QuickNES	quicknes_libretro_android.so
+nes	nes	RustyNES	rustynes_libretro_android.so
+nes	nes	NES.emu (Standalone)	-
+nes	nes	iNES (Standalone)	-
+nes	nes	Nesoid (Standalone)	-
+ngage	ngage	EKA2L1 (Standalone)	-
+ngp	ngp	Beetle NeoPop	mednafen_ngp_libretro_android.so
+ngp	ngp	RACE	race_libretro_android.so
+ngp	ngp	NGP.emu (Standalone)	-
+ngpc	ngpc	Beetle NeoPop	mednafen_ngp_libretro_android.so
+ngpc	ngpc	RACE	race_libretro_android.so
+ngpc	ngpc	NGP.emu (Standalone)	-
+odyssey2	odyssey2	O2EM	o2em_libretro_android.so
+odyssey2	odyssey2	MAME4droid Current (Standalone)	-
+openbor	openbor	OpenBOR (Standalone)	-
+oric	oric	MAME4droid Current (Standalone)	-
+palm	palm	O2EM	mu_libretro_android.so
+pc	pc	DOSBox-Pure	dosbox_pure_libretro_android.so
+pc	pc	DOSBox-Core	dosbox_core_libretro_android.so
+pc	pc	DOSBox-SVN	dosbox_svn_libretro_android.so
+pc	pc	VirtualXT	virtualxt_libretro_android.so
+pc88	pc88	QUASI88	quasi88_libretro_android.so
+pc98	pc98	Neko Project II Kai	np2kai_libretro_android.so
+pc98	pc98	Neko Project II	nekop2_libretro_android.so
+pcarcade	pcarcade	Winlator Cmod (Standalone)	-
+pcarcade	pcarcade	Winlator Cmod Glibc (Standalone)	-
+pcarcade	pcarcade	Winlator Cmod PRoot (Standalone)	-
+pcarcade	pcarcade	WinNative (Standalone)	-
+pcengine	pcengine	Beetle PCE	mednafen_pce_libretro_android.so
+pcengine	pcengine	Beetle PCE FAST	mednafen_pce_fast_libretro_android.so
+pcengine	pcengine	Beetle SuperGrafx	mednafen_supergrafx_libretro_android.so
+pcengine	pcengine	Geargrafx	geargrafx_libretro_android.so
+pcengine	pcengine	MesenCE	mesen2_libretro_android.so
+pcengine	pcengine	PCE.emu (Standalone)	-
+pcenginecd	pcenginecd	Beetle PCE	mednafen_pce_libretro_android.so
+pcenginecd	pcenginecd	Beetle PCE FAST	mednafen_pce_fast_libretro_android.so
+pcenginecd	pcenginecd	Beetle SuperGrafx	mednafen_supergrafx_libretro_android.so
+pcenginecd	pcenginecd	Geargrafx	geargrafx_libretro_android.so
+pcenginecd	pcenginecd	MesenCE	mesen2_libretro_android.so
+pcenginecd	pcenginecd	PCE.emu (Standalone)	-
+pcfx	pcfx	Beetle PC-FX	mednafen_pcfx_libretro_android.so
+pico8	pico8	PICO-8 (Standalone)	-
+pico8	pico8	Fake-08	fake08_libretro_android.so
+pico8	pico8	Retro8	retro8_libretro_android.so
+pico8	pico8	Infinity (Standalone)	-
+plus4	plus4	VICE xplus4	vice_xplus4_libretro_android.so
+pokemini	pokemini	PokeMini	pokemini_libretro_android.so
+ports	ports	ECWolf (Wolfenstein 3D)	ecwolf_libretro_android.so
+ports	ports	CannonBall (OutRun)	cannonball_libretro_android.so
+ports	ports	Craft (Minecraft)	craft_libretro_android.so
+ports	ports	Mr.Boom (Bomberman)	mrboom_libretro_android.so
+ports	ports	NXEngine (Cave Story)	nxengine_libretro_android.so
+ports	ports	drs (Cave Story)	doukutsu_rs_libretro_android.so
+ports	ports	OpenLara (Tomb Raider)	openlara_libretro_android.so
+ports	ports	Super Bros War	superbroswar_libretro_android.so
+ports	ports	Starboard (Standalone)	-
+ports	ports	idTech4A++ (Standalone)	-
+ports	ports	Native port	-
+ps2	ps2	PCEE2	pcee2_libretro_android.so
+ps2	ps2	LRPS2	pcsx2_libretro_android.so
+ps2	ps2	NetherSX2 (Standalone)	-
+ps2	ps2	NetherSX2-Turnip (Standalone)	-
+ps2	ps2	NetherSX2-Turnip Classic (Standalone)	-
+ps2	ps2	AetherSX2 (Standalone)	-
+ps2	ps2	ARMSX2 (Standalone)	-
+ps2	ps2	EmuCoreX (Standalone)	-
+ps2	ps2	Play! (Standalone)	-
+ps3	ps3	aPS3e Game Serial (Standalone)	-
+ps3	ps3	aPS3e Directory (Standalone)	-
+ps3	ps3	aPS3e ISO (Standalone)	-
+ps3	ps3	ARMSX3 Game Serial (Standalone)	-
+ps3	ps3	ARMSX3 Directory or ISO (Standalone)	-
+ps3	ps3	EmuCoreC Directory or ISO (Standalone)	-
+ps4	ps4	BachataS4 (Standalone)	-
+psp	psp	PPSSPP	ppsspp_libretro_android.so
+psp	psp	PPSSPP (Standalone)	-
+psvita	psvita	Vita3K (Standalone)	-
+psvita	psvita	EmuCoreV (Standalone)	-
+psx	psx	Beetle PSX	mednafen_psx_libretro_android.so
+psx	psx	Beetle PSX HW	mednafen_psx_hw_libretro_android.so
+psx	psx	PCSX ReARMed	pcsx_rearmed_libretro_android.so
+psx	psx	SwanStation	swanstation_libretro_android.so
+psx	psx	DuckStation (Standalone)	-
+psx	psx	ARMSX1 (Standalone)	-
+psx	psx	ePSXe (Standalone)	-
+psx	psx	FPseNG (Standalone)	-
+psx	psx	FPse (Standalone)	-
+pv1000	pv1000	MAME4droid Current (Standalone)	-
+quake	quake	TyrQuake	tyrquake_libretro_android.so
+quake	quake	vitaQuake 2	vitaquake2_libretro_android.so
+quake	quake	vitaQuake 2 [Rogue]	vitaquake2-rogue_libretro_android.so
+quake	quake	vitaQuake 2 [Xatrix]	vitaquake2-xatrix_libretro_android.so
+quake	quake	vitaQuake 2 [Zaero]	vitaquake2-zaero_libretro_android.so
+quake	quake	idTech4A++ (Standalone)	-
+samcoupe	samcoupe	Speccy (Standalone)	-
+satellaview	satellaview	Snes9x - Current	snes9x_libretro_android.so
+satellaview	satellaview	Snes9x 2010	snes9x2010_libretro_android.so
+satellaview	satellaview	Snes9x 2005 Plus	snes9x2005_plus_libretro_android.so
+satellaview	satellaview	Snes9x EX+ (Standalone)	-
+satellaview	satellaview	bsnes	bsnes_libretro_android.so
+satellaview	satellaview	bsnes-hd	bsnes_hd_beta_libretro_android.so
+satellaview	satellaview	bsnes-jg	bsnes-jg_libretro_android.so
+satellaview	satellaview	bsnes-mercury Accuracy	bsnes_mercury_accuracy_libretro_android.so
+satellaview	satellaview	Mesen-S	mesen-s_libretro_android.so
+satellaview	satellaview	MesenCE	mesen2_libretro_android.so
+saturn	saturn	Beetle Saturn	mednafen_saturn_libretro_android.so
+saturn	saturn	YabaSanshiro	yabasanshiro_libretro_android.so
+saturn	saturn	Yaba Sanshiro 2 (Standalone)	-
+saturn	saturn	Yabause	yabause_libretro_android.so
+saturn	saturn	Saturn.emu (Standalone)	-
+saturnjp	saturnjp	Beetle Saturn	mednafen_saturn_libretro_android.so
+saturnjp	saturnjp	YabaSanshiro	yabasanshiro_libretro_android.so
+saturnjp	saturnjp	Yaba Sanshiro 2 (Standalone)	-
+saturnjp	saturnjp	Yabause	yabause_libretro_android.so
+saturnjp	saturnjp	Saturn.emu (Standalone)	-
+scummvm	scummvm	ScummVM	scummvm_libretro_android.so
+scummvm	scummvm	ScummVM (Standalone)	-
+scv	scv	MAME4droid Current (Standalone)	-
+sega32x	sega32x	PicoDrive	picodrive_libretro_android.so
+sega32x	sega32x	BlastEm	blastem_libretro_android.so
+sega32xjp	sega32xjp	PicoDrive	picodrive_libretro_android.so
+sega32xjp	sega32xjp	BlastEm	blastem_libretro_android.so
+sega32xna	sega32xna	PicoDrive	picodrive_libretro_android.so
+sega32xna	sega32xna	BlastEm	blastem_libretro_android.so
+segacd	segacd	Genesis Plus GX	genesis_plus_gx_libretro_android.so
+segacd	segacd	Genesis Plus GX Wide	genesis_plus_gx_wide_libretro_android.so
+segacd	segacd	PicoDrive	picodrive_libretro_android.so
+segacd	segacd	BlastEm	blastem_libretro_android.so
+segacd	segacd	ClownMDEmu	clownmdemu_libretro_android.so
+segacd	segacd	MD.emu (Standalone)	-
+segacd	segacd	Pizza Boy SC (Standalone)	-
+sfc	sfc	Snes9x - Current	snes9x_libretro_android.so
+sfc	sfc	Snes9x 2010	snes9x2010_libretro_android.so
+sfc	sfc	Snes9x 2005 Plus	snes9x2005_plus_libretro_android.so
+sfc	sfc	Snes9x EX+ (Standalone)	-
+sfc	sfc	bsnes	bsnes_libretro_android.so
+sfc	sfc	bsnes-hd	bsnes_hd_beta_libretro_android.so
+sfc	sfc	bsnes-jg	bsnes-jg_libretro_android.so
+sfc	sfc	bsnes-mercury Accuracy	bsnes_mercury_accuracy_libretro_android.so
+sfc	sfc	Beetle Supafaust	mednafen_supafaust_libretro_android.so
+sfc	sfc	Mesen-S	mesen-s_libretro_android.so
+sfc	sfc	MesenCE	mesen2_libretro_android.so
+sg-1000	sg-1000	Genesis Plus GX	genesis_plus_gx_libretro_android.so
+sg-1000	sg-1000	Genesis Plus GX Wide	genesis_plus_gx_wide_libretro_android.so
+sg-1000	sg-1000	Gearsystem	gearsystem_libretro_android.so
+sg-1000	sg-1000	BlastEm	blastem_libretro_android.so
+sg-1000	sg-1000	blueMSX	bluemsx_libretro_android.so
+sg-1000	sg-1000	MasterGear (Standalone)	-
+sgb	sgb	Mesen-S	mesen-s_libretro_android.so
+sgb	sgb	MesenCE	mesen2_libretro_android.so
+sgb	sgb	SameBoy	sameboy_libretro_android.so
+sgb	sgb	mGBA	mgba_libretro_android.so
+snes	snes	Snes9x - Current	snes9x_libretro_android.so
+snes	snes	Snes9x 2010	snes9x2010_libretro_android.so
+snes	snes	Snes9x 2005 Plus	snes9x2005_plus_libretro_android.so
+snes	snes	Snes9x EX+ (Standalone)	-
+snes	snes	bsnes	bsnes_libretro_android.so
+snes	snes	bsnes-hd	bsnes_hd_beta_libretro_android.so
+snes	snes	bsnes-jg	bsnes-jg_libretro_android.so
+snes	snes	bsnes-mercury Accuracy	bsnes_mercury_accuracy_libretro_android.so
+snes	snes	Beetle Supafaust	mednafen_supafaust_libretro_android.so
+snes	snes	Mesen-S	mesen-s_libretro_android.so
+snes	snes	MesenCE	mesen2_libretro_android.so
+snesna	snesna	Snes9x - Current	snes9x_libretro_android.so
+snesna	snesna	Snes9x 2010	snes9x2010_libretro_android.so
+snesna	snesna	Snes9x 2005 Plus	snes9x2005_plus_libretro_android.so
+snesna	snesna	Snes9x EX+ (Standalone)	-
+snesna	snesna	bsnes	bsnes_libretro_android.so
+snesna	snesna	bsnes-hd	bsnes_hd_beta_libretro_android.so
+snesna	snesna	bsnes-jg	bsnes-jg_libretro_android.so
+snesna	snesna	bsnes-mercury Accuracy	bsnes_mercury_accuracy_libretro_android.so
+snesna	snesna	Beetle Supafaust	mednafen_supafaust_libretro_android.so
+snesna	snesna	Mesen-S	mesen-s_libretro_android.so
+snesna	snesna	MesenCE	mesen2_libretro_android.so
+solarus	solarus	None	-
+spectravideo	spectravideo	blueMSX	bluemsx_libretro_android.so
+steam	steam	GameNative (Standalone)	-
+steam	steam	GameHub Lite (Standalone)	-
+steam	steam	GameHub Lite Local (Standalone)	-
+steam	steam	WinNative (Standalone)	-
+stv	stv	MAME - Current	mamearcade_libretro_android.so
+stv	stv	MAME4droid Current (Standalone)	-
+stv	stv	MAME4droid (Standalone)	-
+sufami	sufami	Snes9x - Current	snes9x_libretro_android.so
+sufami	sufami	Snes9x 2010	snes9x2010_libretro_android.so
+sufami	sufami	Snes9x 2005 Plus	snes9x2005_plus_libretro_android.so
+sufami	sufami	Snes9x EX+ (Standalone)	-
+sufami	sufami	bsnes	bsnes_libretro_android.so
+sufami	sufami	bsnes-hd	bsnes_hd_beta_libretro_android.so
+sufami	sufami	bsnes-jg	bsnes-jg_libretro_android.so
+sufami	sufami	bsnes-mercury Accuracy	bsnes_mercury_accuracy_libretro_android.so
+supergrafx	supergrafx	Beetle SuperGrafx	mednafen_supergrafx_libretro_android.so
+supergrafx	supergrafx	Beetle PCE	mednafen_pce_libretro_android.so
+supergrafx	supergrafx	Geargrafx	geargrafx_libretro_android.so
+supergrafx	supergrafx	MesenCE	mesen2_libretro_android.so
+supergrafx	supergrafx	PCE.emu (Standalone)	-
+supervision	supervision	Potator	potator_libretro_android.so
+supervision	supervision	MAME4droid Current (Standalone)	-
+supracan	supracan	MAME4droid Current (Standalone)	-
+switch	switch	Eden (Standalone)	-
+switch	switch	Eden Nightly (Standalone)	-
+switch	switch	Kenji-NX (Standalone)	-
+switch	switch	Skyline (Standalone)	-
+symbian	symbian	EKA2L1 (Standalone)	-
+tanodragon	tanodragon	MAME4droid Current [Tape] (Standalone)	-
+tanodragon	tanodragon	MAME4droid Current [Cartridge] (Standalone)	-
+tg16	tg16	Beetle PCE	mednafen_pce_libretro_android.so
+tg16	tg16	Beetle PCE FAST	mednafen_pce_fast_libretro_android.so
+tg16	tg16	Beetle SuperGrafx	mednafen_supergrafx_libretro_android.so
+tg16	tg16	Geargrafx	geargrafx_libretro_android.so
+tg16	tg16	MesenCE	mesen2_libretro_android.so
+tg16	tg16	PCE.emu (Standalone)	-
+tg-cd	tg-cd	Beetle PCE	mednafen_pce_libretro_android.so
+tg-cd	tg-cd	Beetle PCE FAST	mednafen_pce_fast_libretro_android.so
+tg-cd	tg-cd	Beetle SuperGrafx	mednafen_supergrafx_libretro_android.so
+tg-cd	tg-cd	Geargrafx	geargrafx_libretro_android.so
+tg-cd	tg-cd	MesenCE	mesen2_libretro_android.so
+tg-cd	tg-cd	PCE.emu (Standalone)	-
+ti99	ti99	MAME4droid Current (Standalone)	-
+tic80	tic80	TIC-80	tic80_libretro_android.so
+to8	to8	Theodore	theodore_libretro_android.so
+triforce	triforce	Dolphin	dolphin_libretro_android.so
+triforce	triforce	Dolphin (Standalone)	-
+trs-80	trs-80	None	-
+type-x	type-x	Winlator Cmod (Standalone)	-
+type-x	type-x	Winlator Cmod Glibc (Standalone)	-
+type-x	type-x	Winlator Cmod PRoot (Standalone)	-
+type-x	type-x	WinNative (Standalone)	-
+uzebox	uzebox	Uzem	uzem_libretro_android.so
+vectrex	vectrex	vecx	vecx_libretro_android.so
+vectrex	vectrex	MAME4droid Current (Standalone)	-
+vic20	vic20	VICE xvic	vice_xvic_libretro_android.so
+videopac	videopac	O2EM	o2em_libretro_android.so
+videopac	videopac	MAME4droid Current (Standalone)	-
+vircon32	vircon32	Vircon32	vircon32_libretro_android.so
+virtualboy	virtualboy	Beetle VB	mednafen_vb_libretro_android.so
+virtualboy	virtualboy	Virtual Virtual Boy (Standalone)	-
+vpinball	vpinball	Visual Pinball (Standalone)	-
+vsmile	vsmile	MAME4droid Current (Standalone)	-
+vsmile	vsmile	D.Smile (Standalone)	-
+wasm4	wasm4	WASM-4	wasm4_libretro_android.so
+wii	wii	Dolphin	dolphin_libretro_android.so
+wii	wii	Dolphin (Standalone)	-
+wii	wii	Dolphin MMJR (Standalone)	-
+wii	wii	Dolphin MMJR2 (Standalone)	-
+wiiu	wiiu	Cemu (Standalone)	-
+wiiu	wiiu	Cemu	cemu_libretro_android.so
+windows	windows	Winlator Cmod (Standalone)	-
+windows	windows	Winlator Cmod Glibc (Standalone)	-
+windows	windows	Winlator Cmod PRoot (Standalone)	-
+windows	windows	GameNative Steam (Standalone)	-
+windows	windows	GameNative Epic (Standalone)	-
+windows	windows	GameNative GOG (Standalone)	-
+windows	windows	GameNative Amazon (Standalone)	-
+windows	windows	GameNative Custom Game (Standalone)	-
+windows	windows	GameHub Lite (Standalone)	-
+windows	windows	GameHub Lite Local (Standalone)	-
+windows	windows	WinNative (Standalone)	-
+windows3x	windows3x	DOSBox-Pure	dosbox_pure_libretro_android.so
+windows9x	windows9x	DOSBox-Pure	dosbox_pure_libretro_android.so
+wonderswan	wonderswan	Beetle Cygne	mednafen_wswan_libretro_android.so
+wonderswan	wonderswan	MesenCE	mesen2_libretro_android.so
+wonderswan	wonderswan	Swan.emu (Standalone)	-
+wonderswancolor	wonderswancolor	Beetle Cygne	mednafen_wswan_libretro_android.so
+wonderswancolor	wonderswancolor	MesenCE	mesen2_libretro_android.so
+wonderswancolor	wonderswancolor	Swan.emu (Standalone)	-
+x1	x1	X Millennium	x1_libretro_android.so
+x1	x1	MAME4droid Current [Diskette] (Standalone)	-
+x1	x1	MAME4droid Current [Tape] (Standalone)	-
+x68000	x68000	PX68k	px68k_libretro_android.so
+x68000	x68000	MAME4droid Current (Standalone)	-
+xbox	xbox	X1 BOX (Standalone)	-
+xbox	xbox	hakuX (Standalone)	-
+xbox	xbox	Xenra (Standalone)	-
+xbox360	xbox360	aX360e (Standalone)	-
+xbox360	xbox360	XenDroid (Standalone)	-
+xbox360	xbox360	Xenra (Standalone)	-
+xboxone	xboxone	None	-
+zmachine	zmachine	MojoZork	mojozork_libretro_android.so
+zx81	zx81	EightyOne	81_libretro_android.so
+zxnext	zxnext	None	-
+zxspectrum	zxspectrum	Fuse	fuse_libretro_android.so
+zxspectrum	zxspectrum	Speccy (Standalone)	-
