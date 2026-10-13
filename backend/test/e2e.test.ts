@@ -386,7 +386,8 @@ test('dats: No-Intro import and hacks', async () => {
   const dats = await api('GET', '/admin/dats');
   assert.equal(dats.json.length, 4);
   const nes = dats.json.find((d: any) => d.system.slug === 'nes' && d.type === 'NOINTRO');
-  assert.ok(nes.romCount > 7000);
+  // The libretro DAT lists each game twice; its 2026.10.07 version has 6625 distinct names (2026.08.01 had 7054)
+  assert.ok(nes.romCount > 6000);
 });
 
 test('scan: paths, checksums with and without header, hacks and RA hash', async () => {
