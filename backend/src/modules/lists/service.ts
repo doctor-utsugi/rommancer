@@ -188,8 +188,10 @@ export async function pullUnknownFiles(userId: number, unknownIds: number[]) {
     out.notAllowed = lacking.length;
     return out;
   }
-  const devices = await prisma.device.findMany({ where: { userId }, select: { id: true, allowPull: true } });
+  // The console seen last first: the one most likely to answer soon
+  const devices = await prisma.device.findMany({ where: { userId }, select: { id: true, allowPull: true }, orderBy: { lastSeenAt: { sort: 'desc', nulls: 'last' } } });
   const allows = new Map(devices.map((d) => [d.id, d.allowPull]));
+  const rank = new Map(devices.map((d, i) => [d.id, i]));
   const sha1s = lacking.flatMap((u) => (u.sha1 ? [u.sha1] : []));
   const sizes = lacking.filter((u) => !u.sha1).map((u) => u.size);
   const rows = await prisma.deviceRom.findMany({
@@ -200,7 +202,7 @@ export async function pullUnknownFiles(userId: number, unknownIds: number[]) {
   for (const r of rows) holders.set(unknownKey(r), [...(holders.get(unknownKey(r)) ?? []), r]);
   const want: { deviceId: number; path: string }[] = [];
   for (const u of lacking) {
-    const has = holders.get(u.fileKey) ?? [];
+    const has = (holders.get(u.fileKey) ?? []).sort((a, b) => rank.get(a.deviceId)! - rank.get(b.deviceId)!);
     const from = has.find((r) => allows.get(r.deviceId));
     if (from) want.push({ deviceId: from.deviceId, path: from.path });
     else if (has.length) out.notAllowed++;
