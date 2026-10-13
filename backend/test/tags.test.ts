@@ -14,7 +14,7 @@ test('tags: region, languages, revision and translation marks', () => {
   assert.deepEqual(l.languages, ['En', 'Fr', 'De']);
 });
 
-test('tags: exact base rom and the hack's own version', () => {
+test('tags: exact base rom and the version of the hack', () => {
   assert.equal(
     hackLabel({ name: 'Gran Turismo 4 (USA) (v1.01)' }, { type: 'HACK', title: 'Gran Turismo 4 Spec II', hackName: 'Spec II', version: '1.10' }),
     'Gran Turismo 4 (USA) v1.01 + Spec II v1.10',
