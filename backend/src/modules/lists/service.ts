@@ -1,7 +1,9 @@
+import crypto from 'node:crypto';
 import path from 'node:path';
 import type { List } from '@prisma/client';
 import { prisma } from '../../lib/prisma.js';
 import { forbidden, notFound } from '../../lib/http.js';
+import { hasPermission, normalizePermissions } from '../../lib/permissions.js';
 import { safeFileName } from '../../lib/romname.js';
 import type { AuthUser } from '../auth/middleware.js';
 import { ownedRomIds, pickFromWork, pickRom, type RomPreference } from '../roms/service.js';
@@ -122,6 +124,55 @@ export async function unknownFilesOnServer(us: { sha1: string | null; headerless
     if (f.headerlessSha1 && !by.has(`h:${f.headerlessSha1}`)) by.set(`h:${f.headerlessSha1}`, f);
   }
   return (u: { sha1: string | null; headerlessSha1: string | null }) => (u.sha1 ? by.get(u.sha1) : undefined) ?? (u.headerlessSha1 ? by.get(`h:${u.headerlessSha1}`) : undefined) ?? null;
+}
+
+/** How a file no database identified is kept: by its content, or by its system, size and name when it was never hashed */
+export function unknownKey(f: { sha1: string | null; systemSlug: string | null; size: bigint; path: string }) {
+  return f.sha1 ?? crypto.createHash('sha1').update(`${f.systemSlug ?? ''}\0${f.size}\0${path.posix.basename(f.path).slice(0, 255)}`).digest('hex');
+}
+
+/**
+ * Asks the user's consoles for the files no database identified that the server lacks (UNKNOWNIDS), so lists can
+ * copy them to other devices. Says what could not be asked for: the user may not upload roms (DENIED), the only
+ * consoles with the file do not let the server fetch roms (NOTALLOWED), or no console of theirs has it (NOWHERE)
+ */
+export async function pullUnknownFiles(userId: number, unknownIds: number[]) {
+  const out = { asked: 0, notAllowed: 0, nowhere: 0, denied: false };
+  const unknowns = unknownIds.length ? await prisma.unknownFile.findMany({ where: { id: { in: unknownIds } } }) : [];
+  const copy = await unknownFilesOnServer(unknowns);
+  const lacking = unknowns.filter((u) => !copy(u));
+  if (!lacking.length) return out;
+  const user = await prisma.user.findUniqueOrThrow({ where: { id: userId }, select: { role: true, permissions: true } });
+  if (!hasPermission({ role: user.role, permissions: normalizePermissions(user.permissions) }, 'roms.upload')) {
+    out.denied = true;
+    out.notAllowed = lacking.length;
+    return out;
+  }
+  const devices = await prisma.device.findMany({ where: { userId }, select: { id: true, allowPull: true } });
+  const allows = new Map(devices.map((d) => [d.id, d.allowPull]));
+  const sha1s = lacking.flatMap((u) => (u.sha1 ? [u.sha1] : []));
+  const sizes = lacking.filter((u) => !u.sha1).map((u) => u.size);
+  const rows = await prisma.deviceRom.findMany({
+    where: { deviceId: { in: devices.map((d) => d.id) }, OR: [{ sha1: { in: sha1s } }, ...(sizes.length ? [{ sha1: null, size: { in: sizes } }] : [])] },
+    select: { deviceId: true, path: true, sha1: true, systemSlug: true, size: true },
+  });
+  const holders = new Map<string, typeof rows>();
+  for (const r of rows) holders.set(unknownKey(r), [...(holders.get(unknownKey(r)) ?? []), r]);
+  const want: { deviceId: number; path: string }[] = [];
+  for (const u of lacking) {
+    const has = holders.get(u.fileKey) ?? [];
+    const from = has.find((r) => allows.get(r.deviceId));
+    if (from) want.push({ deviceId: from.deviceId, path: from.path });
+    else if (has.length) out.notAllowed++;
+    else out.nowhere++;
+  }
+  // Once per file while a request for it is open
+  const open = await prisma.devicePull.findMany({ where: { path: { in: want.map((w) => w.path) }, status: { in: ['pending', 'sending', 'paused'] } }, select: { deviceId: true, path: true } });
+  const asked = new Set(open.map((p) => `${p.deviceId}\t${p.path}`));
+  const fresh = want.filter((w) => !asked.has(`${w.deviceId}\t${w.path}`));
+  if (fresh.length) await prisma.devicePull.createMany({ data: fresh });
+  out.asked = want.length;
+  return out;
 }
 
 /** Ficheros en disco de una rom poseida, con el nombre de destino canonico. */

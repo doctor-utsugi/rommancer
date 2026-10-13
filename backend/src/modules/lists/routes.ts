@@ -1,6 +1,5 @@
 import { Router } from 'express';
 import { ZipArchive } from 'archiver';
-import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { z } from 'zod';
@@ -14,7 +13,7 @@ import { extractEntryStream } from '../../lib/tools.js';
 import { me, requirePerm, type AuthUser } from '../auth/middleware.js';
 import { queueListScrape } from '../scrape/routes.js';
 import { ownedRomIds, pickFromWork, pickRom, type RomPreference } from '../roms/service.js';
-import { favoritesList, itemKey, loadList, resolveListFiles, toRomItems, unknownFilesOnServer } from './service.js';
+import { favoritesList, itemKey, loadList, pullUnknownFiles, resolveListFiles, toRomItems, unknownFilesOnServer, unknownKey } from './service.js';
 import { previewDerive, resolveDerive, specOf, type DerivedSpec } from './derive.js';
 
 export const listsRouter = Router();
@@ -250,9 +249,8 @@ async function deviceItems(deviceId: number, user: AuthUser) {
       items.set(itemKey(item), item);
       continue;
     }
-    const name = path.posix.basename(r.path).slice(0, 255);
-    const fileKey = r.sha1 ?? crypto.createHash('sha1').update(`${r.systemSlug ?? ''}\0${r.size}\0${name}`).digest('hex');
-    unknowns.set(fileKey, { fileKey, sha1: r.sha1, headerlessSha1: r.headerlessSha1, name, size: r.size, systemSlug: r.systemSlug, baseGameId: r.baseGameId ?? r.gameId });
+    const fileKey = unknownKey(r);
+    unknowns.set(fileKey, { fileKey, sha1: r.sha1, headerlessSha1: r.headerlessSha1, name: path.posix.basename(r.path).slice(0, 255), size: r.size, systemSlug: r.systemSlug, baseGameId: r.baseGameId ?? r.gameId });
   }
   return { items: [...items.values()], unknowns: [...unknowns.values()] };
 }
@@ -279,12 +277,14 @@ listsRouter.post('/from-device/:deviceId', async (req, res) => {
   const u = me(req);
   const body = listBody.parse(req.body);
   const r = await deviceItems(Number(req.params.deviceId), u);
-  const items = [...r.items, ...(await unknownItems(r.unknowns))];
+  const unknown = await unknownItems(r.unknowns);
   const list = await prisma.list.create({ data: { ...body, ownerId: u.id } });
   // Covers for thousands of games are a bulk scrape: only for those allowed to run one
-  const added = await addItems(list.id, items, hasPermission(u, 'scrape.bulk') ? u : undefined);
-  // Anything that did not go in is said, never dropped quietly
-  res.status(201).json({ id: list.id, added, unknown: r.unknowns.length, dropped: r.items.length + r.unknowns.length - added });
+  const added = await addItems(list.id, [...r.items, ...unknown], hasPermission(u, 'scrape.bulk') ? u : undefined);
+  // The files only the console has are asked from it, so the list can reach other devices
+  const pulls = await pullUnknownFiles(u.id, unknown.map((k) => k.unknownId));
+  // Anything that did not go in, or cannot be fetched, is said, never dropped quietly
+  res.status(201).json({ id: list.id, added, unknown: r.unknowns.length, dropped: r.items.length + r.unknowns.length - added, pulls });
 });
 
 listsRouter.post('/:id/items', async (req, res) => {

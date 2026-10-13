@@ -474,6 +474,12 @@ function DeviceListDialog({ deviceId, name, onClose }: { deviceId: number; name:
         const r = await post(`/lists/from-device/${deviceId}`, form)
         toast.success(t('more.device.listCreated', { count: r.added }))
         if (r.dropped > 0) toast.warning(t('more.device.listDropped', { count: r.dropped }))
+        // Files only the console has: asked from it, or said why they cannot be
+        const p = r.pulls
+        if (p.asked) toast.info(t('more.device.listPulls', { count: p.asked }))
+        if (p.denied) toast.warning(t('more.device.listPullDenied', { count: p.notAllowed }), { duration: 15000 })
+        else if (p.notAllowed) toast.warning(t('more.device.listPullOff', { count: p.notAllowed }), { duration: 15000 })
+        if (p.nowhere) toast.warning(t('more.device.listPullNowhere', { count: p.nowhere }), { duration: 15000 })
         return r
       }}
       onClose={onClose}

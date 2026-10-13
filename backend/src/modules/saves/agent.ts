@@ -18,7 +18,7 @@ import fs from 'node:fs';
 import crypto from 'node:crypto';
 import { env } from '../../config/env.js';
 import { extractEntryStream } from '../../lib/tools.js';
-import { resolveListFiles } from '../lists/service.js';
+import { resolveListFiles, unknownKey } from '../lists/service.js';
 import { resolveConflict } from './core.js';
 import { pipeline } from 'node:stream/promises';
 import { normalizeTitle, parseRomName } from '../../lib/romname.js';
@@ -1206,9 +1206,11 @@ agentRouter.post('/pull/:id', async (req, res) => {
       if (!res.headersSent && !req.destroyed) res.status(409).type('text/plain').send('interrupted, will retry\n');
       return;
     }
+    let fileId: number | undefined;
     try {
       try {
         const r = await ingestVerified(tmp, name, owner);
+        if ('file' in r) fileId = r.file?.id;
         result = r.status === 'already-owned' ? 'already owned' : 'stored';
       } catch (e) {
         if (!(e instanceof HttpError) || e.status !== 422) throw e;
@@ -1232,7 +1234,7 @@ agentRouter.post('/pull/:id', async (req, res) => {
         const lang = /\[T[+-]([A-Za-z]{2,3})/.exec(name)?.[1] ?? /\((english|spanish|french|german|italian|portuguese) v[\d.]+\)/i.exec(name)?.[1];
         const fan = base ? { gameId: base.id, kind: /\[T[+-]|\((english|spanish|french|german|italian|portuguese) v[\d.]+\)/i.test(name) ? 'translation' : 'hack', ...(lang ? { hackLanguage: lang.slice(0, 32) } : {}) } : null;
         try {
-          await ingestUnverified(tmp, name, owner, { systemId: system.id, ...(fan ?? (game ? { gameId: game.id } : { newGameTitle: title })) });
+          fileId = (await ingestUnverified(tmp, name, owner, { systemId: system.id, ...(fan ?? (game ? { gameId: game.id } : { newGameTitle: title })) })).file?.id;
           result = 'stored as unverified';
         } catch (dup) {
           // The same file came in before: nothing missing, not a failure
@@ -1241,6 +1243,7 @@ agentRouter.post('/pull/:id', async (req, res) => {
         }
       }
       await prisma.devicePull.update({ where: { id: pull.id }, data: { status: 'done', result, doneAt: new Date() } });
+      await noteUnknownContent(device.id, pull.path, fileId);
     } catch (e) {
       result = e instanceof Error ? e.message : String(e);
       await prisma.devicePull.update({ where: { id: pull.id }, data: { status: 'failed', result: result.slice(0, 500), doneAt: new Date() } });
@@ -1251,6 +1254,14 @@ agentRouter.post('/pull/:id', async (req, res) => {
     await fs.promises.rm(tmp, { force: true });
   }
 });
+
+/** A file no database identified that the device never hashed, now on the server: kept by its content from here on */
+async function noteUnknownContent(deviceId: number, devicePath: string, fileId: number | undefined) {
+  const inv = fileId ? await prisma.deviceRom.findFirst({ where: { deviceId, path: devicePath, sha1: null } }) : null;
+  const file = inv ? await prisma.romFile.findUnique({ where: { id: fileId }, select: { sha1: true, headerlessSha1: true } }) : null;
+  if (!inv || !file?.sha1) return;
+  await prisma.unknownFile.updateMany({ where: { fileKey: unknownKey(inv), sha1: null }, data: { sha1: file.sha1, headerlessSha1: file.headerlessSha1 } });
+}
 
 // Which device a token belongs to (the desktop companion keeps only the token on the card)
 agentRouter.get('/whoami', async (req, res) => {
