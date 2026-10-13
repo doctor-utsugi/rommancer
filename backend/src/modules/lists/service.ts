@@ -18,9 +18,10 @@ export async function loadList(id: number, user: AuthUser, edit = false): Promis
   return list;
 }
 
-export function itemKey(i: { gameId?: number | null; romId?: number | null; hackId?: number | null; workId?: number | null }) {
+export function itemKey(i: { gameId?: number | null; romId?: number | null; hackId?: number | null; workId?: number | null; unknownId?: number | null }) {
   if (i.romId) return `r${i.romId}`;
   if (i.hackId) return `h${i.hackId}`;
+  if (i.unknownId) return `u${i.unknownId}`;
   if (i.workId) return `w${i.workId}`;
   if (i.gameId) return `g${i.gameId}`;
   throw new Error('Empty item');
@@ -32,6 +33,8 @@ export interface TransferItem {
   title: string;
   romId: number | null;
   hackId: number | null;
+  // Content of a file nobody identified: a device with it has the item wherever it keeps it
+  sha1?: string | null;
   // Ficheros a copiar
   files: { absPath: string; archiveEntry: string | null; destName: string }[];
 }
@@ -48,11 +51,13 @@ export async function resolveListFiles(listId: number, pref: RomPreference = {})
       rom: { include: { game: { include: { system: true } } } },
       hack: { include: { game: { include: { system: true } }, files: { include: { romPath: true } } } },
       work: { include: { games: { include: { system: true, roms: true } } } },
+      unknown: { include: { system: true } },
     },
   });
   const romIds = items.flatMap((i) => (i.rom ? [i.rom.id] : (i.game?.roms.map((r) => r.id) ?? i.work?.games.flatMap((g) => g.roms.map((r) => r.id)) ?? [])));
   // Listas y dispositivos usan tambien las roms no verificadas
   const owned = await ownedRomIds({ romIds, include: 'any' });
+  const serverCopy = await unknownFilesOnServer(items.flatMap((i) => (i.unknown ? [i.unknown] : [])));
   const out: TransferItem[] = [];
   const missing: { listItemId: number; title: string }[] = [];
 
@@ -75,6 +80,23 @@ export async function resolveListFiles(listId: number, pref: RomPreference = {})
       });
       continue;
     }
+    if (it.unknown) {
+      const f = serverCopy(it.unknown);
+      if (!f || !it.unknown.system) {
+        missing.push({ listItemId: it.id, title: it.unknown.name });
+        continue;
+      }
+      out.push({
+        listItemId: it.id,
+        systemSlug: it.unknown.system.slug,
+        title: it.unknown.name,
+        romId: null,
+        hackId: null,
+        sha1: it.unknown.sha1,
+        files: [{ absPath: path.join(f.romPath.path, f.relativePath), archiveEntry: f.archiveEntry, destName: safeFileName(it.unknown.name) }],
+      });
+      continue;
+    }
     const fromWork = it.work ? pickFromWork(it.work.games, effective, owned) : null;
     const rom = it.rom ?? (it.game ? pickRom(it.game.roms, effective, owned) : (fromWork?.rom ?? null));
     const system = it.rom?.game.system ?? it.game?.system ?? fromWork?.game.system;
@@ -86,6 +108,20 @@ export async function resolveListFiles(listId: number, pref: RomPreference = {})
     out.push({ listItemId: it.id, systemSlug: system.slug, title: rom.name, romId: rom.id, hackId: null, files: await romFiles(rom.id) });
   }
   return { items: out, missing };
+}
+
+/** The server's copies of files no database identified, by sha1 ("h:" + headerless sha1 for the same content without its header) */
+export async function unknownFilesOnServer(us: { sha1: string | null; headerlessSha1: string | null }[]) {
+  const sha1s = us.flatMap((u) => (u.sha1 ? [u.sha1] : []));
+  const bare = us.flatMap((u) => (u.headerlessSha1 ? [u.headerlessSha1] : []));
+  const or = [...(sha1s.length ? [{ sha1: { in: sha1s } }] : []), ...(bare.length ? [{ headerlessSha1: { in: bare } }] : [])];
+  const files = or.length ? await prisma.romFile.findMany({ where: { OR: or }, include: { romPath: true } }) : [];
+  const by = new Map<string, (typeof files)[number]>();
+  for (const f of files) {
+    if (f.sha1) by.set(f.sha1, f);
+    if (f.headerlessSha1 && !by.has(`h:${f.headerlessSha1}`)) by.set(`h:${f.headerlessSha1}`, f);
+  }
+  return (u: { sha1: string | null; headerlessSha1: string | null }) => (u.sha1 ? by.get(u.sha1) : undefined) ?? (u.headerlessSha1 ? by.get(`h:${u.headerlessSha1}`) : undefined) ?? null;
 }
 
 /** Ficheros en disco de una rom poseida, con el nombre de destino canonico. */
@@ -136,6 +172,7 @@ export interface ItemInput {
   romId?: number;
   hackId?: number;
   workId?: number;
+  unknownId?: number;
   note?: string;
 }
 
@@ -150,7 +187,7 @@ export async function toRomItems<T extends ItemInput>(items: T[]): Promise<(T & 
   const gameRom = new Map(games.map((g) => [g.id, (pickRom(g.roms, {}, owned) ?? pickRom(g.roms, { excludeFlags: [] }, owned))?.id]));
   const workRom = new Map(works.map((w) => [w.id, (pickFromWork(w.games, {}, owned) ?? pickFromWork(w.games, { excludeFlags: [] }, owned))?.rom.id]));
   return items.flatMap((i) => {
-    if (i.romId || i.hackId) return [{ ...i, gameId: undefined, workId: undefined }];
+    if (i.romId || i.hackId || i.unknownId) return [{ ...i, gameId: undefined, workId: undefined }];
     const romId = i.gameId ? gameRom.get(i.gameId) : i.workId ? workRom.get(i.workId) : undefined;
     if (romId) return [{ ...i, romId, gameId: undefined, workId: undefined }];
     // A game known only through romhacks goes in as its romhack
@@ -161,7 +198,7 @@ export async function toRomItems<T extends ItemInput>(items: T[]): Promise<(T & 
 
 /** Game and work items saved before lists held roms only: each becomes its best rom (or goes, if it has none) */
 export async function convertLegacyItems() {
-  const legacy = await prisma.listItem.findMany({ where: { romId: null, hackId: null }, select: { id: true, listId: true, gameId: true, workId: true } });
+  const legacy = await prisma.listItem.findMany({ where: { romId: null, hackId: null, unknownId: null }, select: { id: true, listId: true, gameId: true, workId: true } });
   let converted = 0;
   for (const it of legacy) {
     const [rom] = await toRomItems([{ gameId: it.gameId ?? undefined, workId: it.workId ?? undefined }]);

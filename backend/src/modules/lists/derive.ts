@@ -28,17 +28,18 @@ export function specOf(stored: unknown): DerivedSpec {
 
 const romSelect = { id: true, name: true, regions: true, languages: true, flags: true, revision: true, raGameId: true, isBios: true, gameId: true, datSource: { select: { type: true } } } as const;
 
-/** The games of a list in its order (from its roms), and its romhacks, which have no versions to choose from */
+/** The games of a list in its order (from its roms), and its romhacks and unknown files, which have no versions to choose from */
 async function sourceOf(listId: number) {
   const items = await prisma.listItem.findMany({
     where: { listId },
     orderBy: { position: 'asc' },
     include: { rom: { select: { gameId: true } }, hack: { select: { id: true } } },
   });
-  const order: { gameId?: number; hackId?: number }[] = [];
+  const order: { gameId?: number; hackId?: number; unknownId?: number }[] = [];
   const seen = new Set<number>();
   for (const i of items) {
     if (i.hack) order.push({ hackId: i.hack.id });
+    else if (i.unknownId) order.push({ unknownId: i.unknownId });
     else if (i.rom && !seen.has(i.rom.gameId)) {
       seen.add(i.rom.gameId);
       order.push({ gameId: i.rom.gameId });
@@ -108,18 +109,18 @@ export async function previewDerive(listId: number, filters: DeriveFilters) {
       missing.push({ gameId: g.id, title: g.title, system: g.system.name, versions: ranked.map((r) => view(r, src.owned)) });
     }
   }
-  return { matched, missing, hacks: src.order.filter((o) => o.hackId).length };
+  return { matched, missing, hacks: src.order.filter((o) => o.hackId).length, unknown: src.order.filter((o) => o.unknownId).length };
 }
 
 /** The items of a sublist: its filters, then the decisions for the games without the version */
 export async function resolveDerive(listId: number, spec: DerivedSpec) {
   const src = await sourceOf(listId);
   const like = spec.rest.mode === 'like' ? await prisma.rom.findUnique({ where: { id: spec.rest.romId }, select: { regions: true, languages: true } }) : null;
-  const items: { romId?: number; hackId?: number }[] = [];
+  const items: { romId?: number; hackId?: number; unknownId?: number }[] = [];
   const skipped: string[] = [];
   for (const o of src.order) {
-    if (o.hackId) {
-      items.push({ hackId: o.hackId });
+    if (o.hackId || o.unknownId) {
+      items.push(o.hackId ? { hackId: o.hackId } : { unknownId: o.unknownId });
       continue;
     }
     const g = src.games.get(o.gameId!)!;

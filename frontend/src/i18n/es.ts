@@ -168,7 +168,7 @@ export const es = {
     device: 'Dispositivo',
     overwrite: 'Sobrescribir existentes',
     dryRun: 'Simular',
-    kind: { game: 'Juego', rom: 'Rom', hack: 'Hack' },
+    kind: { game: 'Juego', rom: 'Rom', hack: 'Hack', unknown: 'Desconocido' },
     selected: 'Rom elegida',
     unresolved: 'No resueltos: {{count}}',
     added: 'Añadidos: {{count}}',

@@ -317,8 +317,9 @@ export async function listProgress(listId: number, device: Awaited<ReturnType<ty
   const layout = layoutOf(device);
   const root = device.rootPath;
   const { items } = await resolveListFiles(listId);
-  const inv = await prisma.deviceRom.findMany({ where: { deviceId: device.id }, select: { pathHash: true, gameId: true } });
+  const inv = await prisma.deviceRom.findMany({ where: { deviceId: device.id }, select: { pathHash: true, gameId: true, sha1: true } });
   const paths = new Set(inv.map((r) => r.pathHash));
+  const contents = new Set(inv.flatMap((r) => (r.sha1 ? [r.sha1] : [])));
   const games = new Set(inv.map((r) => r.gameId).filter(Boolean));
   const roms = items.length ? await prisma.rom.findMany({ where: { id: { in: items.flatMap((i) => (i.romId ? [i.romId] : [])) } }, select: { id: true, gameId: true } }) : [];
   const gameOf = new Map(roms.map((r) => [r.id, r.gameId]));
@@ -330,7 +331,7 @@ export async function listProgress(listId: number, device: Awaited<ReturnType<ty
     const folder = folderFor(layout, it.systemSlug);
     total++;
     const there = it.files.some((f) => paths.has(pathKey(path.posix.join(root, layout.romsRoot, folder, f.destName))));
-    if (there || (it.romId && games.has(gameOf.get(it.romId) ?? -1))) have++;
+    if (there || (it.romId && games.has(gameOf.get(it.romId) ?? -1)) || (it.sha1 && contents.has(it.sha1))) have++;
   }
   return { have, total };
 }

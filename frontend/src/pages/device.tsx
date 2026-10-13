@@ -463,7 +463,7 @@ function SendDialog({ deviceId, onClose, onSent }: { deviceId: number; onClose()
 function DeviceListDialog({ deviceId, name, onClose }: { deviceId: number; name: string; onClose(): void }) {
   const { t } = useTranslation()
   const nav = useNavigate()
-  const preview = useQuery({ queryKey: ['device-list-preview', deviceId], queryFn: () => get<{ items: number; skipped: number }>(`/lists/from-device/${deviceId}`) })
+  const preview = useQuery({ queryKey: ['device-list-preview', deviceId], queryFn: () => get<{ items: number; unknown: number }>(`/lists/from-device/${deviceId}`) })
   const date = new Date().toLocaleDateString()
   return (
     <ListFormDialog
@@ -473,6 +473,7 @@ function DeviceListDialog({ deviceId, name, onClose }: { deviceId: number; name:
       save={async (form) => {
         const r = await post(`/lists/from-device/${deviceId}`, form)
         toast.success(t('more.device.listCreated', { count: r.added }))
+        if (r.dropped > 0) toast.warning(t('more.device.listDropped', { count: r.dropped }))
         return r
       }}
       onClose={onClose}
@@ -480,7 +481,7 @@ function DeviceListDialog({ deviceId, name, onClose }: { deviceId: number; name:
     >
       <p className="text-sm text-muted-foreground">
         {preview.data ? t('more.device.listHelp', { count: preview.data.items }) : t('common.loading')}
-        {!!preview.data?.skipped && ` ${t('more.device.listSkipped', { count: preview.data.skipped })}`}
+        {!!preview.data?.unknown && ` ${t('more.device.listUnknown', { count: preview.data.unknown })}`}
       </p>
     </ListFormDialog>
   )

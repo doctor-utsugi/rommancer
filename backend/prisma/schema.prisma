@@ -165,6 +165,7 @@ model System {
   games      Game[]
   datSources DatSource[]
   raGames    RaGame[]
+  unknownFiles UnknownFile[]
 }
 
 model DatSource {
@@ -216,6 +217,7 @@ model Game {
   hacks           RomHack[]
   media           Media[]
   listItems       ListItem[]
+  unknownFiles    UnknownFile[]
   saves           Save[]
 
   @@index([systemId, titleNormalized])
@@ -402,6 +404,7 @@ model RomFile {
 
   @@unique([romPathId, pathKey])
   @@index([sha1])
+  @@index([headerlessSha1])
   @@index([quickHash])
   @@index([romPartId])
   @@index([status])
@@ -452,7 +455,8 @@ model ListItem {
   romId    Int?
   hackId   Int?
   workId   Int?
-  // Clave unica: r<id> | h<id> (game and work items are turned into one of their roms)
+  unknownId Int?
+  // Clave unica: r<id> | h<id> | u<id> (game and work items are turned into one of their roms)
   itemKey  String   @db.VarChar(24)
   position Int      @default(0)
   note     String?  @db.VarChar(512)
@@ -461,8 +465,29 @@ model ListItem {
   rom      Rom?     @relation(fields: [romId], references: [id], onDelete: Cascade)
   hack     RomHack? @relation(fields: [hackId], references: [id], onDelete: Cascade)
   work     Work?    @relation(fields: [workId], references: [id], onDelete: Cascade)
+  unknown  UnknownFile? @relation(fields: [unknownId], references: [id], onDelete: Cascade)
 
   @@unique([listId, itemKey])
+}
+
+// A file no database identified (a hack or translation nobody registered, a homebrew, a dump of its own), kept so
+// lists can hold it: told apart by its content, or by its system, size and name when it was never hashed
+model UnknownFile {
+  id             Int        @id @default(autoincrement())
+  fileKey        String     @unique @db.Char(40)
+  sha1           String?    @db.Char(40)
+  headerlessSha1 String?    @db.Char(40)
+  name           String     @db.VarChar(255)
+  size           BigInt     @default(0)
+  systemId       Int?
+  // The game it is a hack or translation of, when that is known
+  baseGameId     Int?
+  createdAt      DateTime   @default(now())
+  system         System?    @relation(fields: [systemId], references: [id], onDelete: SetNull)
+  baseGame       Game?      @relation(fields: [baseGameId], references: [id], onDelete: SetNull)
+  listItems      ListItem[]
+
+  @@index([sha1])
 }
 
 model ListShare {

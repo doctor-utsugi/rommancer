@@ -44,8 +44,9 @@ export async function devicePlan(device: Device & { firmware: Firmware }, root =
   const layout = layoutOf(device);
   const filter = systemFilterOf(device);
   const excludedGames = new Set(filter.excludedGames);
-  const inv = await prisma.deviceRom.findMany({ where: { deviceId: device.id }, select: { pathHash: true, gameId: true } });
+  const inv = await prisma.deviceRom.findMany({ where: { deviceId: device.id }, select: { pathHash: true, gameId: true, sha1: true } });
   const havePaths = new Set(inv.map((r) => r.pathHash));
+  const haveContent = new Set(inv.flatMap((r) => (r.sha1 ? [r.sha1] : [])));
   const haveGames = new Set(inv.flatMap((r) => (r.gameId ? [r.gameId] : [])));
   const files: PlanFile[] = [];
   const seen = new Set<string>();
@@ -71,7 +72,7 @@ export async function devicePlan(device: Device & { firmware: Firmware }, root =
           ? Number(romOf.get(it.romId ?? -1)?.parts.reduce((n, p) => n + Number(p.size), 0) ?? 0)
           : ((await fs.promises.stat(f.absPath).catch(() => null))?.size ?? 0);
         const onDevice = havePaths.has(pathKey(path.posix.join(homeRoot, rel)));
-        const present = onDevice || (gameId !== null && haveGames.has(gameId));
+        const present = onDevice || (gameId !== null && haveGames.has(gameId)) || (!!it.sha1 && haveContent.has(it.sha1));
         const excluded = !copiesSystem(filter, it.systemSlug) || (gameId !== null && excludedGames.has(gameId));
         files.push({ dest, size, absPath: f.absPath, archiveEntry: f.archiveEntry ?? null, system: it.systemSlug, gameId, title: it.title, present, onDevice, excluded });
       }

@@ -169,7 +169,7 @@ export const en: Dict = {
     device: 'Device',
     overwrite: 'Overwrite existing',
     dryRun: 'Dry run',
-    kind: { game: 'Game', rom: 'Rom', hack: 'Hack' },
+    kind: { game: 'Game', rom: 'Rom', hack: 'Hack', unknown: 'Unknown' },
     selected: 'Chosen rom',
     unresolved: 'Unresolved: {{count}}',
     added: 'Added: {{count}}',

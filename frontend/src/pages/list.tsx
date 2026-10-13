@@ -235,9 +235,21 @@ export function ListPage() {
                   </div>
                 </TableCell>
                 <TableCell>
-                  <Link className="block truncate font-medium hover:underline" title={i.title} to={i.kind === 'work' ? `/works/${i.workId}` : `/games/${i.gameId}`}>
-                    {i.gameTitle ?? i.title}
-                  </Link>
+                  {/* A file nobody identified links to the game it is a hack of, when that is known */}
+                  {i.kind === 'unknown' && !i.gameId ? (
+                    <span className="block truncate font-medium" title={i.title}>
+                      {i.title}
+                    </span>
+                  ) : (
+                    <Link className="block truncate font-medium hover:underline" title={i.title} to={i.kind === 'work' ? `/works/${i.workId}` : `/games/${i.gameId}`}>
+                      {i.gameTitle ?? i.title}
+                    </Link>
+                  )}
+                  {i.kind === 'unknown' && i.gameId && (
+                    <p className="truncate text-xs text-muted-foreground" title={i.title}>
+                      {i.title}
+                    </p>
+                  )}
                   {i.kind === 'rom' && (
                     <p className="flex flex-wrap items-center gap-1 text-xs text-muted-foreground">
                       <span className="truncate" title={i.title}>

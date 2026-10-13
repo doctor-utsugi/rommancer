@@ -28,6 +28,7 @@ interface Preview {
   matched: { gameId: number; title: string; rom: Version }[]
   missing: { gameId: number; title: string; system: string; versions: Version[] }[]
   hacks: number
+  unknown: number
 }
 
 /** Quick picks: each sets regions and/or languages the version must have */
@@ -237,6 +238,7 @@ export function DeriveWizard({ list, onClose }: { list: { id: number; name: stri
                       </>
                     )}
                     {preview.hacks > 0 && ` · ${t('more.derive.hacks', { count: preview.hacks })}`}
+                    {preview.unknown > 0 && ` · ${t('more.derive.unknown', { count: preview.unknown })}`}
                   </p>
                   {showMissing && <p className="mt-1 text-xs text-muted-foreground">{missing.map((m) => m.title).join(' · ')}</p>}
                 </>
