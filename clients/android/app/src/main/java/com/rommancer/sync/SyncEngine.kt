@@ -73,6 +73,34 @@ class SyncEngine(private val context: Context, private val store: Store, private
             .maxByOrNull { dir -> dir.listFiles()?.count { it.isDirectory && !it.name.startsWith(".") } ?: 0 }
     }
 
+    /**
+     * What the app sees when it looks for roms, sent to the server so the web app can tell why a device lists none:
+     * file access, storage volumes and their top folders, ES-DE's setting, and what the roms folder holds
+     */
+    private fun romsReport(romsDir: File?, romFiles: List<File>, version: String?): String {
+        val out = StringBuilder()
+        fun line(s: String) = out.append(s).append('\n')
+        line("app $version, Android ${Build.VERSION.RELEASE}, ${Build.MANUFACTURER} ${Build.MODEL}")
+        line("all files access: ${Environment.isExternalStorageManager()}")
+        val esde = File(root, "ES-DE/settings/es_settings.xml")
+        line("es-de settings: ${esde.path} exists=${esde.exists()} readable=${esde.canRead()}")
+        Regex("<string name=\"ROMDirectory\" value=\"([^\"]*)\"").find(runCatching { esde.readText() }.getOrDefault(""))?.let { line("es-de ROMDirectory: ${it.groupValues[1]}") }
+        val volumes = listOf(root) + context.getExternalFilesDirs(null).filterNotNull().map { File(it.path.substringBefore("/Android/")) }
+        for (v in volumes.distinct()) {
+            val top = v.listFiles()?.filter { it.isDirectory }?.map { it.name }?.sorted()
+            line("volume ${v.path}: ${top?.size ?: "unreadable"} folders${top?.let { ": " + it.take(60).joinToString(", ") }.orEmpty()}")
+        }
+        line("roms folder found here: ${romsFolder()?.path}")
+        line("roms folder used: ${romsDir?.path} exists=${romsDir?.isDirectory}")
+        romsDir?.listFiles()?.filter { it.isDirectory && !it.name.startsWith(".") }?.sortedBy { it.name }?.take(80)?.forEach { sys ->
+            val kids = sys.listFiles().orEmpty()
+            val exts = kids.filter { it.isFile }.map { it.extension.lowercase() }.groupingBy { it }.eachCount()
+            line("  ${sys.name}: ${kids.count { it.isFile }} files ${exts.entries.take(6).joinToString(" ") { "${it.key}=${it.value}" }}, ${kids.count { it.isDirectory }} folders")
+        }
+        line("roms listed: ${romFiles.size}")
+        return out.toString()
+    }
+
     private fun savesNextToRoms(): Boolean {
         val roms = (romsFolder() ?: File(root, "ROMs")).listFiles() ?: return false
         return roms.any { system -> system.listFiles()?.any { it.isDirectory && it.list()?.any { n -> n.endsWith(".srm") || n.contains(".state") } == true } == true }
@@ -98,6 +126,7 @@ class SyncEngine(private val context: Context, private val store: Store, private
         val romHashes = HashMap<String, String>()
         val romFiles = romsDir?.listFiles()?.filter { it.isDirectory && !it.name.startsWith(".") }
             ?.flatMap { system -> system.listFiles()?.filter { it.isFile && !it.name.startsWith(".") && isRom(it.name, exts) }.orEmpty() }.orEmpty()
+        runCatching { api.text("/agent/log", "POST", romsReport(romsDir, romFiles, version).toByteArray(), listOfNotNull(version?.let { "X-Client-Version" to it }).toMap()) }
         romFiles.forEachIndexed { index, rom ->
             if (index % 10 == 0) report(Progress("roms", index, romFiles.size))
             run {
