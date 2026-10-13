@@ -204,6 +204,27 @@ pub fn read(dir: &Path) -> Library {
     lib
 }
 
+/// Rommancer's collections (by name, their roms) as one Pegasus metadata file in its metafiles folder (Pegasus reads
+/// it when it starts); removed when there are none
+pub fn write_collections(dir: &Path, collections: &BTreeMap<String, Vec<String>>) {
+    let file = dir.join("metafiles").join("rommancer.metadata.pegasus.txt");
+    if collections.is_empty() {
+        let _ = fs::remove_file(&file);
+        return;
+    }
+    let mut text = String::from("# Written by the Rommancer app\n");
+    for (name, paths) in collections {
+        text.push_str(&format!("\ncollection: {name}\nfiles:\n"));
+        for p in paths {
+            text.push_str(&format!("  {p}\n"));
+        }
+    }
+    if fs::read_to_string(&file).ok().as_deref() != Some(text.as_str()) {
+        let _ = fs::create_dir_all(dir.join("metafiles"));
+        let _ = fs::write(&file, text);
+    }
+}
+
 /// When Pegasus's game folders, metadata files or the folders they hold last changed
 fn stamp(dir: &Path) -> u64 {
     let mut files = vec![dir.join("game_dirs.txt"), dir.join("metafiles")];

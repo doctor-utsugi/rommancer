@@ -1125,6 +1125,25 @@ agentRouter.get('/collections', async (req, res) => {
   const names = new Set(synced.map((s) => s.save.baseName));
   const roms = await prisma.deviceRom.findMany({ where: { deviceId: device.id }, select: { path: true, gameId: true } });
   const out = roms.filter((r) => (r.gameId && games.has(r.gameId)) || names.has(path.posix.basename(r.path).replace(/\.[^.]+$/, ''))).map((r) => `saves\t${r.path}`);
+  // The lists given to the device, for frontends to show as collections: "list<TAB>name<TAB>path" for each of their
+  // roms on it, in the list's order
+  const lists = await prisma.deviceList.findMany({
+    where: { deviceId: device.id },
+    select: { list: { select: { name: true, items: { orderBy: { position: 'asc' }, select: { romId: true, gameId: true } } } } },
+  });
+  const byRom = new Map<number, string[]>();
+  const byGame = new Map<number, string[]>();
+  for (const r of await prisma.deviceRom.findMany({ where: { deviceId: device.id }, select: { path: true, romId: true, gameId: true } })) {
+    if (r.romId) byRom.set(r.romId, [...(byRom.get(r.romId) ?? []), r.path]);
+    if (r.gameId) byGame.set(r.gameId, [...(byGame.get(r.gameId) ?? []), r.path]);
+  }
+  for (const { list } of lists) {
+    const seen = new Set<string>();
+    for (const it of list.items) {
+      const paths = (it.romId ? byRom.get(it.romId) : undefined) ?? (it.gameId ? byGame.get(it.gameId) : undefined) ?? [];
+      for (const p of paths) if (!seen.has(p) && seen.add(p)) out.push(`list\t${field(list.name)}\t${p}`);
+    }
+  }
   res.type('text/plain').send(out.join('\n') + (out.length ? '\n' : ''));
 });
 

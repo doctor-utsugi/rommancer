@@ -288,14 +288,64 @@ pub fn install_scripts(dir: &Path, hook: &Path) -> bool {
     if esde_running() {
         return false;
     }
+    set_setting(dir, "bool", "CustomEventScripts", "true")
+}
+
+fn xml_attr(s: &str) -> String {
+    s.replace('&', "&amp;").replace('"', "&quot;").replace('<', "&lt;").replace('>', "&gt;")
+}
+
+/// Writes one of ES-DE's settings (KIND: bool, string...), the others kept as they are
+fn set_setting(dir: &Path, kind: &str, name: &str, value: &str) -> bool {
     let file = dir.join("settings").join("es_settings.xml");
     let Ok(text) = fs::read_to_string(&file) else { return false };
-    let line = "<bool name=\"CustomEventScripts\" value=\"true\" />";
-    let out = match text.lines().position(|l| l.contains("name=\"CustomEventScripts\"")) {
-        Some(i) => text.lines().enumerate().map(|(j, l)| if j == i { line.to_string() } else { l.to_string() }).collect::<Vec<_>>().join("\n") + "\n",
+    let line = format!("<{kind} name=\"{name}\" value=\"{}\" />", xml_attr(value));
+    let key = format!("name=\"{name}\"");
+    let out = match text.lines().position(|l| l.contains(&key)) {
+        Some(i) => text.lines().enumerate().map(|(j, l)| if j == i { line.clone() } else { l.to_string() }).collect::<Vec<_>>().join("\n") + "\n",
         None => format!("{}\n{line}\n", text.trim_end()),
     };
-    fs::write(&file, out).is_ok()
+    out == text || fs::write(&file, out).is_ok()
+}
+
+/// Rommancer's collections (by name, their roms) as ES-DE custom collections: collections/custom-<name>.cfg, the
+/// ones of Rommancer no longer there removed, and all of them turned on in its settings while ES-DE is closed (it
+/// writes its settings back when it quits; until then they wait, written, to be ticked or turned on later)
+pub fn write_collections(dir: &Path, collections: &BTreeMap<String, Vec<String>>) {
+    let folder = dir.join("collections");
+    if fs::create_dir_all(&folder).is_err() {
+        return;
+    }
+    let roms = pc::wire(&rom_dir(dir, &settings(dir)));
+    let ours = |n: &str| n.starts_with(crate::collections::PREFIX);
+    for e in fs::read_dir(&folder).into_iter().flatten().flatten() {
+        let n = e.file_name().to_string_lossy().to_string();
+        let name = n.strip_prefix("custom-").and_then(|x| x.strip_suffix(".cfg")).unwrap_or("");
+        if ours(name) && !collections.contains_key(name) {
+            let _ = fs::remove_file(e.path());
+        }
+    }
+    for (name, paths) in collections {
+        let text: String = paths.iter().map(|p| match p.strip_prefix(&format!("{roms}/")) {
+            Some(rel) => format!("%ROMPATH%/{rel}\n"),
+            None => format!("{p}\n"),
+        }).collect();
+        let file = folder.join(format!("custom-{name}.cfg"));
+        if fs::read_to_string(&file).ok().as_deref() != Some(text.as_str()) {
+            let _ = fs::write(&file, text);
+        }
+    }
+    if esde_running() {
+        return;
+    }
+    let mut on: Vec<String> = settings(dir).get("CollectionSystemsCustom").map(|v| v.split(',').map(|x| x.trim().to_string()).filter(|x| !x.is_empty()).collect()).unwrap_or_default();
+    on.retain(|n| !ours(n) || collections.contains_key(n));
+    for n in collections.keys() {
+        if !on.contains(n) {
+            on.push(n.clone());
+        }
+    }
+    set_setting(dir, "string", "CollectionSystemsCustom", &on.join(","));
 }
 
 /// When the roms folder or ES-DE's settings and gamelists last changed
@@ -428,6 +478,26 @@ mod tests {
         assert_eq!(settings(&dir).get("ROMDirectory").map(String::as_str), Some(""));
         let (name, _) = script("game-start", Path::new("/x"));
         assert!(fs::read_to_string(dir.join("scripts/game-start").join(name)).unwrap().contains("/x/hook.json"));
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn collections_are_written_and_turned_on() {
+        let dir = std::env::temp_dir().join(format!("rommancer-esde-coll-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        write(&dir.join("settings/es_settings.xml"), "<string name=\"ROMDirectory\" value=\"/roms\" />\n<string name=\"CollectionSystemsCustom\" value=\"Mine,Rommancer - Old\" />\n");
+        write(&dir.join("collections/custom-Rommancer - Old.cfg"), "x\n");
+        write(&dir.join("collections/custom-Mine.cfg"), "y\n");
+        if esde_running() {
+            return;
+        }
+        let mut c = BTreeMap::new();
+        c.insert("Rommancer - RPG & more".to_string(), vec!["/roms/snes/a.sfc".to_string(), "/other/b.gba".to_string()]);
+        write_collections(&dir, &c);
+        assert_eq!(fs::read_to_string(dir.join("collections/custom-Rommancer - RPG & more.cfg")).unwrap(), "%ROMPATH%/snes/a.sfc\n/other/b.gba\n");
+        assert!(!dir.join("collections/custom-Rommancer - Old.cfg").exists());
+        assert!(dir.join("collections/custom-Mine.cfg").exists());
+        assert_eq!(settings(&dir).get("CollectionSystemsCustom").map(String::as_str), Some("Mine,Rommancer - RPG & more"));
         let _ = fs::remove_dir_all(&dir);
     }
 

@@ -7,6 +7,7 @@ mod folder;
 mod frontend;
 mod game;
 mod hook;
+mod collections;
 mod esde;
 mod launchbox;
 mod pegasus;
@@ -748,6 +749,11 @@ fn start_sync(app: &AppHandle, state: &AppState, key: String, mode: Mode, roms: 
             Ok(())
         };
         let result = run();
+        if is_pc && mode == Mode::Full && result.is_ok() {
+            if let Err(e) = collections::write(&t.api(), &libraries(&app.state::<AppState>())) {
+                log(format!("error: frontend collections: {e:#}"));
+            }
+        }
         let was_cancelled = matches!(&result, Err(e) if e.to_string() == "cancelled");
         if is_pc {
             set_offline(&app, matches!(&result, Err(e) if unreachable(e)));

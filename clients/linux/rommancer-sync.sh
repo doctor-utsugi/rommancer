@@ -22,7 +22,7 @@
 #                                   Menu++...) mounted on this computer; the link lives on the card itself,
 #                                   so any computer with this script can sync it. Without a command: sync.
 set -u
-CLIENT_VERSION=20261066
+CLIENT_VERSION=20261067
 # A clock before this date is surely wrong (no battery-backed clock); kept apart from the version, which may run ahead
 CLOCK_MIN=20261001
 # Onion keeps curl (with TLS) and friends outside the default PATH
@@ -1718,8 +1718,8 @@ roms_status() {
   if [ -n "$s" ]; then printf '%s\n' "$s"; else printf '\t\t\n'; fi
 }
 
-# EmulationStation collections (Knulli, Batocera): games whose save is synced, and roms Rommancer copied in the
-# last two weeks. Only Rommancer's own collection files are written, and only when their content changes;
+# EmulationStation collections (Knulli, Batocera): games whose save is synced, roms Rommancer copied in the last
+# two weeks and each list given to the console. Only Rommancer's own collection files are written, and only when their content changes;
 # EmulationStation shows them once they are ticked in its collection settings and reads them when it starts
 cmd_collections() {
   need_link
@@ -1740,6 +1740,20 @@ cmd_collections() {
   for c in saves new; do
     eval "name=\$${c}_name"
     cmp -s "$WORK/coll-$c" "$dir/custom-$name.cfg" 2>/dev/null || cp "$WORK/coll-$c" "$dir/custom-$name.cfg"
+  done
+  # The lists given to this console, one collection each in the list's order ("list<TAB>name<TAB>path" lines)
+  rm -rf "$WORK/coll-lists"; mkdir -p "$WORK/coll-lists"
+  awk -F"$TAB" -v out="$WORK/coll-lists" '$1 == "list" && NF == 3 { n = $2; gsub(/[\/\\:*?"<>|]/, " ", n); f = out "/Rommancer - " n ".cfg"; if (!seen[f, $3]++) print $3 > f }' "$WORK/collections"
+  for f in "$WORK/coll-lists"/*.cfg; do
+    [ -f "$f" ] || continue
+    cmp -s "$f" "$dir/custom-${f##*/}" 2>/dev/null || cp "$f" "$dir/custom-${f##*/}"
+  done
+  # Collections of lists no longer given to this console
+  for f in "$dir"/custom-Rommancer\ -\ *.cfg; do
+    [ -f "$f" ] || continue
+    n="${f##*/custom-}"
+    case "$n" in "$saves_name.cfg"|"$new_name.cfg") continue ;; esac
+    [ -f "$WORK/coll-lists/$n" ] || rm -f "$f"
   done
   return 0
 }
