@@ -1284,6 +1284,9 @@ agentRouter.get('/roots', async (req, res) => {
     if (!emuSlug) continue;
     const emu = await prisma.emulator.findUnique({ where: { slug: emuSlug } });
     if (emu) [emu.saveExt, emu.stateExt].forEach((e) => e && exts.add(e.toLowerCase()));
+    // A standalone emulator in a layout sorted by core keeps its saves next to its roms (see saveDirs)
+    const romSaves = abs(path.posix.join(layout.romsRoot, v.folder));
+    if (emu && !emu.core && !isCardEmulator(emu) && ['core', 'content-core'].includes(layout.savesLayout) && !lines.includes(`saves\t${romSaves}`)) lines.push(`saves\t${romSaves}`);
     // Memory cards every game shares (pcsx-card2.mcd) or kept under a serial sit in the same folders
     if (emu && isCardEmulator(emu)) ['.mcd', '.mcr'].forEach((e) => exts.add(e));
     // Dolphin's GameCube cards: a .gci per save, or a card image (MemoryCardA.USA.raw)
