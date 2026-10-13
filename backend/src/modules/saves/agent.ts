@@ -32,7 +32,7 @@ import { storeWifiBands } from '../devconfig/service.js';
 import { cardAction, cardHash, commitOffer, deviceCard, entryFolderState, findDeviceCard, gameForSerial, gcCardFile, gciFolder, hasWantedSaves, isCardEmulator, namedCard, observeCard, prepareCard, pspFolder, recordOffer, type EntryFolder } from './cards.js';
 import { codecFor } from './cardcodec.js';
 import { takeNudge } from './nudge.js';
-import { systemForPlatform, systemIndex } from '../scanner/systems.js';
+import { systemForFolder, systemForPlatform, systemIndex } from '../scanner/systems.js';
 import { FAN_WORK, FIRST_ASK, normTitle, probeRound, probesOf, serialMatch, wantsProbe } from './probe.js';
 
 export const agentRouter = Router();
@@ -186,7 +186,7 @@ async function systemOf(layout: DeviceLayout, folder: string, romPath: string): 
   if (byFolder) return byFolder;
   // A folder named as other firmwares name it ("megadrive" where ES-DE says "genesis")
   if (folder) {
-    const known = (await systemIndex()).byFolder.get(folder.toLowerCase());
+    const known = systemForFolder(await systemIndex(), folder);
     if (known) return known.slug;
   }
   const ext = path.posix.extname(romPath).toLowerCase();
@@ -1309,15 +1309,16 @@ agentRouter.post('/roms-folder', express.text({ limit: '1mb', type: '*/*' }), as
   const lines = String(req.body ?? '').split('\n');
   let chosen = lines.find((l) => l.startsWith('told\t'))?.slice(5).trim();
   if (!chosen) {
-    const { byFolder } = await systemIndex();
+    const idx = await systemIndex();
     const isSystem = (sub: string) => {
       const [name, files, counts = ''] = sub.split('|');
-      const exts = new Set([...((byFolder.get(name.toLowerCase())?.extensions as string[] | undefined) ?? []), '.zip', '.7z']);
+      const system = systemForFolder(idx, name);
+      const exts = new Set([...((system?.extensions as string[] | undefined) ?? []), '.zip', '.7z']);
       const fit = counts.split(',').reduce((n, c) => {
         const [ext, k] = c.split('=');
         return n + (exts.has(`.${ext.toLowerCase()}`) ? Number(k) || 0 : 0);
       }, 0);
-      return byFolder.has(name.toLowerCase()) && fit > 0 && fit * 2 >= (Number(files) || 0);
+      return !!system && fit > 0 && fit * 2 >= (Number(files) || 0);
     };
     let best = { path: '', score: 1 };
     for (const l of lines) {

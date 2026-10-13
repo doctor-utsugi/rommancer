@@ -16,10 +16,17 @@ const EXTRA_FOLDERS: Record<string, string[]> = {
   psp: ['psp'],
   gc: ['gc', 'gamecube', 'ngc'],
   wii: ['wii'],
-  fbneo: ['fbneo', 'fba', 'arcade', 'fbn'],
+  fbneo: ['fbneo', 'fba', 'arcade', 'fbn', 'cps1', 'cps2', 'cps3', 'neogeo'],
   n64: ['n64'],
   nds: ['nds', 'ds'],
 };
+
+/** A folder name as systems are looked up by it: case, spaces and punctuation aside ("Game Boy Advance" = "GameBoyAdvance") */
+export const folderKey = (name: string) => name.toLowerCase().replace(/[^a-z0-9]/g, '');
+
+export function systemForFolder(idx: SystemIndex, name: string) {
+  return idx.byFolder.get(folderKey(name));
+}
 
 export interface SystemIndex {
   bySlug: Map<string, System>;
@@ -40,9 +47,12 @@ export async function systemIndex(): Promise<SystemIndex> {
   for (const s of systems) {
     idx.bySlug.set(s.slug, s);
     idx.byId.set(s.id, s);
-    idx.byFolder.set(s.slug, s);
-    idx.byFolder.set(s.datName.toLowerCase(), s);
-    for (const f of EXTRA_FOLDERS[s.slug] ?? []) idx.byFolder.set(f, s);
+    // Its slug, its databases' name with and without the maker ("Nintendo - Game Boy"), its name with and without it
+    const dat = s.datName.split(' - ');
+    for (const n of [s.slug, s.datName, dat.slice(1).join(' '), s.name, `${s.manufacturer} ${s.name}`, ...(EXTRA_FOLDERS[s.slug] ?? [])]) {
+      const k = folderKey(n);
+      if (k && !idx.byFolder.has(k)) idx.byFolder.set(k, s);
+    }
     for (const e of s.extensions as string[]) {
       idx.allExts.add(e);
       extCount.set(e, (extCount.get(e) ?? 0) + 1);
@@ -51,7 +61,7 @@ export async function systemIndex(): Promise<SystemIndex> {
   for (const fw of firmwares) {
     for (const [slug, v] of Object.entries(fw.systemMap as Record<string, { folder: string }>)) {
       const s = idx.bySlug.get(slug);
-      if (s && v.folder) idx.byFolder.set(v.folder.toLowerCase(), s);
+      if (s && v.folder) idx.byFolder.set(folderKey(v.folder), s);
     }
   }
   // Only unambiguous extensions can infer the system
@@ -65,7 +75,7 @@ export function guessSystem(idx: SystemIndex, relPath: string, forced: System | 
   if (forced) return forced;
   const dirs = path.dirname(relPath).split(/[\\/]/).reverse();
   for (const d of dirs) {
-    const s = idx.byFolder.get(d.toLowerCase());
+    const s = systemForFolder(idx, d);
     if (s) return s;
   }
   const ext = path.extname(entryName ?? relPath).toLowerCase();

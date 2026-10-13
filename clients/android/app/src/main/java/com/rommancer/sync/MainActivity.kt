@@ -11,6 +11,8 @@ import android.os.Environment
 import android.provider.Settings
 import android.text.format.DateUtils
 import android.view.KeyEvent
+import android.view.WindowManager
+import android.app.Activity
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -531,6 +533,13 @@ private fun Linked(store: Store, onUnlinked: () -> Unit) {
     // B / back returns from any inner screen; a running sync is left alone. On the deletion prompts it is the safe
     // answer: leave the deletion off (intro), turn it off (ask), not now (hold), so the prompt does not come back at once
     val titlePrune = stringResource(R.string.prune_title)
+    // The screen stays on while a sync shows its progress (the work itself keeps the device awake when it goes off)
+    val working = screen is Screen.Working || screen is Screen.Watch
+    DisposableEffect(working) {
+        val window = (context as? Activity)?.window
+        if (working) window?.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        onDispose { window?.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON) }
+    }
     BackHandler(enabled = screen != Screen.Menu && screen !is Screen.Working) {
         when (val s = screen) {
             Screen.Lists -> leaveLists()

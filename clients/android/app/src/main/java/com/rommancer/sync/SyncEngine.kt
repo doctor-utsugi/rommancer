@@ -3,6 +3,7 @@ package com.rommancer.sync
 import android.content.Context
 import android.os.Build
 import android.os.Environment
+import android.os.PowerManager
 import java.io.File
 import java.security.MessageDigest
 
@@ -125,7 +126,7 @@ class SyncEngine(private val context: Context, private val store: Store, private
     }
 
     // The screen, the background worker and the save watcher may all ask at once: one pass at a time
-    fun sync(): Summary = synchronized(LOCK) { syncOnce() }
+    fun sync(): Summary = locked { syncOnce() }
 
     private fun syncOnce(): Summary {
         val server = store.server
@@ -435,7 +436,7 @@ class SyncEngine(private val context: Context, private val store: Store, private
      * Deletes the roms the server names as in no list (only with the setting on, only inside the roms folder). A
      * deletion of more than half of the roms waits in pruneHold for the user (pruneConfirm).
      */
-    fun prune(): Summary = synchronized(LOCK) {
+    fun prune(): Summary = locked {
         val sum = Summary()
         if (!store.pruneRoms || store.pruneAsk != null) return sum
         report(Progress("prune"))
@@ -487,7 +488,7 @@ class SyncEngine(private val context: Context, private val store: Store, private
     /** Roms of the lists assigned to this device that are not here yet; never deletes anything */
     fun roms(): Summary {
         STOP_ROMS.set(false)
-        return synchronized(LOCK) { romsOnce() }.also { keep(it) }
+        return locked { romsOnce() }.also { keep(it) }
     }
 
     private fun romsOnce(): Summary = try { romsPass() } finally { LIVE = null }
@@ -553,7 +554,7 @@ class SyncEngine(private val context: Context, private val store: Store, private
         if (!store.allowPull) return Summary()
         // One copy at a time; a transfer cut halfway stays open on the server and is sent again next time
         if (!PULLING.compareAndSet(false, true)) return Summary()
-        try { return pullsOnce() } finally { PULLING.set(false); PULL_LIVE = null }
+        try { return awake { pullsOnce() } } finally { PULLING.set(false); PULL_LIVE = null }
     }
 
     private fun pullsOnce(): Summary {
@@ -724,7 +725,29 @@ class SyncEngine(private val context: Context, private val store: Store, private
         cacheFile.writeText(cache.entries.joinToString("") { (k, v) -> "$k\t${v.first}\t${v.second}\t${v.third}\n" })
     }
 
+    /** One pass at a time, the device kept awake while it runs */
+    private inline fun <T> locked(block: () -> T): T = awake { synchronized(LOCK, block) }
+
+    /**
+     * Keeps the device from sleeping while work runs (a handheld suspends when its screen goes off, and a sync of
+     * thousands of roms takes a while): one wake lock for all the passes under way, released when the last ends
+     */
+    private inline fun <T> awake(block: () -> T): T {
+        synchronized(WAKE) {
+            if (wakeHolders++ == 0) wakeLock = (context.getSystemService(Context.POWER_SERVICE) as PowerManager)
+                .newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "rommancer:sync").apply { acquire(3 * 60 * 60 * 1000L) }
+        }
+        try {
+            return block()
+        } finally {
+            synchronized(WAKE) { if (--wakeHolders == 0) wakeLock?.let { if (it.isHeld) it.release() }.also { wakeLock = null } }
+        }
+    }
+
     companion object {
+        private val WAKE = Any()
+        private var wakeHolders = 0
+        private var wakeLock: PowerManager.WakeLock? = null
         const val HASH_MAX = 64L * 1024 * 1024
         const val THUMB_MAX = 4L * 1024 * 1024
         private val LOCK = Any()

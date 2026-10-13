@@ -14,7 +14,7 @@ import { normalizeTitle, parseRomName } from '../../lib/romname.js';
 import { chdInfo, extractChd, extractEntryStream, extractEntryToFile, listArchive, tmpDir } from '../../lib/tools.js';
 import type { JobContext } from '../../lib/jobs.js';
 import { env } from '../../config/env.js';
-import { ARCHIVE_EXTS, guessSystem, systemIndex, type SystemIndex } from './systems.js';
+import { ARCHIVE_EXTS, folderKey, guessSystem, systemIndex, type SystemIndex } from './systems.js';
 
 const SKIP_DIRS = new Set(['.git', 'media', 'images', 'videos', 'manuals', 'saves', 'states', '@eaDir', '#recycle']);
 
@@ -251,7 +251,7 @@ export async function scanPath(romPathId: number, ctx?: JobContext, force = fals
   const rp = await prisma.romPath.findUniqueOrThrow({ where: { id: romPathId } });
   const base = await systemIndex();
   // Folders the user told apart ("varios" -> snes) take precedence over names guessed from the catalogue
-  const overrides = Object.entries((rp.folderSystems ?? {}) as Record<string, string>).flatMap(([f, slug]) => (base.bySlug.get(slug) ? [[f.toLowerCase(), base.bySlug.get(slug)!] as const] : []));
+  const overrides = Object.entries((rp.folderSystems ?? {}) as Record<string, string>).flatMap(([f, slug]) => (base.bySlug.get(slug) ? [[folderKey(f), base.bySlug.get(slug)!] as const] : []));
   const idx: SystemIndex = overrides.length ? { ...base, byFolder: new Map([...base.byFolder, ...overrides]) } : base;
   const forced = rp.systemId ? idx.byId.get(rp.systemId) ?? null : null;
   await fs.promises.mkdir(env.tmpDir, { recursive: true });
