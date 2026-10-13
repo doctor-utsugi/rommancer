@@ -988,14 +988,6 @@
       "listUnknown_other": "{{count}} de ellos no los identifica ninguna base de datos (hacks, traducciones u otros ficheros): entran como desconocidos, con su nombre y su contenido.",
       "listDropped_one": "{{count}} fichero de la consola no ha entrado en la lista.",
       "listDropped_other": "{{count}} ficheros de la consola no han entrado en la lista.",
-      "listPulls_one": "Se ha pedido a la consola {{count}} fichero que el servidor no tenía; lo subirá en su próxima sincronización.",
-      "listPulls_other": "Se han pedido a la consola {{count}} ficheros que el servidor no tenía; los subirá en su próxima sincronización.",
-      "listPullOff_one": "{{count}} fichero solo está en la consola y no se puede pedir: la consola no deja que el servidor coja roms.",
-      "listPullOff_other": "{{count}} ficheros solo están en la consola y no se pueden pedir: la consola no deja que el servidor coja roms.",
-      "listPullDenied_one": "{{count}} fichero solo está en la consola y no se puede pedir: tu cuenta no puede subir roms.",
-      "listPullDenied_other": "{{count}} ficheros solo están en la consola y no se pueden pedir: tu cuenta no puede subir roms.",
-      "listPullNowhere_one": "{{count}} fichero no está ni en el servidor ni en ninguna de tus consolas.",
-      "listPullNowhere_other": "{{count}} ficheros no están ni en el servidor ni en ninguna de tus consolas.",
       "listCreate_one": "Crear con {{count}} juego",
       "listCreate_other": "Crear con {{count}} juegos",
       "listCreated_one": "Lista creada con {{count}} juego",
@@ -1352,6 +1344,16 @@
     "defaultLocale": {
       "title": "Idioma por defecto",
       "help": "Idioma de las cuentas nuevas y de quien aún no haya elegido uno. Los usuarios existentes conservan el suyo."
+    },
+    "pulls": {
+      "asked_one": "Se ha pedido a tus consolas {{count}} fichero que el servidor no tenía; llegará en su próxima sincronización.",
+      "asked_other": "Se han pedido a tus consolas {{count}} ficheros que el servidor no tenía; llegarán en su próxima sincronización.",
+      "off_one": "{{count}} fichero solo está en consolas que no dejan que el servidor coja roms: no se puede pedir.",
+      "off_other": "{{count}} ficheros solo están en consolas que no dejan que el servidor coja roms: no se pueden pedir.",
+      "denied_one": "{{count}} fichero que el servidor no tiene no se puede pedir a tus consolas: tu cuenta no puede subir roms.",
+      "denied_other": "{{count}} ficheros que el servidor no tiene no se pueden pedir a tus consolas: tu cuenta no puede subir roms.",
+      "nowhere_one": "{{count}} fichero no está ni en el servidor ni en ninguna de tus consolas.",
+      "nowhere_other": "{{count}} ficheros no están ni en el servidor ni en ninguna de tus consolas."
     }
   }
 }

@@ -365,7 +365,9 @@ listsRouter.post('/:id/clone', async (req, res) => {
       items: { create: items.map(({ gameId, romId, hackId, unknownId, itemKey, position, note }) => ({ gameId, romId, hackId, unknownId, itemKey, position, note })) },
     },
   });
-  res.status(201).json(copy);
+  // Unidentified files the server lacks are asked from the user's own consoles
+  const pulls = await pullUnknownFiles(u.id, items.flatMap((i) => (i.unknownId ? [i.unknownId] : [])));
+  res.status(201).json({ ...copy, pulls });
 });
 
 /** Sublists of a list follow it: their filters and decisions are applied again when it changes */
@@ -502,7 +504,8 @@ listsRouter.post('/import', async (req, res) => {
   resolved.push(...(await unknownItems(unknowns)).map((k) => ({ unknownId: k.unknownId, note: noteOf.get(k.fileKey) })));
   const list = await prisma.list.create({ data: { ownerId: u.id, name: body.name ?? 'Imported list', description: body.description ?? null } });
   await addItems(list.id, resolved, u);
-  res.status(201).json({ list, added: resolved.length, unresolved });
+  const pulls = await pullUnknownFiles(u.id, resolved.flatMap((i) => (i.unknownId ? [i.unknownId] : [])));
+  res.status(201).json({ list, added: resolved.length, unresolved, pulls });
 });
 
 listsRouter.get('/:id/files', requirePerm('roms.download'), async (req, res) => {

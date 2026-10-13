@@ -3,6 +3,7 @@ import { Link, useNavigate } from 'react-router'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
+import { toastPulls } from '@/lib/pulls'
 import { Gamepad2, Star } from 'lucide-react'
 import { get, patch, post } from '@/lib/api'
 import { useAuth } from '@/lib/auth'
@@ -34,6 +35,7 @@ export function ListsPage() {
       const json = JSON.parse(await f.text())
       const r = await post('/lists/import', json)
       toast.success(`${t('lists.added', { count: r.added })} · ${t('lists.unresolved', { count: r.unresolved.length })}`)
+      toastPulls(t, r.pulls)
       void qc.invalidateQueries({ queryKey: ['lists'] })
       nav(`/lists/${r.list.id}`)
     } catch (e) {

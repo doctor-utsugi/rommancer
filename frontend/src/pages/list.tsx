@@ -4,6 +4,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
 import { ArrowDown, ArrowUp, Check, ImageOff, Loader2, Star, Trash2, Trophy, X } from 'lucide-react'
 import { toast } from 'sonner'
+import { toastPulls } from '@/lib/pulls'
 import { authUrl, del, get, post, put } from '@/lib/api'
 import { useAuth } from '@/lib/auth'
 import { Input } from '@/components/ui/input'
@@ -57,6 +58,7 @@ export function ListPage() {
   const clone = () =>
     run(async () => {
       const c = await post(`/lists/${list.id}/clone`, {})
+      toastPulls(t, c.pulls)
       void qc.invalidateQueries({ queryKey: ['lists'] })
       nav(`/lists/${c.id}`)
     })
