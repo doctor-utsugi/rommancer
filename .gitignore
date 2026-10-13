@@ -15,3 +15,5 @@ clients/desktop/src-tauri/gen/
 clients/desktop/release/
 *.tsbuildinfo
 clients/android/release/
+__pycache__/
+*.pyc

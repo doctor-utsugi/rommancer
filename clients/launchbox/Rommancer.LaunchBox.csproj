@@ -6,6 +6,9 @@
     <Nullable>disable</Nullable>
     <AssemblyName>Rommancer.LaunchBox</AssemblyName>
     <Version>1.0.0</Version>
+    <!-- No build machine path in the DLL or its debug info -->
+    <PathMap>$(MSBuildProjectDirectory)=/src/launchbox</PathMap>
+    <Deterministic>true</Deterministic>
   </PropertyGroup>
   <ItemGroup>
     <!-- From LaunchBox's own install (LaunchBox\Core); LaunchBox provides it at run time -->
