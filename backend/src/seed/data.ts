@@ -109,7 +109,7 @@ export interface EmulatorSeed {
   slug: string;
   name: string;
   core?: string;
-  saveFormat?: 'raw' | 'ps1card' | 'ps1gme' | 'ps1vmp' | 'gcraw' | 'gci';
+  saveFormat?: 'raw' | 'ps1card' | 'ps1gme' | 'ps1vmp' | 'gcraw' | 'gci' | 'ps2card' | 'pspdir';
   saveExt: string;
   stateExt?: string;
 }
@@ -173,8 +173,8 @@ export const emulators: EmulatorSeed[] = [
   { slug: 'epsxe', name: 'ePSXe', saveFormat: 'ps1card', saveExt: '.mcr' },
   { slug: 'dexdrive', name: 'DexDrive', saveFormat: 'ps1gme', saveExt: '.gme' },
   { slug: 'ps3-psp-vmp', name: 'PSP/PS3 Virtual Memory Card', saveFormat: 'ps1vmp', saveExt: '.vmp' },
-  { slug: 'pcsx2', name: 'PCSX2', saveExt: '.ps2', stateExt: '.p2s' },
-  { slug: 'ppsspp', name: 'PPSSPP', saveExt: '.bin', stateExt: '.ppst' },
+  { slug: 'pcsx2', name: 'PCSX2', saveFormat: 'ps2card', saveExt: '.ps2', stateExt: '.p2s' },
+  { slug: 'ppsspp', name: 'PPSSPP', saveFormat: 'pspdir', saveExt: '.bin', stateExt: '.ppst' },
   { slug: 'melonds', name: 'melonDS (standalone)', saveExt: '.sav', stateExt: '.ml1' },
   { slug: 'drastic', name: 'DraStic', saveExt: '.dsv', stateExt: '.dst' },
   // NextUI/MinUI (minarch): "<rom with its extension>.sav" and states ".st0".."st7", ".st9" the auto-resume one.

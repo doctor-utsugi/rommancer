@@ -1,12 +1,15 @@
 /**
  * The kinds of memory card file, each read and written entry by entry: a PS1 card (any of its formats), a
- * GameCube card image, and a single GameCube save in its own .gci file (Dolphin's GCI folders), which is a card
- * holding one entry. Entries are stored in their single-save form (.mcs, .gci) so any kind of card can take them.
+ * GameCube card image, a single GameCube save in its own .gci file (Dolphin's GCI folders), which is a card
+ * holding one entry, a PS2 card image, and a PSP save folder (sent as a tar). Entries are stored in their single-save
+ * form (.mcs, .gci, .psu, .tar) so any kind of card of their family can take them.
  */
 import type { Emulator } from '@prisma/client';
 import { convertSave, ps1ToRaw, type SaveFormat } from './convert.js';
 import { formatPs1Card, readMcs, readPs1Card, writePs1Card, type Ps1Entry } from './ps1card.js';
 import { readGcCard, readGci, writeGcCard, type GcEntry } from './gccard.js';
+import { readPs2Card, readPsu, writePs2Card, type Ps2Entry } from './ps2card.js';
+import { readPspFolder, type PspEntry } from './pspsave.js';
 
 export interface CardEntry {
   /** Its full name in the card's directory: what identifies it */
@@ -16,7 +19,7 @@ export interface CardEntry {
   /** The entry as a single save (.mcs, .gci) */
   data: Buffer;
   sha1: string;
-  /** The code that tells its game: PS1 product code ("SCUS-94163"), GameCube game code ("GALE") */
+  /** The code that tells its game: PS1/PS2/PSP product code ("SCUS-94163"), GameCube game code ("GALE") */
   code: string | null;
 }
 
@@ -28,7 +31,11 @@ export interface ReadCard {
 
 export interface CardCodec {
   /** The user's cards are per family: entries move between every kind of card of one family */
-  family: 'ps1' | 'gc';
+  family: 'ps1' | 'gc' | 'ps2' | 'psp';
+  /** Extension of the single-save form */
+  ext: string;
+  /** Each file holds one entry (a .gci, a PSP save folder): the device gets a file per save */
+  single?: boolean;
   /** The file as the device keeps it -> the card's entries */
   read(file: Buffer): ReadCard;
   /** The file with entries put in and taken out; those that do not fit are left out and named */
@@ -41,10 +48,13 @@ export interface CardCodec {
 
 const fromPs1 = (e: Ps1Entry): CardEntry => ({ name: e.name, title: e.title, blocks: e.blocks, data: e.mcs, sha1: e.sha1, code: e.productCode });
 const fromGc = (e: GcEntry): CardEntry => ({ name: e.name, title: e.title, blocks: e.blocks, data: e.gci, sha1: e.sha1, code: e.gameCode });
+const fromPs2 = (e: Ps2Entry): CardEntry => ({ name: e.name, title: e.title, blocks: e.blocks, data: e.psu, sha1: e.sha1, code: e.productCode });
+const fromPsp = (e: PspEntry): CardEntry => ({ name: e.name, title: e.title, blocks: e.blocks, data: e.tar, sha1: e.sha1, code: e.productCode });
 
 function ps1Codec(fmt: SaveFormat): CardCodec {
   return {
     family: 'ps1',
+    ext: '.mcs',
     read(file) {
       const c = readPs1Card(ps1ToRaw(file, fmt));
       return { entries: c.entries.map(fromPs1), freeBlocks: c.freeBlocks, problems: c.problems };
@@ -60,6 +70,7 @@ function ps1Codec(fmt: SaveFormat): CardCodec {
 
 const gcImage: CardCodec = {
   family: 'gc',
+  ext: '.gci',
   read(file) {
     const c = readGcCard(file);
     return { entries: c.entries.map(fromGc), freeBlocks: c.freeBlocks, problems: c.problems };
@@ -76,6 +87,8 @@ const gcImage: CardCodec = {
 /** One .gci file: an empty file stands for a save not written yet; putting the entry replaces the file */
 const gciFile: CardCodec = {
   family: 'gc',
+  ext: '.gci',
+  single: true,
   read: (file) => ({ entries: file.length ? [fromGc(readGci(file))] : [], freeBlocks: null, problems: [] }),
   write(file, put) {
     const e = put[put.length - 1];
@@ -85,10 +98,42 @@ const gciFile: CardCodec = {
   entry: (data) => fromGc(readGci(data)),
 };
 
+const ps2Image: CardCodec = {
+  family: 'ps2',
+  ext: '.psu',
+  read(file) {
+    const c = readPs2Card(file);
+    return { entries: c.entries.map(fromPs2), freeBlocks: c.freeBlocks, problems: c.problems };
+  },
+  write(file, put, remove = []) {
+    const r = writePs2Card(file, put.map((e) => readPsu(e.data)), remove);
+    return { file: r.card, skipped: r.skipped };
+  },
+  // PCSX2 formats its cards itself (and at sizes of its choosing)
+  blank: () => null,
+  entry: (data) => fromPs2(readPsu(data)),
+};
+
+/** A PSP save folder (PPSSPP's SAVEDATA/<game code + suffix>) as a tar of it; empty while the folder does not exist */
+const pspFolder: CardCodec = {
+  family: 'psp',
+  ext: '.tar',
+  single: true,
+  read: (file) => ({ entries: file.length ? [fromPsp(readPspFolder(file))] : [], freeBlocks: null, problems: [] }),
+  write(file, put) {
+    const e = put[put.length - 1];
+    return { file: e ? readPspFolder(e.data).tar : file, skipped: put.slice(0, -1).map((p) => p.name) };
+  },
+  blank: () => Buffer.alloc(0),
+  entry: (data) => fromPsp(readPspFolder(data)),
+};
+
 export function codecFor(emu: Pick<Emulator, 'saveFormat'>): CardCodec | null {
   const fmt = emu.saveFormat as SaveFormat;
   if (fmt.startsWith('ps1')) return ps1Codec(fmt);
   if (fmt === 'gcraw') return gcImage;
   if (fmt === 'gci') return gciFile;
+  if (fmt === 'ps2card') return ps2Image;
+  if (fmt === 'pspdir') return pspFolder;
   return null;
 }

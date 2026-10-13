@@ -29,7 +29,8 @@ import { prunePlan, queuePrunePulls } from '../devices/prune.js';
 import { deviceUser, listsPreview, setDeviceLists, visibleLists } from '../devices/lists.js';
 import { Prisma } from '@prisma/client';
 import { storeWifiBands } from '../devconfig/service.js';
-import { cardAction, commitOffer, deviceCard, findDeviceCard, gameForSerial, gcCardFile, gciFolderState, hasWantedSaves, isCardEmulator, namedCard, observeCard, prepareCard, recordOffer } from './cards.js';
+import { cardAction, commitOffer, deviceCard, entryFolderState, findDeviceCard, gameForSerial, gcCardFile, gciFolder, hasWantedSaves, isCardEmulator, namedCard, observeCard, prepareCard, pspFolder, recordOffer, type EntryFolder } from './cards.js';
+import { codecFor } from './cardcodec.js';
 import { takeNudge } from './nudge.js';
 import { systemForPlatform, systemIndex } from '../scanner/systems.js';
 import { FAN_WORK, FIRST_ASK, normTitle, probeRound, probesOf, serialMatch, wantsProbe } from './probe.js';
@@ -246,14 +247,22 @@ async function launcherContext(device: AgentDevice, romPath: string) {
 
 /**
  * A memory card in the save folder of a frontend's emulator setup (DuckStation's per-game cards are named after the
- * game's title): its emulator; the game comes from the saves inside it (see observeCard)
+ * game's title, PCSX2's after what the user chose), or a save folder of PPSSPP's: its emulator, and whether every
+ * game shares it; the game of a card of one game comes from the saves inside it (see observeCard)
  */
 async function launcherCard(device: AgentDevice, file: string) {
-  if (!/\.(mcd|mcr)$/i.test(file)) return null;
   for (const setup of Object.values(launcherOf(device)?.setups ?? {})) {
     if (!setup.saves || setup.emulator.startsWith('core:') || !file.startsWith(setup.saves + '/')) continue;
     const emu = await emulatorBySlug(setup.emulator).catch(() => null);
-    if (emu && isCardEmulator(emu)) return emu;
+    const codec = emu && codecFor(emu);
+    if (!emu || !codec) continue;
+    const fits =
+      codec.family === 'psp'
+        ? file.endsWith('/') && path.posix.dirname(file) === setup.saves
+        : codec.family === 'ps1'
+          ? /\.(mcd|mcr)$/i.test(file)
+          : file.toLowerCase().endsWith(emu.saveExt.toLowerCase());
+    if (fits) return { emu, shared: setup.savesLayout === 'card-shared' && codec.family !== 'psp' };
   }
   return null;
 }
@@ -323,8 +332,10 @@ function candidatePaths(ctx: RomCtx, emu: Emulator = ctx.emu) {
   const base = minui ? path.posix.basename(ctx.rel) : ctx.baseName;
   const files: { kind: 'SAVE' | 'STATE'; slot: number; path: string }[] = [{ kind: 'SAVE', slot: 0, path: abs(path.posix.join(dirs.saves, deviceFileName(base, ctx.emu, 'SAVE', 0))) }];
   // Memory cards of a frontend's emulator, named by it: after the rom's file ("<name>_1.mcd", DuckStation's "file
-  // title"); cards named after a title, a serial or shared by all are found in their folder (launcherCard, namedCard)
-  if (ctx.layout.savesLayout.startsWith('card-')) {
+  // title"); cards named after a title, a serial or shared by all are found in their folder (launcherCard, namedCard).
+  // PS2 cards and PSP save folders are never named after a rom
+  const family = codecFor(ctx.emu)?.family;
+  if (ctx.layout.savesLayout.startsWith('card-') || family === 'ps2' || family === 'psp') {
     files.length = 0;
     if (ctx.layout.savesLayout === 'card-filetitle') files.push({ kind: 'SAVE', slot: 0, path: abs(path.posix.join(dirs.saves, `${base}_1${ctx.emu.saveExt}`)) });
   }
@@ -598,28 +609,39 @@ const relToRoot = (device: AgentDevice, abs: string) => {
   const root = trimRoot(device.rootPath);
   return abs.startsWith(root + '/') ? abs.slice(root.length + 1) : abs;
 };
-const absOf = (device: AgentDevice, rel: string) => (rel.startsWith('/') ? rel : path.posix.join(device.rootPath, rel));
+const absOf = (device: AgentDevice, rel: string) => (ROOT.test(rel) ? rel : path.posix.join(device.rootPath, rel));
 
 /**
- * Lines for the GameCube saves in Dolphin's GCI folders: each .gci is a card file holding one save ("put" when it
- * changed, "cget" when the server has a newer one), plus a "cget" for every save of the folder's region it lacks.
+ * Lines for the folders of one-save files (Dolphin's GCI folders, PPSSPP's SAVEDATA of a frontend's setup): each file
+ * is a card holding one save ("put" when it changed, "cget" when the server has a newer one), plus a "cget" for every
+ * save that belongs in the folder and has no file there.
  */
-async function gciLines(device: AgentDevice, present: Map<string, string>) {
-  const emu = await prisma.emulator.findUnique({ where: { slug: 'dolphin-gci' } });
-  if (!emu) return [];
+async function entryFolderLines(device: AgentDevice, present: Map<string, string>) {
   const out: string[] = [];
-  const folders = new Set<string>();
-  for (const [p, h] of present) {
-    const gc = gcCardFile(p);
-    if (gc?.kind !== 'gci') continue;
-    folders.add(gc.folder);
-    const line = await cardLine(device, p, emu, { shared: false, gameId: null }, h, '-');
-    if (line) out.push(line);
+  const folders = new Map<string, { emu: Emulator; kind: EntryFolder }>();
+  const gci = await prisma.emulator.findUnique({ where: { slug: 'dolphin-gci' } });
+  if (gci) {
+    for (const [p, h] of present) {
+      const gc = gcCardFile(p);
+      if (gc?.kind !== 'gci') continue;
+      folders.set(gc.folder, { emu: gci, kind: gciFolder(gc.folder) });
+      const line = await cardLine(device, p, gci, { shared: false, gameId: null }, h, '-');
+      if (line) out.push(line);
+    }
+    // Folders known from earlier syncs count even when found empty
+    for (const c of await prisma.deviceCard.findMany({ where: { deviceId: device.id, emulatorId: gci.id }, select: { path: true } })) {
+      const folder = path.posix.dirname(absOf(device, c.path));
+      if (!folders.has(folder)) folders.set(folder, { emu: gci, kind: gciFolder(folder) });
+    }
   }
-  // Folders known from earlier syncs count even when found empty
-  for (const c of await prisma.deviceCard.findMany({ where: { deviceId: device.id, emulatorId: emu.id }, select: { path: true } })) folders.add(path.posix.dirname(absOf(device, c.path)));
-  for (const folder of folders) {
-    const { absent, made } = await gciFolderState(device, emu, folder, (p) => relToRoot(device, p), present);
+  // Their files were read with the other card files of the setups (launcherCard)
+  for (const setup of Object.values(launcherOf(device)?.setups ?? {})) {
+    if (!setup.saves || setup.emulator.startsWith('core:')) continue;
+    const emu = await emulatorBySlug(setup.emulator).catch(() => null);
+    if (emu && codecFor(emu)?.family === 'psp') folders.set(setup.saves, { emu, kind: pspFolder });
+  }
+  for (const [folder, { emu, kind }] of folders) {
+    const { absent, made } = await entryFolderState(device, emu, folder, kind, (p) => relToRoot(device, p), present);
     for (const c of [...absent, ...made]) {
       const dc = await findDeviceCard(device.id, c.path);
       if (dc && (await prepareCard(device, dc, emu, null))) out.push(`cget\t${absOf(device, dc.path)}\t-\t-`);
@@ -792,8 +814,8 @@ agentRouter.post('/sync', express.text({ limit: '16mb', type: '*/*' }), async (r
   for (const [p, h] of present) {
     const named = cardFiles.has(p) ? null : namedCard(path.posix.basename(p));
     if (!named) {
-      const emu = cardFiles.has(p) ? null : await launcherCard(device, p);
-      const line = emu && (await cardLine(device, p, emu, { shared: false, gameId: null }, h, '-'));
+      const found = cardFiles.has(p) ? null : await launcherCard(device, p);
+      const line = found && (await cardLine(device, p, found.emu, { shared: found.shared, gameId: null }, h, '-'));
       if (line) out.push(line);
       continue;
     }
@@ -801,7 +823,7 @@ agentRouter.post('/sync', express.text({ limit: '16mb', type: '*/*' }), async (r
     const line = await cardLine(device, p, emu, { shared: named.shared, gameId: named.serial ? await gameForSerial(named.serial) : null }, h, '-');
     if (line) out.push(line);
   }
-  out.push(...(await gciLines(device, present)));
+  out.push(...(await entryFolderLines(device, present)));
   // Files to read by their header, last: clients that can ("X-Probe: 1") post their blocks to /probe
   if (req.header('x-probe') === '1') {
     for (const p of probe.slice(0, 400)) out.push(`probe\t${p}\t${FIRST_ASK}`);
@@ -1380,10 +1402,10 @@ agentRouter.post('/upload', express.raw({ limit: '128mb', type: '*/*' }), async 
     res.type('text/plain').send(await cardUpload(device, dc, emu, filePath, buf, '-'));
     return;
   }
-  const cardEmu = !romPath || romPath === '-' ? await launcherCard(device, filePath) : null;
-  if (cardEmu) {
-    const dc = await deviceCard(device, relToRoot(device, filePath), cardEmu, { shared: false, gameId: null });
-    res.type('text/plain').send(await cardUpload(device, dc, cardEmu, filePath, buf, '-'));
+  const found = !romPath || romPath === '-' ? await launcherCard(device, filePath) : null;
+  if (found) {
+    const dc = await deviceCard(device, relToRoot(device, filePath), found.emu, { shared: found.shared, gameId: null });
+    res.type('text/plain').send(await cardUpload(device, dc, found.emu, filePath, buf, '-'));
     return;
   }
   const ctx = await romContext(device, romPath);
