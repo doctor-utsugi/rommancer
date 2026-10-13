@@ -107,32 +107,66 @@ export function ListsPage() {
   )
 }
 
-export function ListFormDialog({ list, onClose, onSaved }: { list?: any; onClose(): void; onSaved(l: any): void }) {
+export interface ListForm {
+  name: string
+  description: string
+  visibility: string
+  isCollaborative: boolean
+}
+
+/**
+ * A list's name, description and sharing: editing LIST, or a new one (from INITIAL values, saved by SAVE when given,
+ * with TITLE, CHILDREN shown above the fields and SAVELABEL on the button)
+ */
+export function ListFormDialog({
+  list,
+  initial,
+  title,
+  children,
+  save,
+  saveLabel,
+  onClose,
+  onSaved,
+}: {
+  list?: any
+  initial?: Partial<ListForm>
+  title?: string
+  children?: React.ReactNode
+  save?(form: ListForm): Promise<any>
+  saveLabel?: string
+  onClose(): void
+  onSaved(l: any): void
+}) {
   const { t } = useTranslation()
   const qc = useQueryClient()
-  const [form, setForm] = useState({
-    name: list?.name ?? '',
-    description: list?.description ?? '',
-    visibility: list?.visibility ?? 'PRIVATE',
-    isCollaborative: list?.isCollaborative ?? false,
+  const [busy, setBusy] = useState(false)
+  const [form, setForm] = useState<ListForm>({
+    name: list?.name ?? initial?.name ?? '',
+    description: list?.description ?? initial?.description ?? '',
+    visibility: list?.visibility ?? initial?.visibility ?? 'PRIVATE',
+    isCollaborative: list?.isCollaborative ?? initial?.isCollaborative ?? false,
   })
   const submit = async () => {
+    setBusy(true)
     try {
-      const l = list ? await patch(`/lists/${list.id}`, form) : await post('/lists', form)
+      const l = list ? await patch(`/lists/${list.id}`, form) : save ? await save(form) : await post('/lists', form)
       void qc.invalidateQueries({ queryKey: ['lists'] })
       void qc.invalidateQueries({ queryKey: ['list'] })
       onSaved(l)
       onClose()
     } catch (e) {
       toast.error(errMsg(e))
+    } finally {
+      setBusy(false)
     }
   }
   return (
     <Dialog open onOpenChange={(o) => !o && onClose()}>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>{list ? t('common.edit') : t('lists.new')}</DialogTitle>
+          <DialogTitle>{list ? t('common.edit') : (title ?? t('lists.new'))}</DialogTitle>
         </DialogHeader>
+        {children}
         <div className="grid gap-4">
           <Field label={t('common.name')}>
             <Input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} autoFocus />
@@ -158,8 +192,8 @@ export function ListFormDialog({ list, onClose, onSaved }: { list?: any; onClose
           <Button variant="outline" onClick={onClose}>
             {t('common.cancel')}
           </Button>
-          <Button onClick={() => void submit()} disabled={!form.name}>
-            {t('common.save')}
+          <Button onClick={() => void submit()} disabled={!form.name || busy}>
+            {saveLabel ?? t('common.save')}
           </Button>
         </DialogFooter>
       </DialogContent>

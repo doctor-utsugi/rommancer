@@ -205,6 +205,46 @@ async function addItems(listId: number, given: z.infer<typeof itemSchema>[], use
   return r.count;
 }
 
+/**
+ * What a device holds, as list items: every rom a database identified (whether or not the server has its file), and
+ * hacks or translations the server knows by their content; files nothing identified are counted, as they cannot go in
+ */
+async function deviceItems(deviceId: number, user: AuthUser) {
+  const device = await prisma.device.findFirst({ where: { id: deviceId, userId: user.id }, select: { id: true } });
+  if (!device) throw badRequest('Unknown device');
+  const rows = await prisma.deviceRom.findMany({ where: { deviceId }, select: { romId: true, gameId: true, sha1: true, headerlessSha1: true } });
+  const loose = rows.filter((r) => !r.romId && !r.gameId).flatMap((r) => [r.sha1, r.headerlessSha1].filter((h): h is string => !!h));
+  const hacks = loose.length
+    ? await prisma.romHack.findMany({ where: { OR: [{ sha1: { in: loose } }, { headerlessSha1: { in: loose } }] }, select: { id: true, sha1: true, headerlessSha1: true } })
+    : [];
+  const hackBy = new Map(hacks.flatMap((h) => [h.sha1, h.headerlessSha1].filter((x): x is string => !!x).map((x) => [x, h.id] as const)));
+  const items = new Map<string, { romId?: number; gameId?: number; hackId?: number }>();
+  let skipped = 0;
+  for (const r of rows) {
+    const hackId = r.romId || r.gameId ? undefined : (hackBy.get(r.sha1 ?? '') ?? hackBy.get(r.headerlessSha1 ?? ''));
+    const item = r.romId ? { romId: r.romId } : r.gameId ? { gameId: r.gameId } : hackId ? { hackId } : null;
+    if (item) items.set(item.romId ? `r${item.romId}` : item.gameId ? `g${item.gameId}` : `h${item.hackId}`, item);
+    else skipped++;
+  }
+  return { items: [...items.values()], skipped };
+}
+
+listsRouter.get('/from-device/:deviceId', async (req, res) => {
+  const r = await deviceItems(Number(req.params.deviceId), me(req));
+  res.json({ items: r.items.length, skipped: r.skipped });
+});
+
+// A new list of every game a device holds
+listsRouter.post('/from-device/:deviceId', async (req, res) => {
+  const u = me(req);
+  const body = listBody.parse(req.body);
+  const r = await deviceItems(Number(req.params.deviceId), u);
+  const list = await prisma.list.create({ data: { ...body, ownerId: u.id } });
+  // Covers for thousands of games are a bulk scrape: only for those allowed to run one
+  const added = await addItems(list.id, r.items, hasPermission(u, 'scrape.bulk') ? u : undefined);
+  res.status(201).json({ id: list.id, added, skipped: r.skipped });
+});
+
 listsRouter.post('/:id/items', async (req, res) => {
   const list = await loadList(intParam(req), me(req), true);
   const body = z.union([itemSchema, z.object({ items: z.array(itemSchema).max(10000) })]).parse(req.body);

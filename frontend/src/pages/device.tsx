@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Link, useLocation, useParams, useSearchParams } from 'react-router'
+import { Link, useLocation, useNavigate, useParams, useSearchParams } from 'react-router'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
 import { Check, Download, ListPlus, Pause, Play, RefreshCw, Send, Terminal, X } from 'lucide-react'
@@ -17,6 +17,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Empty, NativeSelect, PageHeader, errMsg, formatBytes, formatDate } from '@/components/common'
 import { DeviceConfigTab } from '@/components/device-config'
+import { ListFormDialog } from '@/pages/lists'
 
 interface InventoryItem {
   id: number
@@ -88,6 +89,7 @@ export function DevicePage() {
   const [system, setSystem] = useState('')
   const [show, setShow] = useState<'all' | 'new' | 'unidentified' | 'onServer'>('all')
   const [sending, setSending] = useState(false)
+  const [listing, setListing] = useState(false)
   const [choosing, setChoosing] = useState(false)
   const [confirming, setConfirming] = useState<number[] | null>(null)
   const [copying, setCopying] = useState(false)
@@ -148,6 +150,10 @@ export function DevicePage() {
             {t('more.device.send')}
           </Button>
         )}
+        <Button size="sm" variant="outline" onClick={() => setListing(true)} disabled={!items.length}>
+          <ListPlus className="size-4" />
+          {t('more.device.listAll')}
+        </Button>
         {user?.role === 'ADMIN' && d.sshHost && d.clientPath && (
           <Button size="sm" variant="outline" onClick={() => void act(() => post(`/devices/${id}/ssh-sync`, {}), () => t('more.device.sshAsked'))}>
             <Terminal className="size-4" />
@@ -391,6 +397,7 @@ export function DevicePage() {
           }}
         />
       )}
+      {listing && <DeviceListDialog deviceId={Number(id)} name={d.name} onClose={() => setListing(false)} />}
       {sending && <SendDialog deviceId={Number(id)} onClose={() => setSending(false)} onSent={() => void qc.invalidateQueries({ queryKey: ['device-lists', id] })} />}
     </div>
   )
@@ -449,6 +456,33 @@ function SendDialog({ deviceId, onClose, onSent }: { deviceId: number; onClose()
         </DialogFooter>
       </DialogContent>
     </Dialog>
+  )
+}
+
+/** A new list of every game the console holds, whether or not the server has it: named for it, all editable first */
+function DeviceListDialog({ deviceId, name, onClose }: { deviceId: number; name: string; onClose(): void }) {
+  const { t } = useTranslation()
+  const nav = useNavigate()
+  const preview = useQuery({ queryKey: ['device-list-preview', deviceId], queryFn: () => get<{ items: number; skipped: number }>(`/lists/from-device/${deviceId}`) })
+  const date = new Date().toLocaleDateString()
+  return (
+    <ListFormDialog
+      title={t('more.device.listAll')}
+      initial={{ name: t('more.device.listName', { name }), description: t('more.device.listDescription', { name, date }) }}
+      saveLabel={preview.data ? t('more.device.listCreate', { count: preview.data.items }) : t('common.save')}
+      save={async (form) => {
+        const r = await post(`/lists/from-device/${deviceId}`, form)
+        toast.success(t('more.device.listCreated', { count: r.added }))
+        return r
+      }}
+      onClose={onClose}
+      onSaved={(l) => nav(`/lists/${l.id}`)}
+    >
+      <p className="text-sm text-muted-foreground">
+        {preview.data ? t('more.device.listHelp', { count: preview.data.items }) : t('common.loading')}
+        {!!preview.data?.skipped && ` ${t('more.device.listSkipped', { count: preview.data.skipped })}`}
+      </p>
+    </ListFormDialog>
   )
 }
 
