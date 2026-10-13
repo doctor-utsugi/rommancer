@@ -245,6 +245,12 @@ async function launcherContext(device: AgentDevice, romPath: string) {
   return { layout, slug: game.system, emu, baseName, root: '', rel: romPath, reported: true, launched: true };
 }
 
+/**
+ * The standalone PPSSPP's memory stick under the device root, where its firmware puts it: Batocera and Knulli start
+ * it with XDG_CONFIG_HOME=/userdata/system/configs, ROCKNIX with its home at /storage (PPSSPP keeps it in its config)
+ */
+const PPSSPP_STICKS: Record<string, string> = { knulli: 'system/configs/ppsspp', batocera: 'system/configs/ppsspp', rocknix: '.config/ppsspp' };
+
 /** A PSP save folder in a memory stick's SAVEDATA (PPSSPP, its RetroArch core), sent as one file: "<path>/" */
 const PSP_SAVE = /(^|\/)PSP\/SAVEDATA\/[^/]+\/$/i;
 
@@ -1288,8 +1294,11 @@ agentRouter.get('/roots', async (req, res) => {
     [emu?.saveExt ?? '.srm', emu?.stateExt ?? '.state'].forEach((e) => e && exts.add(e.toLowerCase()));
     if (emu && isCardEmulator(emu)) ['.mcd', '.mcr', '.gci', '.raw'].forEach((e) => exts.add(e));
   }
-  // PS2 cards wherever an emulator keeps them; PSP save folders are found by clients that know them
+  // PS2 cards wherever an emulator keeps them; PSP save folders are found by clients that know them, in the save
+  // folders and in the standalone PPSSPP's memory stick ("psp" lines)
   exts.add('.ps2');
+  const stick = PPSSPP_STICKS[device.firmware.slug];
+  if (stick) lines.push(`psp\t${abs(stick)}`);
   lines.push(`exts\t${[...exts].join(' ')}`);
   res.type('text/plain').send(lines.join('\n') + '\n');
 });
