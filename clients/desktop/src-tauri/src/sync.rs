@@ -139,7 +139,7 @@ pub struct Engine<'a> {
     /// The roms folder this device knows for itself (this PC): deletions stay inside it whatever the server says
     pub roms_dir: Option<String>,
     /// The games LaunchBox launches on this PC, synced with the emulator each one opens with
-    pub library: Option<std::sync::Arc<crate::launchbox::Library>>,
+    pub library: Option<std::sync::Arc<crate::frontend::Library>>,
     cache: HashMap<String, (u64, u64, String)>,
 }
 

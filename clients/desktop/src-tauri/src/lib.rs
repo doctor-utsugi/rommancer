@@ -4,8 +4,10 @@
 mod api;
 mod card;
 mod folder;
+mod frontend;
 mod game;
 mod hook;
+mod esde;
 mod launchbox;
 mod pc;
 mod prune;
@@ -66,6 +68,9 @@ struct AppState {
     pc_conflicts: Mutex<u32>,
     pc_offline: Mutex<Option<u64>>,
     launchbox: Mutex<launchbox::Cache>,
+    esde: Mutex<esde::Cache>,
+    /// The frontends' libraries as one, with the ones it was made of
+    merged: Mutex<Option<(Vec<Arc<frontend::Library>>, Arc<frontend::Library>)>>,
     /// The LaunchBox game being played since then: no sync writes its saves meanwhile
     playing: Mutex<Option<(String, Instant)>>,
     /// Where the conflict screen before a game sends its answers
@@ -155,9 +160,25 @@ fn game_answer(state: State<AppState>, answers: Vec<(u64, String)>) {
 }
 
 /// LaunchBox's library on this PC (the folder the user picked, else the one found)
-fn library(state: &AppState) -> Option<Arc<launchbox::Library>> {
+fn launchbox_library(state: &AppState) -> Option<Arc<frontend::Library>> {
     let chosen = state.settings.lock().unwrap().pc.as_ref().and_then(|p| p.launchbox.clone());
     state.launchbox.lock().unwrap().get(chosen.as_deref())
+}
+
+/// Every frontend found on this PC
+fn libraries(state: &AppState) -> Vec<Arc<frontend::Library>> {
+    launchbox_library(state).into_iter().chain(state.esde.lock().unwrap().get()).collect()
+}
+
+/// The games of every frontend on this PC, merged again only when one of them was read again
+fn library(state: &AppState) -> Option<Arc<frontend::Library>> {
+    let libs = libraries(state);
+    let mut merged = state.merged.lock().unwrap();
+    let same = merged.as_ref().is_some_and(|(parts, _)| parts.len() == libs.len() && parts.iter().zip(&libs).all(|(a, b)| Arc::ptr_eq(a, b)));
+    if !same {
+        *merged = frontend::Library::merge(&libs).map(|m| (libs.clone(), Arc::new(m)));
+    }
+    merged.as_ref().map(|(_, m)| m.clone())
 }
 
 fn now_ms() -> u64 {
@@ -234,17 +255,22 @@ struct Status {
     pc_conflicts: u32,
     /// Milliseconds since the epoch of the first failed contact in a row; none while the server answers
     pc_offline_since: Option<u64>,
-    launchbox: Option<launchbox::Summary>,
+    launchbox: Option<frontend::Summary>,
+    /// The other frontends found (ES-DE)
+    frontends: Vec<frontend::Summary>,
     game_sync: bool,
     game_ask: bool,
 }
 
 #[tauri::command]
 fn status(state: State<AppState>) -> Status {
-    let launchbox = if state.settings.lock().unwrap().pc.is_some() {
-        library(&state).map(|l| launchbox::Summary { restart: state.launchbox.lock().unwrap().needs_restart(&l.dir), ..l.summary() })
+    let linked = state.settings.lock().unwrap().pc.is_some();
+    let launchbox = if linked { launchbox_library(&state).map(|l| frontend::Summary { restart: state.launchbox.lock().unwrap().needs_restart(&l.dir), ..l.summary() }) } else { None };
+    let frontends = if linked {
+        let mut esde = state.esde.lock().unwrap();
+        esde.get().map(|l| frontend::Summary { restart: esde.needs_restart(&l.dir), ..l.summary() }).into_iter().collect()
     } else {
-        None
+        vec![]
     };
     let s = state.settings.lock().unwrap();
     Status {
@@ -269,6 +295,7 @@ fn status(state: State<AppState>) -> Status {
         pc_conflicts: *state.pc_conflicts.lock().unwrap(),
         pc_offline_since: *state.pc_offline.lock().unwrap(),
         launchbox,
+        frontends,
         game_sync: s.game_sync,
         game_ask: s.game_ask,
     }
@@ -1111,6 +1138,8 @@ pub fn run() {
                 pc_conflicts: Mutex::new(0),
                 pc_offline: Mutex::new(None),
                 launchbox: Mutex::new(launchbox::Cache::default()),
+                esde: Mutex::new(esde::Cache::default()),
+                merged: Mutex::new(None),
                 playing: Mutex::new(None),
                 answer: Mutex::new(None),
             });

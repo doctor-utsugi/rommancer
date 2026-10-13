@@ -161,6 +161,17 @@ pub fn parse(cfg: &Path, kind: &str) -> RetroArch {
     }
 }
 
+/// A folder setting of a retroarch.cfg (none when unset or "default")
+pub fn cfg_folder(cfg: &Path, key: &str) -> Option<PathBuf> {
+    resolve(read_cfg(cfg).get(key), cfg.parent().unwrap_or(Path::new(".")))
+}
+
+/// This PC's retroarch.cfg files, in the order RetroArch itself looks for them
+pub fn retroarch_cfgs() -> Vec<PathBuf> {
+    let mut seen = std::collections::HashSet::new();
+    candidates().into_iter().map(|(p, _)| p).filter(|p| p.is_file() && seen.insert(p.clone())).collect()
+}
+
 pub fn detect() -> Detected {
     let mut seen = std::collections::HashSet::new();
     let found = candidates().into_iter().filter(|(p, _)| p.is_file() && seen.insert(p.clone())).map(|(p, k)| parse(&p, k)).collect();

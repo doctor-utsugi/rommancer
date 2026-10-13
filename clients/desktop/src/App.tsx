@@ -34,7 +34,18 @@ interface Status {
   pc_offline_since: number | null
   game_sync: boolean
   game_ask: boolean
-  launchbox: { dir: string; restart: boolean; games: number; synced: number; unsupported: [string, number][] } | null
+  launchbox: Frontend | null
+  /** The other frontends found (ES-DE) */
+  frontends: Frontend[]
+}
+
+interface Frontend {
+  name: string
+  dir: string
+  restart: boolean
+  games: number
+  synced: number
+  unsupported: [string, number][]
 }
 
 interface Card {
@@ -488,8 +499,8 @@ function AppSettings({ status, onChange }: { status: Status; onChange: () => voi
         {toggle(status.auto_sync, (v) => void set({ autoSync: v }), 'autoSync', 'autoSyncHelp')}
         {toggle(status.auto_roms, (v) => void set({ autoRoms: v }), 'autoRoms', 'autoRomsHelp')}
         {toggle(status.allow_pull, (v) => void set({ allowPull: v }), 'allowPull', 'allowPullHelp')}
-        {status.launchbox && toggle(status.game_sync, (v) => void set({ gameSync: v }), 'gameSync', 'gameSyncHelp')}
-        {status.launchbox && status.game_sync && toggle(status.game_ask, (v) => void set({ gameAsk: v }), 'gameAsk', 'gameAskHelp')}
+        {(status.launchbox || status.frontends.length > 0) && toggle(status.game_sync, (v) => void set({ gameSync: v }), 'gameSync', 'gameSyncHelp')}
+        {(status.launchbox || status.frontends.length > 0) && status.game_sync && toggle(status.game_ask, (v) => void set({ gameAsk: v }), 'gameAsk', 'gameAskHelp')}
         {toggle(
           auto,
           async (v) => {
@@ -1015,6 +1026,7 @@ function StatusView({
         {card && row(t(card.removable ? 'sdCard' : 'folder'), card.root)}
       </div>
       {pc && <LaunchBox status={status} />}
+      {pc && status.frontends.map((f) => <FrontendPanel key={f.name} frontend={f} />)}
       {result && <LastSync result={result} onDetails={() => {}} />}
       <div className="panel">
         <h2>{t('statusLog')}</h2>
@@ -1061,6 +1073,19 @@ function LaunchBox({ status }: { status: Status }) {
         <button onClick={pick}>{t('launchboxPick')}</button>
       </div>
       {error && <p className="small error">{error}</p>}
+    </div>
+  )
+}
+
+/** A frontend found by itself (ES-DE), synced with the emulator each game opens with */
+function FrontendPanel({ frontend: f }: { frontend: Frontend }) {
+  return (
+    <div className="panel">
+      <h2>{f.name}</h2>
+      <p className="small mono">{f.dir}</p>
+      {f.restart && <p className="small warn">{t('frontendRestart', { name: f.name })}</p>}
+      <p className="small">{t('launchboxGames', { synced: String(f.synced), games: String(f.games) })}</p>
+      {f.unsupported.length > 0 && <p className="small muted">{t('launchboxOther', { list: f.unsupported.map(([e, n]) => `${e} (${n})`).join(', ') })}</p>}
     </div>
   )
 }

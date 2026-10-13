@@ -115,5 +115,6 @@ export async function systemForPlatform(name: string): Promise<string | null> {
     const names = [s.datName, s.name, s.slug, parts.join(' '), ...parts, ...((s.datAliases as string[] | null) ?? [])];
     if (names.some((x) => norm(x) === n || norm(maker + x) === n)) return s.slug;
   }
-  return null;
+  // Frontends that name platforms by their rom folders (ES-DE's "snes", "psx", "gc")
+  return systemForFolder(idx, name)?.slug ?? null;
 }
