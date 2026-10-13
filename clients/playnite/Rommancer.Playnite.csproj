@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <!-- Playnite 10 runs extensions on .NET Framework 4.6.2 -->
+    <TargetFramework>net462</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <Nullable>disable</Nullable>
+    <AssemblyName>Rommancer.Playnite</AssemblyName>
+    <Version>1.0.0</Version>
+    <!-- No build machine path in the DLL or its debug info -->
+    <PathMap>$(MSBuildProjectDirectory)=/src/playnite</PathMap>
+    <Deterministic>true</Deterministic>
+  </PropertyGroup>
+  <ItemGroup>
+    <!-- Playnite provides the SDK at run time -->
+    <PackageReference Include="PlayniteSDK" Version="6.11.0">
+      <PrivateAssets>all</PrivateAssets>
+      <ExcludeAssets>runtime</ExcludeAssets>
+    </PackageReference>
+    <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies" Version="1.0.3" PrivateAssets="all" />
+    <Reference Include="System.Net.Http" />
+  </ItemGroup>
+</Project>

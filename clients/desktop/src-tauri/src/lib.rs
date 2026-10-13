@@ -10,6 +10,7 @@ mod hook;
 mod esde;
 mod launchbox;
 mod pegasus;
+mod playnite;
 mod pc;
 mod prune;
 mod sync;
@@ -71,6 +72,7 @@ struct AppState {
     launchbox: Mutex<launchbox::Cache>,
     esde: Mutex<esde::Cache>,
     pegasus: Mutex<pegasus::Cache>,
+    playnite: Mutex<playnite::Cache>,
     /// The frontends' libraries as one, with the ones it was made of
     merged: Mutex<Option<(Vec<Arc<frontend::Library>>, Arc<frontend::Library>)>>,
     /// The LaunchBox game being played since then: no sync writes its saves meanwhile
@@ -169,7 +171,7 @@ fn launchbox_library(state: &AppState) -> Option<Arc<frontend::Library>> {
 
 /// Every frontend found on this PC
 fn libraries(state: &AppState) -> Vec<Arc<frontend::Library>> {
-    launchbox_library(state).into_iter().chain(state.esde.lock().unwrap().get()).chain(state.pegasus.lock().unwrap().get()).collect()
+    launchbox_library(state).into_iter().chain(state.esde.lock().unwrap().get()).chain(state.pegasus.lock().unwrap().get()).chain(state.playnite.lock().unwrap().get()).collect()
 }
 
 /// The games of every frontend on this PC, merged again only when one of them was read again
@@ -258,7 +260,7 @@ struct Status {
     /// Milliseconds since the epoch of the first failed contact in a row; none while the server answers
     pc_offline_since: Option<u64>,
     launchbox: Option<frontend::Summary>,
-    /// The other frontends found (ES-DE, Pegasus)
+    /// The other frontends found (ES-DE, Pegasus, Playnite)
     frontends: Vec<frontend::Summary>,
     game_sync: bool,
     game_ask: bool,
@@ -271,7 +273,9 @@ fn status(state: State<AppState>) -> Status {
     let frontends = if linked {
         let mut esde = state.esde.lock().unwrap();
         let esde = esde.get().map(|l| frontend::Summary { restart: esde.needs_restart(&l.dir), ..l.summary() });
-        esde.into_iter().chain(state.pegasus.lock().unwrap().get().map(|l| l.summary())).collect()
+        let mut playnite = state.playnite.lock().unwrap();
+        let playnite = playnite.get().map(|l| frontend::Summary { restart: playnite.needs_restart(), ..l.summary() });
+        esde.into_iter().chain(state.pegasus.lock().unwrap().get().map(|l| l.summary())).chain(playnite).collect()
     } else {
         vec![]
     };
@@ -1143,6 +1147,7 @@ pub fn run() {
                 launchbox: Mutex::new(launchbox::Cache::default()),
                 esde: Mutex::new(esde::Cache::default()),
                 pegasus: Mutex::new(pegasus::Cache::default()),
+                playnite: Mutex::new(playnite::Cache::default()),
                 merged: Mutex::new(None),
                 playing: Mutex::new(None),
                 answer: Mutex::new(None),
