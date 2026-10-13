@@ -669,8 +669,8 @@ class SyncEngine(private val context: Context, private val store: Store, private
 
         private val HOLD = setOf("get", "aside", "cget")
 
-        /** AetherSX2's (and NetherSX2's, the same app) memory cards */
-        private val PS2_CARDS = listOf("Android/data/xyz.aethersx2.android/files/memcards")
+        /** The memory cards of AetherSX2 (NetherSX2 is the same app) and ARMSX2 */
+        private val PS2_CARDS = listOf("Android/data/xyz.aethersx2.android/files/memcards", "Android/data/com.armsx2/files/memcards")
 
         private val RETROARCH = listOf("com.retroarch", "com.retroarch.aarch64", "com.retroarch.ra32")
 

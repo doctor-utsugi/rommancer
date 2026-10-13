@@ -4,19 +4,39 @@ import android.content.pm.PackageManager
 import rikka.shizuku.Shizuku
 import java.io.File
 
-/** Shell-level access through Shizuku: the emulators' folders under Android/data, and stopping an emulator. */
+/**
+ * Shell-level access through Shizuku, or root on a rooted device without it: the emulators' folders under
+ * Android/data, and stopping an emulator.
+ */
 object Privileged {
     enum class State { NOT_RUNNING, NOT_ALLOWED, READY }
 
     fun state(): State = runCatching {
         when {
-            !Shizuku.pingBinder() || Shizuku.isPreV11() -> State.NOT_RUNNING
-            Shizuku.checkSelfPermission() != PackageManager.PERMISSION_GRANTED -> State.NOT_ALLOWED
+            !Shizuku.pingBinder() || Shizuku.isPreV11() -> if (root) State.READY else State.NOT_RUNNING
+            Shizuku.checkSelfPermission() != PackageManager.PERMISSION_GRANTED -> if (root) State.READY else State.NOT_ALLOWED
             else -> State.READY
         }
-    }.getOrDefault(State.NOT_RUNNING)
+    }.getOrDefault(if (root) State.READY else State.NOT_RUNNING)
 
     val ready get() = state() == State.READY
+
+    private fun shizuku() = runCatching { Shizuku.pingBinder() && !Shizuku.isPreV11() && Shizuku.checkSelfPermission() == PackageManager.PERMISSION_GRANTED }.getOrDefault(false)
+
+    @Volatile private var rootKnown: Boolean? = null
+
+    /**
+     * Whether su runs commands as root here, asked once a run off the main thread (Magisk shows its prompt the first
+     * time); the screen sees it once a sync asked
+     */
+    private val root: Boolean
+        get() {
+            rootKnown?.let { return it }
+            if (android.os.Looper.myLooper() == android.os.Looper.getMainLooper()) return false
+            val ok = listOf("/system/bin/su", "/system/xbin/su", "/sbin/su", "/debug_ramdisk/su").any { File(it).exists() } &&
+                runCatching { ProcessBuilder("su", "-c", "id -u").start().let { p -> p.inputStream.bufferedReader().readText().trim() == "0" && p.waitFor() == 0 } }.getOrDefault(false)
+            return ok.also { rootKnown = it }
+        }
 
     fun request(code: Int) = runCatching { Shizuku.requestPermission(code) }
 
@@ -24,9 +44,11 @@ object Privileged {
 
     /** newProcess is not public in Shizuku's API 13; it is still there and is what file access needs */
     private fun exec(command: String, input: ByteArray? = null): Pair<Int, ByteArray> {
-        val m = Shizuku::class.java.getDeclaredMethod("newProcess", Array<String>::class.java, Array<String>::class.java, String::class.java)
-        m.isAccessible = true
-        val p = m.invoke(null, arrayOf("sh", "-c", command), null, null) as Process
+        val p = if (shizuku()) {
+            val m = Shizuku::class.java.getDeclaredMethod("newProcess", Array<String>::class.java, Array<String>::class.java, String::class.java)
+            m.isAccessible = true
+            m.invoke(null, arrayOf("sh", "-c", command), null, null) as Process
+        } else ProcessBuilder("su", "-c", command).start()
         p.outputStream.use { out -> input?.let { out.write(it) } }
         val bytes = p.inputStream.use { it.readBytes() }
         return p.waitFor() to bytes

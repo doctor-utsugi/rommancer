@@ -16,10 +16,13 @@ const EPC = CLUSTER / 4;
 const ALLOCATED = 0x80000000;
 const CHAIN_END = 0xffffffff;
 
+const DF_WRITE = 0x0002;
+const DF_EXECUTE = 0x0004;
 const DF_RWX = 0x0007;
 const DF_FILE = 0x0010;
 const DF_DIR = 0x0020;
 const DF_0400 = 0x0400;
+const DF_HIDDEN = 0x2000;
 const DF_EXISTS = 0x8000;
 
 export class Ps2CardError extends Error {}
@@ -284,6 +287,99 @@ function entryOf(dir: Dirent, files: { e: Dirent; data: Buffer }[]): Ps2Entry {
   };
 }
 
+/** A card no game has formatted yet: erased flash, every byte 0xFF (how PCSX2 and its forks make new cards) */
+export function isErased(buf: Buffer) {
+  if (buf.length < PAGE || !buf.subarray(0, MAGIC.length).equals(Buffer.alloc(MAGIC.length, 0xff))) return false;
+  for (let i = 0; i < buf.length; i++) if (buf[i] !== 0xff) return false;
+  return true;
+}
+
+const tod = (d: Date) => {
+  const b = Buffer.alloc(8);
+  b.writeUInt8(d.getUTCSeconds(), 1);
+  b.writeUInt8(d.getUTCMinutes(), 2);
+  b.writeUInt8(d.getUTCHours(), 3);
+  b.writeUInt8(d.getUTCDate(), 4);
+  b.writeUInt8(d.getUTCMonth() + 1, 5);
+  b.writeUInt16LE(d.getUTCFullYear(), 6);
+  return b;
+};
+
+/** An empty card the size of SIZE (with ECC when its pages carry spare bytes), as the PS2 formats one (mymc's format) */
+export function formatPs2Card(size: number): Buffer {
+  const ecc = size % (PAGE + 16) === 0 && (size / (PAGE + 16)) % 16 === 0;
+  const raw = ecc ? PAGE + 16 : PAGE;
+  const perBlock = 16;
+  const pages = Math.floor(size / raw / perBlock) * perBlock;
+  if (pages < 1024 || pages * raw !== size) throw new Ps2CardError(`Unexpected card size ${size}`);
+  const clusters = pages / 2;
+  const blocks = pages / perBlock;
+  const good1 = blocks - 1;
+  const good2 = blocks - 2;
+  const firstIfc = Math.ceil(0x2000 / CLUSTER);
+  let fatClusters = Math.ceil((clusters - (firstIfc + 2)) / EPC);
+  let ifcCount = Math.ceil(fatClusters / EPC);
+  if (ifcCount > 32) [ifcCount, fatClusters] = [32, 32 * EPC];
+  const offset = firstIfc + ifcCount + fatClusters;
+  const allocEnd = good2 * (perBlock / 2) - offset;
+
+  const out = Buffer.alloc(size);
+  const spare = ecc ? eccPage(Buffer.alloc(PAGE)) : null;
+  if (spare) for (let p = 0; p < pages; p++) spare.copy(out, p * raw + PAGE);
+  const writeCluster = (abs: number, data: Buffer) => {
+    for (let i = 0; i < 2; i++) {
+      const page = data.subarray(i * PAGE, i * PAGE + PAGE);
+      page.copy(out, (abs * 2 + i) * raw);
+      if (ecc) eccPage(page).copy(out, (abs * 2 + i) * raw + PAGE);
+    }
+  };
+  // Indirect FAT clusters list the FAT clusters, which follow them
+  const firstFat = firstIfc + ifcCount;
+  for (let i = 0; i < ifcCount; i++) {
+    const c = Buffer.alloc(CLUSTER, 0xff);
+    for (let j = 0; j < EPC && i * EPC + j < fatClusters; j++) c.writeUInt32LE(firstFat + i * EPC + j, j * 4);
+    writeCluster(firstIfc + i, c);
+  }
+  // Cluster 0 holds the root directory; the rest up to the end are free, those past it never allocated
+  for (let f = 0; f < fatClusters; f++) {
+    const c = Buffer.alloc(CLUSTER);
+    for (let j = 0; j < EPC; j++) {
+      const n = f * EPC + j;
+      c.writeUInt32LE(n === 0 || n >= allocEnd ? CHAIN_END : 0x7fffffff, j * 4);
+    }
+    writeCluster(firstFat + f, c);
+  }
+  const now = tod(new Date());
+  const root = Buffer.alloc(CLUSTER);
+  writeDirent({ mode: DF_RWX | DF_DIR | DF_0400 | DF_EXISTS, length: 2, created: now, cluster: 0, parent: 0, modified: now, attr: 0, name: '.' }).copy(root, 0);
+  writeDirent({ mode: DF_WRITE | DF_EXECUTE | DF_DIR | DF_0400 | DF_HIDDEN | DF_EXISTS, length: 0, created: now, cluster: 0, parent: 0, modified: now, attr: 0, name: '..' }).copy(root, DIRENT);
+  writeCluster(offset, root);
+
+  const sb = Buffer.alloc(CLUSTER);
+  sb.write(MAGIC, 0, 'latin1');
+  sb.write('1.2.0.0', 0x1c, 'latin1');
+  sb.writeUInt16LE(PAGE, 0x28);
+  sb.writeUInt16LE(2, 0x2a);
+  sb.writeUInt16LE(perBlock, 0x2c);
+  sb.writeUInt16LE(0xff00, 0x2e);
+  sb.writeUInt32LE(clusters, 0x30);
+  sb.writeUInt32LE(offset, 0x34);
+  sb.writeUInt32LE(allocEnd, 0x38);
+  sb.writeUInt32LE(0, 0x3c);
+  sb.writeUInt32LE(good1, 0x40);
+  sb.writeUInt32LE(good2, 0x44);
+  for (let i = 0; i < 32; i++) sb.writeUInt32LE(i < ifcCount ? firstIfc + i : 0, 0x50 + i * 4);
+  sb.fill(0xff, 0xd0, 0x150);
+  sb.writeUInt8(2, 0x150);
+  sb.writeUInt8(0x2b, 0x151);
+  // Only the superblock's page: the cluster's second page stays erased
+  sb.subarray(0, PAGE).copy(out, 0);
+  if (ecc) eccPage(sb.subarray(0, PAGE)).copy(out, PAGE);
+  // The last good erase block is left erased (the spare block)
+  out.fill(0xff, good2 * perBlock * raw, (good2 + 1) * perBlock * raw);
+  return out;
+}
+
 export function isPs2Card(buf: Buffer) {
   return buf.length > MAGIC.length && buf.subarray(0, MAGIC.length).toString('latin1') === MAGIC;
 }
@@ -295,7 +391,7 @@ function rootOf(card: Card) {
 }
 
 export function readPs2Card(file: Buffer): Ps2Card {
-  const card = new Card(file);
+  const card = new Card(isErased(file) ? formatPs2Card(file.length) : file);
   const problems: string[] = [];
   const entries: Ps2Entry[] = [];
   const root = rootOf(card);
@@ -341,7 +437,7 @@ export function readPsu(psu: Buffer): Ps2Entry {
 
 /** Saves taken out (REMOVE, and older copies of those put in) and put in; those that do not fit are skipped */
 export function writePs2Card(file: Buffer, put: Ps2Entry[], remove: string[] = []): { card: Buffer; skipped: string[] } {
-  const card = new Card(file);
+  const card = new Card(isErased(file) ? formatPs2Card(file.length) : file);
   let root = rootOf(card);
   const gone = new Set([...remove, ...put.map((p) => p.name)]);
   root.forEach((d, i) => {
