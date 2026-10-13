@@ -279,7 +279,7 @@ export function ListPage() {
                   {i.note && <p className="truncate text-xs text-muted-foreground">{i.note}</p>}
                 </TableCell>
                 <TableCell>{i.kind === 'work' ? t('more.lists.work') : t(`lists.kind.${i.kind}`)}</TableCell>
-                <TableCell className="truncate" title={i.system?.name}>{i.system?.name}</TableCell>
+                <TableCell className="truncate" title={i.system?.name ?? i.folder}>{i.system?.name ?? i.folder}</TableCell>
                 <TableCell>{i.owned ? <Check className="size-4 text-green-600" /> : <X className="size-4 text-muted-foreground" />}</TableCell>
                 <TableCell>
                   {list.canEdit && (

@@ -480,6 +480,8 @@ model UnknownFile {
   name           String     @db.VarChar(255)
   size           BigInt     @default(0)
   systemId       Int?
+  // The folder the device kept it in, where it goes on other devices when it is of no system
+  folder         String?    @db.VarChar(255)
   // The game it is a hack or translation of, when that is known
   baseGameId     Int?
   createdAt      DateTime   @default(now())

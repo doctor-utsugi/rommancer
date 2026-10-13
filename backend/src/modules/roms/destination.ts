@@ -20,11 +20,24 @@ export function holdSpace(key: string, size: number) {
 }
 
 /** Folder inside a destination for a system, by its scheme (per system, flat, or a firmware's folders) */
-async function schemeDir(rp: RomPath, system: System) {
+/** Where files of no system go (app shortcuts, launcher files kept from a device), when the server accepts them */
+export const UNKNOWN_DIR = 'unknown';
+const UNKNOWN_FILES_KEY = 'library.unknownFiles';
+
+export async function acceptsUnknownFiles() {
+  return (await prisma.setting.findUnique({ where: { key: UNKNOWN_FILES_KEY } }))?.value !== 'false';
+}
+
+export async function setAcceptsUnknownFiles(on: boolean) {
+  await prisma.setting.upsert({ where: { key: UNKNOWN_FILES_KEY }, create: { key: UNKNOWN_FILES_KEY, value: String(on) }, update: { value: String(on) } });
+}
+
+async function schemeDir(rp: RomPath, system: System | null) {
   if (rp.targetScheme === 'flat') return '';
-  if (rp.targetScheme === 'system') return system.slug;
+  const slug = system?.slug ?? UNKNOWN_DIR;
+  if (rp.targetScheme === 'system') return slug;
   const fw = await prisma.firmware.findUnique({ where: { slug: rp.targetScheme } });
-  return (fw?.systemMap as Record<string, { folder: string }> | undefined)?.[system.slug]?.folder ?? system.slug;
+  return (fw?.systemMap as Record<string, { folder: string }> | undefined)?.[slug]?.folder ?? slug;
 }
 
 /**
@@ -33,9 +46,10 @@ async function schemeDir(rp: RomPath, system: System) {
  * destination. When destinations exist and none can take it, the upload fails (507) instead of landing on a
  * disk nobody chose.
  */
-export async function resolveDestination(system: System, size = 0): Promise<{ romPath: RomPath; dir: string; volume: string }> {
+export async function resolveDestination(system: System | null, size = 0): Promise<{ romPath: RomPath; dir: string; volume: string }> {
   const writable = await prisma.romPath.findMany({ where: { readOnly: false }, orderBy: [{ priority: 'asc' }, { id: 'asc' }] });
-  const forSystem = writable.filter((p) => ((p.targetSystems as string[] | null) ?? []).includes(system.slug));
+  const forSystem = system ? writable.filter((p) => ((p.targetSystems as string[] | null) ?? []).includes(system.slug)) : [];
+  const label = system?.name ?? 'files of no system';
   const general = writable.filter((p) => p.isDefaultTarget && !forSystem.includes(p));
   const candidates = [...forSystem, ...general];
   if (!candidates.length && !writable.length) {
@@ -67,18 +81,20 @@ export async function resolveDestination(system: System, size = 0): Promise<{ ro
   throw new HttpError(
     507,
     candidates.length
-      ? `No destination can take ${fmt(size)} for ${system.name}: ${reasons.join('; ')}.${full ? ' Free some space, lower a reserve or add another destination folder.' : ''}`
-      : `No destination folder takes ${system.name}. Mark a folder as destination for it, or as general destination.`,
+      ? `No destination can take ${fmt(size)} for ${label}: ${reasons.join('; ')}.${full ? ' Free some space, lower a reserve or add another destination folder.' : ''}`
+      : `No destination folder takes ${label}. Mark a folder as destination for it, or as general destination.`,
   );
 }
 
 const fmt = (n: number) => (n >= 1e9 ? `${(n / 1e9).toFixed(1)} GB` : `${Math.round(n / 1e6)} MB`);
 
 export interface PlaceOptions {
-  system: System;
+  system: System | null;
   fileName: string;
+  /** A folder under the system's, for files of no system: the one the device kept it in */
+  subdir?: string;
   hashes: FileHashes;
-  status: 'MATCHED' | 'HACK' | 'UNVERIFIED';
+  status: 'MATCHED' | 'HACK' | 'UNVERIFIED' | 'UNKNOWN';
   romPartId?: number | null;
   romHackId?: number | null;
   raHash?: string | null;
@@ -90,7 +106,7 @@ export interface PlaceOptions {
 export async function placeFile(src: string | Buffer, opts: PlaceOptions) {
   const size = typeof src === 'string' ? (await fs.promises.stat(src)).size : src.length;
   const { romPath, dir, volume } = await resolveDestination(opts.system, size);
-  const rel = path.join(dir, safeFileName(opts.fileName));
+  const rel = path.join(dir, opts.subdir ? safeFileName(opts.subdir) : '', safeFileName(opts.fileName));
   const dest = path.join(romPath.path, rel);
   if (fs.existsSync(dest)) throw new HttpError(409, `File exists: ${rel}`);
   // Written beside the destination (same disk) and renamed when complete: a crash or a full disk never
@@ -131,7 +147,7 @@ export async function placeFile(src: string | Buffer, opts: PlaceOptions) {
       headerlessMd5: h.headerless?.md5 ?? null,
       headerlessSha1: h.headerless?.sha1 ?? null,
       raHash: opts.raHash ?? null,
-      systemId: opts.system.id,
+      systemId: opts.system?.id ?? null,
       status: opts.status,
       romPartId: opts.romPartId ?? null,
       romHackId: opts.romHackId ?? null,

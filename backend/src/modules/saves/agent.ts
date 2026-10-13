@@ -21,7 +21,8 @@ import { resolveListFiles, unknownKey } from '../lists/service.js';
 import { resolveConflict } from './core.js';
 import { pipeline } from 'node:stream/promises';
 import { normalizeTitle, parseRomName } from '../../lib/romname.js';
-import { ingestUnverified, ingestVerified } from '../uploads/ingest.js';
+import { ingestUnknown, ingestUnverified, ingestVerified } from '../uploads/ingest.js';
+import { acceptsUnknownFiles } from '../roms/destination.js';
 import { serverKey } from '../devices/ssh.js';
 import { devicePlan } from '../devices/plan.js';
 import { prunePlan, queuePrunePulls } from '../devices/prune.js';
@@ -1225,20 +1226,27 @@ agentRouter.post('/pull/:id', async (req, res) => {
             : outside
               ? await prisma.system.findUnique({ where: { slug: outside.slug } })
               : null;
-        if (!system) throw badRequest('Unknown system for an unverified rom');
-        const title = parseRomName(name.replace(/\.[^.]+$/, '')).title || name;
-        const game = await prisma.game.findFirst({ where: { systemId: system.id, titleNormalized: normalizeTitle(title).slice(0, 255) } });
-        // A hack or translation whose header named its game: stored as that game's, never as a new game
-        const base = inv?.baseGameId ? await prisma.game.findFirst({ where: { id: inv.baseGameId, systemId: system.id } }) : null;
-        const lang = /\[T[+-]([A-Za-z]{2,3})/.exec(name)?.[1] ?? /\((english|spanish|french|german|italian|portuguese) v[\d.]+\)/i.exec(name)?.[1];
-        const fan = base ? { gameId: base.id, kind: /\[T[+-]|\((english|spanish|french|german|italian|portuguese) v[\d.]+\)/i.test(name) ? 'translation' : 'hack', ...(lang ? { hackLanguage: lang.slice(0, 32) } : {}) } : null;
-        try {
-          fileId = (await ingestUnverified(tmp, name, owner, { systemId: system.id, ...(fan ?? (game ? { gameId: game.id } : { newGameTitle: title })) })).file?.id;
-          result = 'stored as unverified';
-        } catch (dup) {
-          // The same file came in before: nothing missing, not a failure
-          if (!(dup instanceof HttpError) || dup.status !== 409) throw dup;
-          result = 'already owned';
+        if (!system) {
+          // Of no system (an app shortcut, a launcher file): kept as a file nobody identified, if the server takes them
+          if (!inv || !(await acceptsUnknownFiles())) throw badRequest('Unknown system for an unverified rom');
+          const r = await ingestUnknown(tmp, name, path.posix.basename(path.posix.dirname(pull.path)), owner);
+          fileId = r.file.id;
+          result = r.status === 'stored' ? 'stored as unknown' : 'already owned';
+        } else {
+          const title = parseRomName(name.replace(/\.[^.]+$/, '')).title || name;
+          const game = await prisma.game.findFirst({ where: { systemId: system.id, titleNormalized: normalizeTitle(title).slice(0, 255) } });
+          // A hack or translation whose header named its game: stored as that game's, never as a new game
+          const base = inv?.baseGameId ? await prisma.game.findFirst({ where: { id: inv.baseGameId, systemId: system.id } }) : null;
+          const lang = /\[T[+-]([A-Za-z]{2,3})/.exec(name)?.[1] ?? /\((english|spanish|french|german|italian|portuguese) v[\d.]+\)/i.exec(name)?.[1];
+          const fan = base ? { gameId: base.id, kind: /\[T[+-]|\((english|spanish|french|german|italian|portuguese) v[\d.]+\)/i.test(name) ? 'translation' : 'hack', ...(lang ? { hackLanguage: lang.slice(0, 32) } : {}) } : null;
+          try {
+            fileId = (await ingestUnverified(tmp, name, owner, { systemId: system.id, ...(fan ?? (game ? { gameId: game.id } : { newGameTitle: title })) })).file?.id;
+            result = 'stored as unverified';
+          } catch (dup) {
+            // The same file came in before: nothing missing, not a failure
+            if (!(dup instanceof HttpError) || dup.status !== 409) throw dup;
+            result = 'already owned';
+          }
         }
       }
       await prisma.devicePull.update({ where: { id: pull.id }, data: { status: 'done', result, doneAt: new Date() } });

@@ -192,3 +192,32 @@ export async function ingestUnverified(tmp: string, originalName: string, u: Ing
   const { file, rel } = await placeFile(tmp, { system, fileName: baseName + ext, hashes: h, status: 'UNVERIFIED', romPartId: rom.parts[0].id, raHash, uploadedById: u.id });
   return ({ status: 'stored', match: 'UNVERIFIED', romId: rom.id, gameId, file: { id: file.id, path: rel } });
 }
+
+/**
+ * A file of no system (an app shortcut, a launcher file) kept as a file nobody identified, under the folder its
+ * device kept it in. The same content under the same name is stored once; another content under a taken name gets
+ * its hash in the name
+ */
+export async function ingestUnknown(tmp: string, originalName: string, folder: string, u: IngestUser) {
+  const name = path.basename(originalName);
+  const h = await hashFile(tmp, 'none');
+  const named = unknownStoredNames(name, h.sha1);
+  const same = await prisma.romFile.findMany({ where: { sha1: h.sha1, systemId: null }, select: { id: true, relativePath: true } });
+  const had = same.find((f) => named.includes(path.basename(f.relativePath)));
+  if (had) return { status: 'already-owned' as const, file: { id: had.id } };
+  for (const fileName of named) {
+    try {
+      const { file, rel } = await placeFile(tmp, { system: null, subdir: folder, fileName, hashes: h, status: 'UNKNOWN', uploadedById: u.id });
+      return { status: 'stored' as const, file: { id: file.id, path: rel } };
+    } catch (e) {
+      if (!(e instanceof HttpError) || e.status !== 409) throw e;
+    }
+  }
+  throw new HttpError(409, `File exists: ${name}`);
+}
+
+/** The names a file of no system is stored under: its own, or with its hash when that is taken */
+export function unknownStoredNames(name: string, sha1: string) {
+  const ext = path.extname(name);
+  return [name, `${name.slice(0, name.length - ext.length)} (${sha1.slice(0, 8)})${ext}`];
+}

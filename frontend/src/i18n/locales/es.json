@@ -1354,8 +1354,12 @@
       "denied_other": "{{count}} ficheros que el servidor no tiene no se pueden pedir a tus consolas: tu cuenta no puede subir roms.",
       "nowhere_one": "{{count}} fichero no está ni en el servidor ni en ninguna de tus consolas.",
       "nowhere_other": "{{count}} ficheros no están ni en el servidor ni en ninguna de tus consolas.",
-      "noSystem_one": "{{count}} fichero no es un juego de ningún sistema (un acceso a una app o un lanzador de la consola): queda en la lista, pero el servidor no lo guarda.",
-      "noSystem_other": "{{count}} ficheros no son juegos de ningún sistema (accesos a apps o lanzadores de la consola): quedan en la lista, pero el servidor no los guarda."
+      "noSystem_one": "{{count}} fichero no es un juego de ningún sistema y el servidor no acepta ficheros desconocidos (Admin › Rutas de roms): queda en la lista, pero no se guarda.",
+      "noSystem_other": "{{count}} ficheros no son juegos de ningún sistema y el servidor no acepta ficheros desconocidos (Admin › Rutas de roms): quedan en la lista, pero no se guardan."
+    },
+    "unknownFiles": {
+      "title": "Aceptar ficheros desconocidos",
+      "help": "Lo que una consola tiene y no es un juego de ningún sistema (accesos a apps, lanzadores) se guarda en la carpeta «unknown» de la biblioteca, para que las listas puedan llevarlo a otras consolas, a la misma carpeta."
     }
   }
 }

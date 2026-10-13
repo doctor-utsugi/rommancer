@@ -60,7 +60,7 @@ export async function devicePlan(device: Device & { firmware: Firmware }, root =
     const romOf = new Map(roms.map((r) => [r.id, r]));
     const hackGame = new Map(hacks.map((h) => [h.id, h.gameId]));
     for (const it of items) {
-      const folder = folderFor(layout, it.systemSlug);
+      const folder = it.folder ?? folderFor(layout, it.systemSlug);
       const gameId = it.romId ? (romOf.get(it.romId)?.gameId ?? null) : it.hackId ? (hackGame.get(it.hackId) ?? null) : null;
       for (const f of it.files) {
         const rel = path.posix.join(layout.romsRoot, folder, f.destName);
@@ -73,7 +73,8 @@ export async function devicePlan(device: Device & { firmware: Firmware }, root =
           : ((await fs.promises.stat(f.absPath).catch(() => null))?.size ?? 0);
         const onDevice = havePaths.has(pathKey(path.posix.join(homeRoot, rel)));
         const present = onDevice || (gameId !== null && haveGames.has(gameId)) || (!!it.sha1 && haveContent.has(it.sha1));
-        const excluded = !copiesSystem(filter, it.systemSlug) || (gameId !== null && excludedGames.has(gameId));
+        // Files of no system follow no system filter
+        const excluded = (!it.folder && !copiesSystem(filter, it.systemSlug)) || (gameId !== null && excludedGames.has(gameId));
         files.push({ dest, size, absPath: f.absPath, archiveEntry: f.archiveEntry ?? null, system: it.systemSlug, gameId, title: it.title, present, onDevice, excluded });
       }
     }

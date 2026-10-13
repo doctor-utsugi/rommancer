@@ -327,8 +327,8 @@ export async function listProgress(listId: number, device: Awaited<ReturnType<ty
   let total = 0;
   const filter = systemFilterOf(device);
   for (const it of items) {
-    if (!copiesSystem(filter, it.systemSlug)) continue; // left out for this device
-    const folder = folderFor(layout, it.systemSlug);
+    if (!it.folder && !copiesSystem(filter, it.systemSlug)) continue; // left out for this device
+    const folder = it.folder ?? folderFor(layout, it.systemSlug);
     total++;
     const there = it.files.some((f) => paths.has(pathKey(path.posix.join(root, layout.romsRoot, folder, f.destName))));
     if (there || (it.romId && games.has(gameOf.get(it.romId) ?? -1)) || (it.sha1 && contents.has(it.sha1))) have++;
@@ -840,7 +840,7 @@ registerJob('transfer', async (ctx) => {
   const touched = new Set<string>();
   try {
     for (const it of items) {
-      const folder = layout.systemMap[it.systemSlug]?.folder ?? it.systemSlug;
+      const folder = it.folder ?? layout.systemMap[it.systemSlug]?.folder ?? it.systemSlug;
       for (const f of it.files) {
         const dest = path.posix.join(layout.romsRoot, folder, f.destName);
         if (dryRun) {

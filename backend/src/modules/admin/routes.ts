@@ -4,6 +4,7 @@ import { Router } from 'express';
 import { Prisma } from '@prisma/client';
 import multer from 'multer';
 import { z } from 'zod';
+import { acceptsUnknownFiles, setAcceptsUnknownFiles } from '../roms/destination.js';
 import { env } from '../../config/env.js';
 import { prisma } from '../../lib/prisma.js';
 import { badRequest, intParam, HttpError } from '../../lib/http.js';
@@ -408,6 +409,17 @@ adminRouter.put('/settings/locale', async (req, res) => {
   const { locale } = z.object({ locale: localeSchema }).parse(req.body);
   await setDefaultLocale(locale);
   res.json({ locale, locales: LOCALE_CODES });
+});
+
+// Files of no system fetched from devices (app shortcuts, launcher files), kept in the library as unknown files
+adminRouter.get('/settings/unknown-files', async (_req, res) => {
+  res.json({ accept: await acceptsUnknownFiles() });
+});
+
+adminRouter.put('/settings/unknown-files', async (req, res) => {
+  const { accept } = z.object({ accept: z.boolean() }).parse(req.body);
+  await setAcceptsUnknownFiles(accept);
+  res.json({ accept });
 });
 
 adminRouter.put('/settings/signup', async (req, res) => {

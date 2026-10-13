@@ -3,7 +3,8 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
 import { Pencil, ScanSearch, Trash2, Wand2 } from 'lucide-react'
 import { toast } from 'sonner'
-import { del, get, patch, post } from '@/lib/api'
+import { del, get, patch, post, put } from '@/lib/api'
+import { Switch } from '@/components/ui/switch'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
@@ -22,6 +23,7 @@ export function AdminPathsPage() {
   const [organize, setOrganize] = useState<any | null>(null)
   const [jobId, setJobId] = useState<number | null>(null)
   const job = useJob(jobId, [['paths'], ['systems'], ['games']])
+  const unknownFiles = useQuery({ queryKey: ['unknown-files'], queryFn: () => get<{ accept: boolean }>('/admin/settings/unknown-files') })
   const scan = async (id: number, force = false, allowMassRemoval = false) => setJobId((await post(`/admin/paths/${id}/scan`, { force, allowMassRemoval })).id)
   const relink = async (p: any) => {
     const to = prompt(t('more.storage.relinkAsk', { path: p.path }), p.path)
@@ -53,6 +55,25 @@ export function AdminPathsPage() {
           <JobProgress job={job} />
         </div>
       )}
+      <Card className="mb-4">
+        <CardContent className="flex items-center justify-between gap-4 pt-6">
+          <div>
+            <p className="font-medium">{t('more.unknownFiles.title')}</p>
+            <p className="text-sm text-muted-foreground">{t('more.unknownFiles.help')}</p>
+          </div>
+          <Switch
+            checked={!!unknownFiles.data?.accept}
+            onCheckedChange={async (accept) => {
+              try {
+                await put('/admin/settings/unknown-files', { accept })
+                void qc.invalidateQueries({ queryKey: ['unknown-files'] })
+              } catch (e) {
+                toast.error(errMsg(e))
+              }
+            }}
+          />
+        </CardContent>
+      </Card>
       {!data?.length ? (
         <Empty />
       ) : (

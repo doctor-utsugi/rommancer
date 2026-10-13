@@ -134,6 +134,7 @@ listsRouter.get('/:id', async (req, res) => {
         hackId: i.hackId,
         workId: i.workId,
         unknownId: i.unknownId,
+        folder: i.unknown && !i.unknown.system ? i.unknown.folder : undefined,
         platforms: i.work?.games.map((g) => g.system.slug),
         title: i.rom?.name ?? i.hack?.title ?? i.game?.title ?? i.work?.title ?? i.unknown?.name,
         gameTitle: i.rom?.game.title ?? i.hack?.game.title ?? i.unknown?.baseGame?.title ?? null,
@@ -219,6 +220,7 @@ interface UnknownInput {
   size: bigint;
   systemSlug: string | null;
   baseGameId: number | null;
+  folder: string | null;
 }
 
 /**
@@ -250,17 +252,17 @@ async function deviceItems(deviceId: number, user: AuthUser) {
       continue;
     }
     const fileKey = unknownKey(r);
-    unknowns.set(fileKey, { fileKey, sha1: r.sha1, headerlessSha1: r.headerlessSha1, name: path.posix.basename(r.path).slice(0, 255), size: r.size, systemSlug: r.systemSlug, baseGameId: r.baseGameId ?? r.gameId });
+    unknowns.set(fileKey, { fileKey, sha1: r.sha1, headerlessSha1: r.headerlessSha1, name: path.posix.basename(r.path).slice(0, 255), size: r.size, systemSlug: r.systemSlug, baseGameId: r.baseGameId ?? r.gameId, folder: path.posix.basename(path.posix.dirname(r.path)).slice(0, 255) });
   }
   return { items: [...items.values()], unknowns: [...unknowns.values()] };
 }
 
 /** The files no database identified, kept as such (once per content), as list items */
-async function unknownItems(files: UnknownInput[]) {
+async function unknownItems(files: (UnknownInput & { note?: string })[]) {
   if (!files.length) return [];
   const systems = new Map((await prisma.system.findMany({ select: { id: true, slug: true } })).map((s) => [s.slug, s.id]));
   await prisma.unknownFile.createMany({
-    data: files.map(({ systemSlug, ...f }) => ({ ...f, systemId: systemSlug ? (systems.get(systemSlug) ?? null) : null })),
+    data: files.map(({ systemSlug, note: _note, ...f }) => ({ ...f, systemId: systemSlug ? (systems.get(systemSlug) ?? null) : null })),
     skipDuplicates: true,
   });
   const kept = await prisma.unknownFile.findMany({ where: { fileKey: { in: files.map((f) => f.fileKey) } }, select: { id: true, fileKey: true } });
@@ -426,6 +428,7 @@ listsRouter.get('/:id/export', async (req, res) => {
     rom: i.rom?.name,
     hack: i.hack?.title,
     file: i.unknown?.name,
+    folder: i.unknown?.system ? undefined : (i.unknown?.folder ?? undefined),
     size: i.unknown ? Number(i.unknown.size) : undefined,
     sha1: i.rom?.parts[0]?.sha1 ?? i.hack?.sha1 ?? i.unknown?.sha1 ?? undefined,
     note: i.note ?? undefined,
@@ -455,6 +458,7 @@ listsRouter.post('/import', async (req, res) => {
           rom: z.string().optional(),
           hack: z.string().optional(),
           file: z.string().max(255).optional(),
+          folder: z.string().max(255).optional(),
           size: z.number().int().nonnegative().optional(),
           sha1: z.string().regex(/^[0-9a-f]{40}$/i).optional(),
           note: z.string().optional(),
@@ -475,7 +479,9 @@ listsRouter.post('/import', async (req, res) => {
     }
     // Files no database identified come back as such, by their content
     if (it.type === 'unknown') {
-      if (it.sha1 && it.file) unknowns.push({ fileKey: it.sha1.toLowerCase(), sha1: it.sha1.toLowerCase(), headerlessSha1: null, name: it.file, size: BigInt(it.size ?? 0), systemSlug: it.system || null, baseGameId: null, note: it.note });
+      const sha1 = it.sha1?.toLowerCase() ?? null;
+      const file = { sha1, systemSlug: it.system || null, size: BigInt(it.size ?? 0), path: it.file ?? '' };
+      if (sha1 && it.file) unknowns.push({ fileKey: unknownKey(file), sha1, headerlessSha1: null, name: it.file, size: BigInt(it.size ?? 0), systemSlug: it.system || null, baseGameId: null, folder: it.folder ?? null, note: it.note });
       else unresolved.push(it);
       continue;
     }
@@ -526,7 +532,7 @@ listsRouter.get('/:id/download', requirePerm('roms.download'), async (req, res) 
   zip.on('error', (e: Error) => res.destroy(e));
   zip.pipe(res);
   for (const it of items) {
-    const folder = (fw?.systemMap as Record<string, { folder: string }> | undefined)?.[it.systemSlug]?.folder ?? it.systemSlug;
+    const folder = it.folder ?? (fw?.systemMap as Record<string, { folder: string }> | undefined)?.[it.systemSlug]?.folder ?? it.systemSlug;
     for (const f of it.files) {
       const name = path.posix.join(fw ? fw.romsRoot : '', folder, f.destName);
       if (f.archiveEntry) zip.append(extractEntryStream(f.absPath, f.archiveEntry), { name });
