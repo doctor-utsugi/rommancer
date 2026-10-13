@@ -77,7 +77,7 @@ export function DevicePage() {
   const device = useQuery({ queryKey: ['device', id], queryFn: () => get<any>(`/devices/${id}`) })
   const inventory = useQuery({
     queryKey: ['device-inventory', id],
-    queryFn: () => get<{ allowPull: boolean; inventoryAt: string | null; summary: Summary; items: InventoryItem[] }>(`/devices/${id}/inventory`),
+    queryFn: () => get<{ allowPull: boolean; inventoryAt: string | null; romsDir: string; summary: Summary; items: InventoryItem[] }>(`/devices/${id}/inventory`),
     refetchInterval: 15_000,
   })
   const progress = useQuery({
@@ -173,6 +173,10 @@ export function DevicePage() {
       </p>
       </div>
       <SyncState deviceId={id!} />
+      {/* A list received empty: most often the roms are in another folder (an SD card) the client did not look in */}
+      {inventory.data?.inventoryAt && !inventory.data.items.length && (
+        <p className="rounded-lg border border-amber-500/40 bg-amber-500/10 p-3 text-sm">{t('more.device.noRoms', { dir: inventory.data.romsDir })}</p>
+      )}
       {d.sshHost && (
         <p className="text-sm text-muted-foreground">
           {t('more.device.ssh', { address: `${d.sshUser ?? 'root'}@${d.sshHost}:${d.sshPort ?? 22}` })} · {t('more.device.sshAt')}: {formatDate(d.sshAt)}

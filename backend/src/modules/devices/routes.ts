@@ -298,6 +298,8 @@ async function listsPending(d: Awaited<ReturnType<typeof ownDevice>>) {
     copyBytes: missing.reduce((n, f) => n + f.size, 0),
     delete: prune ? prune.del.length + prune.upload.length : 0,
     inventoryAt: d.inventoryAt,
+    // Where its client looks for roms, to tell when it found none
+    romsDir: path.posix.join(d.rootPath, layoutOf(d).romsRoot),
     downloading: live?.current ? { done: live.done, total: Math.max(live.expected, live.done + 1) } : null,
   };
 }

@@ -59,8 +59,22 @@ class SyncEngine(private val context: Context, private val store: Store, private
         return hints
     }
 
+    /**
+     * Where this device keeps its roms: the folder ES-DE was told to use, else a ROMs folder at the top of internal
+     * storage or of an SD card (the one with most system folders); null when there is none
+     */
+    fun romsFolder(): File? {
+        val esde = File(root, "ES-DE/settings/es_settings.xml").takeIf { it.canRead() }?.readText()
+        Regex("<string name=\"ROMDirectory\" value=\"([^\"]+)\"").find(esde.orEmpty())?.groupValues?.get(1)
+            ?.let(::File)?.takeIf { it.isAbsolute && it.isDirectory }?.let { return it }
+        val volumes = listOf(root) + context.getExternalFilesDirs(null).filterNotNull().map { File(it.path.substringBefore("/Android/")) }
+        return volumes.distinct().flatMap { v -> listOf("ROMs", "Roms", "roms").map { File(v, it) } }
+            .filter { it.isDirectory }
+            .maxByOrNull { dir -> dir.listFiles()?.count { it.isDirectory && !it.name.startsWith(".") } ?: 0 }
+    }
+
     private fun savesNextToRoms(): Boolean {
-        val roms = File(root, "ROMs").listFiles() ?: return false
+        val roms = (romsFolder() ?: File(root, "ROMs")).listFiles() ?: return false
         return roms.any { system -> system.listFiles()?.any { it.isDirectory && it.list()?.any { n -> n.endsWith(".srm") || n.contains(".state") } == true } == true }
     }
 
@@ -72,7 +86,9 @@ class SyncEngine(private val context: Context, private val store: Store, private
         val api = Api(server, store.token ?: error("Not linked"))
         report(Progress("connecting"))
         loadCache()
-        val roots = api.text("/agent/roots").lines().mapNotNull { l -> l.split('\t', limit = 2).takeIf { it.size == 2 } }
+        // The server keeps where the roms are, as found here
+        val found = romsFolder()?.let { mapOf("X-Device-Roms-B64" to Api.b64(it.path)) }.orEmpty()
+        val roots = api.text("/agent/roots", headers = found).lines().mapNotNull { l -> l.split('\t', limit = 2).takeIf { it.size == 2 } }
         val romsDir = roots.firstOrNull { it[0] == "roms" }?.get(1)?.let(::File)
         val saveDirs = roots.filter { it[0] == "saves" }.map { File(it[1]) }
         val exts = roots.firstOrNull { it[0] == "exts" }?.get(1)?.split(' ')?.filter { it.isNotBlank() }.orEmpty()

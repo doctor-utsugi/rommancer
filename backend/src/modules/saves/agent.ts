@@ -1283,8 +1283,21 @@ agentRouter.get('/ssh-key', async (req, res) => {
 });
 
 // Folders the client must list: roms (to know what is installed) and save locations
+/**
+ * A device's roms folder as its client found it (its frontend's setting, or a ROMs folder on its SD card): kept
+ * relative to its root, so every path built from root and roms folder lands there
+ */
+async function romsWhereTold<D extends AgentDevice>(device: D, told: string): Promise<D> {
+  if (!ROOT.test(told) || told.length > 512 || device.homeRoot) return device;
+  const layout = layoutOf(device);
+  if (trimRoot(told) === trimRoot(path.posix.join(device.rootPath, layout.romsRoot))) return device;
+  const overrides = { ...((device.overrides ?? {}) as Record<string, unknown>), romsRoot: path.posix.relative(device.rootPath, trimRoot(told)) };
+  await prisma.device.update({ where: { id: device.id }, data: { overrides } });
+  return { ...device, overrides };
+}
+
 agentRouter.get('/roots', async (req, res) => {
-  const device = await deviceFromToken(req);
+  const device = await romsWhereTold(await deviceFromToken(req), b64(req.header('x-device-roms-b64')));
   const layout = layoutOf(device);
   const abs = (p: string) => path.posix.join(device.rootPath, p);
   // Saves and states each next to the roms or in their own folder
