@@ -1353,7 +1353,9 @@
       "denied_one": "{{count}} file the server lacks cannot be asked from your consoles: your account cannot upload roms.",
       "denied_other": "{{count}} files the server lacks cannot be asked from your consoles: your account cannot upload roms.",
       "nowhere_one": "{{count}} file is neither on the server nor on any of your consoles.",
-      "nowhere_other": "{{count}} files are neither on the server nor on any of your consoles."
+      "nowhere_other": "{{count}} files are neither on the server nor on any of your consoles.",
+      "noSystem_one": "{{count}} file is not a game of any system (an app shortcut or a launcher of the console): it stays in the list, but the server does not keep it.",
+      "noSystem_other": "{{count}} files are not games of any system (app shortcuts or launchers of the console): they stay in the list, but the server does not keep them."
     }
   }
 }

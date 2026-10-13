@@ -113,10 +113,17 @@ export async function resolveListFiles(listId: number, pref: RomPreference = {})
   return { items: out, missing };
 }
 
-/** The server's copies of files no database identified, by sha1 ("h:" + headerless sha1 for the same content without its header) */
-export async function unknownFilesOnServer(us: { sha1: string | null; headerlessSha1: string | null }[]) {
-  const sha1s = us.flatMap((u) => (u.sha1 ? [u.sha1] : []));
-  const bare = us.flatMap((u) => (u.headerlessSha1 ? [u.headerlessSha1] : []));
+type UnknownRow = { id: number; sha1: string | null; headerlessSha1: string | null; systemId: number | null; size: bigint; name: string };
+
+/**
+ * The server's copies of files no database identified: the same content, or the same without its header; a file the
+ * device never hashed (a big disc image) by the same name and size, whose content is kept from then on. Only files
+ * of a system: the server keeps nothing else
+ */
+export async function unknownFilesOnServer(us: UnknownRow[]) {
+  const kept = us.filter((u) => u.systemId !== null);
+  const sha1s = kept.flatMap((u) => (u.sha1 ? [u.sha1] : []));
+  const bare = kept.flatMap((u) => (u.headerlessSha1 ? [u.headerlessSha1] : []));
   const or = [...(sha1s.length ? [{ sha1: { in: sha1s } }] : []), ...(bare.length ? [{ headerlessSha1: { in: bare } }] : [])];
   const files = or.length ? await prisma.romFile.findMany({ where: { OR: or }, include: { romPath: true } }) : [];
   const by = new Map<string, (typeof files)[number]>();
@@ -124,24 +131,43 @@ export async function unknownFilesOnServer(us: { sha1: string | null; headerless
     if (f.sha1) by.set(f.sha1, f);
     if (f.headerlessSha1 && !by.has(`h:${f.headerlessSha1}`)) by.set(`h:${f.headerlessSha1}`, f);
   }
-  return (u: { sha1: string | null; headerlessSha1: string | null }) => (u.sha1 ? by.get(u.sha1) : undefined) ?? (u.headerlessSha1 ? by.get(`h:${u.headerlessSha1}`) : undefined) ?? null;
+  const blind = kept.filter((u) => !u.sha1);
+  const sameSize = blind.length ? await prisma.romFile.findMany({ where: { fileSize: { in: blind.map((u) => u.size) }, archiveEntry: null }, include: { romPath: true } }) : [];
+  const byName = new Map(sameSize.map((f) => [`${path.posix.basename(f.relativePath)}\0${f.fileSize}`, f]));
+  const found = new Map<number, (typeof files)[number]>();
+  for (const u of kept) {
+    const f = (u.sha1 ? by.get(u.sha1) : undefined) ?? (u.headerlessSha1 ? by.get(`h:${u.headerlessSha1}`) : undefined) ?? (u.sha1 ? undefined : byName.get(`${u.name}\0${u.size}`));
+    if (f) found.set(u.id, f);
+  }
+  for (const u of blind) {
+    const f = found.get(u.id);
+    if (f?.sha1) await prisma.unknownFile.update({ where: { id: u.id }, data: { sha1: f.sha1, headerlessSha1: f.headerlessSha1 } });
+  }
+  return (u: { id: number }) => found.get(u.id) ?? null;
 }
 
-/** How a file no database identified is kept: by its content, or by its system, size and name when it was never hashed */
+/**
+ * How a file no database identified is kept: a game of a system by its content; one never hashed, and anything
+ * that is not a game of a system (an app shortcut, an empty launcher file), by its system, size, name and content
+ */
 export function unknownKey(f: { sha1: string | null; systemSlug: string | null; size: bigint; path: string }) {
-  return f.sha1 ?? crypto.createHash('sha1').update(`${f.systemSlug ?? ''}\0${f.size}\0${path.posix.basename(f.path).slice(0, 255)}`).digest('hex');
+  if (f.sha1 && f.systemSlug && Number(f.size) > 0) return f.sha1;
+  const name = path.posix.basename(f.path).slice(0, 255);
+  return crypto.createHash('sha1').update(`${f.systemSlug ?? ''}\0${f.size}\0${name}${f.sha1 ? `\0${f.sha1}` : ''}`).digest('hex');
 }
 
 /**
  * Asks the user's consoles for the files no database identified that the server lacks (UNKNOWNIDS), so lists can
- * copy them to other devices. Says what could not be asked for: the user may not upload roms (DENIED), the only
- * consoles with the file do not let the server fetch roms (NOTALLOWED), or no console of theirs has it (NOWHERE)
+ * copy them to other devices. Says what could not be asked for: files of no system the server keeps (NOSYSTEM), the
+ * user may not upload roms (DENIED), the only consoles with the file do not let the server fetch roms (NOTALLOWED),
+ * or no console of theirs has it (NOWHERE)
  */
 export async function pullUnknownFiles(userId: number, unknownIds: number[]) {
-  const out = { asked: 0, notAllowed: 0, nowhere: 0, denied: false };
+  const out = { asked: 0, noSystem: 0, notAllowed: 0, nowhere: 0, denied: false };
   const unknowns = unknownIds.length ? await prisma.unknownFile.findMany({ where: { id: { in: unknownIds } } }) : [];
+  out.noSystem = unknowns.filter((u) => u.systemId === null).length;
   const copy = await unknownFilesOnServer(unknowns);
-  const lacking = unknowns.filter((u) => !copy(u));
+  const lacking = unknowns.filter((u) => u.systemId !== null && !copy(u));
   if (!lacking.length) return out;
   const user = await prisma.user.findUniqueOrThrow({ where: { id: userId }, select: { role: true, permissions: true } });
   if (!hasPermission({ role: user.role, permissions: normalizePermissions(user.permissions) }, 'roms.upload')) {

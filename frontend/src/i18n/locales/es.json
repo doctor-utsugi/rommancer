@@ -1353,7 +1353,9 @@
       "denied_one": "{{count}} fichero que el servidor no tiene no se puede pedir a tus consolas: tu cuenta no puede subir roms.",
       "denied_other": "{{count}} ficheros que el servidor no tiene no se pueden pedir a tus consolas: tu cuenta no puede subir roms.",
       "nowhere_one": "{{count}} fichero no está ni en el servidor ni en ninguna de tus consolas.",
-      "nowhere_other": "{{count}} ficheros no están ni en el servidor ni en ninguna de tus consolas."
+      "nowhere_other": "{{count}} ficheros no están ni en el servidor ni en ninguna de tus consolas.",
+      "noSystem_one": "{{count}} fichero no es un juego de ningún sistema (un acceso a una app o un lanzador de la consola): queda en la lista, pero el servidor no lo guarda.",
+      "noSystem_other": "{{count}} ficheros no son juegos de ningún sistema (accesos a apps o lanzadores de la consola): quedan en la lista, pero el servidor no los guarda."
     }
   }
 }
