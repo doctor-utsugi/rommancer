@@ -78,6 +78,8 @@ function otherMocks(req: http.IncomingMessage, res: http.ServerResponse, url: UR
     }
     return true;
   }
+  // Key check done when a user saves their TheGamesDB key
+  if (p === '/tgdb/v1/Genres') return json(res, { code: 200, status: 'Success', data: { genres: {} } });
   if (p === '/tgdb/v1.1/Games/ByGameName') {
     hit('tgdb');
     const name = url.searchParams.get('name') ?? '';
@@ -126,6 +128,12 @@ const ssMock = http.createServer(async (req, res) => {
   let body = '';
   for await (const c of req) body += c;
   if (otherMocks(req, res, url, body)) return;
+  // Account check done when a user saves their ScreenScraper login
+  if (url.pathname.endsWith('/ssuserInfos.php')) {
+    res.setHeader('Content-Type', 'application/json');
+    res.end(JSON.stringify({ response: { ssuser: { id: url.searchParams.get('ssid') ?? '' } } }));
+    return;
+  }
   if (url.pathname.endsWith('/jeuInfos.php')) {
     ssRequests++;
     ssUsers.push(url.searchParams.get('ssid') ?? '');
@@ -1727,7 +1735,7 @@ test('sync client: roms with non-DAT names share saves by content hash', async (
   assert.equal(save.game?.title, 'Super Mario Bros. 3', 'the save knows its game from the rom hash');
 });
 
-test('sync client: several cores with their own file for one game keep separate saves', async () => {
+test('sync client: a game with files in several core folders syncs the core the device wrote last', async () => {
   const client = path.join(ROOT, 'clients/linux/rommancer-sync.sh');
   const dir = path.join(DATA, 'sync-cores');
   fs.rmSync(dir, { recursive: true, force: true });
@@ -1741,18 +1749,22 @@ test('sync client: several cores with their own file for one game keep separate 
   const rom = 'Some Game (USA)';
   fs.mkdirSync(path.join(thor, 'ROMs/nes'), { recursive: true });
   fs.writeFileSync(path.join(thor, 'ROMs/nes', `${rom}.nes`), crypto.randomBytes(2048));
-  // FCEUmm is known; "Mesen" is a core the server has never seen and registers on the fly
-  for (const [core, content] of [['FCEUmm', 'FCEUMM-SAVE'], ['Mesen', 'MESEN-SAVE']]) {
+  // FCEUmm is known; "Mesen" is a core the server has never seen and registers on the fly. The game's core is the one
+  // whose file the device wrote last (Mesen here); the other folder is a leftover that neither uploads nor is overwritten
+  const when = Date.now() / 1000;
+  for (const [core, content, age] of [['FCEUmm', 'FCEUMM-SAVE', 120], ['Mesen', 'MESEN-SAVE', 0]] as const) {
     fs.mkdirSync(path.join(thor, 'ROMs/nes', core), { recursive: true });
-    fs.writeFileSync(path.join(thor, 'ROMs/nes', core, `${rom}.srm`), content);
+    const file = path.join(thor, 'ROMs/nes', core, `${rom}.srm`);
+    fs.writeFileSync(file, content);
+    fs.utimesSync(file, when - age, when - age);
   }
-  assert.match((await run()).stdout, /2 up, 0 down, 0 errors/);
-  assert.match((await run()).stdout, /0 up, 0 down, 0 errors/, 'no core overwrites another');
-  assert.equal(fs.readFileSync(path.join(thor, 'ROMs/nes/FCEUmm', `${rom}.srm`), 'utf8'), 'FCEUMM-SAVE');
+  assert.match((await run()).stdout, /1 up, 0 down, 0 errors/);
+  assert.match((await run()).stdout, /0 up, 0 down, 0 errors/, 'nothing changed');
+  assert.equal(fs.readFileSync(path.join(thor, 'ROMs/nes/FCEUmm', `${rom}.srm`), 'utf8'), 'FCEUMM-SAVE', 'the leftover is left alone');
   assert.equal(fs.readFileSync(path.join(thor, 'ROMs/nes/Mesen', `${rom}.srm`), 'utf8'), 'MESEN-SAVE');
   const { prisma } = await import('../src/lib/prisma.js');
   const saves = await prisma.save.findMany({ where: { baseName: rom }, include: { emulator: true } });
-  assert.deepEqual(saves.map((s) => s.emulator.core).sort(), ['FCEUmm', 'Mesen']);
+  assert.deepEqual(saves.map((s) => s.emulator.core), ['Mesen']);
 });
 
 test('sync client: updates itself from the server', async () => {
@@ -1903,10 +1915,12 @@ test('sync client: roms of assigned lists, save before a game, conflicts resolve
   // Arrivals older than two weeks drop out, and the record forgets them
   const record = path.join(dir, 'roms-b-state', 'received-roms');
   fs.writeFileSync(record, fs.readFileSync(record, 'utf8').replace(/^\d+/gm, String(Math.floor(Date.now() / 1000) - 15 * 86400)));
+  // The clients are English only: the console's language changes nothing
   await collections('es_ES.UTF-8');
-  assert.equal(fs.readFileSync(path.join(coll, 'custom-Rommancer - Nuevos.cfg'), 'utf8'), '');
+  assert.equal(fs.readFileSync(path.join(coll, 'custom-Rommancer - New.cfg'), 'utf8'), '');
   assert.equal(fs.readFileSync(record, 'utf8'), '');
-  assert.deepEqual(fs.readFileSync(path.join(coll, 'custom-Rommancer - Con partida.cfg'), 'utf8').trim().split('\n'), [romPath(b)]);
+  assert.ok(!fs.existsSync(path.join(coll, 'custom-Rommancer - Nuevos.cfg')));
+  assert.deepEqual(fs.readFileSync(path.join(coll, 'custom-Rommancer - With saves.cfg'), 'utf8').trim().split('\n'), [romPath(b)]);
 });
 
 test('sync client: the console chooses its own lists', async () => {
@@ -1981,9 +1995,13 @@ test('sync client: saves of a rom kept in a subfolder of its system sync, and th
   fs.writeFileSync(path.join(root, 'roms/snes/Blank Start.sfc'), crypto.randomBytes(2048));
   fs.writeFileSync(path.join(saves, 'Blank Start.srm'), Buffer.alloc(8192, 0xff));
   assert.match((await run('sync')).stdout, /sync: 3 up, 0 down, 0 errors/);
-  // The web hides only the blank one; a savestate saved once and a save with content show
-  const listed = (await api('GET', '/saves')).json.filter((x: any) => ['Nested Quest 2', 'Blank Start'].includes(x.baseName));
-  assert.deepEqual(listed.map((x: any) => `${x.baseName}:${x.kind}:${x.unplayed}`).sort(), ['Blank Start:SAVE:true', 'Nested Quest 2:SAVE:false', 'Nested Quest 2:STATE:false']);
+  // The web hides saves the game never changed (one version) and manual savestates always show
+  const unplayed = async () => (await api('GET', '/saves')).json.filter((x: any) => ['Nested Quest 2', 'Blank Start'].includes(x.baseName)).map((x: any) => `${x.baseName}:${x.kind}:${x.unplayed}`).sort();
+  assert.deepEqual(await unplayed(), ['Blank Start:SAVE:true', 'Nested Quest 2:SAVE:true', 'Nested Quest 2:STATE:false']);
+  // Playing changes the save: a second version, and it shows
+  fs.writeFileSync(path.join(saves, 'Nested Quest 2.srm'), crypto.randomBytes(8192));
+  assert.match((await run('sync')).stdout, /sync: 1 up, 0 down, 0 errors/);
+  assert.deepEqual(await unplayed(), ['Blank Start:SAVE:true', 'Nested Quest 2:SAVE:false', 'Nested Quest 2:STATE:false']);
   const { prisma } = await import('../src/lib/prisma.js');
   const stored = await prisma.save.findMany({ where: { baseName: 'Nested Quest 2' }, select: { kind: true } });
   assert.deepEqual(stored.map((x) => x.kind).sort(), ['SAVE', 'STATE']);
