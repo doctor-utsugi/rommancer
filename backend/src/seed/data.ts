@@ -8,7 +8,7 @@ export interface SystemSeed {
   mediaType?: 'rom' | 'disc' | 'arcade';
   raConsoleId?: number;
   ssSystemId?: number;
-  // Nombres alternativos de DAT (Redump, libretro, etc.)
+  // Alternative DAT names (Redump, libretro, etc.)
   aliases?: string[];
 }
 
@@ -114,7 +114,7 @@ export interface EmulatorSeed {
   stateExt?: string;
 }
 
-// core = nombre de la carpeta que usa RetroArch con sort_savefiles_enable
+// core = folder name RetroArch uses with sort_savefiles_enable
 export const emulators: EmulatorSeed[] = [
   { slug: 'ra-fceumm', name: 'RetroArch FCEUmm', core: 'FCEUmm', saveExt: '.srm', stateExt: '.state' },
   { slug: 'ra-nestopia', name: 'RetroArch Nestopia', core: 'Nestopia', saveExt: '.srm', stateExt: '.state' },
@@ -188,7 +188,7 @@ export const emulators: EmulatorSeed[] = [
   ).map(([core, name]): EmulatorSeed => ({ slug: `minui-${core}`, name: `NextUI ${name}`, saveFormat: core === 'pcsx_rearmed' ? 'ps1card' : 'raw', saveExt: '.sav', stateExt: '.st' })),
 ];
 
-// Emulador por defecto de cada sistema en firmwares basados en RetroArch
+// Default emulator of each system on RetroArch-based firmwares
 export const raDefaults: Record<string, string> = {
   nes: 'ra-fceumm',
   fds: 'ra-fceumm',
@@ -364,6 +364,7 @@ export const consoles: { name: string; manufacturer: string; formFactor: string;
   { name: 'Nintendo DS', manufacturer: 'Nintendo', formFactor: 'handheld', wifiBands: 'none' },
   { name: 'Nintendo DSi', manufacturer: 'Nintendo', formFactor: 'handheld' },
   { name: 'Nintendo 3DS', manufacturer: 'Nintendo', formFactor: 'handheld' },
+  { name: 'Nintendo Switch', manufacturer: 'Nintendo', formFactor: 'hybrid', wifiBands: 'dual' },
   { name: 'PC', manufacturer: 'Generic', formFactor: 'desktop' },
   { name: 'Other', manufacturer: 'Generic', formFactor: 'handheld' },
 ];

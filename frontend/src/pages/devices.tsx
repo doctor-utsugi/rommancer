@@ -13,6 +13,7 @@ import { Checkbox } from '@/components/ui/checkbox'
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
+import { DeviceArt } from '@/components/device-art'
 import { Empty, Field, JobProgress, NativeSelect, PageHeader, errMsg, formatDate, useJob, useSystems } from '@/components/common'
 
 export function DevicesPage() {
@@ -88,8 +89,9 @@ export function DevicesPage() {
           {data.map((d) => (
             <Card key={d.id}>
               <CardHeader>
-                <CardTitle className="flex items-center justify-between gap-2">
-                  {d.name}
+                <CardTitle className="flex items-center justify-between gap-3">
+                  <DeviceArt consoleName={d.console.name} firmwareSlug={d.firmware.slug} formFactor={d.console.formFactor} />
+                  <span className="min-w-0 flex-1 truncate">{d.name}</span>
                   <Badge variant="outline">{d.connType}</Badge>
                 </CardTitle>
               </CardHeader>
@@ -178,7 +180,7 @@ function ScriptsDialog({ device, onClose }: { device: any; onClose(): void }) {
   const [server, setServer] = useState(location.origin)
   const download = async () => {
     try {
-      // Descarga con fetch para enviar el token de acceso en la cabecera
+      // Download via fetch to send the access token in the header
       const r = await fetch(`/api/v1/devices/${device.id}/agent-script`, {
         method: 'POST',
         headers: { Authorization: `Bearer ${tokens.access}`, 'Content-Type': 'application/json' },

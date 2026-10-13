@@ -16,6 +16,7 @@ import { Progress } from '@/components/ui/progress'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Empty, NativeSelect, PageHeader, errMsg, formatBytes, formatDate } from '@/components/common'
+import { DeviceArt } from '@/components/device-art'
 import { DeviceConfigTab } from '@/components/device-config'
 import { ListFormDialog } from '@/pages/lists'
 
@@ -161,12 +162,15 @@ export function DevicePage() {
           </Button>
         )}
       </PageHeader>
+      <div className="flex items-center gap-3">
+        <DeviceArt consoleName={d.console?.name} firmwareSlug={d.firmware?.slug} formFactor={d.console?.formFactor} className="h-12 w-[4.5rem]" />
       <p className="text-sm text-muted-foreground">
         {d.console?.name} · {d.firmware?.name} · {t('more.device.games', { count: items.length })} · {t('more.devices.lastSeen')}: {formatDate(d.lastSeenAt)}
         {d.clientVersion && ` · ${t('more.device.client')} ${d.clientVersion}${d.clientUpdatedAt ? ` (${t('more.device.clientSince', { date: formatDate(d.clientUpdatedAt) })})` : ''}`}
         {d.offline && ` · ${t('more.offline.help')}`}
         {inventory.data?.inventoryAt && ` · ${t('more.device.inventoryAt')}: ${formatDate(inventory.data.inventoryAt)}`}
       </p>
+      </div>
       <SyncState deviceId={id!} />
       {d.sshHost && (
         <p className="text-sm text-muted-foreground">

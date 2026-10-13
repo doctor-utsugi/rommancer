@@ -39,6 +39,57 @@ const isPaused = (c: Transfer) => !!c.paused && c.paused === (c.open ?? 0) - (c.
 const told = (i: Item) => i.kind === 'copy' || i.kind === 'download' || i.kind === 'job'
 
 const PANEL_KEY = 'activityCollapsed'
+const WINDOW_MS = 60_000
+const MIN_SPAN_MS = 6_000
+const MAX_ETA_S = 7 * 86_400
+
+/** Progress of an entry as work done and work left, in bytes when known and in items otherwise; null when it is not under way */
+function workOf(i: Item): { done: number; total: number } | null {
+  if (i.kind === 'copy' || i.kind === 'download') {
+    if (i.kind === 'copy' && isPaused(i)) return null
+    return i.bytesTotal > 0 ? { done: i.bytesDone, total: i.bytesTotal } : { done: i.done + (i.failed ?? 0), total: i.total }
+  }
+  if (i.kind === 'job' && i.status === 'RUNNING' && i.total > 0) return { done: i.processed, total: i.total }
+  return null
+}
+
+export function formatDuration(seconds: number) {
+  const s = Math.max(1, Math.round(seconds))
+  if (s < 60) return `${s} s`
+  const min = Math.round(s / 60)
+  if (min < 60) return `${min} min`
+  const h = Math.floor(min / 60)
+  return min % 60 ? `${h} h ${min % 60} min` : `${h} h`
+}
+
+/** Time until everything under way is done: the slowest entry, from how fast each moved over the last minute */
+function useEta(items: Item[] | undefined) {
+  const samples = useRef(new Map<string, { t: number; v: number }[]>())
+  const [eta, setEta] = useState<number | null>(null)
+  useEffect(() => {
+    if (!items) return
+    const now = Date.now()
+    const live = new Set<string>()
+    let slowest: number | null = null
+    for (const i of items) {
+      const w = workOf(i)
+      if (!w) continue
+      live.add(i.key)
+      const list = (samples.current.get(i.key) ?? []).filter((s) => now - s.t <= WINDOW_MS)
+      if (list.length && w.done < list[list.length - 1].v) list.length = 0
+      list.push({ t: now, v: w.done })
+      samples.current.set(i.key, list)
+      const first = list[0]
+      const span = now - first.t
+      if (span < MIN_SPAN_MS || w.done <= first.v) continue
+      const left = ((w.total - w.done) / (w.done - first.v)) * (span / 1000)
+      if (left < MAX_ETA_S) slowest = Math.max(slowest ?? 0, left)
+    }
+    for (const k of samples.current.keys()) if (!live.has(k)) samples.current.delete(k)
+    setEta(slowest)
+  }, [items])
+  return eta
+}
 
 /**
  * Everything under way, on every page: copies from consoles, roms going to them, configuration changes and syncs
@@ -72,6 +123,7 @@ export function ActivityDock() {
     refetchInterval: (q) => (q.state.data?.length ? 3_000 : 20_000),
   })
   const items = (data ?? []).filter((i) => i.kind !== 'copy' || i.active)
+  const eta = useEta(data)
   const copying = items.some((i) => i.kind === 'copy' && !isPaused(i))
 
   // Closing the tab does not stop a copy, but the user asked to be warned while one runs
@@ -112,6 +164,7 @@ export function ActivityDock() {
           {running > 0 ? <Loader2 className="size-4 shrink-0 animate-spin" /> : <AlertTriangle className="size-4 shrink-0 text-amber-600" />}
           <span className="truncate">
             {running > 0 && t('more.activity.running', { count: running })}
+            {running > 0 && eta !== null && <span className="font-normal text-muted-foreground"> · {t('more.activity.eta', { time: formatDuration(eta) })}</span>}
             {running > 0 && attention > 0 && ' · '}
             {attention > 0 && <span className="text-amber-600">{t('more.activity.attention', { count: attention })}</span>}
           </span>
