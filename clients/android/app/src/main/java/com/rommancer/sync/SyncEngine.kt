@@ -718,6 +718,10 @@ class SyncEngine(private val context: Context, private val store: Store, private
         return dirs to exts
     }
 
+    /** Folders whose every file is part of a save (3DS save folders): each folder of Azahar's, to its deepest */
+    fun folderSaveTargets(): List<File> =
+        CtrSaves.titleDirs(root).filter { it.isDirectory }.flatMap { d -> d.walkTopDown().filter { it.isDirectory }.toList() }
+
     fun isSaveFile(name: String, exts: List<String>): Boolean = !name.startsWith(".") && isSave(name, exts)
 
     private fun isSave(name: String, exts: List<String>): Boolean {

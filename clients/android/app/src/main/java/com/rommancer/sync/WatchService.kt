@@ -57,14 +57,25 @@ class WatchService : Service() {
     private fun watch() {
         val (dirs, saveExts) = runCatching { engine().watchTargets() }.getOrElse { return }
         exts = saveExts
+        val folders = runCatching { engine().folderSaveTargets() }.getOrDefault(emptyList())
         observers.forEach { it.stopWatching() }
-        observers = dirs.map { dir -> observer(dir).also { it.startWatching() } }
+        observers = dirs.map { dir -> observer(dir).also { it.startWatching() } } + folders.map { dir -> folderObserver(dir).also { it.startWatching() } }
     }
 
     @Suppress("DEPRECATION")
     private fun observer(dir: File) = object : FileObserver(dir.path, CLOSE_WRITE or MOVED_TO) {
         override fun onEvent(event: Int, path: String?) {
             if (path != null && engine().isSaveFile(path.lowercase(), exts)) later()
+        }
+    }
+
+    /** A 3DS save folder: any file written counts, and a new folder (a game's first save) is watched too */
+    @Suppress("DEPRECATION")
+    private fun folderObserver(dir: File) = object : FileObserver(dir.path, CLOSE_WRITE or MOVED_TO or CREATE) {
+        override fun onEvent(event: Int, path: String?) {
+            if (path == null || path.startsWith(".")) return
+            if (event and (CREATE or MOVED_TO) != 0 && File(dir, path).isDirectory) worker.execute { watch() }
+            if (event and (CLOSE_WRITE or MOVED_TO) != 0 || File(dir, path).isDirectory) later()
         }
     }
 
