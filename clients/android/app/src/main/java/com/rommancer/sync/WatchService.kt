@@ -177,9 +177,9 @@ class WatchService : Service() {
     }
 }
 
-/** Starts the save watcher when the console is switched on */
+/** Starts the save watcher when the console is switched on, and again after the app updates (which stops it) */
 class BootReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
-        if (intent.action == Intent.ACTION_BOOT_COMPLETED) WatchService.start(context)
+        if (intent.action == Intent.ACTION_BOOT_COMPLETED || intent.action == Intent.ACTION_MY_PACKAGE_REPLACED) WatchService.start(context)
     }
 }
