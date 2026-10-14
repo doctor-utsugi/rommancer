@@ -82,6 +82,10 @@ export async function ingestVerified(tmp: string, originalName: string, u: Inges
       return ({ status: 'already-owned', hackId: hack.id });
     }
     destName = hack.title + path.extname(original);
+  } else {
+    // Known only to RetroAchievements: the same content may be stored already, unverified
+    const same = await prisma.romFile.findFirst({ where: { sha1: h.sha1 }, select: { id: true } });
+    if (same) return { status: 'already-owned', file: { id: same.id } };
   }
   const { file, rel } = await placeFile(tmp, {
     system,
