@@ -165,7 +165,7 @@ async function learnCores(device: AgentDevice, present: Map<string, string>, mti
 }
 
 /** A RetroArch core as a frontend names it (a file, "mgba_libretro_android.so", or "mgba"): the name of its save folder */
-function coreName(core: string) {
+function coreNameOf(core: string) {
   const stem = path.posix.basename(core.replace(/\\/g, '/')).replace(/\.(so|dll|dylib)$/i, '').replace(/_android$/i, '').replace(/_libretro$/i, '');
   return CORE_NAMES[stem] ?? null;
 }
@@ -174,18 +174,30 @@ function coreName(core: string) {
  * The cores a frontend on the device runs games with (Daijishō's players, ES-DE's emulators): "fsys<TAB>folder<TAB>
  * core<TAB>platform" for a system's games, "fgame<TAB>rom<TAB>core" for a game with one of its own. Taken only for
  * systems and games whose saves were never seen here (learnCores tells those), so a save arriving for a game not
- * played here yet goes to the folder of the core that will open it
+ * played here yet goes to the folder of the core that will open it. A standalone emulator ("emu:melonds") counts
+ * by its name, as a folder of a standalone emulator does (emulatorForCore); one of memory cards or save folders
+ * (DuckStation, PCSX2, PPSSPP, Dolphin) is left out: its saves are found in its own folders, whatever runs the game
  */
 async function learnFrontendCores(device: AgentDevice, systems: string[][], games: string[][]) {
   if ((!systems.length && !games.length) || !coreLayout(layoutOf(device))) return;
   const idx = await systemIndex();
+  const standalone = new Map<string, string | null>();
+  const coreName = async (core: string) => {
+    if (!core.startsWith('emu:')) return coreNameOf(core);
+    const slug = core.slice(4);
+    if (!standalone.has(slug)) {
+      const emu = await prisma.emulator.findUnique({ where: { slug } });
+      standalone.set(slug, emu && !emu.core && !isCardEmulator(emu) ? emu.name : null);
+    }
+    return standalone.get(slug)!;
+  };
   const sysBefore = (device.systemCores ?? {}) as Record<string, string>;
   const romBefore = (device.romCores ?? {}) as Record<string, string>;
   const sys = { ...sysBefore };
   const roms = { ...romBefore };
   const found: { slug: string; name: string; exact: boolean }[] = [];
   for (const [folder, core, platform] of systems) {
-    const name = coreName(core ?? '');
+    const name = await coreName(core ?? '');
     const base = path.posix.basename(folder ?? '');
     const slug = systemForFolder(idx, base)?.slug ?? (platform ? await systemForPlatform(platform) : null);
     if (name && slug) found.push({ slug, name, exact: base.toLowerCase() === slug });
@@ -194,7 +206,7 @@ async function learnFrontendCores(device: AgentDevice, systems: string[][], game
   found.sort((a, b) => Number(b.exact) - Number(a.exact));
   for (const { slug, name } of found) if (!(slug in sys)) sys[slug] = name;
   for (const [rom, core] of games) {
-    const name = coreName(core ?? '');
+    const name = await coreName(core ?? '');
     const base = path.posix.basename(rom ?? '').replace(/\.[^.]+$/, '');
     if (name && base && !(base in roms)) roms[base] = name;
   }

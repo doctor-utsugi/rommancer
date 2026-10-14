@@ -191,12 +191,19 @@ class SyncEngine(private val context: Context, private val store: Store, private
             request.append("dir\t").append(stick).append('\n')
             for (folder in psp.folders(stick)) runCatching { folderHash(folder) }.getOrNull()?.let { request.append("file\t").append(folder).append("/\t").append(it).append('\n') }
         }
-        // AetherSX2's and NetherSX2's PS2 cards, in their own folder: through Shizuku
-        if (Privileged.ready) for (dir in PS2_CARDS) {
-            for ((path, size, time) in Privileged.stats(File(root, dir).path).filter { it.first.lowercase().endsWith(".ps2") }) {
+        // Standalone emulators' memory cards, in their own folders (those in Android/data through Shizuku). A folder
+        // whose cards are named after the game's title is told as the emulator's setup ("setup<TAB>key<TAB>emulator
+        // <TAB>saves<TAB>states<TAB>layout"), so the server knows them by the folder
+        for (card in CARDS) {
+            val dir = File(root, card.dir).path
+            val files = cardFiles(dir).filter { (path) -> card.exts.any { path.lowercase().endsWith(it) } }
+            if (card.emulator != null && (files.isNotEmpty() || dirExists(dir))) {
+                request.append("setup\t").append(card.dir).append('\t').append(card.emulator).append('\t').append(dir).append("\t-\t").append(card.layout).append("\tnone\n")
+            }
+            for ((path, size, time) in files) {
                 if (!listed.add(path)) continue
                 val hash = cache[path]?.takeIf { it.first == size && it.second == time }?.third
-                    ?: Privileged.read(path)?.let { sha1Of(it) }?.also { cache[path] = Triple(size, time, it) } ?: continue
+                    ?: runCatching { sha1Of(readSave(path)) }.getOrNull()?.also { cache[path] = Triple(size, time, it) } ?: continue
                 request.append("file\t").append(path).append('\t').append(hash).append('\n')
             }
         }
@@ -404,6 +411,14 @@ class SyncEngine(private val context: Context, private val store: Store, private
         runCatching { api.text("/agent/card/ack?sha=${sha1Of(data)}", "POST", ByteArray(0), mapOf("X-Path-B64" to Api.b64(path))) }
         return true
     }
+
+    /** Files in a folder with their size and time (seconds); one in Android/data only through Shizuku */
+    private fun cardFiles(dir: String): List<Triple<String, Long, Long>> = when {
+        dir.contains("/Android/data/") -> if (Privileged.ready) Privileged.stats(dir) else emptyList()
+        else -> File(dir).listFiles()?.filter { it.isFile }?.map { Triple(it.path, it.length(), it.lastModified() / 1000) }.orEmpty()
+    }
+
+    private fun dirExists(dir: String) = if (dir.contains("/Android/data/")) Privileged.ready && Privileged.isDir(dir) else File(dir).isDirectory
 
     private fun sha1Of(data: ByteArray): String = MessageDigest.getInstance("SHA-1").digest(data).joinToString("") { "%02x".format(it) }
 
@@ -764,8 +779,20 @@ class SyncEngine(private val context: Context, private val store: Store, private
 
         private val HOLD = setOf("get", "aside", "cget")
 
-        /** The memory cards of AetherSX2 (NetherSX2 is the same app) and ARMSX2 */
-        private val PS2_CARDS = listOf("Android/data/xyz.aethersx2.android/files/memcards", "Android/data/com.armsx2/files/memcards")
+        /**
+         * A standalone emulator's memory card folder: PS2 cards hold every game's saves whatever their name; DuckStation's
+         * are named after the game's title (its default) unless shared or kept by serial, which the server knows by name
+         */
+        private class CardDir(val dir: String, val exts: List<String>, val emulator: String? = null, val layout: String = "card-title")
+
+        private val CARDS = listOf(
+            // AetherSX2 (NetherSX2 is the same app) and ARMSX2
+            CardDir("Android/data/xyz.aethersx2.android/files/memcards", listOf(".ps2")),
+            CardDir("Android/data/com.armsx2/files/memcards", listOf(".ps2")),
+            // DuckStation, in its app folder or the shared-storage one older versions used
+            CardDir("Android/data/com.github.stenzek.duckstation/files/memcards", listOf(".mcd", ".mcr"), "duckstation"),
+            CardDir("duckstation/memcards", listOf(".mcd", ".mcr"), "duckstation"),
+        )
 
         private val RETROARCH = listOf("com.retroarch", "com.retroarch.aarch64", "com.retroarch.ra32")
 

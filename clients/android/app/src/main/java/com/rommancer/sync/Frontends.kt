@@ -7,10 +7,11 @@ import org.json.JSONArray
 import java.io.File
 
 /**
- * The RetroArch cores the frontends on this device run each system and game with: Daijishō's players (its database,
- * which only root reads), ES-DE's emulators (its bundled systems, custom systems and gamelists) and Pegasus's launch
- * commands. Sent with each sync as "fsys<TAB>folder<TAB>core<TAB>platform" and "fgame<TAB>rom<TAB>core" lines; the
- * server takes them for the games whose saves it never saw here, so a save arriving goes to the right core's folder.
+ * The RetroArch cores and standalone emulators the frontends on this device run each system and game with: Daijishō's
+ * players (its database, which only root reads), ES-DE's emulators (its bundled systems, custom systems and gamelists)
+ * and Pegasus's launch commands. Sent with each sync as "fsys<TAB>folder<TAB>core<TAB>platform" and "fgame<TAB>rom<TAB>
+ * core" lines, a standalone emulator as "emu:<emulator>"; the server takes them for the games whose saves it never saw
+ * here, so a save arriving goes to the right core's folder.
  */
 class Frontends(private val context: Context, private val root: File) {
     /** What each frontend gave, for the device's log */
@@ -53,7 +54,18 @@ class Frontends(private val context: Context, private val root: File) {
         return documentPath(doc ?: tree ?: return null)
     }
 
-    /** The core of a launch command: Daijishō's and Pegasus's "-e LIBRETRO <core>", ES-DE's "%EXTRA_LIBRETRO%=<core>" */
+    /**
+     * The core of a launch command (Daijishō's and Pegasus's "-e LIBRETRO <core>", ES-DE's "%EXTRA_LIBRETRO%=<core>"),
+     * else the standalone emulator it starts, as "emu:<emulator>"
+     */
+    private fun emulatorOf(command: String): String? = coreOf(command) ?: standaloneOf(command)
+
+    /** A standalone emulator Rommancer reads, by its name in a label, an app id or an ES-DE emulator variable */
+    private fun standaloneOf(text: String): String? {
+        val t = text.lowercase()
+        return STANDALONE.firstOrNull { (key) -> key in t }?.let { "emu:${it.second}" }
+    }
+
     private fun coreOf(command: String): String? {
         Regex("""%EXTRA_LIBRETRO%=(\S+)""").find(command)?.let { return it.groupValues[1] }
         val args = Regex(""""[^"]*"|\S+""").findAll(command).map { it.value.trim('"') }.toList()
@@ -91,7 +103,7 @@ class Frontends(private val context: Context, private val root: File) {
                 val player = c.getColumnIndex("default_player_id")
                 val trees = c.getColumnIndex("items_sync_tree_uri_list")
                 while (c.moveToNext()) {
-                    val core = players[if (player >= 0 && !c.isNull(player)) c.getLong(player) else -1L]?.let(::coreOf) ?: continue
+                    val core = players[if (player >= 0 && !c.isNull(player)) c.getLong(player) else -1L]?.let(::emulatorOf) ?: continue
                     val platform = if (nameCol >= 0) c.getString(nameCol) ?: "" else ""
                     val list = if (trees >= 0) c.getString(trees) else null
                     val folders = runCatching { JSONArray(list ?: "[]").let { a -> (0 until a.length()).map { a.getString(it) } } }.getOrDefault(emptyList()).mapNotNull(::safPath)
@@ -107,13 +119,13 @@ class Frontends(private val context: Context, private val root: File) {
                 val player = c.getColumnIndex("custom_player_id")
                 while (c.moveToNext()) {
                     if (uri < 0 || custom < 0 || player < 0 || c.getInt(custom) == 0 || c.isNull(player)) continue
-                    val core = players[c.getLong(player)]?.let(::coreOf) ?: continue
+                    val core = players[c.getLong(player)]?.let(::emulatorOf) ?: continue
                     val rom = safPath(c.getString(uri) ?: continue) ?: continue
                     game(out, rom, core)
                     games++
                 }
             }
-            notes += "daijisho: ${players.size} players, $systems platform folders with a RetroArch core, $games games with their own"
+            notes += "daijisho: ${players.size} players, $systems platform folders with a core or standalone emulator, $games games with their own"
         } finally {
             sql.close()
             dir.deleteRecursively()
@@ -128,7 +140,7 @@ class Frontends(private val context: Context, private val root: File) {
     private fun bundled(): MutableMap<String, EsSystem> {
         val rows = context.assets.open("esde_android.tsv").bufferedReader().readLines().filter { it.isNotBlank() && !it.startsWith("#") }.map { it.split('\t') }.filter { it.size == 4 }
         val out = LinkedHashMap<String, EsSystem>()
-        for ((name, group) in rows.groupBy { it[0] }) out[name] = EsSystem(name, group[0][1], group.map { it[2] to it[3].takeIf { c -> c != "-" } })
+        for ((name, group) in rows.groupBy { it[0] }) out[name] = EsSystem(name, group[0][1], group.map { it[2] to (it[3].takeIf { c -> c != "-" } ?: standaloneOf(it[2])) })
         return out
     }
 
@@ -147,7 +159,7 @@ class Frontends(private val context: Context, private val root: File) {
             for (m in Regex("<system>(.*?)</system>", RegexOption.DOT_MATCHES_ALL).findAll(text)) {
                 val block = m.groupValues[1]
                 val name = tag(block, "name") ?: continue
-                val commands = Regex("""<command(?:\s+label="([^"]*)")?\s*>([^<]*)</command>""").findAll(block).map { unescape(it.groupValues[1]) to unescape(it.groupValues[2]).takeIf { c -> "%EMULATOR_RETROARCH%" in c }?.let(::coreOf) }.toList()
+                val commands = Regex("""<command(?:\s+label="([^"]*)")?\s*>([^<]*)</command>""").findAll(block).map { unescape(it.groupValues[1]) to unescape(it.groupValues[2]).let { c -> if ("%EMULATOR_RETROARCH%" in c) coreOf(c) else standaloneOf(c) } }.toList()
                 if (commands.isNotEmpty()) systems[name] = EsSystem(name, (tag(block, "path") ?: "").substringAfter("%ROMPATH%/"), commands)
             }
         }
@@ -166,7 +178,7 @@ class Frontends(private val context: Context, private val root: File) {
                 game(out, File(folder, path.removePrefix("./")).path, c)
             }
         }
-        notes += "es-de: $count systems with a RetroArch core"
+        notes += "es-de: $count systems with a core or standalone emulator"
     }
 
     // --- Pegasus ---
@@ -187,10 +199,10 @@ class Frontends(private val context: Context, private val root: File) {
             var gameLaunch = ""
             fun endCollection() {
                 val (name, short, launch) = collection ?: return
-                coreOf(launch)?.let { system(out, meta.parent ?: "", it, short.ifEmpty { name }); count++ }
+                emulatorOf(launch)?.let { system(out, meta.parent ?: "", it, short.ifEmpty { name }); count++ }
             }
             fun endGame() {
-                if (inGame) coreOf(gameLaunch)?.let { c -> gameFiles.forEach { f -> game(out, File(meta.parentFile, f).path, c) } }
+                if (inGame) emulatorOf(gameLaunch)?.let { c -> gameFiles.forEach { f -> game(out, File(meta.parentFile, f).path, c) } }
                 inGame = false
                 gameFiles = mutableListOf()
                 gameLaunch = ""
@@ -212,6 +224,17 @@ class Frontends(private val context: Context, private val root: File) {
             endGame()
             endCollection()
         }
-        notes += "pegasus: ${metas.size} metadata files, $count collections with a RetroArch core"
+        notes += "pegasus: ${metas.size} metadata files, $count collections with a core or standalone emulator"
+    }
+
+    private companion object {
+        /** Standalone emulators by a word of their names and app ids, and the emulator the server knows them as */
+        val STANDALONE = listOf(
+            "duckstation" to "duckstation",
+            "aethersx2" to "pcsx2", "nethersx2" to "pcsx2", "armsx2" to "pcsx2",
+            "ppsspp" to "ppsspp",
+            "dolphin" to "dolphin-gci",
+            "melonds" to "melonds", "melondualds" to "melonds",
+        )
     }
 }
