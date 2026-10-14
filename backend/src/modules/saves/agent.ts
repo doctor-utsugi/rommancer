@@ -1153,8 +1153,8 @@ agentRouter.get('/collections', async (req, res) => {
   const roms = await prisma.deviceRom.findMany({ where: { deviceId: device.id }, select: { path: true, gameId: true } });
   const out = roms.filter((r) => (r.gameId && games.has(r.gameId)) || names.has(path.posix.basename(r.path).replace(/\.[^.]+$/, ''))).map((r) => `saves\t${r.path}`);
   // The lists given to the device, for frontends to show as collections: "list<TAB>name<TAB>path" for each of their
-  // roms on it, in the list's order
-  const lists = await prisma.deviceList.findMany({
+  // roms on it, in the list's order (none when the user turned that off)
+  const lists = !device.listCollections ? [] : await prisma.deviceList.findMany({
     where: { deviceId: device.id },
     select: { list: { select: { name: true, items: { orderBy: { position: 'asc' }, select: { romId: true, gameId: true } } } } },
   });

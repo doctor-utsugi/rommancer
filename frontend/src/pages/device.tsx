@@ -341,6 +341,19 @@ export function DevicePage() {
               ))}
             </div>
           )}
+          {d.connType === 'AGENT' && (
+            <label className="mt-4 flex items-start gap-2 text-sm">
+              <Checkbox
+                checked={d.listCollections}
+                disabled={!can('roms.download')}
+                onCheckedChange={(c) => void act(() => put(`/devices/${id}/list-collections`, { on: !!c }).then(() => qc.invalidateQueries({ queryKey: ['device', id] })))}
+              />
+              <span>
+                {t('more.device.listCollections')}
+                <span className="block text-xs text-muted-foreground">{t('more.device.listCollectionsHelp')}</span>
+              </span>
+            </label>
+          )}
           <ExcludedSystems deviceId={String(id)} canEdit={can('roms.download')} onChange={() => void qc.invalidateQueries({ queryKey: ['device-lists', id] })} />
           <DeviceSpace deviceId={String(id)} canEdit={can('roms.download')} />
           {d.connType === 'AGENT' && <DevicePrune deviceId={String(id)} canEdit={can('roms.download')} />}

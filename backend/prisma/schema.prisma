@@ -617,6 +617,8 @@ model Device {
   // A deletion of more than half of the device's roms waits: how many it would delete, and how many the user allowed
   pruneHeld       Int?
   pruneAllow      Int?
+  // Frontends show each list given to the device as a collection (ES-DE, EmulationStation)
+  listCollections Boolean               @default(true)
   createdAt       DateTime              @default(now())
   user            User                  @relation(fields: [userId], references: [id], onDelete: Cascade)
   console         Console               @relation(fields: [consoleId], references: [id])

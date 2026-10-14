@@ -1018,6 +1018,8 @@
       "listPending_one": "{{count}} still to copy to the console",
       "listPending_other": "{{count}} still to copy to the console",
       "chooseLists": "Choose lists",
+      "listCollections": "Show the lists as collections in the frontend",
+      "listCollectionsHelp": "Each list given to the console shows up as a collection in ES-DE, EmulationStation or Pegasus. Turning it off makes the console remove those collections at its next sync. The ones for games with saves and new games stay.",
       "removeList": "Remove the list from this console",
       "chooseListsHelp": "The console copies the games of the ticked lists. Removing a list does not delete games already copied to the console, unless you turn on deleting roms in no list below.",
       "noListsToChoose": "No lists",

@@ -748,6 +748,14 @@ devicesRouter.get('/:id/lists', async (req, res) => {
   res.json(rows.map((r) => r.list));
 });
 
+// Whether frontends show the device's lists as collections: the client writes or drops them at its next sync
+devicesRouter.put('/:id/list-collections', requirePerm('roms.download'), async (req, res) => {
+  const d = await ownDevice(intParam(req), me(req));
+  const { on } = z.object({ on: z.boolean() }).parse(req.body);
+  await prisma.device.update({ where: { id: d.id }, data: { listCollections: on, wantSyncAt: new Date() } });
+  res.json({ on });
+});
+
 devicesRouter.put('/:id/lists', requirePerm('roms.download'), async (req, res) => {
   const d = await ownDevice(intParam(req), me(req));
   const { listIds } = z.object({ listIds: z.array(z.number().int()).max(100) }).parse(req.body);

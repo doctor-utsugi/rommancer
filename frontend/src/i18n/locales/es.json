@@ -1018,6 +1018,8 @@
       "listPending_one": "Falta {{count}} por copiar a la consola",
       "listPending_other": "Faltan {{count}} por copiar a la consola",
       "chooseLists": "Elegir listas",
+      "listCollections": "Mostrar las listas como colecciones en el frontend",
+      "listCollectionsHelp": "Cada lista asignada aparece como una colección en ES-DE, EmulationStation o Pegasus. Al desactivarlo, la consola borra esas colecciones en la próxima sincronización. Las de juegos con partida y juegos nuevos se mantienen.",
       "removeList": "Quitar la lista de esta consola",
       "chooseListsHelp": "La consola copia los juegos de las listas marcadas. Quitar una lista no borra de la consola los juegos ya copiados, salvo que actives más abajo el borrado de roms que no están en ninguna lista.",
       "noListsToChoose": "No hay listas",
