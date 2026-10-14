@@ -109,7 +109,7 @@ export interface EmulatorSeed {
   slug: string;
   name: string;
   core?: string;
-  saveFormat?: 'raw' | 'ps1card' | 'ps1gme' | 'ps1vmp' | 'gcraw' | 'gci' | 'ps2card' | 'pspdir';
+  saveFormat?: 'raw' | 'ps1card' | 'ps1gme' | 'ps1vmp' | 'gcraw' | 'gci' | 'ps2card' | 'pspdir' | 'ctrdir';
   saveExt: string;
   stateExt?: string;
 }
@@ -176,6 +176,8 @@ export const emulators: EmulatorSeed[] = [
   { slug: 'pcsx2', name: 'PCSX2', saveFormat: 'ps2card', saveExt: '.ps2', stateExt: '.p2s' },
   { slug: 'ppsspp', name: 'PPSSPP', saveFormat: 'pspdir', saveExt: '.bin', stateExt: '.ppst' },
   { slug: 'melonds', name: 'melonDS (standalone)', saveExt: '.sav', stateExt: '.ml1' },
+  // A 3DS game's save folder, found by the rom's title id (see ctrSavePath in saves/agent.ts)
+  { slug: 'azahar', name: 'Azahar (standalone)', saveFormat: 'ctrdir', saveExt: '' },
   { slug: 'drastic', name: 'DraStic', saveExt: '.dsv', stateExt: '.dst' },
   // NextUI/MinUI (minarch): "<rom with its extension>.sav" and states ".st0".."st7", ".st9" the auto-resume one.
   // No core here: the slug after "minui-" names minarch's states folder (<tag>-<core>)

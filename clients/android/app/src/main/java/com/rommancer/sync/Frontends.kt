@@ -235,6 +235,7 @@ class Frontends(private val context: Context, private val root: File) {
             "ppsspp" to "ppsspp",
             "dolphin" to "dolphin-gci",
             "melonds" to "melonds", "melondualds" to "melonds",
+            "azahar" to "azahar", "citra" to "azahar", "lime3ds" to "azahar",
         )
     }
 }

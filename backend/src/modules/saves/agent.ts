@@ -308,6 +308,16 @@ const PPSSPP_STICKS: Record<string, string> = { knulli: 'system/configs/ppsspp',
 /** A PSP save folder in a memory stick's SAVEDATA (PPSSPP, its RetroArch core), sent as one file: "<path>/" */
 const PSP_SAVE = /(^|\/)PSP\/SAVEDATA\/[^/]+\/$/i;
 
+/** Azahar's (and Citra's) folder of 3DS games' saves in its emulated SD card, one "<title id low>/data/" each */
+const CTR_TITLES = /\/Nintendo 3DS\/[0-9a-f]{32}\/[0-9a-f]{32}\/title\/00040000$/i;
+const CTR_SAVE = /\/Nintendo 3DS\/[0-9a-f]{32}\/[0-9a-f]{32}\/title\/00040000\/[0-9a-f]{8}\/data\/$/i;
+
+/** A 3DS game's save folder ("<path>/", sent as one file) from its rom's title id ("00040000000E5C00") */
+function ctrSavePath(titles: string | undefined, titleId: string | undefined) {
+  if (!titles || !titleId || !/^00040000[0-9a-f]{8}$/i.test(titleId)) return undefined;
+  return `${titles}/${titleId.slice(8).toLowerCase()}/data/`;
+}
+
 /**
  * A memory card in the save folder of a frontend's emulator setup (DuckStation's per-game cards are named after the
  * game's title, PCSX2's after what the user chose), or a save folder of PPSSPP's: its emulator, and whether every
@@ -396,8 +406,10 @@ function asideLines(f: { kind: string; path: string; emu?: Emulator }, files: { 
   return files.filter((x) => isResume(x) && x.emu === f.emu && present.has(x.path)).map((x) => `aside\t${x.path}`);
 }
 
-function candidatePaths(ctx: RomCtx, emu: Emulator = ctx.emu) {
+function candidatePaths(ctx: RomCtx & { ctrSave?: string }, emu: Emulator = ctx.emu) {
   ctx = { ...ctx, emu };
+  // A 3DS game's whole save folder, known only when the client read the rom's title id
+  if (emu.saveFormat === 'ctrdir') return ctx.ctrSave ? [{ kind: 'SAVE' as const, slot: 0, path: ctx.ctrSave }] : [];
   // "beside": flashcarts keep each save and state next to its rom; emulators a frontend launches, either kind
   const dirs = saveDirs(ctx.layout, ctx.slug, ctx.emu, ctx.rel);
   const beside = (kind: string) => kind === 'beside' || (!ctx.launched && ctx.layout.savesLayout === 'beside');
@@ -782,8 +794,12 @@ agentRouter.post('/sync', express.text({ limit: '16mb', type: '*/*' }), async (r
   // A frontend's games: "rom" lines end in the platform and emulator setup, after "setup" lines (see readLauncher)
   const setups: string[][] = [];
   const launched: { path: string; platform: string; setup: string }[] = [];
-  // "dir<TAB>path": a PSP memory stick's SAVEDATA folder, listed even when empty so saves can be written there
+  // "dir<TAB>path": a PSP memory stick's SAVEDATA folder, listed even when empty so saves can be written there; or
+  // Azahar's folder of 3DS saves
   const savedata: string[] = [];
+  let ctrTitles: string | undefined;
+  // "tid<TAB>rom<TAB>title id": a 3DS rom's title id, read from its header by the client
+  const titleIds = new Map<string, string>();
   // The cores a frontend runs systems and games with (see learnFrontendCores)
   const frontendSystems: string[][] = [];
   const frontendGames: string[][] = [];
@@ -794,6 +810,8 @@ agentRouter.post('/sync', express.text({ limit: '16mb', type: '*/*' }), async (r
     else if (kind === 'setup' && p) setups.push(line.replace(/\r$/, '').split('\t').slice(1));
     else if (kind === 'srom' && p) nested.push({ path: p, hashes: [], size: 0 });
     else if (kind === 'dir' && p && /(^|\/)PSP\/SAVEDATA$/i.test(p)) savedata.push(p);
+    else if (kind === 'dir' && p && CTR_TITLES.test(p)) ctrTitles ??= p;
+    else if (kind === 'tid' && p && h) titleIds.set(p, h);
     else if (kind === 'file' && p && SHA1.test(h ?? '')) {
       present.set(p, h);
       if (Number(h2) > 0) mtimes.set(p, Number(h2));
@@ -845,8 +863,9 @@ agentRouter.post('/sync', express.text({ limit: '16mb', type: '*/*' }), async (r
   );
   const romsOfSaves: { path: string; baseName: string; gameId: number | null }[] = [];
   for (const { path: rom, hashes } of withSaves) {
-    const ctx = await romContext(device, rom).catch(() => null);
-    if (!ctx) continue;
+    const found = await romContext(device, rom).catch(() => null);
+    if (!found) continue;
+    const ctx = found.emu.saveFormat === 'ctrdir' ? { ...found, ctrSave: ctrSavePath(ctrTitles, titleIds.get(rom)) } : found;
     // Emulators whose save folder already holds files for this rom; the firmware default otherwise
     let emus: Emulator[] = [ctx.emu];
     // A core the device was seen saving with is the only one reading saves there: others' folders are leftovers
@@ -1599,7 +1618,12 @@ agentRouter.post('/upload', express.raw({ limit: '128mb', type: '*/*' }), async 
   }
   const ctx = await romContext(device, romPath);
   const emu = await emulatorForPath(ctx, filePath);
-  const parsed = candidatePaths(ctx, emu).find((f) => f.path === filePath) ?? parseSaveFile(path.posix.basename(filePath), emu);
+  const parsed =
+    emu.saveFormat === 'ctrdir'
+      ? CTR_SAVE.test(filePath)
+        ? { kind: 'SAVE' as const, slot: 0 }
+        : null
+      : (candidatePaths(ctx, emu).find((f) => f.path === filePath) ?? parseSaveFile(path.posix.basename(filePath), emu));
   if (!parsed) throw badRequest('Not a save file for this emulator');
   // Clients before 20261022 still send resume states: kept off the server, they never reach another console
   if (isResume(parsed)) {

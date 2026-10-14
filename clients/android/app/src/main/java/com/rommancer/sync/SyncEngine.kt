@@ -159,6 +159,8 @@ class SyncEngine(private val context: Context, private val store: Store, private
                 request.append("rom\t").append(rom.path).append('\t').append(hashes.getOrElse(0) { "" }).append('\t').append(hashes.getOrElse(1) { "" }).append('\t').append(rom.length()).append('\n')
             }
         }
+        // 3DS roms' title ids, which name their games' save folders
+        for (rom in romFiles) runCatching { CtrSaves.titleId(rom) }.getOrNull()?.let { request.append("tid\t").append(rom.path).append('\t').append(it).append('\n') }
         request.append(frontendLines)
         val listed = HashSet<String>()
         // Android/data may be listable but not readable: read through Shizuku or root, below
@@ -192,6 +194,11 @@ class SyncEngine(private val context: Context, private val store: Store, private
         for (stick in runCatching { psp.sticks(saveDirs) }.getOrDefault(emptyList())) {
             request.append("dir\t").append(stick).append('\n')
             for (folder in psp.folders(stick)) runCatching { folderHash(folder) }.getOrNull()?.let { request.append("file\t").append(folder).append("/\t").append(it).append('\n') }
+        }
+        // 3DS saves: one line per game's save folder ("<path>/"), and the folder they go in even when empty
+        for (titles in runCatching { CtrSaves.titleDirs(root) }.getOrDefault(emptyList())) {
+            request.append("dir\t").append(titles.path).append('\n')
+            for (folder in CtrSaves.folders(titles)) runCatching { tarHash(folder) }.getOrNull()?.let { request.append("file\t").append(folder).append("/\t").append(it).append('\n') }
         }
         // Standalone emulators' memory cards, in their own folders (those in Android/data through Shizuku). A folder
         // whose cards are named after the game's title is told as the emulator's setup ("setup<TAB>key<TAB>emulator
@@ -261,7 +268,7 @@ class SyncEngine(private val context: Context, private val store: Store, private
                         }
                     }
                     "get" -> {
-                        api.download("/agent/file?v=${f[2]}", mapOf("X-Rom-B64" to Api.b64(f[3]), "X-Path-B64" to Api.b64(f[1])), File(f[1])) { tmp ->
+                        if (f[1].endsWith("/")) folderSave(api, f[1], f[2], f[3]) else api.download("/agent/file?v=${f[2]}", mapOf("X-Rom-B64" to Api.b64(f[3]), "X-Path-B64" to Api.b64(f[1])), File(f[1])) { tmp ->
                             val old = File(f[1])
                             if (old.isFile && !old.readBytes().contentEquals(tmp.readBytes())) backup(old.name, old.readBytes())
                         }
@@ -356,6 +363,22 @@ class SyncEngine(private val context: Context, private val store: Store, private
         val key = "${folder.trimEnd('/')}/"
         cache[key]?.let { (size, time, hash) -> if (size == sig.first && time == sig.second) return hash }
         return psp.hash(entries)?.also { cache[key] = Triple(sig.first, sig.second, it) }
+    }
+
+    /** A 3DS save folder's hash: its tar's, kept while its files' sizes and times do not change */
+    private fun tarHash(folder: String): String? {
+        val sig = psp.signature(psp.entries(folder)) ?: return null
+        val key = "${folder.trimEnd('/')}/"
+        cache[key]?.let { (size, time, hash) -> if (size == sig.first && time == sig.second) return hash }
+        return sha1Of(psp.pack(folder)).also { cache[key] = Triple(sig.first, sig.second, it) }
+    }
+
+    /** A save folder the server sent whole (a 3DS game's): the one here goes with the copies first */
+    private fun folderSave(api: Api, path: String, version: String, rom: String) {
+        val data = api.bytes("/agent/file?v=$version", mapOf("X-Rom-B64" to Api.b64(rom), "X-Path-B64" to Api.b64(path))) ?: error("empty save folder")
+        if (psp.entries(path).isNotEmpty()) psp.pack(path).takeIf { !it.contentEquals(data) }?.let { backup(File(rom).nameWithoutExtension + ".tar", it) }
+        psp.write(path, data)
+        cache.remove(path)
     }
 
     /**

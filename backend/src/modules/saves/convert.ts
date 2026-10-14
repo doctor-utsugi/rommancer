@@ -9,9 +9,9 @@ import { HttpError } from '../../lib/http.js';
 
 /**
  * gcraw: a GameCube card image (Dolphin .raw); gci: one GameCube save per file (Dolphin's GCI folders); ps2card: a PS2
- * card image (PCSX2 .ps2); pspdir: a PSP save folder (PPSSPP)
+ * card image (PCSX2 .ps2); pspdir: a PSP save folder (PPSSPP); ctrdir: a 3DS game's save folder (Azahar), as a tar
  */
-export type SaveFormat = 'raw' | 'ps1card' | 'ps1gme' | 'ps1vmp' | 'gcraw' | 'gci' | 'ps2card' | 'pspdir';
+export type SaveFormat = 'raw' | 'ps1card' | 'ps1gme' | 'ps1vmp' | 'gcraw' | 'gci' | 'ps2card' | 'pspdir' | 'ctrdir';
 
 const PS1_SIZE = 0x20000;
 const GME_HEADER = 3904;
@@ -104,8 +104,8 @@ const isPs1 = (f: SaveFormat) => f.startsWith('ps1');
 
 /** Converts a save between formats. targetSize trims/pads SRAM (raw). */
 export function convertSave(buf: Buffer, from: SaveFormat, to: SaveFormat, targetSize?: number): Buffer {
-  // GameCube, PS2 and PSP cards go entry by entry (cards.ts), never converted whole
-  const byEntry = (f: SaveFormat) => f.startsWith('gc') || f === 'ps2card' || f === 'pspdir';
+  // GameCube, PS2 and PSP cards go entry by entry (cards.ts), never converted whole; 3DS save folders fit Azahar only
+  const byEntry = (f: SaveFormat) => f.startsWith('gc') || f === 'ps2card' || f === 'pspdir' || f === 'ctrdir';
   if (byEntry(from) || byEntry(to)) {
     if (from !== to) throw new HttpError(400, `Incompatible formats ${from} -> ${to}`);
     return buf;

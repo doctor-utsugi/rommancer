@@ -14,6 +14,8 @@ const EXTRA_FOLDERS: Record<string, string[]> = {
   psx: ['ps1', 'ps', 'playstation', 'psx'],
   ps2: ['ps2', 'playstation2'],
   psp: ['psp'],
+  // ES-DE's folder
+  '3ds': ['3ds', 'n3ds'],
   gc: ['gc', 'gamecube', 'ngc'],
   wii: ['wii'],
   fbneo: ['fbneo', 'fba', 'arcade', 'fbn', 'cps1', 'cps2', 'cps3', 'neogeo'],
