@@ -6,7 +6,8 @@ import java.io.RandomAccessFile
 /**
  * 3DS saves (Azahar, Citra and its forks): each game's save folder sits in the emulator's SD card at
  * "sdmc/Nintendo 3DS/<id0>/<id1>/title/00040000/<title id low>/data/", named after the game's title id, which the
- * server learns from the roms' headers ("tid" lines). A folder goes as one file whose path ends in "/" (its tar).
+ * server learns from the roms' headers ("tid" lines). A folder goes as one file whose path ends in "/" (its tar),
+ * told apart by its manifest's hash as PSP save folders are.
  */
 object CtrSaves {
     /** The title id of a .3ds or .cci rom (its NCSD header's media id) or of a .cia (its TMD's), 16 hex digits */

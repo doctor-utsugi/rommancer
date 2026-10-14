@@ -23,7 +23,7 @@
 #                                   so any computer with this script can sync it. Without a command: sync.
 set -u
 # Raised with every change of this client (any change reaches devices: they update by content, not by this)
-CLIENT_VERSION=1.70.0
+CLIENT_VERSION=1.71.0
 # A clock before this date is surely wrong (no battery-backed clock); kept apart from the version, which may run ahead
 CLOCK_MIN=20261001
 # Onion keeps curl (with TLS) and friends outside the default PATH
@@ -432,6 +432,7 @@ build_request() {
   done < "$WORK/saves"
   { printf '%s\n' "$roots" | sed -n "s/^saves$TAB//p" | while IFS= read -r d; do psp_lines "$d"; done
     printf '%s\n' "$roots" | sed -n "s/^psp$TAB//p" | while IFS= read -r d; do psp_lines "$d" stick; done; } | awk '!seen[$0]++' >> "$out"
+  ctr_lines >> "$out"
   nested_lines "$out" > "$WORK/nested" && cat "$WORK/nested" >> "$out"
   core_lines >> "$out" 2>/dev/null
   save_cache
@@ -451,6 +452,61 @@ psp_lines() {
       h="$(folder_hash "${f%/}")" && [ -n "$h" ] && printf 'file\t%s\t%s\n' "$f" "$h"
     done
   done
+}
+
+# 3DS saves (Azahar, Citra and its forks, its RetroArch core): a folder per game in the emulator's SD card,
+# "sdmc/Nintendo 3DS/<id0>/<id1>/title/00040000/<title id low>/data/", named after the game's title id. The roms'
+# title ids go as "tid" lines, each game's folder as one file ("<path>/", told apart by its manifest like PSP's)
+# and the folder of them as a "dir" line, even when empty
+ctr_lines() {
+  find "$ROMS" -mindepth 2 -maxdepth 2 -type f \( -iname '*.3ds' -o -iname '*.cci' -o -iname '*.cia' \) 2>/dev/null | while IFS= read -r r; do
+    t="$(ctr_tid "$r")" && printf 'tid\t%s\t%s\n' "$r" "$t"
+  done
+  ctr_dirs | while IFS= read -r t; do
+    printf 'dir\t%s\n' "$t"
+    for d in "$t"/*/data; do
+      [ -n "$(find "$d" -mindepth 2 -type f 2>/dev/null | head -n 1)" ] || continue
+      h="$(folder_hash "$d")" && [ -n "$h" ] && printf 'file\t%s/\t%s\n' "$d" "$h"
+    done
+  done
+}
+
+# The emulators' folders of 3DS games' saves: where Batocera, Knulli and ROCKNIX keep them, and the desktop's
+# (its own folder, Flatpak's)
+ctr_dirs() {
+  for b in "${ROMMANCER_SYSROOT:-}/userdata/saves" "${ROMMANCER_SYSROOT:-}/userdata/system/configs" /storage/.config /storage/.local/share \
+    "${HOME:-/root}/.local/share" "${HOME:-/root}/.var/app" "${HOME:-/root}/.config"; do
+    [ -d "$b" ] && find "$b" -maxdepth 6 -type d -name 'Nintendo 3DS' -path '*/sdmc/*' 2>/dev/null
+  done | awk '!seen[$0]++' | while IFS= read -r n; do
+    for i in "$n"/*/*/; do
+      a="$(basename "$(dirname "$i")")"; b="$(basename "$i")"
+      [ ${#a} -eq 32 ] && [ ${#b} -eq 32 ] || continue
+      case "$a$b" in *[!0-9a-fA-F]*) continue ;; esac
+      printf '%s\n' "${i%/}/title/00040000"
+    done
+  done
+}
+
+align64() { echo $(( ($1 + 63) / 64 * 64 )); }
+
+# A 3DS rom's title id, 16 hex digits: a .3ds/.cci's NCSD media id, a .cia's from its TMD (after the header, the
+# certificate chain and the ticket, each aligned to 64 bytes, and the TMD's signature, whose size its type tells)
+ctr_tid() {
+  case "$1" in
+    *.[cC][iI][aA])
+      set -- "$1" $(dd if="$1" bs=4 count=4 2>/dev/null | od -An -tu4 -v)
+      [ $# -eq 5 ] || return 1
+      tmd=$(align64 $(( $(align64 $(( $(align64 "$2") + $4 ))) + $5 )))
+      case "$(dd if="$1" bs=1 skip="$tmd" count=4 2>/dev/null | od -An -tx1 -v | tr -d ' \n')" in
+        00010003) sig=$((0x23C)) ;; 00010004) sig=$((0x13C)) ;; 00010005) sig=$((0x7C)) ;; *) return 1 ;;
+      esac
+      id="$(dd if="$1" bs=1 skip=$((tmd + 4 + sig + 0x4C)) count=8 2>/dev/null | od -An -tx1 -v | tr -d ' \n')" ;;
+    *)
+      [ "$(dd if="$1" bs=1 skip=256 count=4 2>/dev/null)" = NCSD ] || return 1
+      id="$(dd if="$1" bs=1 skip=264 count=8 2>/dev/null | od -An -tx1 -v | tr -d ' \n' | sed 's/../& /g' | awk '{ for (i = NF; i > 0; i--) printf "%s", $i }')" ;;
+  esac
+  [ ${#id} -eq 16 ] || return 1
+  printf '%s' "$id" | tr 'a-f' 'A-F'
 }
 
 # A save folder's hash: sha1 of its "<path><TAB><sha1>" lines sorted by path (the server reads its tars the same
@@ -539,7 +595,7 @@ thumb_get() {
 # because emulators keep the card in memory and write it back whole
 emu_running() {
   # Every process (busybox ps lists them all and has no -e)
-  { ps -e -o args= 2>/dev/null || ps 2>/dev/null; } | grep -qi '[r]etroarch\|[d]olphin-emu\|[m]inarch\|[d]uckstation\|[e]mulatorlauncher\|[p]csx\|[s]wanstation\|[e]psxe\|[r]etrorun\|[p]psspp\|[a]ethersx2'
+  { ps -e -o args= 2>/dev/null || ps 2>/dev/null; } | grep -qi '[r]etroarch\|[d]olphin-emu\|[m]inarch\|[d]uckstation\|[e]mulatorlauncher\|[p]csx\|[s]wanstation\|[e]psxe\|[r]etrorun\|[p]psspp\|[a]ethersx2\|[a]zahar\|[c]itra\|[l]ime3ds'
 }
 
 # A memory card with the server's newer saves put in ("cget"): swapped in only if the file is still the one
@@ -594,13 +650,27 @@ card_get() {
 # A PSP save folder the server sent (a tar of it), put in place only if the folder is still the one it read; the
 # folder it replaces is kept in the backups as a tar
 folder_get() {
-  fd_="${1%/}"; fe_="$2"; ft_="$WORK/folder-get.tar"; fx_="$(dirname "$fd_")/.rommancer-$(basename "$fd_")"
+  fd_="${1%/}"; fe_="$2"; ft_="$WORK/folder-get.tar"
   rm -f "$ft_"
   http_once GET "$SERVER/api/v1/agent/card?expect=$fe_" - "$ft_" "X-Path-B64: $(b64 "$1")" "X-Rom-B64: $(b64 "$3")" || { rm -f "$ft_"; return 1; }
   [ -s "$ft_" ] || { rm -f "$ft_"; return 1; }
   fn_=-; [ -d "$fd_" ] && fn_="$(folder_hash "$fd_")"
   [ -n "$fn_" ] || fn_=-
   if [ "$fn_" != "$fe_" ]; then rm -f "$ft_"; log "card: $(basename "$fd_") changed meanwhile, later"; return 1; fi
+  folder_place "$fd_" "$ft_" || return 1
+  http_once POST "$SERVER/api/v1/agent/card/ack?sha=$(folder_hash "$fd_")" - - "X-Path-B64: $(b64 "$1")" >/dev/null 2>&1 || log "card: $(basename "$fd_") written, server not told yet"
+}
+
+# A save folder the server sent whole (a 3DS game's, "get"): VERSION for ROM
+folder_save() {
+  ft_="$WORK/folder-get.tar"; rm -f "$ft_"
+  http GET "$SERVER/api/v1/agent/file?v=$2" - "$ft_" "X-Rom-B64: $(b64 "$3")" "X-Path-B64: $(b64 "$1")" && [ -s "$ft_" ] || { rm -f "$ft_"; return 1; }
+  folder_place "${1%/}" "$ft_"
+}
+
+# Puts the folder a tar (TAR) holds in place as DIR; the folder it replaces is kept in the backups as a tar
+folder_place() {
+  fd_="$1"; ft_="$2"; fx_="$(dirname "$fd_")/.rommancer-$(basename "$fd_")"
   rm -rf "$fx_"; mkdir -p "$fx_" && tar -xf "$ft_" -C "$fx_" 2>/dev/null || { rm -rf "$fx_" "$ft_"; return 1; }
   src_="$(find "$fx_" -mindepth 1 -maxdepth 1 -type d | head -n 1)"
   [ -n "$src_" ] || { rm -rf "$fx_" "$ft_"; return 1; }
@@ -610,8 +680,7 @@ folder_get() {
     trim_backups
     rm -rf "$fd_"
   fi
-  mv "$src_" "$fd_" && rm -rf "$fx_" "$ft_" || return 1
-  http_once POST "$SERVER/api/v1/agent/card/ack?sha=$(folder_hash "$fd_")" - - "X-Path-B64: $(b64 "$1")" >/dev/null 2>&1 || log "card: $(basename "$fd_") written, server not told yet"
+  mv "$src_" "$fd_" && rm -rf "$fx_" "$ft_"
 }
 
 # A short note on screen when saves arrived: EmulationStation's popup (Knulli, Batocera), the desktop's
@@ -711,7 +780,7 @@ sync_failed() {
 # popups on Knulli/Batocera, the app's name in Onion's Apps) ----
 
 # A game is on screen, whatever started it (Onion has no game events)
-game_running() { ps 2>/dev/null | grep -q '[r]etroarch\|[m]inarch\|[d]rastic\|[p]pssppSDL\|[m]upen64plus\|[d]uckstation\|[r]etrorun'; }
+game_running() { ps 2>/dev/null | grep -q '[r]etroarch\|[m]inarch\|[d]rastic\|[p]pssppSDL\|[m]upen64plus\|[d]uckstation\|[r]etrorun\|[a]zahar\|[c]itra\|[l]ime3ds'; }
 
 # One command to RetroArch's network command port; REPLY: wait for its answer (fails when it does not answer)
 ra_send() {
@@ -841,6 +910,10 @@ cmd_sync() {
         else errs=$((errs + 1)); fi ;;
       get)
         mkdir -p "$(dirname "$p")"
+        case "$p" in */)
+          if folder_save "$p" "$a" "$b"; then downs=$((downs + 1)); sdown=$((sdown + 1)); rn="$(basename "$b")"; printf '%s\n' "${rn%.*}" >> "$WORK/received"; else errs=$((errs + 1)); fi
+          continue ;;
+        esac
         if http GET "$SERVER/api/v1/agent/file?v=$a" - "$p.rommancer-tmp" "X-Rom-B64: $(b64 "$b")" "X-Path-B64: $(b64 "$p")" && replace_save "$p.rommancer-tmp" "$p"; then
           downs=$((downs + 1)); if is_state "$p"; then stdown=$((stdown + 1)); else sdown=$((sdown + 1)); fi
           rn="$(basename "$b")"; printf '%s\n' "${rn%.*}" >> "$WORK/received"
@@ -1047,7 +1120,7 @@ ssh_offer() {
 # handheld busy and slowed its downloads)
 fingerprint() {
   [ -n "${SAVE_DIRS:-}" ] || return 0
-  printf '%s\n' "$SAVE_DIRS" | while IFS= read -r d; do
+  { printf '%s\n' "$SAVE_DIRS" | while IFS= read -r d; do
     find "$d" -type f -exec stat -c "%s %Y$TAB%n" {} + 2>/dev/null ||
       find "$d" -type f 2>/dev/null | while IFS= read -r f; do stat -c "%s %Y$TAB%n" "$f" 2>/dev/null; done
   done | awk -F"$TAB" -v exts="$EXTS" '
@@ -1061,7 +1134,10 @@ fingerprint() {
         else if (m && l >= m + 5 && substr(n, l - m - 4) == e ".auto") keep = 1
       }
       if (keep) print
-    }' | cksum
+    }'
+  # 3DS save folders: any file in them
+  printf '%s\n' "${CTR_DIRS:-}" | while IFS= read -r d; do [ -n "$d" ] && [ -d "$d" ] && find "$d" -type f -exec stat -c "%s %Y$TAB%n" {} + 2>/dev/null; done
+  } | cksum
 }
 
 # Onion sets its clock from the internet when its Tweaks say so (.ntpState), and waits for it at power-on (.ntpWait):
@@ -1149,7 +1225,7 @@ cmd_daemon() {
       [ "$up" = restart ] && exec sh "$DIR/$(basename "$0")" daemon
     fi
     if [ -z "${SAVE_DIRS:-}" ]; then
-      roots="$(http GET "$SERVER/api/v1/agent/roots" - -)" && { SAVE_DIRS="$(printf '%s\n' "$roots" | sed -n "s/^saves$TAB//p")"; EXTS="$(field exts "$roots")"; }
+      roots="$(http GET "$SERVER/api/v1/agent/roots" - -)" && { SAVE_DIRS="$(printf '%s\n' "$roots" | sed -n "s/^saves$TAB//p")"; EXTS="$(field exts "$roots")"; CTR_DIRS="$(ctr_dirs)"; }
     fi
     # The web app can ask for a sync now or for roms: a tiny request on every watch tick
     if asked="$(HTTP_MAX=5 http_once GET "$SERVER/api/v1/agent/poll" - - 2>/dev/null)"; then
@@ -1892,7 +1968,7 @@ pulls_running() { [ -f "$WORK/pull-lock/pid" ] && kill -0 "$(cat "$WORK/pull-loc
 # (a crashed game may never send its end event)
 playing() {
   [ -f "$WORK/playing" ] || return 1
-  ps 2>/dev/null | grep -q '[e]mulatorlauncher\|[r]etroarch\|[m]inarch\|[d]rastic\|[p]pssppSDL\|[m]upen64plus\|[d]uckstation\|[r]etrorun' && return 0
+  ps 2>/dev/null | grep -q '[e]mulatorlauncher\|[r]etroarch\|[m]inarch\|[d]rastic\|[p]pssppSDL\|[m]upen64plus\|[d]uckstation\|[r]etrorun\|[a]zahar\|[c]itra\|[l]ime3ds' && return 0
   rm -f "$WORK/playing"; return 1
 }
 

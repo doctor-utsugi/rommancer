@@ -14,6 +14,7 @@ import { prisma } from '../../lib/prisma.js';
 import type { DeviceLayout } from '../devices/sink.js';
 import { convertSave, type SaveFormat } from './convert.js';
 import { identifyRom, readVersion, storeVersion } from './service.js';
+import { folderHash, readPspFolder } from './pspsave.js';
 
 export const sha1 = (b: Buffer) => crypto.createHash('sha1').update(b).digest('hex');
 const family = (f: string) => (f.startsWith('ps1') ? 'ps1' : f);
@@ -142,6 +143,9 @@ export interface DeviceFileInfo {
 }
 
 /** Decides what to do with a save on a device. */
+/** A save's hash as its device reports it: a 3DS save folder's is its manifest's, however its tar was made */
+export const saveHash = (buf: Buffer, format: string) => (format === 'ctrdir' ? folderHash(buf) : sha1(buf));
+
 export async function decide(save: (Save & { emulator: Emulator }) | null, device: Device, emu: Emulator, deviceFile: DeviceFileInfo | null): Promise<Decision> {
   if (!save) return deviceFile ? { action: 'upload' } : { action: 'none' };
   const open = await prisma.saveConflict.findFirst({ where: { saveId: save.id, deviceId: device.id, resolvedAt: null } });
@@ -157,7 +161,7 @@ export async function decide(save: (Save & { emulator: Emulator }) | null, devic
   if (!deviceChanged && serverChanged) return { action: 'download', versionId: current };
   // Both sides "changed": if the content already matches, only the base is recorded
   const serverContent = await contentFor(save, current, emu).catch(() => null);
-  if (serverContent && sha1(serverContent) === deviceFile.sha1) return { action: 'adopt' };
+  if (serverContent && saveHash(serverContent, emu.saveFormat) === deviceFile.sha1) return { action: 'adopt' };
   return { action: 'conflict' };
 }
 
@@ -187,7 +191,9 @@ export async function receiveFromDevice(
   const systemId = systemSlug ? (await prisma.system.findUnique({ where: { slug: systemSlug } }))?.id : undefined;
   const ident = known ?? (await identifyRom(baseName, systemId));
   const save = await findLogicalSave(device.userId, emu, kind, slot, baseName, ident?.gameId ?? null, exactOnly, device.id);
-  const deviceSha1 = sha1(buf);
+  // A save folder is kept as the canonical tar of its files, whichever client packed it
+  if (emu.saveFormat === 'ctrdir') buf = readPspFolder(buf).tar;
+  const deviceSha1 = saveHash(buf, emu.saveFormat);
   const d = await decide(save, device, emu, { sha1: deviceSha1 });
   // Stored in the logical save's format (converted if it comes from another compatible emulator)
   const toSaveFormat = (target: Save & { emulator: Emulator }) =>

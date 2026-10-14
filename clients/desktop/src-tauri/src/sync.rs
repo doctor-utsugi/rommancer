@@ -143,6 +143,8 @@ pub struct Engine<'a> {
     pub roms_dir: Option<String>,
     /// The games LaunchBox launches on this PC, synced with the emulator each one opens with
     pub library: Option<std::sync::Arc<crate::frontend::Library>>,
+    /// This PC itself (not a card): its emulators' own folders count too (Azahar's 3DS saves)
+    pub pc: bool,
     cache: HashMap<String, (u64, u64, String)>,
 }
 
@@ -258,7 +260,7 @@ impl<'a> Engine<'a> {
                 }
             }
         }
-        Self { api, key, root, cache_file, report, cancelled, log, steps: vec!["saves"], allow_pull: true, prune: None, roms_dir: None, library: None, cache }
+        Self { api, key, root, cache_file, report, cancelled, log, steps: vec!["saves"], allow_pull: true, prune: None, roms_dir: None, library: None, pc: false, cache }
     }
 
     /// A progress event with its step filled in
@@ -387,6 +389,14 @@ impl<'a> Engine<'a> {
                 None => request.push_str(&format!("rom\t{}\t{}\t{}\t{size}\n", wire(rom), h(0), h(1))),
             }
         }
+        // 3DS roms' title ids, which name their games' save folders in Azahar's
+        if self.pc {
+            for rom in &roms {
+                if let Some(t) = crate::ctr::title_id(rom) {
+                    request.push_str(&format!("tid\t{}\t{t}\n", wire(rom)));
+                }
+            }
+        }
         let mut saves = Vec::new();
         for d in &save_dirs {
             walk(d, &mut saves);
@@ -431,6 +441,18 @@ impl<'a> Engine<'a> {
                 self.check()?;
                 if let Ok(Some(h)) = self.folder_sha1(&d) {
                     request.push_str(&format!("file\t{}/\t{h}\n", wire(&d)));
+                }
+            }
+        }
+        // Azahar's 3DS saves on this PC: one line per game's save folder, and the folder they go in even when empty
+        if self.pc {
+            for titles in crate::ctr::title_dirs() {
+                request.push_str(&format!("dir\t{}\n", wire(&titles)));
+                for d in crate::ctr::save_folders(&titles) {
+                    self.check()?;
+                    if let Ok(Some(h)) = self.folder_sha1(&d) {
+                        request.push_str(&format!("file\t{}/\t{h}\n", wire(&d)));
+                    }
                 }
             }
         }
@@ -502,7 +524,11 @@ impl<'a> Engine<'a> {
                 // Savestate screenshots: ours when the server lacks it, the server's beside a state it sent
                 "tput" => self.thumb_put(&s[1], &s[2]),
                 "tget" => self.api.download(&format!("/agent/thumb?v={}", s[2]), &[], Path::new(&s[1]), &mut |_| {}, self.cancelled),
-                // get <file> <version> <rom>
+                // get <file|folder/> <version> <rom>
+                _ if s[1].ends_with('/') => self.folder_save(&s[1], &s[2], s.get(3).map(String::as_str).unwrap_or("")).map(|_| {
+                    out.saves_down += 1;
+                    (self.log)(format!("down: {}", s[1]));
+                }),
                 _ => {
                     let headers = [("X-Rom-B64", b64(s.get(3).map(String::as_str).unwrap_or(""))), ("X-Path-B64", b64(&s[1]))];
                     self.api.download(&format!("/agent/file?v={}", s[2]), &headers, Path::new(&s[1]), &mut |_| {}, self.cancelled).map(|_| {
@@ -568,6 +594,21 @@ impl<'a> Engine<'a> {
         let sent = self.folder_sha1(dir)?.unwrap_or_default();
         let _ = self.api.post_text(&format!("/agent/card/ack?sha={sent}"), Vec::new(), &[("X-Path-B64", b64(path))]);
         Ok(true)
+    }
+
+    /// A save folder the server sent whole (a 3DS game's)
+    fn folder_save(&mut self, path: &str, version: &str, rom: &str) -> Result<()> {
+        let dir = Path::new(path.trim_end_matches('/'));
+        let tmp = dir.with_file_name(format!(".{}.rommancer-tar", dir.file_name().and_then(|n| n.to_str()).unwrap_or("save")));
+        self.api.download(&format!("/agent/file?v={version}"), &[("X-Rom-B64", b64(rom)), ("X-Path-B64", b64(path))], &tmp, &mut |_| {}, self.cancelled)?;
+        let tar = fs::read(&tmp).unwrap_or_default();
+        let _ = fs::remove_file(&tmp);
+        if tar.is_empty() {
+            bail!("empty save folder");
+        }
+        crate::folder::unpack(&tar, dir)?;
+        self.cache.remove(&format!("{}/", wire(dir)));
+        Ok(())
     }
 
     /// A save folder's manifest hash (none when it has no files); cached by its files' sizes and newest change

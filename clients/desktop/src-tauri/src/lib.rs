@@ -3,6 +3,7 @@
 
 mod api;
 mod card;
+mod ctr;
 mod folder;
 mod frontend;
 mod game;
@@ -693,6 +694,7 @@ fn start_sync(app: &AppHandle, state: &AppState, key: String, mode: Mode, roms: 
         engine.roms_dir = t.roms_dir();
         if is_pc {
             engine.library = library(&app.state::<AppState>());
+            engine.pc = true;
         }
         let pruning = engine.prune.as_ref().is_some_and(|p| p.active());
         engine.steps = match mode {
@@ -1053,7 +1055,8 @@ fn watch_pc(app: AppHandle) {
                 if let Some(lib) = library(&state) {
                     dirs.extend(lib.watched());
                 }
-                let sig = pc::signature(&dirs);
+                // Azahar's 3DS save folders: any file in them
+                let sig = ctr::title_dirs().iter().filter_map(|d| folder::signature(d)).fold(pc::signature(&dirs), |acc, (size, newest)| acc.wrapping_add(size).wrapping_add(newest.wrapping_mul(31)));
                 if running || was_running || baseline.is_none() {
                     // What a sync writes is not RetroArch saving
                     changed_at = None;

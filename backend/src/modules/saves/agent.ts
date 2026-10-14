@@ -11,7 +11,7 @@ import { sha256 } from '../../lib/crypto.js';
 import { HttpError, badRequest } from '../../lib/http.js';
 import { copiesSystem, folderFor, layoutOf, systemFilterOf, type DeviceLayout } from '../devices/sink.js';
 import { raDefaults } from '../../seed/data.js';
-import { contentFor, decide, deviceFileName, deviceThumbPath, findLogicalSave, receiveFromDevice, saveDirs, setBase, sha1 } from './core.js';
+import { contentFor, decide, deviceFileName, deviceThumbPath, findLogicalSave, receiveFromDevice, saveDirs, saveHash, setBase, sha1 } from './core.js';
 import { THUMB_MAX, identifyRom, parseSaveFile, readThumb, saveHistory, storeThumb, looseRomFile, romForSave } from './service.js';
 import fs from 'node:fs';
 import crypto from 'node:crypto';
@@ -312,6 +312,16 @@ const PSP_SAVE = /(^|\/)PSP\/SAVEDATA\/[^/]+\/$/i;
 const CTR_TITLES = /\/Nintendo 3DS\/[0-9a-f]{32}\/[0-9a-f]{32}\/title\/00040000$/i;
 const CTR_SAVE = /\/Nintendo 3DS\/[0-9a-f]{32}\/[0-9a-f]{32}\/title\/00040000\/[0-9a-f]{8}\/data\/$/i;
 
+/**
+ * 3DS saves are folders whatever runs the game (Azahar, Citra, its RetroArch core, which keeps the same SD card
+ * layout): a 3DS rom's save is always Azahar's kind, in the folder CTR_SAVE names when it is known
+ */
+async function withCtr(ctx: RomCtx, ctrSave?: string) {
+  if (ctx.slug !== '3ds') return ctx;
+  const emu = ctx.emu.saveFormat === 'ctrdir' ? ctx.emu : await prisma.emulator.findUnique({ where: { slug: 'azahar' } });
+  return emu ? { ...ctx, emu, ctrSave } : ctx;
+}
+
 /** A 3DS game's save folder ("<path>/", sent as one file) from its rom's title id ("00040000000E5C00") */
 function ctrSavePath(titles: string | undefined, titleId: string | undefined) {
   if (!titles || !titleId || !/^00040000[0-9a-f]{8}$/i.test(titleId)) return undefined;
@@ -381,7 +391,8 @@ async function romContext(device: AgentDevice, romPath: string) {
   if (!slug) throw badRequest(`Unknown system for ${romPath}`);
   // The core the device was seen saving this game or system with wins; else the firmware's, else RetroArch's usual core for the system
   const reported = ((device.romCores ?? {}) as Record<string, string>)[baseName] ?? ((device.systemCores ?? {}) as Record<string, string>)[slug];
-  const emuSlug = layout.systemMap[slug]?.emulator ?? raDefaults[slug];
+  // 3DS saves are Azahar's kind whatever runs the game (see withCtr)
+  const emuSlug = layout.systemMap[slug]?.emulator ?? raDefaults[slug] ?? (slug === '3ds' ? 'azahar' : undefined);
   if (!emuSlug && !reported) throw badRequest(`No emulator known for ${slug}`);
   const emu = reported ? await emulatorForCore(reported) : await emulatorBySlug(emuSlug!);
   return { layout, slug, emu, baseName, root, rel, reported: !!reported, launched: false };
@@ -865,7 +876,7 @@ agentRouter.post('/sync', express.text({ limit: '16mb', type: '*/*' }), async (r
   for (const { path: rom, hashes } of withSaves) {
     const found = await romContext(device, rom).catch(() => null);
     if (!found) continue;
-    const ctx = found.emu.saveFormat === 'ctrdir' ? { ...found, ctrSave: ctrSavePath(ctrTitles, titleIds.get(rom)) } : found;
+    const ctx = await withCtr(found, ctrSavePath(ctrTitles, titleIds.get(rom)));
     // Emulators whose save folder already holds files for this rom; the firmware default otherwise
     let emus: Emulator[] = [ctx.emu];
     // A core the device was seen saving with is the only one reading saves there: others' folders are leftovers
@@ -1578,13 +1589,14 @@ agentRouter.post('/start', express.text({ limit: '1mb', type: '*/*' }), async (r
 // Download of a version converted for the device's emulator; records the base
 agentRouter.get('/file', async (req, res) => {
   const device = await deviceFromToken(req);
-  const ctx = await romContext(device, b64(req.header('x-rom-b64')));
+  const ctx = await withCtr(await romContext(device, b64(req.header('x-rom-b64'))));
   const target = b64(req.header('x-path-b64'));
   const versionId = Number(req.query.v);
   const v = await prisma.saveVersion.findUnique({ where: { id: versionId }, include: { save: { include: { emulator: true } } } });
   if (!v || v.save.userId !== device.userId) throw new HttpError(404, 'Version not found');
-  const content = await contentFor(v.save, v.id, target ? await emulatorForPath(ctx, target) : ctx.emu);
-  if (target) await setBase(v.saveId, device.id, v.id, sha1(content));
+  const emu = target ? await emulatorForPath(ctx, target) : ctx.emu;
+  const content = await contentFor(v.save, v.id, emu);
+  if (target) await setBase(v.saveId, device.id, v.id, saveHash(content, emu.saveFormat));
   res.type('application/octet-stream').send(content);
 });
 
@@ -1616,7 +1628,7 @@ agentRouter.post('/upload', express.raw({ limit: '128mb', type: '*/*' }), async 
     res.type('text/plain').send(await cardUpload(device, dc, found.emu, filePath, buf, '-'));
     return;
   }
-  const ctx = await romContext(device, romPath);
+  const ctx = await withCtr(await romContext(device, romPath));
   const emu = await emulatorForPath(ctx, filePath);
   const parsed =
     emu.saveFormat === 'ctrdir'

@@ -198,7 +198,7 @@ class SyncEngine(private val context: Context, private val store: Store, private
         // 3DS saves: one line per game's save folder ("<path>/"), and the folder they go in even when empty
         for (titles in runCatching { CtrSaves.titleDirs(root) }.getOrDefault(emptyList())) {
             request.append("dir\t").append(titles.path).append('\n')
-            for (folder in CtrSaves.folders(titles)) runCatching { tarHash(folder) }.getOrNull()?.let { request.append("file\t").append(folder).append("/\t").append(it).append('\n') }
+            for (folder in CtrSaves.folders(titles)) runCatching { folderHash(folder) }.getOrNull()?.let { request.append("file\t").append(folder).append("/\t").append(it).append('\n') }
         }
         // Standalone emulators' memory cards, in their own folders (those in Android/data through Shizuku). A folder
         // whose cards are named after the game's title is told as the emulator's setup ("setup<TAB>key<TAB>emulator
@@ -356,21 +356,13 @@ class SyncEngine(private val context: Context, private val store: Store, private
         else -> File(path).readBytes()
     }
 
-    /** A PSP save folder's manifest hash, kept while its files' sizes and times do not change; null when it is empty */
+    /** A save folder's manifest hash (PSP, 3DS), kept while its files' sizes and times do not change; null when it is empty */
     private fun folderHash(folder: String): String? {
         val entries = psp.entries(folder)
         val sig = psp.signature(entries) ?: return null
         val key = "${folder.trimEnd('/')}/"
         cache[key]?.let { (size, time, hash) -> if (size == sig.first && time == sig.second) return hash }
         return psp.hash(entries)?.also { cache[key] = Triple(sig.first, sig.second, it) }
-    }
-
-    /** A 3DS save folder's hash: its tar's, kept while its files' sizes and times do not change */
-    private fun tarHash(folder: String): String? {
-        val sig = psp.signature(psp.entries(folder)) ?: return null
-        val key = "${folder.trimEnd('/')}/"
-        cache[key]?.let { (size, time, hash) -> if (size == sig.first && time == sig.second) return hash }
-        return sha1Of(psp.pack(folder)).also { cache[key] = Triple(sig.first, sig.second, it) }
     }
 
     /** A save folder the server sent whole (a 3DS game's): the one here goes with the copies first */
