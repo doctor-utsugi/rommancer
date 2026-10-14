@@ -510,3 +510,29 @@ mod tests {
         assert_eq!(mine[0].commands[0].0, "A");
     }
 }
+
+#[cfg(test)]
+mod real {
+    use super::*;
+
+    /// Against a real ES-DE: ROMMANCER_ESDE_DIR its data folder, ROMMANCER_HOOK the hook.json its scripts read
+    #[test]
+    #[ignore]
+    fn read_a_real_esde() {
+        let dir = PathBuf::from(std::env::var("ROMMANCER_ESDE_DIR").unwrap());
+        let lib = read(&dir);
+        for g in &lib.games {
+            println!("game {} [{}] {}", g.rom.display(), g.platform, g.setup);
+        }
+        for (k, s) in &lib.setups {
+            println!("setup {k} {s:?}");
+        }
+        println!("unsupported {:?}", lib.unsupported);
+        if let Ok(hook) = std::env::var("ROMMANCER_HOOK") {
+            println!("scripts on: {}", install_scripts(&dir, Path::new(&hook)));
+            let mut c = BTreeMap::new();
+            c.insert("Rommancer - Test list".to_string(), lib.games.iter().map(|g| pc::wire(&g.rom)).collect());
+            write_collections(&dir, &c);
+        }
+    }
+}

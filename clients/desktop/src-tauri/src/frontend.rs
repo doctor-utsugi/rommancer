@@ -143,6 +143,13 @@ pub fn retroarch_setup(cfg: &Path, info_dirs: &[PathBuf], core_stem: &str) -> (S
 /// Where a RetroArch's core info files are: its libretro_info_path, its own info folder, the system's
 pub fn info_dirs(cfg: &Path) -> Vec<PathBuf> {
     let mut v: Vec<PathBuf> = pc::cfg_folder(cfg, "libretro_info_path").into_iter().collect();
+    // A flatpak's "/app/..." is inside its sandbox: on the host, in the flatpak's installed files
+    let wired = pc::wire(cfg);
+    if let (Some(id), Some(inner)) = (wired.split("/.var/app/").nth(1).and_then(|r| r.split('/').next()), v.first().and_then(|p| pc::wire(p).strip_prefix("/app/").map(str::to_string))) {
+        for base in [PathBuf::from("/var/lib/flatpak"), home().join(".local/share/flatpak")] {
+            v.push(base.join("app").join(id).join("current/active/files").join(&inner));
+        }
+    }
     if let Some(d) = cfg.parent() {
         v.push(d.join("info"));
     }

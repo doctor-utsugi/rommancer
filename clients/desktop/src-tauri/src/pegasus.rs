@@ -160,7 +160,12 @@ fn default_cfg(command: &str) -> Option<PathBuf> {
 
 /// What runs a command: the RetroArch setup's key, or the emulator's name when Rommancer cannot read it
 fn setup_of(command: &str, setups: &mut BTreeMap<String, Setup>) -> Result<String, String> {
-    let program = || args(command).into_iter().next().map(|p| normalize(Path::new(&p.replace('\\', "/"))).file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or(p)).unwrap_or_default();
+    // The program's file name; a flatpak's application id ("flatpak run org.duckstation.DuckStation")
+    let program = || {
+        let a = args(command);
+        let p = if a.first().is_some_and(|x| x == "flatpak") { a.iter().skip_while(|x| *x != "run").skip(1).find(|x| !x.starts_with('-')).cloned() } else { a.first().cloned() };
+        p.map(|p| normalize(Path::new(&p.replace('\\', "/"))).file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or(p)).unwrap_or_default()
+    };
     let retroarch = default_cfg(command).and_then(|cfg| retroarch_command(command, "org.libretro.RetroArch", &cfg));
     match retroarch.or_else(|| standalone_of_command(command, &[])) {
         Some((key, setup)) => {
@@ -317,5 +322,28 @@ mod tests {
         assert_eq!(lib.unsupported.get("bsnes"), Some(&1));
         assert_eq!(lib.setups[&key].emulator, "core:Snes9x");
         let _ = fs::remove_dir_all(&base);
+    }
+}
+
+#[cfg(test)]
+mod real {
+    use super::*;
+
+    /// Against a real Pegasus: ROMMANCER_PEGASUS_DIR its configuration folder
+    #[test]
+    #[ignore]
+    fn read_a_real_pegasus() {
+        let dir = PathBuf::from(std::env::var("ROMMANCER_PEGASUS_DIR").unwrap());
+        let lib = read(&dir);
+        for g in &lib.games {
+            println!("game {} [{}] {}", g.rom.display(), g.platform, g.setup);
+        }
+        for (k, s) in &lib.setups {
+            println!("setup {k} {s:?}");
+        }
+        println!("unsupported {:?}", lib.unsupported);
+        let mut c = BTreeMap::new();
+        c.insert("Rommancer - Test list".to_string(), lib.games.iter().map(|g| pc::wire(&g.rom)).collect());
+        write_collections(&dir, &c);
     }
 }
