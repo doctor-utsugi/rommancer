@@ -441,8 +441,9 @@ async function pullRows(d: Device, body: z.infer<typeof pullBody>) {
   const chosen = systems
     ? withSystem.filter((r) => !!r.system).filter((r) => (r.gameId ? systems.has(r.system ?? '') : r.baseGameId ? hacks.has(r.system ?? '') : !!body.unidentified || unidentified.has(r.system ?? '')))
     : withSystem;
-  // Hacks and other unidentified files the server already holds, by their content
-  const sha1s = chosen.flatMap((r) => (!r.gameId && r.sha1 ? [r.sha1] : []));
+  // Files the server already holds, by their content (hacks, unidentified files, and a dump named as a known game
+  // whose content is not that game's)
+  const sha1s = chosen.flatMap((r) => (r.sha1 ? [r.sha1] : []));
   const stored = new Set(sha1s.length ? (await prisma.romFile.findMany({ where: { sha1: { in: sha1s } }, select: { sha1: true } })).map((f) => f.sha1) : []);
   const ownedRoms = await ownedRomIds({ romIds: [...new Set(chosen.flatMap((r) => (r.romId ? [r.romId] : [])))], include: 'any' });
   const ownedGames = await ownedGameIds();
