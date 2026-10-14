@@ -496,7 +496,9 @@ mod tests {
         }
         let mut c = BTreeMap::new();
         c.insert("Rommancer - RPG & more".to_string(), vec!["/roms/snes/a.sfc".to_string(), "/other/b.gba".to_string()]);
-        write_collections(&dir, &c);
+        assert_eq!(write_collections(&dir, &c), vec!["Rommancer - Old".to_string(), "Rommancer - RPG & more".to_string()]);
+        // Written again the same: nothing changed
+        assert!(write_collections(&dir, &c).is_empty());
         assert_eq!(fs::read_to_string(dir.join("collections/custom-Rommancer - RPG & more.cfg")).unwrap(), "%ROMPATH%/snes/a.sfc\n/other/b.gba\n");
         assert!(!dir.join("collections/custom-Rommancer - Old.cfg").exists());
         assert!(dir.join("collections/custom-Mine.cfg").exists());

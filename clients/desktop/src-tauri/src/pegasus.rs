@@ -301,6 +301,23 @@ impl Cache {
 mod tests {
     use super::*;
 
+    #[test]
+    fn collections_tell_what_changed() {
+        let dir = std::env::temp_dir().join(format!("rommancer-pegasus-coll-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        let mut c = BTreeMap::new();
+        c.insert("Rommancer - A".to_string(), vec!["/r/a.sfc".to_string()]);
+        c.insert("Rommancer - B".to_string(), vec!["/r/b.sfc".to_string()]);
+        assert_eq!(write_collections(&dir, &c).len(), 2);
+        assert!(write_collections(&dir, &c).is_empty());
+        c.get_mut("Rommancer - B").unwrap().push("/r/c.sfc".to_string());
+        c.remove("Rommancer - A");
+        assert_eq!(write_collections(&dir, &c), vec!["Rommancer - A".to_string(), "Rommancer - B".to_string()]);
+        assert_eq!(write_collections(&dir, &BTreeMap::new()), vec!["Rommancer - B".to_string()]);
+        assert!(!dir.join("metafiles/rommancer.metadata.pegasus.txt").exists());
+        let _ = fs::remove_dir_all(&dir);
+    }
+
     fn write(p: &Path, text: &str) {
         fs::create_dir_all(p.parent().unwrap()).unwrap();
         fs::write(p, text).unwrap();
