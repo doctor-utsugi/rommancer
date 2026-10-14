@@ -183,11 +183,16 @@ async function learnFrontendCores(device: AgentDevice, systems: string[][], game
   const romBefore = (device.romCores ?? {}) as Record<string, string>;
   const sys = { ...sysBefore };
   const roms = { ...romBefore };
+  const found: { slug: string; name: string; exact: boolean }[] = [];
   for (const [folder, core, platform] of systems) {
     const name = coreName(core ?? '');
-    const slug = systemForFolder(idx, path.posix.basename(folder ?? ''))?.slug ?? (platform ? await systemForPlatform(platform) : null);
-    if (name && slug && !(slug in sys)) sys[slug] = name;
+    const base = path.posix.basename(folder ?? '');
+    const slug = systemForFolder(idx, base)?.slug ?? (platform ? await systemForPlatform(platform) : null);
+    if (name && slug) found.push({ slug, name, exact: base.toLowerCase() === slug });
   }
+  // Several folders of one system (ES-DE's "arcade" and "fbneo"): the one named as it first
+  found.sort((a, b) => Number(b.exact) - Number(a.exact));
+  for (const { slug, name } of found) if (!(slug in sys)) sys[slug] = name;
   for (const [rom, core] of games) {
     const name = coreName(core ?? '');
     const base = path.posix.basename(rom ?? '').replace(/\.[^.]+$/, '');
