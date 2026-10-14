@@ -9,16 +9,27 @@ import java.io.RandomAccessFile
  * server learns from the roms' headers ("tid" lines). A folder goes as one file whose path ends in "/" (its tar).
  */
 object CtrSaves {
-    /** The title id of a .3ds or .cci rom (its NCSD header's media id), 16 hex digits; null for any other file */
+    /** The title id of a .3ds or .cci rom (its NCSD header's media id) or of a .cia (its TMD's), 16 hex digits */
     fun titleId(rom: File): String? {
-        if (rom.extension.lowercase() !in setOf("3ds", "cci")) return null
+        val ext = rom.extension.lowercase()
+        if (ext != "3ds" && ext != "cci" && ext != "cia") return null
         RandomAccessFile(rom, "r").use { f ->
-            if (f.length() < 0x110) return null
-            val h = ByteArray(0x10)
-            f.seek(0x100)
-            f.readFully(h)
-            if (String(h, 0, 4, Charsets.US_ASCII) != "NCSD") return null
-            return (7 downTo 0).joinToString("") { "%02X".format(h[8 + it].toInt() and 0xff) }
+            fun bytes(at: Long, n: Int): ByteArray? = if (at < 0 || at + n > f.length()) null else ByteArray(n).also { f.seek(at); f.readFully(it) }
+            if (ext != "cia") {
+                val h = bytes(0x100, 0x10) ?: return null
+                if (String(h, 0, 4, Charsets.US_ASCII) != "NCSD") return null
+                return (7 downTo 0).joinToString("") { "%02X".format(h[8 + it].toInt() and 0xff) }
+            }
+            // CIA: header, certificate chain, ticket and TMD, each aligned to 64 bytes; the TMD's signature size
+            // depends on its type, and the title id sits 0x4C into the header after it (big-endian)
+            val h = bytes(0, 0x20) ?: return null
+            fun le(at: Int) = (0 until 4).fold(0L) { acc, i -> acc or ((h[at + i].toLong() and 0xff) shl (8 * i)) }
+            fun align(n: Long) = (n + 63) / 64 * 64
+            val tmd = align(align(align(le(0)) + le(8)) + le(12))
+            val type = bytes(tmd, 4)?.fold(0L) { acc, b -> (acc shl 8) or (b.toLong() and 0xff) } ?: return null
+            val sig = when (type) { 0x10003L -> 0x23C; 0x10004L -> 0x13C; 0x10005L -> 0x7C; else -> return null }
+            val id = bytes(tmd + 4 + sig + 0x4C, 8) ?: return null
+            return id.joinToString("") { "%02X".format(it.toInt() and 0xff) }
         }
     }
 
