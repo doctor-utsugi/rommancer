@@ -311,18 +311,20 @@ fn set_setting(dir: &Path, kind: &str, name: &str, value: &str) -> bool {
 /// Rommancer's collections (by name, their roms) as ES-DE custom collections: collections/custom-<name>.cfg, the
 /// ones of Rommancer no longer there removed, and all of them turned on in its settings while ES-DE is closed (it
 /// writes its settings back when it quits; until then they wait, written, to be ticked or turned on later)
-pub fn write_collections(dir: &Path, collections: &BTreeMap<String, Vec<String>>) {
+/// Returns the collections written or removed
+pub fn write_collections(dir: &Path, collections: &BTreeMap<String, Vec<String>>) -> Vec<String> {
+    let mut changed = vec![];
     let folder = dir.join("collections");
     if fs::create_dir_all(&folder).is_err() {
-        return;
+        return changed;
     }
     let roms = pc::wire(&rom_dir(dir, &settings(dir)));
     let ours = |n: &str| n.starts_with(crate::collections::PREFIX);
     for e in fs::read_dir(&folder).into_iter().flatten().flatten() {
         let n = e.file_name().to_string_lossy().to_string();
         let name = n.strip_prefix("custom-").and_then(|x| x.strip_suffix(".cfg")).unwrap_or("");
-        if ours(name) && !collections.contains_key(name) {
-            let _ = fs::remove_file(e.path());
+        if ours(name) && !collections.contains_key(name) && fs::remove_file(e.path()).is_ok() {
+            changed.push(name.to_string());
         }
     }
     for (name, paths) in collections {
@@ -331,12 +333,12 @@ pub fn write_collections(dir: &Path, collections: &BTreeMap<String, Vec<String>>
             None => format!("{p}\n"),
         }).collect();
         let file = folder.join(format!("custom-{name}.cfg"));
-        if fs::read_to_string(&file).ok().as_deref() != Some(text.as_str()) {
-            let _ = fs::write(&file, text);
+        if fs::read_to_string(&file).ok().as_deref() != Some(text.as_str()) && fs::write(&file, text).is_ok() {
+            changed.push(name.clone());
         }
     }
     if esde_running() {
-        return;
+        return changed;
     }
     let mut on: Vec<String> = settings(dir).get("CollectionSystemsCustom").map(|v| v.split(',').map(|x| x.trim().to_string()).filter(|x| !x.is_empty()).collect()).unwrap_or_default();
     on.retain(|n| !ours(n) || collections.contains_key(n));
@@ -346,6 +348,7 @@ pub fn write_collections(dir: &Path, collections: &BTreeMap<String, Vec<String>>
         }
     }
     set_setting(dir, "string", "CollectionSystemsCustom", &on.join(","));
+    changed
 }
 
 /// When the roms folder or ES-DE's settings and gamelists last changed

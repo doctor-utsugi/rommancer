@@ -50,6 +50,9 @@ pub struct Outcome {
     pub games_sent: u32,
     /// Games deleted for being in no list
     pub games_deleted: u32,
+    /// Frontends that show the games copied or their changed collections only once they start again (ES-DE, Pegasus)
+    #[serde(default)]
+    pub restart: Vec<String>,
     /// Save and state files of those games removed
     pub saves_cleaned: u32,
     pub errors: u32,

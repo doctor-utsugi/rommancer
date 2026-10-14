@@ -80,6 +80,8 @@ interface Outcome {
   games_failed: number
   games_sent: number
   games_deleted?: number
+  /** Frontends to start again to see the games copied or their changed collections */
+  restart?: string[]
   saves_cleaned?: number
   errors: number
   config: number
@@ -163,7 +165,9 @@ function summaryLines(o: Outcome) {
     ['sum_saves_cleaned', o.saves_cleaned ?? 0],
     ['sum_conflicts', o.conflicts],
   ]
-  return facts.filter(([, n]) => n > 0).map(([k, n]) => tn(k, n))
+  const lines = facts.filter(([, n]) => n > 0).map(([k, n]) => tn(k, n))
+  if (o.restart?.length) lines.push(t('sumRestart', { list: o.restart.join(', ') }))
+  return lines
 }
 
 export function App() {
@@ -2181,7 +2185,11 @@ async function notifyFinished(f: Finished, name: string) {
   if (!f.ok || document.hasFocus()) return
   const o = f.outcome
   const saves = o.saves_down + o.states_down
-  const parts = [saves === 1 ? t('notifySave') : saves > 1 ? t('notifySaves', { n: saves }) : '', o.games_down > 0 ? t('notifyRoms', { n: o.games_down }) : ''].filter(Boolean)
+  const parts = [
+    saves === 1 ? t('notifySave') : saves > 1 ? t('notifySaves', { n: saves }) : '',
+    o.games_down > 0 ? t('notifyRoms', { n: o.games_down }) : '',
+    o.restart?.length ? t('notifyRestart', { list: o.restart.join(', ') }) : '',
+  ].filter(Boolean)
   if (!parts.length) return
   let granted = await isPermissionGranted()
   if (!granted) granted = (await requestPermission()) === 'granted'

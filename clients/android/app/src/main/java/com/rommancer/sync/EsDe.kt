@@ -19,9 +19,10 @@ object EsDe {
         runCatching { record(context).appendText("${System.currentTimeMillis() / 1000}\t${dest.path}\n") }
     }
 
-    fun write(context: Context, api: Api, root: File) {
+    /** True when the collection of a list changed, came or went */
+    fun write(context: Context, api: Api, root: File): Boolean {
         val dir = File(root, "ES-DE/collections")
-        if (!dir.isDirectory) return
+        if (!dir.isDirectory) return false
         val savesName = "Rommancer - With saves"
         val newName = "Rommancer - New"
         val romsDir = api.text("/agent/roots").lines().firstOrNull { it.startsWith("roms\t") }?.substringAfter('\t')
@@ -42,18 +43,24 @@ object EsDe {
         val fresh = recent.sortedByDescending { it.first }.map { it.second }.distinct().filter { File(it).isFile }
         put(File(dir, "custom-$savesName.cfg"), saves.map { esPath(it, romsDir) })
         put(File(dir, "custom-$newName.cfg"), fresh.map { esPath(it, romsDir) })
-        for ((name, paths) in lists) put(File(dir, "custom-$name.cfg"), paths.map { esPath(it, romsDir) })
+        // Only the lists' collections are worth telling about (the other two change with every game played or copied)
+        var changed = false
+        for ((name, paths) in lists) changed = put(File(dir, "custom-$name.cfg"), paths.map { esPath(it, romsDir) }) || changed
         // Collections of lists no longer given to this device
         val kept = setOf(savesName, newName) + lists.keys
-        dir.listFiles()?.filter { it.name.startsWith("custom-Rommancer - ") && it.name.endsWith(".cfg") && it.name.removePrefix("custom-").removeSuffix(".cfg") !in kept }?.forEach { it.delete() }
+        dir.listFiles()?.filter { it.name.startsWith("custom-Rommancer - ") && it.name.endsWith(".cfg") && it.name.removePrefix("custom-").removeSuffix(".cfg") !in kept }?.forEach { it.delete(); changed = true }
+        return changed
     }
 
     /** ES-DE keeps the games of its collections relative to its ROM folder */
     private fun esPath(path: String, romsDir: String?) =
         if (romsDir != null && path.startsWith("$romsDir/")) "%ROMPATH%/" + path.removePrefix("$romsDir/") else path
 
-    private fun put(file: File, lines: List<String>) {
+    /** True when FILE was written */
+    private fun put(file: File, lines: List<String>): Boolean {
         val text = lines.joinToString("") { "$it\n" }
-        if (!file.exists() || file.readText() != text) file.writeText(text)
+        if (file.exists() && file.readText() == text) return false
+        file.writeText(text)
+        return true
     }
 }

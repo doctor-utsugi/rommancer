@@ -284,7 +284,7 @@ class SyncEngine(private val context: Context, private val store: Store, private
             runCatching { probe(api, File(f[1]), f[2]) }
         }
         Notices.received(context, received.toList())
-        runCatching { EsDe.write(context, api, root) }
+        if (runCatching { EsDe.write(context, api, root) }.getOrDefault(false)) Notices.frontend(context, root, 0, true)
         store.lastSyncAt = System.currentTimeMillis()
         store.addLog("sync: ${sum.savesUp + sum.statesUp} up, ${sum.savesDown + sum.statesDown} down, ${sum.errors} errors")
         return sum.also { keep(it) }
@@ -548,7 +548,10 @@ class SyncEngine(private val context: Context, private val store: Store, private
                 watcher.interrupt()
             }
         }
-        if (got > 0) runCatching { EsDe.write(context, api, root) }
+        if (got > 0) {
+            val changed = runCatching { EsDe.write(context, api, root) }.getOrDefault(false)
+            Notices.frontend(context, root, got, changed)
+        }
         store.addLog("roms: $got downloaded, $have already here, $failed failed")
         if (STOP_ROMS.get()) sum.stopped = true
         return sum.apply { gamesDown = got }

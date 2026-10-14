@@ -750,9 +750,21 @@ fn start_sync(app: &AppHandle, state: &AppState, key: String, mode: Mode, roms: 
         };
         let result = run();
         if is_pc && mode == Mode::Full && result.is_ok() {
-            if let Err(e) = collections::write(&t.api(), &libraries(&app.state::<AppState>())) {
+            let libs = libraries(&app.state::<AppState>());
+            let mut restart = collections::write(&t.api(), &libs).unwrap_or_else(|e| {
                 log(format!("error: frontend collections: {e:#}"));
+                vec![]
+            });
+            // Games copied show in the frontends that look through the rom folders when they start
+            if out.games_down > 0 {
+                restart.extend(libs.iter().filter(|l| l.name == "ES-DE" || l.name == "Pegasus").map(|l| l.name.clone()));
             }
+            restart.sort();
+            restart.dedup();
+            if !restart.is_empty() {
+                log(format!("frontends: close and open {} again to see the changes", restart.join(", ")));
+            }
+            out.restart = restart;
         }
         let was_cancelled = matches!(&result, Err(e) if e.to_string() == "cancelled");
         if is_pc {

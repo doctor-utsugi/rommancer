@@ -23,7 +23,7 @@
 #                                   so any computer with this script can sync it. Without a command: sync.
 set -u
 # Raised with every change of this client (any change reaches devices: they update by content, not by this)
-CLIENT_VERSION=1.68.0
+CLIENT_VERSION=1.69.0
 # A clock before this date is surely wrong (no battery-backed clock); kept apart from the version, which may run ahead
 CLOCK_MIN=20261001
 # Onion keeps curl (with TLS) and friends outside the default PATH
@@ -1745,17 +1745,23 @@ cmd_collections() {
   # The lists given to this console, one collection each in the list's order ("list<TAB>name<TAB>path" lines)
   rm -rf "$WORK/coll-lists"; mkdir -p "$WORK/coll-lists"
   awk -F"$TAB" -v out="$WORK/coll-lists" '$1 == "list" && NF == 3 { n = $2; gsub(/[\/\\:*?"<>|]/, " ", n); f = out "/Rommancer - " n ".cfg"; if (!seen[f, $3]++) print $3 > f }' "$WORK/collections"
+  coll_changed=""
   for f in "$WORK/coll-lists"/*.cfg; do
     [ -f "$f" ] || continue
-    cmp -s "$f" "$dir/custom-${f##*/}" 2>/dev/null || cp "$f" "$dir/custom-${f##*/}"
+    cmp -s "$f" "$dir/custom-${f##*/}" 2>/dev/null || { cp "$f" "$dir/custom-${f##*/}"; coll_changed=1; }
   done
   # Collections of lists no longer given to this console
   for f in "$dir"/custom-Rommancer\ -\ *.cfg; do
     [ -f "$f" ] || continue
     n="${f##*/custom-}"
     case "$n" in "$saves_name.cfg"|"$new_name.cfg") continue ;; esac
-    [ -f "$WORK/coll-lists/$n" ] || rm -f "$f"
+    [ -f "$WORK/coll-lists/$n" ] || { rm -f "$f"; coll_changed=1; }
   done
+  # EmulationStation reads collections with its game lists: reloaded when a list's collection changed (the other
+  # two change with every game played or copied, and show at the next reload), never during a game
+  if [ -n "$coll_changed" ] && ! playing; then
+    curl -fsS -m 10 "${ROMMANCER_ES_API:-http://127.0.0.1:1234}/reloadgames" >/dev/null 2>&1 && log "collections changed: game lists reloaded"
+  fi
   return 0
 }
 

@@ -211,11 +211,25 @@ pub fn read(dir: &Path) -> Library {
 
 /// Rommancer's collections (by name, their roms) as one Pegasus metadata file in its metafiles folder (Pegasus reads
 /// it when it starts); removed when there are none
-pub fn write_collections(dir: &Path, collections: &BTreeMap<String, Vec<String>>) {
+/// Returns the collections whose roms changed
+pub fn write_collections(dir: &Path, collections: &BTreeMap<String, Vec<String>>) -> Vec<String> {
     let file = dir.join("metafiles").join("rommancer.metadata.pegasus.txt");
+    let before = fs::read_to_string(&file).unwrap_or_default();
+    // The roms of each collection the file held, to tell which changed
+    let mut old: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    let mut current = None;
+    for line in before.lines() {
+        if let Some(n) = line.strip_prefix("collection: ") {
+            current = Some(n.to_string());
+            old.entry(n.to_string()).or_default();
+        } else if let (Some(n), Some(p)) = (&current, line.strip_prefix("  ")) {
+            old.entry(n.clone()).or_default().push(p.to_string());
+        }
+    }
+    let changed: Vec<String> = old.keys().chain(collections.keys()).filter(|n| old.get(*n) != collections.get(*n)).cloned().collect::<std::collections::BTreeSet<_>>().into_iter().collect();
     if collections.is_empty() {
         let _ = fs::remove_file(&file);
-        return;
+        return changed;
     }
     let mut text = String::from("# Written by the Rommancer app\n");
     for (name, paths) in collections {
@@ -224,10 +238,11 @@ pub fn write_collections(dir: &Path, collections: &BTreeMap<String, Vec<String>>
             text.push_str(&format!("  {p}\n"));
         }
     }
-    if fs::read_to_string(&file).ok().as_deref() != Some(text.as_str()) {
+    if before != text {
         let _ = fs::create_dir_all(dir.join("metafiles"));
         let _ = fs::write(&file, text);
     }
+    changed
 }
 
 /// When Pegasus's game folders, metadata files or the folders they hold last changed

@@ -204,4 +204,8 @@
     <string name="received_channel">Saves received</string>
     <string name="received_one">Save received: %1$s</string>
     <string name="received_many">%1$d saves received: %2$s and more</string>
+    <string name="frontend_channel">Games and collections</string>
+    <string name="frontend_esde_games">%1$d new games arrived. Close ES-DE and open it again to see them.</string>
+    <string name="frontend_esde_collections">Rommancer\'s collections changed. Close ES-DE and open it again to see them.</string>
+    <string name="frontend_daijisho_games">%1$d new games arrived. Sync their platforms in Daijishō to see them.</string>
 </resources>
