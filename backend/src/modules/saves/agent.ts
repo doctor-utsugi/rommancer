@@ -329,9 +329,19 @@ async function launcherCard(device: AgentDevice, file: string) {
         : codec.family === 'ps1'
           ? /\.(mcd|mcr)$/i.test(file)
           : file.toLowerCase().endsWith(emu.saveExt.toLowerCase());
-    if (fits) return { emu, shared: setup.savesLayout === 'card-shared' && codec.family !== 'psp' };
+    if (!fits) continue;
+    const shared = setup.savesLayout === 'card-shared' && codec.family !== 'psp';
+    return { emu, shared, gameId: setup.savesLayout === 'card-title' && codec.family === 'ps1' ? await titleCardGame(file) : null };
   }
   return null;
+}
+
+/** The game of a PS1 card named after its title ("Tony Hawk's Pro Skater (USA)_1.mcd"), before it holds any save */
+async function titleCardGame(file: string) {
+  const title = path.posix.basename(file).replace(/_\d+\.(mcd|mcr)$/i, '');
+  if (title === path.posix.basename(file)) return null;
+  const psx = await prisma.system.findUnique({ where: { slug: 'psx' }, select: { id: true } });
+  return (await identifyRom(title, psx?.id))?.gameId ?? null;
 }
 
 /** Kept only when it changed (a library of thousands of games is sent with every sync) */
@@ -896,7 +906,7 @@ agentRouter.post('/sync', express.text({ limit: '16mb', type: '*/*' }), async (r
     const named = cardFiles.has(p) ? null : namedCard(path.posix.basename(p));
     if (!named) {
       const found = cardFiles.has(p) ? null : await launcherCard(device, p);
-      const line = found && (await cardLine(device, p, found.emu, { shared: found.shared, gameId: null }, h, '-'));
+      const line = found && (await cardLine(device, p, found.emu, { shared: found.shared, gameId: found.gameId ?? null }, h, '-'));
       if (line) out.push(line);
       continue;
     }
@@ -1583,7 +1593,7 @@ agentRouter.post('/upload', express.raw({ limit: '128mb', type: '*/*' }), async 
   }
   const found = !romPath || romPath === '-' ? await launcherCard(device, filePath) : null;
   if (found) {
-    const dc = await deviceCard(device, relToRoot(device, filePath), found.emu, { shared: found.shared, gameId: null });
+    const dc = await deviceCard(device, relToRoot(device, filePath), found.emu, { shared: found.shared, gameId: found.gameId ?? null });
     res.type('text/plain').send(await cardUpload(device, dc, found.emu, filePath, buf, '-'));
     return;
   }

@@ -161,11 +161,13 @@ class SyncEngine(private val context: Context, private val store: Store, private
         }
         request.append(frontendLines)
         val listed = HashSet<String>()
-        saveDirs.forEach { dir ->
+        // Android/data may be listable but not readable: read through Shizuku or root, below
+        saveDirs.filter { !it.path.contains("/Android/data/") }.forEach { dir ->
             // PSP save folders go whole, below
             dir.walkTopDown().filter { it.isFile && !it.name.startsWith(".") && isSave(it.name, exts) && !it.path.contains("/PSP/SAVEDATA/", ignoreCase = true) }.forEach { save ->
                 // file, path, sha1, mtime (the server tells which emulator folder is in use by the newest one)
-                if (listed.add(save.path)) request.append("file\t").append(save.path).append('\t').append(sha1(save, 0)).append('\t').append(save.lastModified() / 1000).append('\n')
+                val hash = runCatching { sha1(save, 0) }.getOrNull() ?: return@forEach
+                if (listed.add(save.path)) request.append("file\t").append(save.path).append('\t').append(hash).append('\t').append(save.lastModified() / 1000).append('\n')
             }
         }
         // Roms kept in a folder of their own under their system (ROMs/snes/CURADA/game.smc): sent as "srom" when a save
