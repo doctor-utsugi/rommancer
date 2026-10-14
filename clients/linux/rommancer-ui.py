@@ -178,6 +178,46 @@ TEXTS = {
         "f_conflicts1": "1 save in conflict",
         "f_errors": "{n} errors",
         "f_errors1": "1 error",
+        "show_close": "They show in the game list when you close Rommancer Sync",
+        "show_arkos": "EmulationStation restarts to show them when you close Rommancer Sync",
+        "show_list": "They show in the game list",
+        "st_games": "Games",
+        "browse": "Browse games",
+        "b_search": "Search…",
+        "search": "Search games",
+        "search_keys": "A key  B delete  X shift  Y space  START results  SELECT back",
+        "b_systems_keys": "A open  X tick all  Y search  START download  B back",
+        "b_games_keys": "A tick  L1/R1 page  Y search  START download  B back",
+        "b_counts": "{n} · {size}",
+        "b_here_n": "({n} here)",
+        "b_games_n": "{n} games",
+        "b_here": "here",
+        "b_queued": "queued",
+        "b_selected": "{n} games selected · {size}",
+        "b_selected1": "1 game selected · {size}",
+        "b_nothing": "Nothing selected yet",
+        "b_found": "“{q}” · {n} games",
+        "b_found1": "“{q}” · 1 game",
+        "loading": "Loading…",
+        "searching": "Searching…",
+        "b_match": "{n} games match",
+        "b_match1": "1 game matches",
+        "b_nomatch": "No games match “{q}”",
+        "b_none": "The server has no games to send yet",
+        "b_denied": "Your account cannot download games",
+        "b_have": "Nothing to download: those games are already here or on their way",
+        "b_ask": "Download {n} games ({size})?",
+        "b_ask1": "Download 1 game ({size})?",
+        "b_usable": "Usable space: {usable} ({free} free, {kept} kept free)",
+        "b_pending": "Already waiting from your lists: {size}",
+        "b_whole": "{name}: all {n} games, one version each; games the server gets later are not included",
+        "b_long": "This may take a long time: keep the console charged",
+        "b_nospace": "Not enough space: needs {need}, {usable} usable",
+        "b_nospace_unknown": "Not enough space: the free space of this console could not be measured",
+        "b_dl_go": "Download",
+        "b_discard": "Discard {n} selected games?",
+        "b_discard1": "Discard 1 selected game?",
+        "b_discard_go": "Discard",
     },
 }
 
@@ -265,8 +305,12 @@ class Pad:
     KEYS = {
         pygame.K_UP: "up", pygame.K_DOWN: "down", pygame.K_LEFT: "left", pygame.K_RIGHT: "right",
         pygame.K_RETURN: "a", pygame.K_BACKSPACE: "b", pygame.K_ESCAPE: "select", pygame.K_TAB: "x",
-        pygame.K_SPACE: "y", pygame.K_F1: "start",
+        pygame.K_SPACE: "y", pygame.K_F1: "start", pygame.K_PAGEUP: "pageup", pygame.K_PAGEDOWN: "pagedown",
     }
+    DIRS = ("up", "down", "left", "right")
+    # A direction held on a hat, a stick or a d-pad button repeats: after 300 ms, then every 60 ms (keys repeat by
+    # SDL's own key repeat)
+    REPEAT_AFTER, REPEAT_EVERY = 0.3, 0.06
 
     def __init__(self):
         pygame.joystick.init()
@@ -276,8 +320,27 @@ class Pad:
             m = es_mapping(j)
             # Generic fallback: SDL's usual south/east buttons and the first hat
             self.maps[j.get_instance_id()] = m or {"a": ("button", 0, 1), "b": ("button", 1, 1), "x": ("button", 2, 1), "y": ("button", 3, 1),
+                                                   "pageup": ("button", 4, 1), "pagedown": ("button", 5, 1),
                                                    "select": ("button", 6, 1), "start": ("button", 7, 1)}
         self.axis_held = {}
+        # (direction, what holds it, when it fires next)
+        self.held = None
+
+    def hold(self, acts, source):
+        """A direction pressed by SOURCE starts repeating; SOURCE let go (or pressed elsewhere) stops it"""
+        d = next((a for a in acts if a in self.DIRS), None)
+        if d:
+            self.held = (d, source, time.time() + self.REPEAT_AFTER)
+        elif self.held and self.held[1] == source:
+            self.held = None
+        return acts
+
+    def repeat(self):
+        """The held direction when it is due again, else None"""
+        if not self.held or time.time() < self.held[2]:
+            return None
+        self.held = (self.held[0], self.held[1], time.time() + self.REPEAT_EVERY)
+        return self.held[0]
 
     def actions(self, event):
         if event.type == pygame.KEYDOWN:
@@ -286,10 +349,15 @@ class Pad:
             return [("char", event.text)]
         m = self.maps.get(getattr(event, "instance_id", None), {})
         if event.type == pygame.JOYBUTTONDOWN:
-            return [name for name, (kind, ident, _) in m.items() if kind == "button" and ident == event.button]
+            acts = [name for name, (kind, ident, _) in m.items() if kind == "button" and ident == event.button]
+            return self.hold(acts, ("button", event.instance_id, event.button)) if any(a in self.DIRS for a in acts) else acts
+        if event.type == pygame.JOYBUTTONUP:
+            self.hold([], ("button", event.instance_id, event.button))
+            return []
         if event.type == pygame.JOYHATMOTION:
             x, y = event.value
-            return [d for d, ok in (("left", x < 0), ("right", x > 0), ("up", y > 0), ("down", y < 0)) if ok]
+            acts = [d for d, ok in (("left", x < 0), ("right", x > 0), ("up", y > 0), ("down", y < 0)) if ok]
+            return self.hold(acts, ("hat", event.instance_id, event.hat))
         if event.type == pygame.JOYAXISMOTION:
             key = (event.instance_id, event.axis)
             direction = 0 if abs(event.value) < 0.6 else (1 if event.value > 0 else -1)
@@ -297,11 +365,11 @@ class Pad:
                 return []
             self.axis_held[key] = direction
             if direction == 0:
-                return []
+                return self.hold([], ("axis",) + key)
             named = [n for n, (kind, ident, val) in m.items() if kind == "axis" and ident == event.axis and val == direction]
-            if named:
-                return named
-            return [("down" if direction > 0 else "up") if event.axis % 2 else ("right" if direction > 0 else "left")]
+            if not named:
+                named = [("down" if direction > 0 else "up") if event.axis % 2 else ("right" if direction > 0 else "left")]
+            return self.hold(named, ("axis",) + key)
         return []
 
 
@@ -379,16 +447,19 @@ def _synced_text():
 
 # ---------- the summary of an action: the client's "sum<TAB>key<TAB>n[<TAB>extra]" lines (docs/clients-ux.md) ----------
 
-SUM_ORDER = ["saves-up", "saves-down", "states-up", "states-down", "games-down", "games-sent", "games-deleted",
+SUM_ORDER = ["saves-up", "saves-down", "states-up", "states-down", "games-down", "games-show", "games-sent", "games-deleted",
              "saves-cleaned", "games-stopped", "games-nospace", "conflicts", "errors"]
 SUM_ICONS = {"saves-up": "up", "states-up": "up", "games-sent": "up", "saves-down": "down", "states-down": "down",
              "games-down": "down", "conflicts": "warn", "errors": "warn", "games-nospace": "warn"}
+# When games just downloaded show, by firmware (the "games-show" line)
+GAMES_SHOW = {"onion": "show_close", "knulli": "show_close", "batocera": "show_close", "rocknix": "show_close",
+              "arkos": "show_arkos", "muos": "show_list", "nextui": "show_list"}
 
 
 def summary_facts(lines):
     """One (icon, text, colour) per fact that is not zero, in the guide's order; the same keys added up (conflicts:
     the last count; a game with no room: each one)"""
-    vals, conflicts, nospace, stopped = {}, 0, [], False
+    vals, conflicts, nospace, stopped, shows = {}, 0, [], False, ""
     for line in lines:
         p = line.rstrip("\n").split("\t")
         if len(p) < 3 or p[0] != "sum" or not p[2].isdigit():
@@ -399,6 +470,8 @@ def summary_facts(lines):
             nospace.append(p[3] if len(p) > 3 else "?")
         elif p[1] == "games-stopped":
             stopped = True
+        elif p[1] == "games-show":
+            shows = p[3] if len(p) > 3 else ""
         else:
             vals[p[1]] = vals.get(p[1], 0) + int(p[2])
     vals.update({"conflicts": conflicts, "games-stopped": int(stopped)})
@@ -407,6 +480,9 @@ def summary_facts(lines):
         color = WARN if SUM_ICONS.get(k) == "warn" else FG
         if k == "games-nospace":
             facts += [("warn", T["f_games-nospace"].format(x=x), color) for x in nospace]
+        elif k == "games-show":
+            if shows in GAMES_SHOW:
+                facts.append((None, T[GAMES_SHOW[shows]], FG))
         elif vals.get(k):
             n = vals[k]
             text = T[f"f_{k}1"] if n == 1 and f"f_{k}1" in T else T[f"f_{k}"].format(n=n)
@@ -536,6 +612,121 @@ KEYBOARD = [
     ":/?=&+#!*~",
 ]
 
+# ---------- browsing the server's games (docs/browse.md) ----------
+
+# A search goes out this long after the last edit of its text
+try:
+    SEARCH_DEBOUNCE = float(os.environ.get("ROMMANCER_SEARCH_DEBOUNCE", "2.0"))
+except ValueError:
+    SEARCH_DEBOUNCE = 2.0
+BROWSE_PAGE = 50
+
+
+class Picks:
+    """The games ticked while browsing: single games (id → (bytes, system)) and whole systems (slug → the games left
+    out of it, id → bytes). Ticking a system clears its single ticks"""
+
+    def __init__(self):
+        self.games, self.systems = {}, {}
+
+    def __bool__(self):
+        return bool(self.games or self.systems)
+
+    def clear(self):
+        self.games, self.systems = {}, {}
+
+    def ticked(self, gid, slug):
+        return gid not in self.systems[slug] if slug in self.systems else gid in self.games
+
+    def toggle(self, gid, size, slug):
+        if slug in self.systems:
+            skip = self.systems[slug]
+            if gid in skip:
+                del skip[gid]
+            else:
+                skip[gid] = size
+        elif gid in self.games:
+            del self.games[gid]
+        else:
+            self.games[gid] = (size, slug)
+
+    def toggle_system(self, slug):
+        """The whole system ticked; one ticked in full is unticked"""
+        full = slug in self.systems and not self.systems[slug]
+        self.games = {g: v for g, v in self.games.items() if v[1] != slug}
+        if full:
+            del self.systems[slug]
+        else:
+            self.systems[slug] = {}
+
+    def mark(self, slug):
+        """[x] the whole system, [-] some of its games, [  ] none"""
+        if slug in self.systems:
+            return "[-]" if self.systems[slug] else "[x]"
+        return "[-]" if any(v[1] == slug for v in self.games.values()) else "[  ]"
+
+    def totals(self, systems):
+        """(games, bytes), approximate (the review asks the server): a whole system counts its games not here yet"""
+        n, b = len(self.games), sum(v[0] for v in self.games.values())
+        for slug, skip in self.systems.items():
+            s = systems.get(slug)
+            if s and s["games"]:
+                new = s["games"] - s["here"]
+                n += new - len(skip)
+                b += s["bytes"] * new // s["games"] - sum(skip.values())
+        return max(n, 0), max(b, 0)
+
+    def body(self):
+        return "".join([f"game\t{g}\n" for g in self.games] + [f"system\t{s}\n" for s in self.systems]
+                       + [f"skip\t{g}\n" for skip in self.systems.values() for g in skip])
+
+
+class Paged:
+    """The games of a system or of a search (SYSTEM "-"), fetched a page at a time in a thread while the list keeps
+    drawing. GEN: the search's generation, so only the latest answer shows"""
+
+    def __init__(self, app, system="-", query="", gen=0):
+        self.app, self.system, self.query, self.gen = app, system, query, gen
+        # (id, bytes, state, system, title)
+        self.rows, self.total = [], None
+        self.loading = self.failed = self.denied = False
+        self.load()
+
+    def load(self):
+        if self.loading or self.failed or self.denied or (self.total is not None and len(self.rows) >= self.total):
+            return
+        self.loading = True
+        threading.Thread(target=self._fetch, args=(len(self.rows),), daemon=True).start()
+
+    def _fetch(self, offset):
+        out = self.app.client("browse-games", self.system, str(offset), self.query, str(BROWSE_PAGE), timeout=20)
+        if out is None:
+            self.failed = True
+        elif ["denied"] in out:
+            self.denied = True
+        else:
+            got = [(p[1], int(p[2]), p[3], p[4], "\t".join(p[5:])) for p in out if p[0] == "game" and len(p) >= 6 and p[2].isdigit()]
+            total = next((int(p[1]) for p in out if p[0] == "total" and len(p) > 1 and p[1].isdigit()), None)
+            self.rows += got
+            # A page that brings nothing ends the list, whatever the total said
+            self.total = len(self.rows) if total is None or not got else total
+        self.loading = False
+
+
+def check_lines(out):
+    """A check or add answer: bytes and games it adds, what the lists still have to bring, the space, whether it fits"""
+    d = {p[0]: p[1:] for p in out if p}
+
+    def num(v):
+        return int(v) if v and v.lstrip("-").isdigit() else None
+
+    need = (d.get("need") or []) + ["0", "0"]
+    space = (d.get("space") or ["-"]) + ["-", "-"]
+    usable = num(space[0])
+    return {"bytes": num(need[0]) or 0, "games": num(need[1]) or 0, "pending": num((d.get("pending") or ["0"])[0]) or 0,
+            "usable": None if usable is None else max(usable, 0), "free": num(space[1]) or 0, "kept": num(space[2]) or 0,
+            "fits": (d.get("fits") or ["0"])[0] == "1"}
+
 
 class App:
     def __init__(self):
@@ -550,6 +741,10 @@ class App:
         self.server = (saved or "https://").strip()
         self.script = [a.strip() for a in os.environ.get("ROMMANCER_UI_TEST", "").split(",") if a.strip()]
         self.clock = pygame.time.Clock()
+        self.queue, self.wait_until = [], 0.0
+        # Browsing: hidden once the server said the account may not download; the search's text and latest answer
+        # (only the answer of the latest generation shows)
+        self.browse_off, self.search_text, self.search_gen, self.search_res = False, "", 0, None
         # Conflicts are counted in the background so the menu never waits for the network
         self.conflict_count = None
         self.cleanable = "0"
@@ -568,23 +763,37 @@ class App:
         except OSError:
             return ""
 
-    # Input: real events, or a scripted list in tests (ROMMANCER_UI_TEST="down,a,...")
+    # Input: real events, or a scripted list in tests (ROMMANCER_UI_TEST="down,a,type:zel,wait:2.5,...": "wait:S" lets
+    # S seconds pass with no input, for what arrives in the background)
     def next_action(self, timeout=None):
         """Next gamepad action; None when TIMEOUT seconds pass without one (to animate)."""
         start = time.time()
         while True:
-            if self.script:
+            if self.script or time.time() < self.wait_until:
+                if time.time() < self.wait_until:
+                    if timeout is not None and time.time() - start >= timeout:
+                        return None
+                    time.sleep(0.016)
+                    continue
                 time.sleep(0.05)
                 a = self.script.pop(0)
+                if a.startswith("wait:"):
+                    self.wait_until = time.time() + float(a[5:])
+                    continue
                 return ("char", a[5:]) if a.startswith("type:") else a
             if os.environ.get("ROMMANCER_UI_TEST") is not None:
                 return "quit"
+            # Every event of the batch is read (a release left unread would keep a direction repeating)
             for event in pygame.event.get():
                 if event.type == pygame.QUIT:
                     return "quit"
-                acts = self.pad.actions(event)
-                if acts:
-                    return acts[0]
+                self.queue += self.pad.actions(event)
+            if not self.queue:
+                r = self.pad.repeat()
+                if r:
+                    self.queue.append(r)
+            if self.queue:
+                return self.queue.pop(0)
             if timeout is not None and time.time() - start >= timeout:
                 return None
             time.sleep(0.016)
@@ -655,11 +864,72 @@ class App:
             elif a in ("b", "quit"):
                 return None
 
-    def keyboard(self, title, value="", secret=False):
+    def pick_list(self, title, rows, footer, sub=None, view=None, wrap=True, near_end=None, tail=None):
+        """A list for browsing: (action, index) for a, x, y and start (index None with no rows), (b or quit, None).
+        ROWS: a function giving (label, right text, colour) per row, read every frame (pages arrive meanwhile); VIEW: a
+        dict keeping the selection and the scroll between calls; NEAR_END(): called while the selection is near the
+        last row (the next page loads); TAIL(): a dim line after the rows (Loading…), never selected; SUB: the line
+        under the title, or a function giving it. L1/R1 move a page; WRAP: past the last row is the first"""
+        view = {} if view is None else view
+        while True:
+            items = rows()
+            n = len(items)
+            sel = min(max(view.get("sel", 0), 0), max(n - 1, 0))
+            s = self.screen
+            s.frame(title, footer, sub() if callable(sub) else sub)
+            x, width = s.left(), s.column(True)
+            top, step = int(s.h * 0.17), s.font.get_linesize() + int(s.h * 0.012)
+            extra = tail() if tail else ""
+            fit = max(1, (int(s.h * 0.9) - top) // step - (1 if extra else 0))
+            first = min(max(view.get("first", 0), sel - fit + 1), sel)
+            first = max(0, min(first, n - fit))
+            y = top
+            for i in range(first, min(n, first + fit)):
+                label, right, color = items[i]
+                rw = s.small.size(right)[0] if right else 0
+                if right:
+                    s.text(right, (x + width - rw, y + (s.font.get_height() - s.small.get_height()) // 2), s.small, DIM)
+                s.text(s.clip(label, s.font, width - rw - 30), (x + 10, y), s.font, ACCENT if i == sel and color == FG else color)
+                if i == sel:
+                    pygame.draw.rect(s.surf, ACCENT, pygame.Rect(x, y - 4, width + 8, s.font.get_height() + 8), 2, border_radius=8)
+                y += step
+            if extra and first + fit >= n:
+                s.text(s.clip(extra, s.font, width - 10), (x + 10, y), s.font, DIM)
+            tri = max(4, step // 6)
+            if first:
+                pygame.draw.polygon(s.surf, DIM, [(x - 8, top + tri), (x - 8 - tri, top + 3 * tri), (x - 8 + tri, top + 3 * tri)])
+            if first + fit < n:
+                b = top + (fit - 1) * step
+                pygame.draw.polygon(s.surf, DIM, [(x - 8 - tri, b + tri), (x - 8 + tri, b + tri), (x - 8, b + 3 * tri)])
+            s.flip()
+            view["first"] = first
+            if near_end and n - sel <= 10:
+                near_end()
+            a = self.next_action(timeout=0)
+            if a is None:
+                self.clock.tick(SPRITE_FPS)
+            elif a == "up":
+                sel = sel - 1 if sel > 0 else (n - 1 if wrap else 0)
+            elif a == "down":
+                sel = sel + 1 if sel < n - 1 else (0 if wrap else sel)
+            elif a == "pageup":
+                sel = max(0, sel - fit)
+            elif a == "pagedown":
+                sel = min(max(n - 1, 0), sel + fit)
+            view["sel"] = sel
+            if a in ("a", "x", "y", "start"):
+                return a, (sel if n else None)
+            if a in ("b", "quit"):
+                return a, None
+
+    def keyboard(self, title, value="", secret=False, live=None, on_edit=None, keys=None):
+        """The on-screen keyboard: the text on START, None on SELECT. LIVE: a function giving a status line (text,
+        colour) under the field, called every frame (the keyboard then never waits for a key); ON_EDIT(text): after
+        each change of the text; KEYS: the footer's hints"""
         row, col, upper = 0, 0, False
         while True:
             s = self.screen
-            s.frame(title, T["keys"])
+            s.frame(title, keys or T["keys"])
             shown = "*" * len(value) if secret else value
             box = pygame.Rect(30, int(s.h * 0.15), s.w - 60, int(s.font.get_linesize() * 1.4))
             pygame.draw.rect(s.surf, (40, 44, 60), box, border_radius=8)
@@ -667,6 +937,10 @@ class App:
             while s.font.size(txt)[0] > box.w - 20 and len(txt) > 1:
                 txt = txt[1:]
             s.text(txt, (box.x + 10, box.y + 6))
+            if live:
+                status, color = live()
+                if status:
+                    s.text(s.clip(status, s.small, box.w - 20), (box.x + 10, box.bottom + int(s.h * 0.01)), s.small, color)
             kw, kh = (s.w - 60) // 10, int(s.h * 0.1)
             for r, keys in enumerate(KEYBOARD):
                 for c, ch in enumerate(keys):
@@ -677,7 +951,11 @@ class App:
                     img = s.font.render(ch, True, BG if hot else FG)
                     s.surf.blit(img, img.get_rect(center=rect.center))
             s.flip()
-            a = self.next_action()
+            a = self.next_action(timeout=0 if live else None)
+            if a is None:
+                self.clock.tick(SPRITE_FPS)
+                continue
+            before = value
             if isinstance(a, tuple):
                 value += a[1]
             elif a == "up":
@@ -701,6 +979,8 @@ class App:
                 return value
             elif a in ("select", "quit"):
                 return None
+            if on_edit and value != before:
+                on_edit(value)
 
     def message(self, text, color=FG, wait=True, title=None, lines=None):
         """TEXT on its own screen (or LINES: texts and facts, one per line), until A or B when WAIT"""
@@ -1182,6 +1462,261 @@ class App:
         if changed:
             self.sync_now()
 
+    # ---------- browsing the server's games (docs/browse.md) ----------
+
+    def in_thread(self, fn, text):
+        """FN's result, run in a thread while TEXT shows (the screen keeps drawing)"""
+        box = {}
+        th = threading.Thread(target=lambda: box.update(r=fn()), daemon=True)
+        th.start()
+        while th.is_alive():
+            self.message(text, wait=False)
+            pygame.event.pump()
+            self.clock.tick(30)
+        return box.get("r")
+
+    def browse_fail(self):
+        """Could not reach the server, with the details behind a button"""
+        details = read_text(self.details_file()).strip().splitlines()
+        if not details:
+            self.message(T["lists_fail"], BAD)
+        elif self.menu(T["browse"], ["OK", T["details"]], info=[(None, T["lists_fail"], BAD), details[0]]) == 1:
+            self.menu(T["details"], ["OK"], info=details[1:], wide=True)
+
+    def browse_denied(self):
+        self.browse_off = True
+        self.message(T["b_denied"], BAD)
+
+    def picks_line(self, picks, systems, head=""):
+        """The sub line: what is ticked so far (approximate)"""
+        if not picks:
+            return (head or T["b_nothing"]), DIM
+        n, size = picks.totals(systems)
+        sel = T["b_selected1" if n == 1 else "b_selected"].format(n=n, size=human(size))
+        return (f"{head} · {sel}" if head else sel), ACCENT
+
+    def browse_systems(self):
+        """slug → system the server can send here; None when there is nothing to browse (said on screen)"""
+        out = self.in_thread(lambda: self.client("browse-systems", timeout=20), T["checking"])
+        if out is None:
+            self.browse_fail()
+            return None
+        if ["denied"] in out:
+            self.browse_denied()
+            return None
+        systems = {p[1]: {"slug": p[1], "games": int(p[2]), "bytes": int(p[3]), "here": int(p[4]), "name": "\t".join(p[5:]) or p[1]}
+                   for p in out if p[0] == "system" and len(p) >= 6 and all(v.isdigit() for v in p[2:5])}
+        if not systems:
+            self.message(T["b_none"])
+            return None
+        return systems
+
+    def browse(self):
+        """The systems (Search… first): A opens one, X ticks it whole, Y searches, START reviews and downloads what is
+        ticked. Leaving with games ticked asks first"""
+        systems = self.browse_systems()
+        if systems is None:
+            return
+        picks, view = Picks(), {}
+        while True:
+            order = list(systems.values())
+
+            def rows():
+                return [(T["b_search"], "", FG)] + [
+                    (f"{picks.mark(s['slug'])} {s['name']}", T["b_counts"].format(n=s["games"], size=human(s["bytes"]))
+                     + (f"  {T['b_here_n'].format(n=s['here'])}" if s["here"] else ""), FG) for s in order]
+
+            act, i = self.pick_list(T["browse"], rows, T["b_systems_keys"], sub=lambda: self.picks_line(picks, systems), view=view)
+            r = None
+            if act == "quit":
+                return
+            if act == "b":
+                n = picks.totals(systems)[0]
+                if not picks or self.menu(T["browse"], [T["b_discard_go"], T["cancel"]], info=[T["b_discard1" if n == 1 else "b_discard"].format(n=n)]) == 0:
+                    return
+            elif act == "y" or (act == "a" and i == 0):
+                r = self.browse_search(picks, systems)
+            elif act == "start":
+                r = self.browse_review(picks, systems)
+            elif act == "x" and i:
+                picks.toggle_system(order[i - 1]["slug"])
+            elif act == "a" and i:
+                r = self.browse_games(picks, systems, system=order[i - 1])
+                if r == "y":
+                    r = self.browse_search(picks, systems)
+            if r == "leave":
+                return
+            if r == "done":
+                # The "here" counts changed
+                systems = self.browse_systems()
+                if systems is None:
+                    return
+
+    def browse_games(self, picks, systems, system=None, paged=None):
+        """A system's games (SYSTEM) or a search's (PAGED), paged as the selection gets near the end; A ticks a game
+        (here or queued ones are not tickable). "y" for Y, None for B, else as browse_review"""
+        paged = paged or Paged(self, system["slug"])
+        view = {}
+
+        def rows():
+            out = []
+            for gid, size, state, slug, title in list(paged.rows):
+                if state in ("here", "queued"):
+                    out.append((f"       {title}", T[f"b_{state}"], DIM))
+                else:
+                    out.append((f"{'[x]' if picks.ticked(gid, slug) else '[  ]'} {title}", human(size), FG))
+            return out
+
+        def tail():
+            if paged.denied:
+                return T["b_denied"]
+            if paged.failed:
+                return T["lists_fail"]
+            if paged.loading:
+                return T["loading"]
+            if paged.total == 0:
+                return T["b_nomatch"].format(q=paged.query) if paged.query else T["b_none"]
+            return ""
+
+        def sub():
+            if system:
+                head = T["b_games_n"].format(n=system["games"])
+            else:
+                head = T["b_found1" if paged.total == 1 else "b_found"].format(q=paged.query, n=paged.total if paged.total is not None else "…")
+            return self.picks_line(picks, systems, head)
+
+        title = system["name"] if system else T["search"]
+        while True:
+            act, i = self.pick_list(title, rows, T["b_games_keys"], sub=sub, view=view, wrap=False, near_end=paged.load, tail=tail)
+            if paged.denied:
+                self.browse_off = True
+                return "leave"
+            if act == "quit":
+                return "leave"
+            if act == "b":
+                return None
+            if act == "y":
+                return "y"
+            if act == "start":
+                r = self.browse_review(picks, systems)
+                if r:
+                    return r
+            elif act == "a" and paged.failed:
+                # A tries again
+                paged.failed = False
+                paged.load()
+            elif act == "a" and i is not None and i < len(paged.rows):
+                gid, size, state, slug, _ = paged.rows[i]
+                if state == "new":
+                    picks.toggle(gid, size, slug)
+
+    def start_search(self, text):
+        self.search_gen += 1
+        self.search_res = Paged(self, "-", text.strip(), gen=self.search_gen)
+
+    def browse_search(self, picks, systems):
+        """The keyboard with one status line under the field; START opens the results, where Y or B come back to the
+        keyboard with the text kept. A search goes out SEARCH_DEBOUNCE seconds after the last edit of the text (moving
+        over the keys does not count), and only the latest one's answer shows"""
+        st = {"text": self.search_text, "due": None}
+
+        def edit(value):
+            st["text"] = value
+            # An answer on its way is for an older text
+            self.search_gen += 1
+            self.search_res = None
+            st["due"] = time.time() + SEARCH_DEBOUNCE if len(value.strip()) >= 2 else None
+
+        def live():
+            if st["due"] and time.time() >= st["due"]:
+                st["due"] = None
+                self.start_search(st["text"])
+            r = self.search_res if self.search_res and self.search_res.gen == self.search_gen else None
+            if st["due"] or (r and r.total is None and not (r.failed or r.denied)):
+                return T["searching"], DIM
+            if not r:
+                return "", DIM
+            if r.denied:
+                return T["b_denied"], BAD
+            if r.failed:
+                return T["lists_fail"], BAD
+            if r.total == 0:
+                return T["b_nomatch"].format(q=r.query), WARN
+            return T["b_match1" if r.total == 1 else "b_match"].format(n=r.total), DIM
+
+        while True:
+            text = self.keyboard(T["search"], st["text"], live=live, on_edit=edit, keys=T["search_keys"])
+            if text is None:
+                return None
+            self.search_text = st["text"] = text
+            st["due"] = None
+            r = self.search_res
+            # START searches at once unless the answer for this very text is there or on its way
+            if not r or r.gen != self.search_gen or r.query != text.strip():
+                self.start_search(text)
+            res = self.browse_games(picks, systems, paged=self.search_res)
+            if res not in (None, "y"):
+                return res
+
+    def browse_nospace(self, c):
+        line = T["b_nospace"].format(need=human(c["bytes"]), usable=human(c["usable"])) if c["usable"] is not None else T["b_nospace_unknown"]
+        info = [(None, line, WARN)] + ([T["b_pending"].format(size=human(c["pending"]))] if c["pending"] else [])
+        self.menu(T["browse"], ["OK"], info=info)
+
+    def browse_review(self, picks, systems):
+        """Before every download: what the server says the selection adds and the room for it, then the download on
+        screen. "done" once games downloaded, "leave" when the account may not download, None otherwise"""
+        if not picks:
+            return None
+        body = os.path.join(work_dir(), "browse-body")
+        try:
+            with open(body, "w", encoding="utf-8") as f:
+                f.write(picks.body())
+        except OSError:
+            return None
+        out = self.in_thread(lambda: self.client("browse-check", body, timeout=35), T["checking"])
+        if out is None:
+            self.browse_fail()
+            return None
+        if ["denied"] in out:
+            self.browse_denied()
+            return "leave"
+        c = check_lines(out)
+        if not c["games"]:
+            self.message(T["b_have"])
+            return None
+        if not c["fits"]:
+            self.browse_nospace(c)
+            return None
+        info = [(None, T["b_ask1" if c["games"] == 1 else "b_ask"].format(n=c["games"], size=human(c["bytes"])), FG),
+                T["b_usable"].format(usable=human(c["usable"] or 0), free=human(c["free"]), kept=human(c["kept"]))]
+        if c["pending"]:
+            info.append(T["b_pending"].format(size=human(c["pending"])))
+        for slug, skip in picks.systems.items():
+            s = systems.get(slug)
+            if s:
+                info.append(T["b_whole"].format(name=s["name"], n=max(s["games"] - s["here"] - len(skip), 0)))
+        if c["games"] > 50 or c["bytes"] > 2 * 1024 ** 3:
+            info.append((None, T["b_long"], WARN))
+        if self.menu(T["browse"], [T["b_dl_go"], T["cancel"]], info=info, wide=True) != 0:
+            return None
+        out = self.in_thread(lambda: self.client("browse-add", body, timeout=65), T["checking"])
+        if out is None:
+            self.browse_fail()
+            return None
+        if ["denied"] in out:
+            self.browse_denied()
+            return "leave"
+        if ["nospace"] in out:
+            self.browse_nospace(check_lines(out))
+            return None
+        if not any(p[0] == "added" for p in out):
+            self.browse_fail()
+            return None
+        picks.clear()
+        self.run_with_progress("browse-get", T["browse"])
+        return "done"
+
     # ---------- settings ----------
 
     def settings_menu(self):
@@ -1290,7 +1825,10 @@ class App:
             e.append((self.sync_roms, T["roms_watch"]))
         if self.live.get("pulls"):
             e.append((self.watch_pulls, T["pulls_watch"]))
-        return e + [(self.lists, T["lists"]), (self.settings_menu, T["settings"]), (self.status, T["status"]), (None, T["quit"])]
+        e.append((self.lists, T["lists"]))
+        if not self.browse_off:
+            e.append((self.browse, T["browse"]))
+        return e + [(self.settings_menu, T["settings"]), (self.status, T["status"]), (None, T["quit"])]
 
     def run(self):
         # Opened while the daemon downloads the lists' games: their progress first (B stops them)
@@ -1336,6 +1874,7 @@ class Prompt(App):
         self.pad = Pad()
         self.script = [a.strip() for a in os.environ.get("ROMMANCER_UI_TEST", "").split(",") if a.strip()]
         self.clock = pygame.time.Clock()
+        self.queue, self.wait_until = [], 0.0
 
 
 def main():

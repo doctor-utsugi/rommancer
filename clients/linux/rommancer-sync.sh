@@ -10,6 +10,8 @@
 #   rommancer-sync.sh install       start the daemon at boot and sync around each game (Knulli, Batocera, ArkOS, NextUI)
 #   rommancer-sync.sh update        fetch a newer client from the server (the daemon does it by itself)
 #   rommancer-sync.sh roms          download the roms of the lists assigned to this device
+#   rommancer-sync.sh browse-systems | browse-games SLUG|- OFFSET QUERY [LIMIT] | browse-check FILE | browse-add FILE | browse-get
+#                                   browse the server's games and download the ones picked (docs/browse.md)
 #   rommancer-sync.sh conflicts | resolve ID device|server
 #   rommancer-sync.sh game-start ROM   fetch that rom's saves (called by firmware game events)
 #   rommancer-sync.sh game-stop        upload saves after a game (called by firmware game events)
@@ -23,7 +25,7 @@
 #                                   so any computer with this script can sync it. Without a command: sync.
 set -u
 # Raised with every change of this client (any change reaches devices: they update by content, not by this)
-CLIENT_VERSION=1.71.0
+CLIENT_VERSION=1.72.0
 # A clock before this date is surely wrong (no battery-backed clock); kept apart from the version, which may run ahead
 CLOCK_MIN=20261001
 # Onion keeps curl (with TLS) and friends outside the default PATH
@@ -411,6 +413,8 @@ build_request() {
   progress connecting 0 0
   roots="$(http GET "$SERVER/api/v1/agent/roots" - -)" || return 1
   ROMS="$(field roms "$roots")"; EXTS="$(field exts "$roots")"
+  # Kept for the browse screens' space measurement (written only when it changes)
+  [ -n "$ROMS" ] && [ "$(cat "$STATE/roms-root" 2>/dev/null)" != "$ROMS" ] && printf '%s\n' "$ROMS" > "$STATE/roms-root"
   progress roms 0 0
   : > "$WORK/roms"
   stat_files '%s %Y' "$ROMS" -mindepth 2 -maxdepth 2 | known_lines rom "$WORK/roms" >> "$out"
@@ -1725,7 +1729,8 @@ cmd_roms() {
   # This shell's own pid ($$ is the parent's inside a subshell): the parent of a child sh
   sh -c 'echo $PPID' > "$WORK/roms-lock/pid"
   progress roms-plan 0 0
-  if ! http GET "$SERVER/api/v1/agent/roms" - "$WORK/romplan"; then
+  # The space goes with it: the plan's budget and the browse screens' check use the same numbers
+  if ! http GET "$SERVER/api/v1/agent/roms" - "$WORK/romplan" "X-Space: $(roms_space)"; then
     log "roms: server unreachable"; rm -rf "$WORK/roms-lock"
     [ -n "${VERBOSE:-}" ] && { sync_failed > /dev/null; sum_line errors 1; }
     return 1
@@ -1840,6 +1845,62 @@ cmd_collections() {
   if [ -n "$coll_changed" ] && ! playing; then
     curl -fsS -m 10 "${ROMMANCER_ES_API:-http://127.0.0.1:1234}/reloadgames" >/dev/null 2>&1 && log "collections changed: game lists reloaded"
   fi
+  return 0
+}
+
+# ---------- browsing the server's games (docs/browse.md) ----------
+
+# "<free> <total>" bytes of the roms folder's storage (from /agent/roots, cached in $STATE/roms-root), measured on its
+# nearest existing folder (a system folder not made yet); nothing when it cannot be told
+roms_space() {
+  rr="${ROMS:-}"; [ -n "$rr" ] || rr="$(cat "$STATE/roms-root" 2>/dev/null)"
+  if [ -z "$rr" ]; then
+    rr="$(HTTP_MAX=15 http_once GET "$SERVER/api/v1/agent/roots" - - 2>/dev/null | sed -n "s/^roms$TAB//p" | head -n 1)"
+    [ -n "$rr" ] && printf '%s\n' "$rr" > "$STATE/roms-root"
+  fi
+  [ -n "$rr" ] || return 0
+  while [ ! -d "$rr" ]; do rr="$(dirname "$rr")"; done
+  df -k "$rr" 2>/dev/null | awk 'NR == 2 { printf "%.0f %.0f", $4 * 1024, $2 * 1024 }'
+}
+
+# One browse request, never tried again (a menu waits on it, and an add must not run twice); a failure leaves why in
+# fail-details for the screens
+browse_http() {
+  rm -f "$WORK/fail-details"
+  HTTP_MAX="${HTTP_MAX:-15}" http_once "$@" && return 0
+  bv="${VERBOSE:-}"; VERBOSE=1; sync_failed > /dev/null; VERBOSE="$bv"
+  return 1
+}
+
+cmd_browse_systems() { need_link; browse_http GET "$SERVER/api/v1/agent/browse/systems" - -; }
+
+# SLUG ("-": every system) OFFSET QUERY [LIMIT]
+cmd_browse_games() {
+  need_link
+  bq="?offset=${2:-0}&limit=${4:-50}"
+  [ -n "${1:-}" ] && [ "$1" != - ] && bq="$bq&system=$(urlenc "$1")"
+  [ -n "${3:-}" ] && bq="$bq&q=$(urlenc "$3")"
+  browse_http GET "$SERVER/api/v1/agent/browse/games$bq" - -
+}
+
+# check|add FILE (selection lines: game<TAB>id, system<TAB>slug, skip<TAB>id)
+cmd_browse_post() {
+  need_link
+  [ -f "${2:-}" ] || { echo "Usage: $0 browse-$1 FILE"; return 2; }
+  HTTP_MAX="${HTTP_MAX:-30}" browse_http POST "$SERVER/api/v1/agent/browse/$1" "$2" - "Content-Type: text/plain" "X-Space: $(roms_space)"
+}
+
+# The games just added: downloaded, then an inventory pass (the "here" marks, the list's collection), with the summary
+# and, when games came, when they show (games-show)
+cmd_browse_get() {
+  need_link
+  VERBOSE=1; got=0
+  [ -n "${FW:-}" ] || detect
+  step 1 2 games; cmd_roms; b_got="${got:-0}"
+  step 2 2 saves; cmd_sync
+  rm -f "$WORK/step"
+  cmd_collections > /dev/null 2>&1
+  [ "$b_got" -gt 0 ] && sum_line games-show 1 "$FW"
   return 0
 }
 
@@ -2087,6 +2148,22 @@ t() {
       w_roms) echo "Downloading games $2" ;; w_pulls) echo "Sending games to the server $2" ;;
       romswatch) echo "Watch game download" ;; pullswatch) echo "Watch games being sent to the server" ;;
       romsnow) echo "Download the lists' games now" ;;
+      browse) echo "Browse games" ;; b_search) echo "Search..." ;; b_searchtitle) echo "SEARCH GAMES" ;; checking) echo "Contacting the server..." ;;
+      b_info) echo "A opens a system: its games can be ticked one by one or all at once." ;;
+      b_dlsel) if [ -n "${2:-}" ]; then echo "Download selected ($2 · $3)"; else echo "Download selected"; fi ;;
+      b_selall) echo "Select all $2 games ($3)" ;; b_unselall) echo "Unselect all" ;; b_more) echo "More..." ;;
+      b_page) echo "Games $2-$3 of $4" ;; b_found) if [ "$3" = 1 ]; then echo "\"$2\": 1 game"; else echo "\"$2\": $3 games"; fi ;;
+      b_here) echo "here" ;; b_queued) echo "queued" ;;
+      b_none) echo "The server has no games to send yet" ;; b_nomatch) echo "No games match \"$2\"" ;;
+      b_fail) echo "Could not reach the server" ;; b_denied) echo "Your account cannot download games" ;;
+      b_have) echo "Nothing to download: those games are already here or on their way" ;;
+      b_ask) if [ "$2" = 1 ]; then echo "Download 1 game ($3)?"; else echo "Download $2 games ($3)?"; fi ;;
+      b_usable) echo "Usable space: $2 ($3 free, $4 kept free)" ;; b_pending) echo "Already waiting from your lists: $2" ;;
+      b_whole) echo "$2: all $3 games, one version each; games the server gets later are not included" ;;
+      b_long) echo "This may take a long time: keep the console charged" ;;
+      b_nospace) echo "Not enough space: needs $2, $3 usable" ;; b_nospaceunk) echo "Not enough space: the free space of this console could not be measured" ;;
+      b_dlgo) echo "Download" ;; b_discard) if [ "$2" = 1 ]; then echo "Discard 1 selected game?"; else echo "Discard $2 selected games?"; fi ;; b_discardgo) echo "Discard" ;;
+      st_games) echo "Games" ;;
       step) echo "Step $2 of $3 · $4" ;; of) echo "of" ;;
       st_saves) echo "Saves" ;; st_settings) echo "Settings" ;; st_prune) echo "Games in no list" ;; st_roms) echo "List games" ;; st_pulls) echo "Sending to the server" ;;
       p_waiting) echo "Waiting for the sync under way" ;; p_connecting) echo "Contacting the server" ;;
@@ -2105,6 +2182,11 @@ t() {
       f_games-sent) if [ "$2" = 1 ]; then echo "${UP}1 game sent to the server"; else echo "$UP$2 games sent to the server"; fi ;;
       f_games-deleted) if [ "$2" = 1 ]; then echo "1 game deleted (in no list)"; else echo "$2 games deleted (in no list)"; fi ;;
       f_saves-cleaned) if [ "$2" = 1 ]; then echo "1 save of deleted games removed"; else echo "$2 saves of deleted games removed"; fi ;;
+      f_games-show) case "$3" in
+          onion|knulli|batocera|rocknix) echo "They show in the game list when you close Rommancer Sync" ;;
+          arkos) echo "EmulationStation restarts to show them when you close Rommancer Sync" ;;
+          muos|nextui) echo "They show in the game list" ;;
+        esac ;;
       f_games-stopped) echo "Game download stopped" ;; f_games-nospace) echo "No room for \"$3\": not enough space" ;;
       f_conflicts) if [ "$2" = 1 ]; then echo "${WARN}1 save in conflict"; else echo "$WARN$2 saves in conflict"; fi ;;
       f_errors) if [ "$2" = 1 ]; then echo "${WARN}1 error"; else echo "$WARN$2 errors"; fi ;;
@@ -2228,11 +2310,12 @@ progress_text() {
 # (conflicts: the last count; a game with no room: each one)
 summary_facts() {
   awk -F"$TAB" '
-    BEGIN { n = split("saves-up saves-down states-up states-down games-down games-sent games-deleted saves-cleaned games-stopped games-nospace conflicts errors", order, " ") }
+    BEGIN { n = split("saves-up saves-down states-up states-down games-down games-show games-sent games-deleted saves-cleaned games-stopped games-nospace conflicts errors", order, " ") }
     $1 != "sum" { next }
     $2 == "conflicts" { c = $3; next }
     $2 == "games-nospace" { ns[++nn] = $4; next }
     $2 == "games-stopped" { st = 1; next }
+    $2 == "games-show" { gs = $4; next }
     { v[$2] += $3 }
     END {
       for (i = 1; i <= n; i++) {
@@ -2240,6 +2323,7 @@ summary_facts() {
         if (k == "conflicts") { if (c > 0) print k "\t" c }
         else if (k == "games-nospace") { for (j = 1; j <= nn; j++) print k "\t1\t" ns[j] }
         else if (k == "games-stopped") { if (st) print k "\t1" }
+        else if (k == "games-show") { if (gs != "") print k "\t1\t" gs }
         else if (v[k] > 0) print k "\t" v[k]
       }
     }' "$1" 2>/dev/null
@@ -2467,6 +2551,227 @@ setup_lists() {
   return 0
 }
 
+# ---- Browse games on Onion (docs/browse.md): its menu has no X/Y, so every action is a row of its own ----
+
+# The selection, "kind<TAB>id<TAB>bytes<TAB>system<TAB>games" lines: game (a game ticked), system (a whole system: its
+# slug as id, its games not here yet and their size, approximate) and skip (a game unticked inside a ticked system)
+B_SEL="$WORK/browse-sel"
+# Set once the server said the account may not download games: the home item goes
+B_DENIED=""
+
+# "games<TAB>bytes" of the selection (approximate: the review asks the server)
+bsel_totals() { awk -F"$TAB" '$1 == "game" { n++; b += $3 } $1 == "system" { n += $5; b += $3 } $1 == "skip" { n--; b -= $3 } END { printf "%d\t%.0f\n", n, b }' "$B_SEL" 2>/dev/null; }
+bsel_label() { bt="$(bsel_totals)"; t b_dlsel "${bt%%"$TAB"*}" "$(human "${bt#*"$TAB"}")"; }
+
+# ID BYTES SLUG: a game ticked or unticked (inside a ticked system: left out of it or put back)
+bsel_game() {
+  k=game; grep -q "^system$TAB$3$TAB" "$B_SEL" && k=skip
+  if grep -q "^$k$TAB$1$TAB" "$B_SEL"; then grep -v "^$k$TAB$1$TAB" "$B_SEL" > "$B_SEL.new"; mv "$B_SEL.new" "$B_SEL"
+  else printf '%s\t%s\t%s\t%s\t1\n' "$k" "$1" "$2" "$3" >> "$B_SEL"; fi
+}
+# SLUG: the whole system ticked (its single ticks cleared) or unticked
+bsel_system() {
+  awk -F"$TAB" -v s="$1" '$4 != s' "$B_SEL" > "$B_SEL.new"
+  if ! grep -q "^system$TAB$1$TAB" "$B_SEL"; then
+    awk -F"$TAB" -v s="$1" '$2 == s { n = $3 - $5; printf "system\t%s\t%.0f\t%s\t%d\n", s, ($3 > 0 ? $4 * n / $3 : 0), s, n }' "$WORK/browse-systems.rows" >> "$B_SEL.new"
+  fi
+  mv "$B_SEL.new" "$B_SEL"
+}
+
+# Human sizes inside awk, as human() does
+B_HUMAN='function h(b, i, u) { split("B KB MB GB TB", u, " "); i = 1; while (b >= 1024 && i < 5) { b /= 1024; i++ } return sprintf(i > 2 ? "%.1f %s" : "%d %s", b, u[i]) }'
+
+# The systems' rows, one awk for all (a fork per row is slow on a Miyoo): [x] all, [-] some games, [ ] none
+browse_system_labels() {
+  awk -F"$TAB" -v sel="$B_SEL" "$B_HUMAN"'
+    FILENAME == sel { if ($1 == "system") sys[$2] = 1; else if ($1 == "skip") sk[$4] = 1; else if ($1 == "game") g[$4] = 1; next }
+    { m = "[ ]"; if ($2 in sys) m = ($2 in sk) ? "[-]" : "[x]"; else if ($2 in g) m = "[-]"
+      print m " " substr($6, 1, 18) "  " $3 " · " h($4) }' "$B_SEL" "$WORK/browse-systems.rows"
+}
+# A page's rows: here and queued games dimmed by having no box (not tickable)
+browse_game_labels() {
+  awk -F"$TAB" -v sel="$B_SEL" -v here="$(t b_here)" -v queued="$(t b_queued)" "$B_HUMAN"'
+    FILENAME == sel { if ($1 == "system") sys[$2] = 1; else if ($1 == "game") g[$2] = 1; else if ($1 == "skip") sk[$2] = 1; next }
+    { n = $6; if (length(n) > 24) n = substr(n, 1, 22) ".."
+      if ($4 == "here" || $4 == "queued") { print "    " n "  " ($4 == "here" ? here : queued); next }
+      on = ($5 in sys) ? !($2 in sk) : ($2 in g)
+      print (on ? "[x] " : "[ ] ") n "  " h($3) }' "$B_SEL" "$WORK/browse-page.rows"
+}
+
+browse_fail() {
+  if [ -s "$WORK/fail-details" ]; then
+    menu "$(t browse)" "$(t b_fail)
+$(head -n 1 "$WORK/fail-details")" "OK" "$(t details)"
+    [ $? = 1 ] && panel "$(t details)" "$(tail -n +2 "$WORK/fail-details")" wait
+  else menu "$(t browse)" "$(t b_fail)" "OK"; fi
+}
+browse_denied() { B_DENIED=1; panel "$(t browse)" "$(t b_denied)" wait; }
+
+# The lines of a check or add answer (FILE) as bc_* values
+browse_check_vars() {
+  bc_need="$(sed -n "s/^need$TAB//p" "$1" | head -n 1)"; bc_bytes="${bc_need%%"$TAB"*}"; bc_games="${bc_need#*"$TAB"}"
+  bc_pending="$(sed -n "s/^pending$TAB//p" "$1" | head -n 1)"
+  bc_space="$(sed -n "s/^space$TAB//p" "$1" | head -n 1)"
+  bc_usable="$(printf '%s' "$bc_space" | cut -f1)"; bc_free="$(printf '%s' "$bc_space" | cut -f2)"; bc_kept="$(printf '%s' "$bc_space" | cut -f3)"
+  bc_fits="$(sed -n "s/^fits$TAB//p" "$1" | head -n 1)"
+  case "$bc_games" in ''|*[!0-9]*) bc_games=0 ;; esac
+  case "$bc_bytes" in ''|*[!0-9]*) bc_bytes=0 ;; esac
+  case "$bc_pending" in ''|*[!0-9]*) bc_pending=0 ;; esac
+  case "$bc_usable" in -[0-9]*) bc_usable=0 ;; esac
+}
+browse_nospace() {
+  case "$bc_usable" in ''|*[!0-9]*) m="$(t b_nospaceunk)" ;; *) m="$(t b_nospace "$(human "$bc_bytes")" "$(human "$bc_usable")")" ;; esac
+  [ "$bc_pending" -gt 0 ] && m="$m
+$(t b_pending "$(human "$bc_pending")")"
+  menu "$(t browse)" "$m" "OK"
+}
+
+# Before every download: what the server says the selection adds and the room for it. 0: nothing done, 1: games
+# downloaded, 2: browsing ends (no permission)
+browse_review() {
+  [ -s "$B_SEL" ] || return 0
+  cut -f1,2 "$B_SEL" > "$WORK/browse-body"
+  panel "$(t browse)" "$(t checking)"
+  HTTP_MAX=30 cmd_browse_post check "$WORK/browse-body" > "$WORK/browse-check" 2>/dev/null; br_rc=$?
+  panel_close
+  [ "$br_rc" = 0 ] || { browse_fail; return 0; }
+  grep -qx denied "$WORK/browse-check" && { browse_denied; return 2; }
+  browse_check_vars "$WORK/browse-check"
+  [ "$bc_games" -gt 0 ] || { panel "$(t browse)" "$(t b_have)" wait; return 0; }
+  [ "$bc_fits" = 1 ] || { browse_nospace; return 0; }
+  br_msg="$(t b_ask "$bc_games" "$(human "$bc_bytes")")
+$(t b_usable "$(human "$bc_usable")" "$(human "$bc_free")" "$(human "$bc_kept")")"
+  [ "$bc_pending" -gt 0 ] && br_msg="$br_msg
+$(t b_pending "$(human "$bc_pending")")"
+  # Each whole system: its games not here yet, less the ones left out
+  br_whole="$(awk -F"$TAB" -v sel="$B_SEL" 'FILENAME == sel { if ($1 == "system") { n[$2] = $5; o[++k] = $2 } else if ($1 == "skip") n[$4]--; next }
+    { name[$2] = $6 } END { for (i = 1; i <= k; i++) print name[o[i]] "\t" n[o[i]] }' "$B_SEL" "$WORK/browse-systems.rows")"
+  if [ -n "$br_whole" ]; then
+    br_msg="$br_msg
+$(printf '%s\n' "$br_whole" | while IFS="$TAB" read -r wn wc; do t b_whole "$wn" "$wc"; done)"
+  fi
+  [ "$bc_games" -gt 50 ] || [ "$bc_bytes" -gt 2147483648 ] && br_msg="$br_msg
+$(t b_long)"
+  menu "$(t browse)" "$br_msg" "$(t b_dlgo)" "$(t cancel)"; [ $? = 0 ] || return 0
+  panel "$(t browse)" "$(t checking)"
+  HTTP_MAX=60 cmd_browse_post add "$WORK/browse-body" > "$WORK/browse-add" 2>/dev/null; br_rc=$?
+  panel_close
+  [ "$br_rc" = 0 ] || { browse_fail; return 0; }
+  grep -qx denied "$WORK/browse-add" && { browse_denied; return 2; }
+  if grep -qx nospace "$WORK/browse-add"; then browse_check_vars "$WORK/browse-add"; browse_nospace; return 0; fi
+  grep -q "^added$TAB" "$WORK/browse-add" || { browse_fail; return 0; }
+  : > "$B_SEL"
+  with_progress "$(t browse)" cmd_browse_get
+  return 1
+}
+
+# A games menu, 90 a page (Onion's menu takes about 100 rows): a system's (SLUG) or a search's (SLUG "-", QUERY).
+# The same codes as browse_review
+browse_games_menu() {
+  bg_slug="$1"; bg_q="${2:-}"; bg_off=0; bg_at=0; bg_load=1
+  bg_name="$(awk -F"$TAB" -v s="$bg_slug" '$2 == s { print $6; exit }' "$WORK/browse-systems.rows")"
+  while :; do
+    if [ "$bg_load" = 1 ]; then
+      panel "$(t browse)" "$(t checking)"
+      HTTP_MAX=20 cmd_browse_games "$bg_slug" "$bg_off" "$bg_q" 90 > "$WORK/browse-page" 2>/dev/null; bg_rc=$?
+      panel_close
+      [ "$bg_rc" = 0 ] || { browse_fail; return 0; }
+      grep -qx denied "$WORK/browse-page" && { browse_denied; return 2; }
+      bg_total="$(sed -n "s/^total$TAB//p" "$WORK/browse-page" | head -n 1)"
+      grep "^game$TAB" "$WORK/browse-page" > "$WORK/browse-page.rows"
+      if [ ! -s "$WORK/browse-page.rows" ]; then
+        if [ -n "$bg_q" ]; then panel "$(t browse)" "$(t b_nomatch "$bg_q")" wait; else panel "$(t browse)" "$(t b_none)" wait; fi
+        return 0
+      fi
+      bg_load=0
+    fi
+    bg_n="$(grep -c . "$WORK/browse-page.rows")"
+    case "$bg_total" in ''|*[!0-9]*) bg_total=$((bg_off + bg_n)) ;; esac
+    set --; bg_head=1
+    if [ "$bg_slug" != - ]; then
+      if grep -q "^system$TAB$bg_slug$TAB" "$B_SEL"; then set -- "$(t b_unselall)"
+      else
+        bg_all="$(awk -F"$TAB" -v s="$bg_slug" '$2 == s { print $3 "\t" $4; exit }' "$WORK/browse-systems.rows")"
+        set -- "$(t b_selall "${bg_all%%"$TAB"*}" "$(human "${bg_all#*"$TAB"}")")"
+      fi
+      bg_head=2
+    fi
+    if [ -s "$B_SEL" ]; then set -- "$@" "$(bsel_label)"; else set -- "$@" "$(t b_dlsel)"; fi
+    browse_game_labels > "$WORK/browse-labels"
+    while IFS= read -r l; do set -- "$@" "$l"; done < "$WORK/browse-labels"
+    bg_more=0; [ $((bg_off + bg_n)) -lt "$bg_total" ] && { bg_more=1; set -- "$@" "$(t b_more)"; }
+    if [ -n "$bg_q" ]; then bg_title="$(t browse)"; bg_msg="$(t b_found "$bg_q" "$bg_total")"
+    else bg_title="$bg_name"; bg_msg="$(t b_page $((bg_off + 1)) $((bg_off + bg_n)) "$bg_total")"; fi
+    menu "$bg_title" "$bg_msg" -s "$bg_at" "$@" "$(t back)"; bg_pick=$?
+    bg_at="$bg_pick"
+    if [ "$bg_pick" -lt $((bg_head - 1)) ]; then
+      bsel_system "$bg_slug"
+    elif [ "$bg_pick" = $((bg_head - 1)) ]; then
+      browse_review; bg_rc=$?
+      [ "$bg_rc" = 0 ] || return "$bg_rc"
+    elif [ "$bg_pick" -lt $((bg_head + bg_n)) ]; then
+      IFS="$TAB" read -r _ g_id g_bytes g_state g_sys _ <<EOR
+$(sed -n "$((bg_pick - bg_head + 1))p" "$WORK/browse-page.rows")
+EOR
+      [ "$g_state" = new ] && bsel_game "$g_id" "$g_bytes" "$g_sys"
+    elif [ "$bg_more" = 1 ] && [ "$bg_pick" = $((bg_head + bg_n)) ]; then
+      bg_off=$((bg_off + 90)); bg_load=1; bg_at=0
+    elif [ "$bg_off" -gt 0 ]; then
+      # Back from a later page goes to the one before it
+      bg_off=$((bg_off - 90)); [ "$bg_off" -lt 0 ] && bg_off=0; bg_load=1; bg_at=0
+    else return 0; fi
+  done
+}
+
+# Search: Onion's keyboard has no live typing, so the search runs when it closes; the results are a games menu
+browse_search() {
+  B_Q="$(ask "$(t b_searchtitle)" "${B_Q:-}")" || return 0
+  [ -n "$B_Q" ] || return 0
+  browse_games_menu - "$B_Q"
+}
+
+# The systems: Search, Download selected (when any), each system ticked as a whole or in part, Back (asks first when
+# something is selected)
+setup_browse() {
+  : > "$B_SEL"; bs_at=""; bs_load=1; B_Q=""
+  while :; do
+    if [ "$bs_load" = 1 ]; then
+      panel "$(t browse)" "$(t checking)"
+      HTTP_MAX=15 cmd_browse_systems > "$WORK/browse-systems" 2>/dev/null; bs_rc=$?
+      panel_close
+      [ "$bs_rc" = 0 ] || { browse_fail; return 0; }
+      grep -qx denied "$WORK/browse-systems" && { browse_denied; return 0; }
+      grep "^system$TAB" "$WORK/browse-systems" | head -n 95 > "$WORK/browse-systems.rows"
+      [ -s "$WORK/browse-systems.rows" ] || { panel "$(t browse)" "$(t b_none)" wait; return 0; }
+      bs_load=0
+    fi
+    set -- "$(t b_search)"; bs_head=1
+    [ -s "$B_SEL" ] && { set -- "$@" "$(bsel_label)"; bs_head=2; }
+    browse_system_labels > "$WORK/browse-labels"
+    while IFS= read -r l; do set -- "$@" "$l"; done < "$WORK/browse-labels"
+    bs_n="$(grep -c . "$WORK/browse-systems.rows")"
+    # The cursor stays on the system last opened (the Download row comes and goes above it)
+    bs_sel="$(awk -F"$TAB" -v s="$bs_at" -v h="$bs_head" '$2 == s { print NR - 1 + h; exit }' "$WORK/browse-systems.rows")"
+    menu "$(t browse)" "$(t b_info)" -s "${bs_sel:-0}" "$@" "$(t back)"; bs_pick=$?
+    bs_rc=0
+    if [ "$bs_pick" = 0 ]; then
+      bs_at=""; browse_search; bs_rc=$?
+    elif [ "$bs_head" = 2 ] && [ "$bs_pick" = 1 ]; then
+      browse_review; bs_rc=$?
+    elif [ "$bs_pick" -lt $((bs_head + bs_n)) ]; then
+      bs_at="$(sed -n "$((bs_pick - bs_head + 1))p" "$WORK/browse-systems.rows" | cut -f2)"
+      browse_games_menu "$bs_at"; bs_rc=$?
+    else
+      if [ -s "$B_SEL" ]; then
+        bt="$(bsel_totals)"
+        menu "$(t browse)" "$(t b_discard "${bt%%"$TAB"*}")" "$(t b_discardgo)" "$(t cancel)"; [ $? = 0 ] || continue
+      fi
+      : > "$B_SEL"; return 0
+    fi
+    case "$bs_rc" in 1) bs_load=1 ;; 2) : > "$B_SEL"; return 0 ;; esac
+  done
+}
+
 # Settings: the toggles (what they do in the menu's message: Onion's menu has no line per item), deleting the saves of
 # deleted roms, the account and disconnecting (asked first). Returns 1 when the console was disconnected
 setup_settings() {
@@ -2559,7 +2864,9 @@ cmd_setup() {
       [ "$nconf" -gt 0 ] && { set -- "$@" "$(t conflicts "$nconf")"; acts="$acts conflicts"; }
       roms_running && { set -- "$@" "$(t romswatch)"; acts="$acts romswatch"; }
       pulls_running && { set -- "$@" "$(t pullswatch)"; acts="$acts pullswatch"; }
-      set -- "$@" "$(t lists)" "$(t settings)" "$(t status)" "$(t quit)"; acts="$acts lists settings status quit"
+      set -- "$@" "$(t lists)"; acts="$acts lists"
+      [ -z "$B_DENIED" ] && { set -- "$@" "$(t browse)"; acts="$acts browse"; }
+      set -- "$@" "$(t settings)" "$(t status)" "$(t quit)"; acts="$acts settings status quit"
       menu "Rommancer Sync $CLIENT_VERSION" "$(home_text)" "$@"; rc=$?
       case "$(printf '%s\n' $acts | sed -n "$((rc + 1))p")" in
         sync) with_progress "$(t sync)" cmd_all ;;
@@ -2568,6 +2875,7 @@ cmd_setup() {
         romswatch) with_progress "$(t st_roms)" cmd_roms ;;
         pullswatch) watch_pulls ;;
         lists) setup_lists ;;
+        browse) setup_browse ;;
         settings) setup_settings ;;
         status) setup_status ;;
         *) return 0 ;;
@@ -2623,6 +2931,12 @@ case "${1:-}" in
   update) cmd_update ;;
   roms) VERBOSE=1 cmd_roms; cmd_collections > /dev/null 2>&1 ;;
   roms-stop) cmd_roms_stop ;;
+  # Browsing the server's games (docs/browse.md): plain text answers, "denied" when the account may not download
+  browse-systems) cmd_browse_systems ;;
+  browse-games) cmd_browse_games "${2:-}" "${3:-0}" "${4:-}" "${5:-50}" ;;
+  browse-check) cmd_browse_post check "${2:-}" ;;
+  browse-add) cmd_browse_post add "${2:-}" ;;
+  browse-get) cmd_browse_get ;;
   # What the server runs over SSH and the daemon's full pass: everything but the lists' roms, which only download
   # when asked for on the console's screen
   background) cmd_sync; cmd_config; cmd_prune; cmd_collections > /dev/null 2>&1 ;;

@@ -35,6 +35,7 @@
     <string name="watch_download">Watch the game download</string>
     <string name="watch_pulls">Watch sending games to the server</string>
     <string name="lists">Game lists</string>
+    <string name="browse">Browse games</string>
     <string name="settings">Settings</string>
     <string name="status">Status</string>
     <string name="press_back">Back</string>
@@ -65,6 +66,53 @@
     <string name="list_drop">Removing “%1$s” deletes %2$d games from this device (%3$s).</string>
     <string name="list_drop_up">%1$d the server lacks are sent to it first.</string>
     <string name="list_drop_go">Remove and delete %1$d games</string>
+
+    <!-- Browsing the server's games -->
+    <string name="browse_search_all">Search all games…</string>
+    <string name="browse_search">Search</string>
+    <string name="browse_all_systems">All systems</string>
+    <string name="browse_searching">Searching…</string>
+    <string name="browse_loading">Loading…</string>
+    <string name="browse_contacting">Contacting the server...</string>
+    <string name="browse_empty">The server has no games to send yet</string>
+    <string name="browse_no_match">No games match “%1$s”</string>
+    <string name="browse_unreachable">Could not reach the server</string>
+    <string name="browse_denied">Your account cannot download games</string>
+    <plurals name="browse_games_count">
+        <item quantity="one">%d game</item>
+        <item quantity="other">%d games</item>
+    </plurals>
+    <plurals name="browse_games_match">
+        <item quantity="one">%d game matches</item>
+        <item quantity="other">%d games match</item>
+    </plurals>
+    <string name="browse_system_sub">%1$s · %2$s · %3$d here</string>
+    <string name="browse_here">here</string>
+    <string name="browse_queued">queued</string>
+    <string name="browse_selected">Review: %1$s selected · %2$s</string>
+    <string name="browse_hint_systems">A open · X tick all · Y search · START download · B back</string>
+    <string name="browse_hint_games">A tick · L1/R1 page · Y search · START download · B back</string>
+    <string name="browse_review_title">Download games</string>
+    <string name="browse_review_ask">Download %1$s (%2$s)?</string>
+    <string name="browse_usable">Usable space: %1$s (%2$s free, %3$s kept free)</string>
+    <string name="browse_pending">Already waiting from your lists: %1$s</string>
+    <string name="browse_whole_system">%1$s: all %2$d games, one version each; games the server gets later are not included</string>
+    <plurals name="browse_have">
+        <item quantity="one">%d picked game is already here or waiting, it is skipped</item>
+        <item quantity="other">%d picked games are already here or waiting, they are skipped</item>
+    </plurals>
+    <string name="browse_long">This may take a long time: keep the device charged</string>
+    <string name="browse_nothing">The picked games are already here or waiting to download</string>
+    <string name="browse_nospace">Not enough space: needs %1$s, %2$s usable</string>
+    <string name="browse_space_unknown">The free space on this device could not be measured, so nothing is downloaded</string>
+    <string name="browse_download">Yes, download</string>
+    <plurals name="browse_discard">
+        <item quantity="one">Discard %d selected game?</item>
+        <item quantity="other">Discard %d selected games?</item>
+    </plurals>
+    <string name="browse_discard_go">Yes, discard</string>
+    <string name="browse_discard_keep">No, keep browsing</string>
+    <string name="restart_esde">Restart ES-DE</string>
 
     <!-- Settings -->
     <string name="set_watch">Upload saves when saved: %1$s</string>
@@ -167,6 +215,8 @@
         <item quantity="one">✕ %d save of a deleted game removed</item>
         <item quantity="other">✕ %d saves of deleted games removed</item>
     </plurals>
+    <string name="sum_games_show_esde">Close ES-DE and open it again to see them</string>
+    <string name="sum_games_show_daijisho">Sync their platforms in Daijishō to see them</string>
     <string name="sum_games_stopped">■ Game download stopped</string>
     <string name="sum_games_nospace">⚠ No room for “%1$s”: not enough space</string>
     <plurals name="sum_conflicts">

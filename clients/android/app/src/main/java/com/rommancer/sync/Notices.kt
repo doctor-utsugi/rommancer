@@ -18,7 +18,16 @@ object Notices {
     private const val FRONTEND_CHANNEL = "frontend"
     private const val FRONTEND_ID = 3
 
-    private fun installed(context: Context, pkg: String) = runCatching { context.packageManager.getPackageInfo(pkg, 0) }.isSuccess
+    const val ESDE = "org.es_de.frontend"
+
+    fun installed(context: Context, pkg: String) = runCatching { context.packageManager.getPackageInfo(pkg, 0) }.isSuccess
+
+    /** The frontend here that only sees new games once it reads its library again: "esde", "daijisho" or null */
+    fun shownBy(context: Context, root: java.io.File): String? = when {
+        java.io.File(root, "ES-DE/settings").isDirectory -> "esde"
+        installed(context, "com.magneticchen.daijishou") -> "daijisho"
+        else -> null
+    }
 
     /**
      * GAMES new roms, COLLECTIONS whether Rommancer's ES-DE collections changed: told for the frontends here that

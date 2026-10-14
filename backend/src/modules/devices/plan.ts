@@ -36,6 +36,9 @@ export interface Plan {
   budget: number | null;
 }
 
+export const CLIENT_MARGIN = 50 * 1024 * 1024;
+export const keptBytes = (reserveBytes: number) => Math.max(reserveBytes, CLIENT_MARGIN);
+
 const pathKey = (p: string) => crypto.createHash('sha1').update(p).digest('hex');
 
 /** ROOT: where the device is seen for this plan (a computer may see a console's card under its own mount);
@@ -83,6 +86,7 @@ export async function devicePlan(device: Device & { firmware: Firmware }, root =
   const free = device.spaceFree != null ? Number(device.spaceFree) : null;
   const total = device.spaceTotal != null ? Number(device.spaceTotal) : null;
   const reserveBytes = total != null ? Math.round((total * device.reservePercent) / 100) : null;
-  const budget = free != null && reserveBytes != null ? Math.max(0, free - reserveBytes) : null;
+  // Never under the clients' own margin (they stop a file that would leave less than 50 MB free)
+  const budget = free != null && reserveBytes != null ? Math.max(0, free - keptBytes(reserveBytes)) : null;
   return { files, missingBytes, free, total, reserveBytes, budget };
 }

@@ -38,9 +38,11 @@ Items:
    entry is there right after it. With a single conflict, Android opens its screen directly.
 3. **Watch game download** / **Watch games being sent**: only while one runs.
 4. **Game lists**: tick lists; leaving after a change syncs. The screen also has **Download the lists' games now**.
-5. **Settings** (submenu, see below).
-6. **Status**: version, install date, account, server, last sync result (the summary below), last log lines.
-7. **Exit** (consoles only; Android and PC use their system back/close).
+5. **Browse games**: the server's games by system or by search, ticked one by one or a whole system, then a review and
+   the download (docs/browse.md). Hidden when the account may not download games.
+6. **Settings** (submenu, see below).
+7. **Status**: version, install date, account, server, last sync result (the summary below), last log lines.
+8. **Exit** (consoles only; Android and PC use their system back/close).
 
 ## Settings (submenu)
 
@@ -71,6 +73,7 @@ renders them, **one fact per line, only facts that are not zero**:
 | `saves-cleaned` n | n saves of deleted games removed |
 | `games-stopped` | Game download stopped |
 | `games-nospace` name | No room for "name" |
+| `games-show` platform | When the downloaded games show in the frontend (docs/browse.md) |
 | `conflicts` n | ⚠ n saves in conflict |
 | `errors` n | ⚠ n errors (Show details) |
 

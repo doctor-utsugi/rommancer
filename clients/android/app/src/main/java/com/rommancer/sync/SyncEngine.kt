@@ -36,6 +36,77 @@ class SyncEngine(private val context: Context, private val store: Store, private
     /** What having only some lists would delete here: FILES deleted, UPLOAD sent to the server first, BYTES of both */
     data class ListsDrop(val files: Int, val upload: Int, val bytes: Long)
 
+    /** A system the server can send: GAMES sendable, BYTES their size, HERE of them on the device or queued */
+    data class BrowseSystem(val slug: String, val games: Int, val bytes: Long, val here: Int, val name: String) {
+        val fresh: Int get() = (games - here).coerceAtLeast(0)
+    }
+
+    /** A game the server can send; STATE "here", "queued" or "new" */
+    data class BrowseGame(val id: String, val bytes: Long, val state: String, val system: String, val title: String)
+
+    /** One page of games; TOTAL of the whole query */
+    data class BrowsePage(val total: Int, val games: List<BrowseGame>)
+
+    /** The games picked one by one, and whole systems with the games unticked inside them */
+    data class BrowsePick(val games: Map<String, BrowseGame> = emptyMap(), val systems: Map<String, Set<String>> = emptyMap()) {
+        val isEmpty: Boolean get() = games.isEmpty() && systems.isEmpty()
+
+        fun ticked(g: BrowseGame) = g.state == "new" && (g.id in games || systems[g.system]?.let { g.id !in it } == true)
+
+        /** Inside a ticked system a game is skipped or taken back; elsewhere it is picked or dropped */
+        fun toggle(g: BrowseGame): BrowsePick {
+            if (g.state != "new") return this
+            val skip = systems[g.system] ?: return copy(games = if (g.id in games) games - g.id else games + (g.id to g))
+            return copy(systems = systems + (g.system to if (g.id in skip) skip - g.id else skip + g.id))
+        }
+
+        /** 2 all ticked, 1 some, 0 none */
+        fun state(slug: String): Int = when {
+            systems[slug]?.isEmpty() == true -> 2
+            slug in systems || games.values.any { it.system == slug } -> 1
+            else -> 0
+        }
+
+        /** Ticking a system clears its single game ticks; an all-ticked one is unticked */
+        fun toggle(slug: String): BrowsePick =
+            if (state(slug) == 2) copy(systems = systems - slug)
+            else copy(games = games.filterValues { it.system != slug }, systems = systems + (slug to emptySet()))
+
+        /** Games and bytes, roughly: a whole system counts its share of new games (the review shows the server's check) */
+        fun count(known: List<BrowseSystem>): Pair<Int, Long> {
+            var n = games.size
+            var bytes = games.values.sumOf { it.bytes }
+            for ((slug, skip) in systems) {
+                val s = known.firstOrNull { it.slug == slug } ?: continue
+                val take = (s.fresh - skip.size).coerceAtLeast(0)
+                n += take
+                if (s.games > 0) bytes += s.bytes * take / s.games
+            }
+            return n to bytes
+        }
+
+        fun body(): String = buildString {
+            games.keys.forEach { append("game\t").append(it).append('\n') }
+            for ((slug, skip) in systems) {
+                append("system\t").append(slug).append('\n')
+                skip.forEach { append("skip\t").append(it).append('\n') }
+            }
+        }
+    }
+
+    /**
+     * The server's check of a pick: NEED what it adds, HAVE picked games already here or queued, PENDING what the
+     * lists still download first, USABLE (null: space unknown) = FREE - KEPT; NOSPACE when an add was refused, ADDED
+     * the games an add put in the device's picks
+     */
+    data class BrowseCheck(
+        val needBytes: Long, val needGames: Int, val have: Int, val pending: Long, val usable: Long?, val free: Long, val kept: Long,
+        val fits: Boolean, val nospace: Boolean = false, val added: Int? = null,
+    )
+
+    /** The account lacks the right to download games */
+    class BrowseDenied : Exception("denied")
+
     private val root: File = Environment.getExternalStorageDirectory()
     private val dolphin = Dolphin(context, store)
     private val psp = PspSaves(root)
@@ -540,7 +611,9 @@ class SyncEngine(private val context: Context, private val store: Store, private
         val sum = Summary()
         val api = Api(store.server, store.token ?: error("Not linked"))
         romsProgress(Progress("roms-plan"))
-        val plan = api.text("/agent/roms").lines().mapNotNull { l -> l.split('\t').takeIf { it.size >= 4 && it[0] == "rom" } }
+        // Measured live, so the plan's budget is the one a browse check accepted
+        val space = runCatching { spaceOf(api) }.getOrNull()
+        val plan = api.text("/agent/roms", headers = listOfNotNull(space?.let { "X-Space" to it }).toMap()).lines().mapNotNull { l -> l.split('\t').takeIf { it.size >= 4 && it[0] == "rom" } }
         var got = 0
         var have = 0
         var failed = 0
@@ -653,6 +726,68 @@ class SyncEngine(private val context: Context, private val store: Store, private
     fun listsSet(ids: List<Int>) {
         Api(store.server, store.token ?: error("Not linked")).text("/agent/lists", "POST", ids.joinToString("\n").toByteArray(), mapOf("Content-Type" to "text/plain"))
         store.addLog("lists: ${ids.size} on this device")
+    }
+
+    // ---------- browsing the server's games ----------
+
+    /** Free and total bytes ("free total") where the roms go: the roms folder, or its nearest existing parent */
+    fun space(): String? = runCatching { spaceOf(Api(store.server, store.token ?: error("Not linked"))) }.getOrNull()
+
+    private fun spaceOf(api: Api): String? {
+        val dir = api.text("/agent/roots").lines().firstOrNull { it.startsWith("roms\t") }?.substringAfter('\t')?.trim()?.ifEmpty { null }?.let(::File) ?: return null
+        val near = generateSequence(dir) { it.parentFile }.firstOrNull { it.exists() } ?: return null
+        return android.os.StatFs(near.path).let { "${it.availableBytes} ${it.totalBytes}" }
+    }
+
+    /** The answer's rows; outcomes come as text (the console clients run curl -f), "denied" among them */
+    private fun browse(path: String, method: String = "GET", body: String? = null, space: String? = null): List<List<String>> {
+        val headers = mapOf("Content-Type" to "text/plain") + listOfNotNull(space?.let { "X-Space" to it })
+        val rows = Api(store.server, store.token ?: error("Not linked")).text(path, method, body?.toByteArray(), headers).lines().filter { it.isNotBlank() }
+        if (rows.firstOrNull()?.trim() == "denied") throw BrowseDenied()
+        return rows.map { it.split('\t') }
+    }
+
+    fun browseSystems(): List<BrowseSystem> = browse("/agent/browse/systems").filter { it.size >= 6 && it[0] == "system" }
+        .map { BrowseSystem(it[1], it[2].toIntOrNull() ?: 0, it[3].toLongOrNull() ?: 0L, it[4].toIntOrNull() ?: 0, it[5]) }
+
+    /** SYSTEM null: every system this device knows; Q under 2 characters lists by title */
+    fun browseGames(system: String?, q: String, offset: Int, limit: Int = 50): BrowsePage {
+        val query = listOfNotNull(system?.let { "system=${Api.enc(it)}" }, "q=${Api.enc(q)}", "offset=$offset", "limit=$limit").joinToString("&")
+        val rows = browse("/agent/browse/games?$query")
+        val total = rows.firstOrNull { it.size >= 2 && it[0] == "total" }?.get(1)?.toIntOrNull() ?: 0
+        return BrowsePage(total, rows.filter { it.size >= 6 && it[0] == "game" }.map { BrowseGame(it[1], it[2].toLongOrNull() ?: 0L, it[3], it[4], it[5]) })
+    }
+
+    fun browseCheck(pick: BrowsePick): BrowseCheck = checkOf(browse("/agent/browse/check", "POST", pick.body(), space()))
+
+    /** Puts the pick in the device's picks when it fits; refused here when the space could not be measured */
+    fun browseAdd(pick: BrowsePick): BrowseCheck {
+        val space = space() ?: return browseCheck(pick).copy(usable = null, fits = false, nospace = true)
+        val check = checkOf(browse("/agent/browse/add", "POST", pick.body(), space))
+        if (check.added != null) store.addLog("browse: ${check.added} games picked")
+        return check
+    }
+
+    private fun checkOf(rows: List<List<String>>): BrowseCheck {
+        fun row(key: String) = rows.firstOrNull { it[0] == key }
+        fun num(r: List<String>?, i: Int) = r?.getOrNull(i)?.toLongOrNull() ?: 0L
+        val need = row("need")
+        val space = row("space")
+        val usable = space?.getOrNull(1)?.toLongOrNull()
+        val added = row("added")
+        return BrowseCheck(
+            needBytes = num(need, 1), needGames = num(need, 2).toInt(), have = num(row("have"), 1).toInt(), pending = num(row("pending"), 1),
+            usable = usable, free = num(space, 2), kept = num(space, 3), fits = row("fits")?.getOrNull(1) == "1" && usable != null,
+            nospace = row("nospace") != null, added = added?.getOrNull(1)?.toIntOrNull(),
+        )
+    }
+
+    /** A browse download: the picks, then an inventory pass so they count as here and their collection is right */
+    fun browseGet(): Summary {
+        val sum = roms()
+        runCatching { sync() }.onSuccess { sum += it }.onFailure { sum.error("sync", it) }
+        if (sum.gamesDown > 0) sum.gamesShow = Notices.shownBy(context, root)
+        return sum.also { keep(it) }
     }
 
     fun resolve(id: Int, keep: String): Summary {

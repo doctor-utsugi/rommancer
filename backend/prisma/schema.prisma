@@ -446,6 +446,7 @@ model List {
   items           ListItem[]
   devices         DeviceList[]
   shares          ListShare[]
+  picksOf         Device?      @relation("devicePicks")
 }
 
 model ListItem {
@@ -619,6 +620,9 @@ model Device {
   pruneAllow      Int?
   // Frontends show each list given to the device as a collection (ES-DE, EmulationStation)
   listCollections Boolean               @default(true)
+  // The list of games picked for this device (browsed on the console or sent from the web app): devices/picks.ts
+  picksListId     Int?                  @unique
+  picksList       List?                 @relation("devicePicks", fields: [picksListId], references: [id], onDelete: SetNull)
   createdAt       DateTime              @default(now())
   user            User                  @relation(fields: [userId], references: [id], onDelete: Cascade)
   console         Console               @relation(fields: [consoleId], references: [id])

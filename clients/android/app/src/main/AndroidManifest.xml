@@ -21,6 +21,8 @@
     <!-- Dolphin shares its user folder (GameCube saves) through this documents provider -->
     <queries>
         <provider android:authorities="org.dolphinemu.dolphinemu.user" />
+        <!-- ES-DE: restarted after a browse download so it reads the new games -->
+        <package android:name="org.es_de.frontend" />
         <!-- The launchers: a game is never played in them -->
         <intent>
             <action android:name="android.intent.action.MAIN" />

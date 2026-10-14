@@ -17,6 +17,7 @@ import { clearListCaches, copiesSystem, folderFor, layoutOf, openSink, systemFil
 import { ownedGameIds, ownedRomIds } from '../roms/service.js';
 import { installClient, serverKey, syncOverSsh } from './ssh.js';
 import { OPEN_PULL, pullTransfers, romDownloads } from '../saves/agent.js';
+import { sendGames } from './picks.js';
 import { devicePlan } from './plan.js';
 import { prunePlan } from './prune.js';
 import { listsPreview, setDeviceLists } from './lists.js';
@@ -542,18 +543,11 @@ devicesRouter.get('/:id/pulls', async (req, res) => {
   res.json(await prisma.devicePull.findMany({ where: { deviceId: d.id }, orderBy: { id: 'desc' }, take: 100 }));
 });
 
-// Send games straight to a device: they go to its own list, which the device keeps
+// Send games straight to a device: they go to its picks list, which the device keeps
 devicesRouter.post('/:id/send', requirePerm('roms.download'), async (req, res) => {
   const d = await ownDevice(intParam(req), me(req));
   const { gameIds } = z.object({ gameIds: z.array(z.number().int()).min(1).max(1000) }).parse(req.body);
-  const name = `→ ${d.name}`;
-  let list = await prisma.list.findFirst({ where: { ownerId: me(req).id, name, devices: { some: { deviceId: d.id } } } });
-  if (!list) {
-    list = await prisma.list.create({ data: { ownerId: me(req).id, name, description: `Roms sent directly to ${d.name}` } });
-    await prisma.deviceList.create({ data: { deviceId: d.id, listId: list.id } });
-  }
-  const r = await prisma.listItem.createMany({ data: gameIds.map((gameId) => ({ listId: list.id, gameId, itemKey: `g${gameId}` })), skipDuplicates: true });
-  res.status(201).json({ listId: list.id, added: r.count });
+  res.status(201).json(await sendGames(d, gameIds));
 });
 
 devicesRouter.get('/:id/lists-progress', async (req, res) => {

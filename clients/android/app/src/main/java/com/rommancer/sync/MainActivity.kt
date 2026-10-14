@@ -49,6 +49,7 @@ import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
@@ -81,8 +82,8 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 private val Bg = Color(0xFF12141C)
-private val Accent = Color(0xFF6EAAFF)
-private val Dim = Color(0xFF8C91A0)
+internal val Accent = Color(0xFF6EAAFF)
+internal val Dim = Color(0xFF8C91A0)
 
 class MainActivity : ComponentActivity() {
     // Bumped on resume so the storage permission screen updates after returning from Settings
@@ -102,14 +103,25 @@ class MainActivity : ComponentActivity() {
         resumes.intValue++
     }
 
-    // Gamepads: A selects like the D-pad centre, B goes back
+    // Gamepads: A selects like the D-pad centre, B goes back; the browse screens take X, Y, START, L1 and R1
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
+        if (event.keyCode in PAD) pad?.let { if (event.action != KeyEvent.ACTION_DOWN || it(event.keyCode)) return true }
         val mapped = when (event.keyCode) {
             KeyEvent.KEYCODE_BUTTON_A -> KeyEvent.KEYCODE_DPAD_CENTER
             KeyEvent.KEYCODE_BUTTON_B -> KeyEvent.KEYCODE_BACK
             else -> null
         }
         return if (mapped != null) super.dispatchKeyEvent(KeyEvent(event.action, mapped)) else super.dispatchKeyEvent(event)
+    }
+
+    companion object {
+        private val PAD = setOf(
+            KeyEvent.KEYCODE_BUTTON_X, KeyEvent.KEYCODE_BUTTON_Y, KeyEvent.KEYCODE_BUTTON_START, KeyEvent.KEYCODE_BUTTON_L1,
+            KeyEvent.KEYCODE_BUTTON_R1, KeyEvent.KEYCODE_PAGE_UP, KeyEvent.KEYCODE_PAGE_DOWN,
+        )
+
+        /** The screen that takes the PAD keys, whatever has the focus (an empty list has none); true when handled */
+        var pad: ((Int) -> Boolean)? = null
     }
 }
 
@@ -133,6 +145,16 @@ private sealed interface Screen {
     data class Prune(val kind: String) : Screen
     /** Disconnecting the device, always asked first */
     data object Unlink : Screen
+    /** The server's games by system, to tick and download */
+    data object Browse : Screen
+    /** One system's games, or every system's (SYSTEM null) searched; SEARCH opens with the search field focused */
+    data class BrowseGames(val system: SyncEngine.BrowseSystem?, val search: Boolean) : Screen
+    /** The server's check of the selection before anything is added; FROM is where Back leads */
+    data class BrowseReview(val from: Screen) : Screen
+    /** The add was refused for want of space: nothing was added */
+    data class BrowseNoSpace(val check: SyncEngine.BrowseCheck, val from: Screen) : Screen
+    /** Leaving browse with games ticked */
+    data object BrowseDiscard : Screen
 }
 
 @Composable
@@ -141,6 +163,9 @@ private fun App(resumes: Int) {
     val store = remember { Store(context) }
     var linked by remember { mutableStateOf(store.linked) }
     val canRead = remember(resumes) { Environment.isExternalStorageManager() }
+    // The browse screens scroll their own lazy lists, which cannot sit inside a verticalScroll
+    var ownScroll by remember { mutableStateOf(false) }
+    val scroll = rememberScrollState()
     // Two columns like the handheld setup app: content on the left, the spinning save point on the right. Narrow
     // screens (a phone upright) give all the width to the text
     BoxWithConstraints(Modifier.fillMaxSize().padding(horizontal = 20.dp, vertical = 12.dp)) {
@@ -150,7 +175,8 @@ private fun App(resumes: Int) {
             else -> 0.4f
         }
         Row(Modifier.fillMaxSize()) {
-            Column(Modifier.weight(1f - sprite).fillMaxHeight().verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            val scrolls = !(ownScroll && linked && canRead)
+            Column(Modifier.weight(1f - sprite).fillMaxHeight().then(if (scrolls) Modifier.verticalScroll(scroll) else Modifier), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 val version = remember { runCatching { context.packageManager.getPackageInfo(context.packageName, 0).versionName }.getOrNull().orEmpty() }
                 Row(verticalAlignment = Alignment.Bottom) {
                     Text(stringResource(R.string.app_title), fontSize = 26.sp, fontWeight = FontWeight.SemiBold, color = Accent)
@@ -158,7 +184,7 @@ private fun App(resumes: Int) {
                 }
                 when {
                     !canRead -> StoragePermission()
-                    linked -> Linked(store) { linked = false }
+                    linked -> Linked(store, !scrolls, { ownScroll = it }) { linked = false }
                     else -> Setup(store) { linked = true }
                 }
             }
@@ -195,7 +221,7 @@ private fun SavePoint() {
  * dimmed line what it does
  */
 @Composable
-private fun MenuItem(text: String, focus: FocusRequester? = null, sub: String? = null, color: Color = Color.White, alert: Boolean = false, onClick: () -> Unit) {
+internal fun MenuItem(text: String, focus: FocusRequester? = null, sub: String? = null, color: Color = Color.White, alert: Boolean = false, onClick: () -> Unit) {
     var focused by remember { mutableStateOf(false) }
     TextButton(
         onClick = onClick,
@@ -284,7 +310,7 @@ private fun Setup(store: Store, onLinked: () -> Unit) {
     TextButton(onClick = { signup = !signup }) { Text(stringResource(if (signup) R.string.have_account else R.string.no_account)) }
 }
 
-private val Warn = Color(0xFFFFB454)
+internal val Warn = Color(0xFFFFB454)
 
 /** "Synced: today, 18:52", "Synced: yesterday, 09:10", "Synced: 3 Oct, 18:52" or "Not synced yet" */
 private fun syncedText(context: android.content.Context, at: Long): String {
@@ -297,7 +323,7 @@ private fun syncedText(context: android.content.Context, at: Long): String {
     }
 }
 
-private fun size(context: android.content.Context, bytes: Long) = android.text.format.Formatter.formatShortFileSize(context, bytes)
+internal fun size(context: android.content.Context, bytes: Long) = android.text.format.Formatter.formatShortFileSize(context, bytes)
 
 /** One fact per line, as Summary.lines gives them */
 @Composable
@@ -349,7 +375,7 @@ private fun ProgressLines(p: SyncEngine.Progress) {
 }
 
 @Composable
-private fun Linked(store: Store, onUnlinked: () -> Unit) {
+private fun Linked(store: Store, ownScroll: Boolean, setOwnScroll: (Boolean) -> Unit, onUnlinked: () -> Unit) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var screen by remember { mutableStateOf<Screen>(Screen.Menu) }
@@ -528,6 +554,74 @@ private fun Linked(store: Store, onUnlinked: () -> Unit) {
         } else screen = Screen.Menu
     }
 
+    // Browsing the server's games: the systems, the selection (kept while moving between the screens), the search
+    // text, the server's check, and whether the account was refused (the home item then goes)
+    var browseSystems by remember { mutableStateOf<List<SyncEngine.BrowseSystem>?>(null) }
+    var browseFailure by remember { mutableStateOf<Pair<String, String>?>(null) }
+    var browseDenied by remember { mutableStateOf(false) }
+    var browsePick by remember { mutableStateOf(SyncEngine.BrowsePick()) }
+    var browseText by remember { mutableStateOf("") }
+    var browseAt by remember { mutableIntStateOf(0) }
+    var browseChecked by remember { mutableStateOf<SyncEngine.BrowseCheck?>(null) }
+    var browseCheckFailure by remember { mutableStateOf<Pair<String, String>?>(null) }
+    val titleBrowseGet = stringResource(R.string.browse_review_title)
+    fun browseFailed(e: Throwable): Pair<String, String>? {
+        if (e is SyncEngine.BrowseDenied) { browseDenied = true; return null }
+        return Failure.describe(context, store, e)
+    }
+    fun openBrowse() {
+        browseSystems = null
+        browseFailure = null
+        browseAt = 0
+        screen = Screen.Browse
+        scope.launch {
+            val r = withContext(Dispatchers.IO) { runCatching { SyncEngine(context, store).browseSystems() } }
+            browseSystems = r.getOrNull()
+            browseFailure = r.exceptionOrNull()?.let { browseFailed(it) }
+        }
+    }
+    fun browseReview(from: Screen) {
+        browseChecked = null
+        browseCheckFailure = null
+        // Back from the review returns to the list, without the keyboard popping up again
+        val back = if (from is Screen.BrowseGames) from.copy(search = false) else from
+        screen = Screen.BrowseReview(back)
+        val pick = browsePick
+        scope.launch {
+            val r = withContext(Dispatchers.IO) { runCatching { SyncEngine(context, store).browseCheck(pick) } }
+            browseChecked = r.getOrNull()
+            browseCheckFailure = r.exceptionOrNull()?.let { browseFailed(it) }
+            if (browseDenied) screen = Screen.Browse
+        }
+    }
+    // Added only when it fits; then the download and an inventory pass, on the progress screen
+    fun browseGet(from: Screen) {
+        back = Screen.Browse
+        progress = SyncEngine.Progress("connecting")
+        screen = Screen.Working(titleBrowseGet)
+        val pick = browsePick
+        scope.launch {
+            val r = withContext(Dispatchers.IO) { runCatching { SyncEngine(context, store).browseAdd(pick) } }
+            val c = r.getOrNull()
+            when {
+                c == null -> {
+                    val failed = browseFailed(r.exceptionOrNull()!!)
+                    screen = failed?.let { (why, details) -> Screen.Message(why, details) } ?: Screen.Browse
+                }
+                c.nospace || c.added == null -> screen = Screen.BrowseNoSpace(c, from)
+                else -> {
+                    browsePick = SyncEngine.BrowsePick()
+                    run(titleBrowseGet) { it.browseGet() }
+                }
+            }
+        }
+    }
+    fun leaveBrowse() {
+        screen = if (browsePick.isEmpty) Screen.Menu else Screen.BrowseDiscard
+    }
+    val browsing = screen == Screen.Browse || screen is Screen.BrowseGames
+    SideEffect { if (browsing != ownScroll) setOwnScroll(browsing) }
+
     fun unlink() {
         SyncWorker.cancel(context)
         WatchService.stop(context)
@@ -551,6 +645,10 @@ private fun Linked(store: Store, onUnlinked: () -> Unit) {
             is Screen.ListDrop -> screen = Screen.Lists
             is Screen.Conflict -> screen = Screen.Conflicts
             Screen.Unlink -> screen = Screen.Settings
+            Screen.Browse -> leaveBrowse()
+            is Screen.BrowseGames, Screen.BrowseDiscard -> screen = Screen.Browse
+            is Screen.BrowseReview -> screen = s.from
+            is Screen.BrowseNoSpace -> screen = s.from
             is Screen.Message, is Screen.Result -> screen = back
             is Screen.Prune -> when (s.kind) {
                 "intro", "ask" -> run(titlePrune) { it.pruneSet(false) }
@@ -589,6 +687,7 @@ private fun Linked(store: Store, onUnlinked: () -> Unit) {
             if (live != null) MenuItem(titleWatchRoms) { screen = Screen.Watch(titleWatchRoms, pulls = false) }
             if (pullLive != null) MenuItem(titleWatchPulls) { screen = Screen.Watch(titleWatchPulls, pulls = true) }
             MenuItem(stringResource(R.string.lists)) { lists = null; listsError = null; listAt = null; screen = Screen.Lists; loadLists() }
+            if (!browseDenied) MenuItem(stringResource(R.string.browse)) { openBrowse() }
             MenuItem(stringResource(R.string.settings)) { screen = Screen.Settings }
             MenuItem(stringResource(R.string.status)) { screen = Screen.Status }
             LaunchedEffect(Unit) { runCatching { firstItem.requestFocus() } }
@@ -714,6 +813,16 @@ private fun Linked(store: Store, onUnlinked: () -> Unit) {
             SummaryLines(s.summary)
             if (open) s.summary.details.takeLast(20).forEach { Text(it, color = Dim, fontSize = 14.sp) }
             MenuItem(stringResource(R.string.press_back), firstItem) { screen = back }
+            // ES-DE reads its games when it starts: with Shizuku it is restarted from here
+            val restart = remember(s) {
+                s.summary.gamesShow == "esde" && s.summary.gamesDown > 0 && Privileged.state() == Privileged.State.READY && Notices.installed(context, Notices.ESDE)
+            }
+            if (restart) MenuItem(stringResource(R.string.restart_esde)) {
+                scope.launch {
+                    withContext(Dispatchers.IO) { Privileged.forceStop(Notices.ESDE) }
+                    context.packageManager.getLaunchIntentForPackage(Notices.ESDE)?.let { runCatching { context.startActivity(it) } }
+                }
+            }
             if (s.summary.errors > 0 && s.summary.details.isNotEmpty() && !open) MenuItem(stringResource(R.string.details)) { open = true }
             LaunchedEffect(s) { runCatching { firstItem.requestFocus() } }
         }
@@ -822,6 +931,52 @@ private fun Linked(store: Store, onUnlinked: () -> Unit) {
             MenuItem(stringResource(R.string.list_drop_go, d.files + d.upload), firstItem) { setLists(s.keep) }
             MenuItem(stringResource(R.string.cancel)) { screen = Screen.Lists }
             LaunchedEffect(s) { runCatching { firstItem.requestFocus() } }
+        }
+        // Drawn once the root stopped scrolling (the frame before, it still does)
+        Screen.Browse -> if (ownScroll) BrowseSystems(
+            browseSystems, browseFailure, browseDenied, browsePick, browseAt,
+            onOpen = { system, at -> browseText = ""; browseAt = at; screen = Screen.BrowseGames(system, search = false) },
+            onSearch = { browseText = ""; browseAt = 0; screen = Screen.BrowseGames(null, search = true) },
+            onTick = { browsePick = browsePick.toggle(it) },
+            onReview = { browseReview(Screen.Browse) },
+        )
+        is Screen.BrowseGames -> if (ownScroll) BrowseGames(
+            store, s.system, s.search, browseSystems.orEmpty(), browseText, { browseText = it }, browsePick,
+            onToggle = { browsePick = browsePick.toggle(it) },
+            onReview = { browseReview(s) },
+            onDenied = { browseDenied = true; screen = Screen.Browse },
+        )
+        is Screen.BrowseReview -> {
+            Text(stringResource(R.string.browse_review_title), fontSize = 22.sp)
+            val c = browseChecked
+            val ok = when {
+                browseCheckFailure != null -> {
+                    Text(stringResource(R.string.browse_unreachable), fontSize = 18.sp, color = MaterialTheme.colorScheme.error)
+                    Text(browseCheckFailure!!.first, color = Dim, fontSize = 15.sp)
+                    Text(browseCheckFailure!!.second, color = Dim, fontSize = 12.sp)
+                    false
+                }
+                c == null -> { Text(stringResource(R.string.browse_contacting), color = Dim); false }
+                else -> BrowseCheckLines(c, browsePick, browseSystems.orEmpty())
+            }
+            Spacer(Modifier.height(4.dp))
+            if (ok) MenuItem(stringResource(R.string.browse_download), firstItem) { browseGet(s.from) }
+            MenuItem(stringResource(R.string.press_back), if (ok) null else firstItem) { screen = s.from }
+            LaunchedEffect(ok) { runCatching { firstItem.requestFocus() } }
+        }
+        is Screen.BrowseNoSpace -> {
+            Text(stringResource(R.string.browse_review_title), fontSize = 22.sp)
+            BrowseCheckLines(s.check, browsePick, browseSystems.orEmpty())
+            Spacer(Modifier.height(4.dp))
+            MenuItem(stringResource(R.string.press_back), firstItem) { screen = s.from }
+            LaunchedEffect(s) { runCatching { firstItem.requestFocus() } }
+        }
+        Screen.BrowseDiscard -> {
+            val n = browsePick.count(browseSystems.orEmpty()).first
+            Text(context.resources.getQuantityString(R.plurals.browse_discard, n, n), fontSize = 20.sp)
+            MenuItem(stringResource(R.string.browse_discard_keep), firstItem) { screen = Screen.Browse }
+            MenuItem(stringResource(R.string.browse_discard_go), color = Warn) { browsePick = SyncEngine.BrowsePick(); screen = Screen.Menu }
+            LaunchedEffect(Unit) { runCatching { firstItem.requestFocus() } }
         }
         Screen.Status -> {
             val info = remember { runCatching { context.packageManager.getPackageInfo(context.packageName, 0) }.getOrNull() }

@@ -88,6 +88,18 @@ export async function deviceFromToken(req: Request): Promise<AgentDevice> {
   return moved ? { ...device, rootPath: root } : device;
 }
 
+/**
+ * "X-Space: <free bytes> <total bytes>" of the device's storage, measured by the client just now: kept for the list
+ * copy budget, and applied to DEVICE so the plan of this very request uses it
+ */
+export async function storeSpace<D extends Device>(device: D, req: Request): Promise<D> {
+  const space = req.header('x-space')?.trim().split(/\s+/).map(Number);
+  if (space?.length !== 2 || !space.every((n) => Number.isFinite(n) && n >= 0)) return device;
+  const data = { spaceFree: BigInt(Math.round(space[0])), spaceTotal: BigInt(Math.round(space[1])), spaceAt: new Date() };
+  await prisma.device.update({ where: { id: device.id }, data });
+  return { ...device, ...data };
+}
+
 const SEEN_EVERY_MS = 15_000;
 const INVENTORY_REFRESH_MS = 30 * 60_000;
 
@@ -842,11 +854,7 @@ agentRouter.post('/sync', express.text({ limit: '16mb', type: '*/*' }), async (r
   await storeSshOffer(device, req);
   // "X-Wifi-Bands: 2.4 | dual | none": what its WiFi chip can do, so it is only given networks it can see
   await storeWifiBands(device, req.header('x-wifi-bands'));
-  // "X-Space: <free bytes> <total bytes>" of the device's storage, for the list copy budget
-  const space = req.header('x-space')?.trim().split(/\s+/).map(Number);
-  if (space?.length === 2 && space.every((n) => Number.isFinite(n) && n >= 0)) {
-    await prisma.device.update({ where: { id: device.id }, data: { spaceFree: BigInt(Math.round(space[0])), spaceTotal: BigInt(Math.round(space[1])), spaceAt: new Date() } });
-  }
+  await storeSpace(device, req);
   const userSaves = await prisma.save.findMany({ where: { userId: device.userId }, select: { baseName: true, gameId: true } });
   const savedNames = new Set(userSaves.map((s) => s.baseName));
   const savedGames = new Set(userSaves.map((s) => s.gameId).filter((g): g is number => g !== null));
@@ -1108,7 +1116,7 @@ function readRef(ref: string, deviceId: number): { p: string; e: string | null }
  * Files its last inventory already lists are left out: the client no longer checks them one by one.
  */
 agentRouter.get('/roms', async (req, res) => {
-  const device = await deviceFromToken(req);
+  const device = await storeSpace(await deviceFromToken(req), req);
   // The lists' files minus what the user left out; missing ones only while the device keeps its reserve
   const plan = await devicePlan(device, device.rootPath, device.homeRoot ?? device.rootPath);
   let budget = plan.budget;

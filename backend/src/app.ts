@@ -14,6 +14,7 @@ import { mediaRouter, scrapeRouter } from './modules/scrape/routes.js';
 import { raRouter } from './modules/ra/routes.js';
 import { savesRouter } from './modules/saves/routes.js';
 import { agentRouter } from './modules/saves/agent.js';
+import { browseRouter } from './modules/browse/agent.js';
 import { configAgentRouter } from './modules/devconfig/agent.js';
 import { configRouter } from './modules/devconfig/routes.js';
 import { linkPublicRouter, linkRouter } from './modules/link/routes.js';
@@ -42,6 +43,7 @@ export function createApp() {
   api.use('/auth', express.json({ limit: '1mb' }), authRouter);
   // Device scripts: authenticated with their own token
   api.use('/agent/config', configAgentRouter);
+  api.use('/agent/browse', browseRouter);
   api.use('/agent', agentRouter);
   api.use('/link', linkPublicRouter);
   api.use(express.json({ limit: '10mb' }));
