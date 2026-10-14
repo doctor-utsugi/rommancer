@@ -443,9 +443,14 @@ private fun Linked(store: Store, onUnlinked: () -> Unit) {
         }
     }
 
-    // A newer app on the server: offered at the top of the menu
+    // A newer app on the server: offered at the top of the menu; asked again every hour, as the app may stay open for days
     var update by remember { mutableStateOf<Updater.Available?>(null) }
-    LaunchedEffect(Unit) { update = withContext(Dispatchers.IO) { Updater.check(context, store) } }
+    LaunchedEffect(Unit) {
+        while (true) {
+            withContext(Dispatchers.IO) { Updater.check(context, store) }?.let { update = it }
+            delay(3_600_000)
+        }
+    }
 
     // Conflicts are counted in the background so the menu never waits for the network
     LaunchedEffect(screen) {
