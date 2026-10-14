@@ -89,7 +89,7 @@ pub fn signature(dir: &Path) -> Option<(u64, u64)> {
     for (_, p) in files {
         let m = fs::metadata(p).ok()?;
         size += m.len() << 8;
-        newest = newest.max(m.modified().ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map(|d| d.as_secs()).unwrap_or(0));
+        newest = newest.max(m.modified().ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map(|d| d.as_nanos() as u64).unwrap_or(0));
     }
     Some((size, newest))
 }

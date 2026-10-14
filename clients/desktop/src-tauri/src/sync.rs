@@ -909,3 +909,22 @@ fn clear_list_caches(root: &Path, files: &[PathBuf]) {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    /// One sync against a real server; backend/test/ctr.test.ts runs it with ROMMANCER_DESKTOP=1
+    #[test]
+    #[ignore]
+    fn engine_against_server() {
+        let var = |k: &str| std::env::var(k).unwrap_or_else(|_| panic!("{k} not set"));
+        let root = var("ROMMANCER_TEST_ROOT");
+        let api = crate::api::DeviceApi::new(&var("ROMMANCER_TEST_SERVER"), &var("ROMMANCER_TEST_TOKEN"), crate::api::RootHeader::Temporary(root.clone()));
+        let (report, cancelled, log) = (|_p: super::Progress| {}, || false, |l: String| println!("LOG {l}"));
+        let cache = std::path::Path::new(&root).with_extension("cache.tsv");
+        let mut e = super::Engine::new(api, "pc".into(), root.into(), cache, &report, &cancelled, &log);
+        e.pc = true;
+        let mut out = super::Outcome::default();
+        e.sync(&mut out).unwrap();
+        println!("OUT up={} down={} errors={}", out.saves_up, out.saves_down, out.errors);
+    }
+}
