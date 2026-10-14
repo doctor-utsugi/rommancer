@@ -9,6 +9,7 @@ import { startSshSweep } from './modules/devices/ssh.js';
 import { startHealthWatch } from './modules/storage/health.js';
 import { startExternalSyncCron } from './modules/sync/service.js';
 import { migrateWholeCards } from './modules/saves/cards.js';
+import { catalog } from './modules/browse/catalog.js';
 
 for (const d of [env.dataDir, env.mediaDir, env.savesDir, env.uploadsDir, env.datsDir, env.tmpDir, env.patchesDir]) fs.mkdirSync(d, { recursive: true });
 
@@ -26,3 +27,5 @@ startHealthWatch();
 if (env.seedOnStart && fs.existsSync(env.seedDir)) await enqueue('seed-apply', {});
 
 createApp().listen(env.port, () => console.log(`Rommancer API listening on :${env.port}`));
+// Built now, so the first console that browses does not wait for it
+void catalog().catch((e) => console.error('browse catalog', e));
