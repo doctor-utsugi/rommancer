@@ -23,7 +23,7 @@
 #                                   so any computer with this script can sync it. Without a command: sync.
 set -u
 # Raised with every change of this client (any change reaches devices: they update by content, not by this)
-CLIENT_VERSION=1.69.0
+CLIENT_VERSION=1.70.0
 # A clock before this date is surely wrong (no battery-backed clock); kept apart from the version, which may run ahead
 CLOCK_MIN=20261001
 # Onion keeps curl (with TLS) and friends outside the default PATH
@@ -430,7 +430,8 @@ build_request() {
     mt="${meta#* }"; mt="${mt%% *}"
     s="$(fresh_sha1 "$f" "$meta")" && printf 'file\t%s\t%s\t%s\n' "$f" "$s" "$mt" >> "$out"
   done < "$WORK/saves"
-  printf '%s\n' "$roots" | sed -n "s/^saves$TAB//p; s/^psp$TAB//p" | while IFS= read -r d; do psp_lines "$d"; done | awk '!seen[$0]++' >> "$out"
+  { printf '%s\n' "$roots" | sed -n "s/^saves$TAB//p" | while IFS= read -r d; do psp_lines "$d"; done
+    printf '%s\n' "$roots" | sed -n "s/^psp$TAB//p" | while IFS= read -r d; do psp_lines "$d" stick; done; } | awk '!seen[$0]++' >> "$out"
   nested_lines "$out" > "$WORK/nested" && cat "$WORK/nested" >> "$out"
   core_lines >> "$out" 2>/dev/null
   save_cache
@@ -439,8 +440,9 @@ build_request() {
 # PSP saves (PPSSPP, its RetroArch core) are folders, PSP/SAVEDATA/<game code + suffix>: each goes as one file whose
 # path ends in "/", told apart by its manifest (folder_hash); the SAVEDATA folders themselves as "dir" lines
 psp_lines() {
-  # A memory stick PPSSPP has set up but no game saved on yet: its SAVEDATA can still take saves from elsewhere
-  [ -d "$1/PSP" ] && [ ! -d "$1/PSP/SAVEDATA" ] && printf 'dir\t%s\n' "$1/PSP/SAVEDATA"
+  # A memory stick PPSSPP has set up but no game saved on yet, or the firmware's own (STICK) before PPSSPP first ran:
+  # its SAVEDATA can still take saves from elsewhere
+  { [ -d "$1/PSP" ] || [ "${2:-}" = stick ]; } && [ ! -d "$1/PSP/SAVEDATA" ] && printf 'dir\t%s\n' "$1/PSP/SAVEDATA"
   find "$1" -type d -name SAVEDATA 2>/dev/null | while IFS= read -r sd; do
     [ "$(basename "$(dirname "$sd")")" = PSP ] || continue
     printf 'dir\t%s\n' "$sd"

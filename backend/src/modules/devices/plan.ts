@@ -71,7 +71,7 @@ export async function devicePlan(device: Device & { firmware: Firmware }, root =
         const size = f.archiveEntry
           ? Number(romOf.get(it.romId ?? -1)?.parts.reduce((n, p) => n + Number(p.size), 0) ?? 0)
           : ((await fs.promises.stat(f.absPath).catch(() => null))?.size ?? 0);
-        const onDevice = havePaths.has(pathKey(path.posix.join(homeRoot, rel)));
+        const onDevice = [f.destName, f.altName].some((n) => n && havePaths.has(pathKey(path.posix.join(homeRoot, layout.romsRoot, folder, n))));
         const present = onDevice || (gameId !== null && haveGames.has(gameId)) || (!!it.sha1 && haveContent.has(it.sha1));
         // Files of no system follow no system filter
         const excluded = (!it.folder && !copiesSystem(filter, it.systemSlug)) || (gameId !== null && excludedGames.has(gameId));

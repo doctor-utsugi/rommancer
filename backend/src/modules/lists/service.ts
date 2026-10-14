@@ -43,7 +43,8 @@ export interface TransferItem {
   // Content of a file nobody identified: a device with it has the item wherever it keeps it
   sha1?: string | null;
   // Files to copy
-  files: { absPath: string; archiveEntry: string | null; destName: string }[];
+  // ALTNAME: the name devices got before (the database's, for a file kept compressed)
+  files: { absPath: string; archiveEntry: string | null; destName: string; altName?: string }[];
 }
 
 /** Resolves the files to copy for each list item. Those not held go to missing. */
@@ -240,7 +241,11 @@ export async function romFiles(romId: number) {
       // Disc tracks: the original name is kept so the .cue stays valid
       files.push({ absPath: abs, archiveEntry: f.archiveEntry, destName: path.basename(f.archiveEntry ?? f.relativePath) });
     } else {
-      files.push({ absPath: abs, archiveEntry: f.archiveEntry, destName: safeFileName(part.name) });
+      // A file kept compressed (.cso, .rvz) is named with its own extension, not the database's (.iso)
+      const own = path.extname(f.archiveEntry ?? f.relativePath);
+      const named = path.extname(part.name);
+      const name = own && named && own.toLowerCase() !== named.toLowerCase() ? part.name.slice(0, -named.length) + own : part.name;
+      files.push({ absPath: abs, archiveEntry: f.archiveEntry, destName: safeFileName(name), ...(name !== part.name ? { altName: safeFileName(part.name) } : {}) });
     }
   }
   // .cue of multi-track discs: looked up next to the tracks

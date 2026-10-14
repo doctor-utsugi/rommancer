@@ -60,6 +60,14 @@
                 android:resource="@xml/file_paths" />
         </provider>
         <receiver
+            android:name=".ShellSync"
+            android:exported="true"
+            android:permission="android.permission.DUMP">
+            <intent-filter>
+                <action android:name="com.rommancer.sync.SYNC" />
+            </intent-filter>
+        </receiver>
+        <receiver
             android:name=".BootReceiver"
             android:exported="true">
             <intent-filter>

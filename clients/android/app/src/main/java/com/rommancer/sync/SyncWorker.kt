@@ -3,6 +3,8 @@ package com.rommancer.sync
 import android.content.Context
 import androidx.work.CoroutineWorker
 import androidx.work.ExistingPeriodicWorkPolicy
+import androidx.work.ExistingWorkPolicy
+import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
 import androidx.work.WorkerParameters
@@ -32,5 +34,10 @@ class SyncWorker(context: Context, params: WorkerParameters) : CoroutineWorker(c
         }
 
         fun cancel(context: Context) = WorkManager.getInstance(context).cancelUniqueWork(NAME)
+
+        /** One sync now, as the screen's "Sync now" does */
+        fun now(context: Context) {
+            WorkManager.getInstance(context).enqueueUniqueWork("$NAME-now", ExistingWorkPolicy.KEEP, OneTimeWorkRequestBuilder<SyncWorker>().build())
+        }
     }
 }
