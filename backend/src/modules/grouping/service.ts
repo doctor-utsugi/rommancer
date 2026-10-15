@@ -28,12 +28,40 @@ export interface EvidenceInput {
   source: EvidenceSource;
 }
 
+const evidenceId = (e: { romId: number | null; source: string; key: string }) => `${e.romId}|${e.source}|${e.key}`;
+
+// The unique index does not stop duplicates: gameId is NULL in rom-game rows and MySQL never treats NULLs as equal
 export async function addRomEvidence(rows: EvidenceInput[]) {
-  for (let i = 0; i < rows.length; i += 2000) {
-    await prisma.groupingEvidence.createMany({
-      data: rows.slice(i, i + 2000).map((r) => ({ kind: 'rom-game', romId: r.romId, gameId: null, systemId: r.systemId, key: r.key.slice(0, 255), source: r.source, confidence: CONFIDENCE[r.source] })),
-      skipDuplicates: true,
+  const unique = new Map(rows.map((r) => [evidenceId({ ...r, key: r.key.slice(0, 255) }), r]));
+  const fresh = [...unique.entries()];
+  for (let i = 0; i < fresh.length; i += 2000) {
+    const batch = fresh.slice(i, i + 2000);
+    const existing = await prisma.groupingEvidence.findMany({
+      where: { kind: 'rom-game', romId: { in: [...new Set(batch.map(([, r]) => r.romId))] } },
+      select: { romId: true, source: true, key: true },
     });
+    const known = new Set(existing.map(evidenceId));
+    const data = batch
+      .filter(([id]) => !known.has(id))
+      .map(([, r]) => ({ kind: 'rom-game', romId: r.romId, gameId: null, systemId: r.systemId, key: r.key.slice(0, 255), source: r.source, confidence: CONFIDENCE[r.source] }));
+    if (data.length) await prisma.groupingEvidence.createMany({ data });
+  }
+}
+
+/** Distinct rom-game evidence, read by pages so that leftover duplicates never make one oversized query. */
+export async function readRomEvidence(where: Prisma.GroupingEvidenceWhereInput) {
+  const out = new Map<string, { romId: number | null; key: string; source: string; confidence: number }>();
+  let cursor = 0;
+  for (;;) {
+    const page = await prisma.groupingEvidence.findMany({
+      where: { ...where, kind: 'rom-game', id: { gt: cursor } },
+      select: { id: true, romId: true, key: true, source: true, confidence: true },
+      orderBy: { id: 'asc' },
+      take: 50000,
+    });
+    for (const { id: _id, ...e } of page) out.set(evidenceId(e), e);
+    if (page.length < 50000) return [...out.values()];
+    cursor = page[page.length - 1].id;
   }
 }
 
@@ -85,7 +113,7 @@ export async function resolveRomGroups(systemId?: number, ctx?: JobContext): Pro
     stats.systems++;
     stats.roms += roms.length;
     const byId = new Map(roms.map((r) => [r.id, r]));
-    const evidence = await prisma.groupingEvidence.findMany({ where: { kind: 'rom-game', systemId: system.id }, select: { romId: true, key: true, source: true, confidence: true } });
+    const evidence = await readRomEvidence({ systemId: system.id });
     const rules = await prisma.groupingRule.findMany({ where: { kind: 'rom-game' } });
 
     // Keys per source: the DB ones plus the derived ones (RA and title)

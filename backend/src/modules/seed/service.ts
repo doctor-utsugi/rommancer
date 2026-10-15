@@ -27,7 +27,7 @@ import { enqueue, type JobContext } from '../../lib/jobs.js';
 import { importDat } from '../dats/importer.js';
 import { storeRaGames } from '../ra/routes.js';
 import { rematchAll } from '../scanner/service.js';
-import { addRomEvidence, resolveRomGroups, type EvidenceSource } from '../grouping/service.js';
+import { addRomEvidence, readRomEvidence, resolveRomGroups, type EvidenceSource } from '../grouping/service.js';
 import { normalizeTitle, parseRomName } from '../../lib/romname.js';
 
 interface ManifestEntry {
@@ -216,7 +216,7 @@ export async function exportSeed(ctx?: JobContext) {
       for (const r of await prisma.rom.findMany({ where: { id: { in: missing.slice(i, i + 5000) } }, select: { id: true, name: true, game: { select: { system: { select: { slug: true } } } } } }))
         romName.set(r.id, { name: r.name, slug: r.game.system.slug });
   };
-  const evidence = await prisma.groupingEvidence.findMany({ where: { kind: 'rom-game', source: { in: ['retool', 'screenscraper', 'manual'] } } });
+  const evidence = await readRomEvidence({ source: { in: ['retool', 'screenscraper', 'manual'] } });
   const rules = await prisma.groupingRule.findMany();
   const misses = await prisma.scrapeMiss.findMany();
   const missRoms = await prisma.rom.findMany({ where: { gameId: { in: misses.map((m) => m.gameId) } }, select: { id: true, gameId: true }, orderBy: { id: 'asc' } });

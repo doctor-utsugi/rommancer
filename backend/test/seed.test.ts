@@ -49,10 +49,12 @@ test('seed: DATs of every console, RA and scraping without network', { skip: !fs
       const m = await prisma.media.findFirstOrThrow();
       assert.ok(fs.existsSync(path.join(DATA, 'media', m.path)));
     }
-    // Second application: nothing new
+    // Second application: nothing new, and no evidence row added twice
+    const evidence = await prisma.groupingEvidence.count();
     const r2 = await applySeed();
     assert.equal(r2.datsImported, 0);
     assert.equal(r2.media, 0);
+    assert.equal(await prisma.groupingEvidence.count(), evidence);
   } finally {
     globalThis.fetch = realFetch;
   }
