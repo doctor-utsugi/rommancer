@@ -45,3 +45,17 @@ def page_target(index, direction, count, size):
 def page_bindings(mapping):
     aliases = {"leftshoulder": "pageup", "rightshoulder": "pagedown", "l1": "pageup", "r1": "pagedown"}
     return {aliases.get(name, name): value for name, value in mapping.items()}
+
+
+class LocalSearch:
+    def __init__(self, games, system=None):
+        self.games, self.system = games, system
+        self.applied = ""
+        self.rows = library_rows(games, system)
+
+    def accept(self, draft):
+        query = draft.strip()
+        if query != self.applied:
+            self.rows = library_rows(self.games, self.system, query)
+            self.applied = query
+        return self.rows

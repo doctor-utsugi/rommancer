@@ -39,6 +39,7 @@ internal fun JourneysScreen(store: Store, onBack: () -> Unit) {
     val keyboard = LocalSoftwareKeyboardController.current
     val focusManager = LocalFocusManager.current
     val searchFocus = remember { FocusRequester() }
+    val submission = remember { SearchSubmission() }
     var resultsFocus by remember { mutableIntStateOf(0) }
     var games by remember { mutableStateOf<List<Journeys.Game>>(emptyList()) }
     var system by remember { mutableStateOf<String?>(null) }
@@ -52,6 +53,7 @@ internal fun JourneysScreen(store: Store, onBack: () -> Unit) {
     var message by remember { mutableStateOf("") }
     var busy by remember { mutableStateOf(false) }
     var failed by remember { mutableStateOf(false) }
+    var beforeChange by remember { mutableStateOf<(() -> Unit)?>(null) }
     val pages = remember { mutableStateMapOf<String, Int>() }
     val cursors = remember { mutableStateMapOf<String, String>() }
     fun back() {
@@ -80,6 +82,7 @@ internal fun JourneysScreen(store: Store, onBack: () -> Unit) {
             busy = false
         }
     }
+    fun warnThen(task: () -> String) { if (!busy) beforeChange = { work(task) } }
     LaunchedEffect(Unit) {
         busy = true
         val result = withContext(Dispatchers.IO) { runCatching { engine.games() } }
@@ -97,6 +100,14 @@ internal fun JourneysScreen(store: Store, onBack: () -> Unit) {
     val g = game
     val target = selected
     val query = if (system == null) globalQuery else systemQuery
+    val systems = remember(games, query) {
+        games.groupBy { it.system }.toSortedMap(compareBy { LocalLibrary.systemName(it) })
+            .filterKeys { query.isBlank() || LocalLibrary.matches(query, LocalLibrary.systemName(it), it) }
+    }
+    val found = remember(games, system, query) {
+        if (system == null && query.isBlank()) emptyList()
+        else games.filter { (system == null || it.system == system) && LocalLibrary.matches(query, it.title, LocalLibrary.systemName(it.system), it.system) }.sortedBy { it.title.lowercase() }
+    }
     val route = "${system ?: "consoles"}/${g?.rom ?: query}/${target?.id ?: "slots"}/${action ?: ""}"
     val title = when { g != null -> g.title.substringBeforeLast('.', g.title); system != null -> LocalLibrary.systemName(system!!); else -> "Journeys · Choose a console" }
     val rows = mutableListOf<JourneyRow>()
@@ -104,20 +115,19 @@ internal fun JourneysScreen(store: Store, onBack: () -> Unit) {
     fun open(value: Journeys.Game) { game = value; selected = null; action = null; message = "" }
     when {
         g == null -> {
-            val scoped = games.filter { system == null || it.system == system }
             if (system == null) {
-                games.groupBy { it.system }.toSortedMap(compareBy { LocalLibrary.systemName(it) }).forEach { (slug, list) ->
-                    if (query.isBlank() || LocalLibrary.matches(query, LocalLibrary.systemName(slug), slug))
+                systems.forEach { (slug, list) ->
                         row("system/$slug", LocalLibrary.systemName(slug), "${list.size} games") { system = slug; systemQuery = "" }
                 }
             }
-            if (system != null || query.isNotBlank()) scoped.filter { LocalLibrary.matches(query, it.title, LocalLibrary.systemName(it.system), it.system) }.sortedBy { it.title.lowercase() }.forEach { value ->
+            found.forEach { value ->
                 row("game/${value.rom}", value.title.substringBeforeLast('.', value.title), LocalLibrary.systemName(value.system)) { open(value) }
             }
         }
         g.identity == null -> {
-            rows += JourneyRow("initial", "Set up Slot 1", "Game closed · Keep all your existing saves and states", "CURRENT PROGRESS", 1) {
+            rows += JourneyRow("initial", "Set up Slot 1", "Keep all your existing saves and states", "CURRENT PROGRESS", 1) {
                 if (!busy) {
+                    beforeChange = {
                     busy = true
                     scope.launch {
                         val result = withContext(Dispatchers.IO) { runCatching { engine.enroll(g) } }
@@ -125,25 +135,26 @@ internal fun JourneysScreen(store: Store, onBack: () -> Unit) {
                             .onFailure { message = it.message.orEmpty(); failed = true }
                         busy = false
                     }
+                    }
                 }
             }
         }
         action != null -> {
-            val label = when (action) { "rename" -> "Rename slot"; "copy" -> "Copy to a new slot and use it"; else -> "Start in a new slot" }
-            row("confirm", label, if (action == "rename") "Only the name changes." else "Game closed · The original slot keeps its progress.") {
-                work { when (action) {
+            val label = when (action) { "rename" -> "Rename slot"; "copy" -> "Copy slot"; else -> "Create slot" }
+            row("confirm", label, if (action == "rename") "Only the name changes." else "Continue in the new slot. Your other slots keep their progress.") {
+                val task = { when (action) {
                     "rename" -> engine.rename(g.identity, target!!.id, name)
                     "copy" -> engine.create(g.identity, name, true, true)
                     else -> engine.create(g.identity, name, false, true)
                 } }
+                if (action == "rename") work(task) else warnThen(task)
             }
         }
         target != null -> {
-            if (!target.current) row("use", "Use Slot ${target.slot}", "Close the emulator first. Only this console changes slots.") { work { engine.switch(g.identity, target.id, true) } }
+            if (!target.current) row("use", "Use Slot ${target.slot}", "Only this console changes slots.") { warnThen { engine.switch(g.identity, target.id, true) } }
             if (target.current) row("copy", "Copy this slot…", "Continue in a separate copy and keep this one safe.") { action = "copy"; name = "${target.name} copy".take(80) }
             row("rename", "Rename Slot ${target.slot}") { action = "rename"; name = target.name }
-            if (target.current && target.conflict) row("conflict", "Keep both versions", "Keep server progress here and continue your local progress in a new slot.") { work { engine.keepBoth(g.identity, true) } }
-            if (!target.current) row("queue", "Change after closing the game", "Queue the switch if you are still playing.") { work { engine.switch(g.identity, target.id, false) } }
+            if (target.current && target.conflict) row("conflict", "Keep both versions", "Keep server progress here and continue your local progress in a new slot.") { warnThen { engine.keepBoth(g.identity, true) } }
         }
         else -> {
             slots.forEach { item ->
@@ -151,7 +162,7 @@ internal fun JourneysScreen(store: Store, onBack: () -> Unit) {
                 rows += JourneyRow(item.id, item.name, detail + if (item.incompatible > 0) " · Some states use another core" else "", if (item.current) "IN USE" else if (item.conflict) "CONFLICT" else "", item.slot, item.current) { selected = item }
             }
             rows += JourneyRow("empty", "Empty slot", "Start fresh without changing your other slots", "NEW GAME", (slots.maxOfOrNull { it.slot } ?: 0) + 1) { action = "new"; name = "" }
-            row("pending", "Apply pending changes", "Close the emulator first. Load any queued switch or newer progress.") { work { engine.applyPending(g.identity) } }
+            row("pending", "Apply pending changes", "Load any queued switch or newer progress.") { warnThen { engine.applyPending(g.identity) } }
         }
     }
     Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -162,10 +173,12 @@ internal fun JourneysScreen(store: Store, onBack: () -> Unit) {
         Text(title, fontSize = 22.sp, fontWeight = FontWeight.SemiBold, maxLines = 2)
         if (target != null) Text("Slot ${target.slot} · ${target.name}" + if (target.current) " · In use on this console" else "", color = Accent)
         if (g == null) {
-            OutlinedTextField(query, { value -> if (system == null) globalQuery = value else systemQuery = value },
-                Modifier.fillMaxWidth().focusRequester(searchFocus).onFocusChanged { MainActivity.typing = it.isFocused }, singleLine = true,
-                label = { Text(if (system == null) "Search consoles or all games" else "Search games on this console") },
-                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done), keyboardActions = KeyboardActions(onDone = { keyboard?.hide(); focusManager.clearFocus(); MainActivity.typing = false; resultsFocus++ }))
+            key(system) {
+                ConfirmedSearch(query, if (system == null) "Search consoles or all games" else "Search games on this console", searchFocus, submission) { value ->
+                    if (system == null) globalQuery = value else systemQuery = value
+                    keyboard?.hide(); focusManager.clearFocus(); MainActivity.typing = false; resultsFocus++
+                }
+            }
         } else if (action != null) {
             OutlinedTextField(name, { name = it.take(80) }, Modifier.fillMaxWidth().onFocusChanged { MainActivity.typing = it.isFocused }, singleLine = true, label = { Text(if (action == "rename") "Slot name" else "Slot name (optional)") },
                 keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done), keyboardActions = KeyboardActions(onDone = { keyboard?.hide(); focusManager.clearFocus(); MainActivity.typing = false; resultsFocus++ }))
@@ -173,13 +186,20 @@ internal fun JourneysScreen(store: Store, onBack: () -> Unit) {
         if (busy) LinearProgressIndicator(Modifier.fillMaxWidth())
         if (message.isNotBlank()) Text(message, color = if (failed) MaterialTheme.colorScheme.error else Accent, fontSize = 14.sp, maxLines = 3)
         if (!busy && rows.isEmpty()) Text(if (games.isEmpty()) "No supported games yet. Run Sync now to update your local inventory." else "No matches. Try another name.", color = Dim)
-        JourneyPages(rows, route, pages, cursors, busy, Modifier.weight(1f), resultsFocus) { if (g == null) { searchFocus.requestFocus(); keyboard?.show() } }
+        JourneyPages(rows, route, pages, cursors, busy, Modifier.weight(1f), resultsFocus, { if (g == null) submission.accept?.invoke() }) { if (g == null) { searchFocus.requestFocus(); keyboard?.show() } }
     }
+    if (beforeChange != null) AlertDialog(
+        onDismissRequest = { beforeChange = null },
+        title = { Text("Before continuing") },
+        text = { Text("If the emulator is open, close it before continuing. An open emulator can write over the slot you are about to use.") },
+        confirmButton = { TextButton(onClick = { val run = beforeChange; beforeChange = null; run?.invoke() }) { Text("OK") } },
+        dismissButton = { TextButton(onClick = { beforeChange = null }) { Text("Cancel") } },
+    )
     DisposableEffect(Unit) { onDispose { MainActivity.typing = false } }
 }
 
 @Composable
-private fun JourneyPages(rows: List<JourneyRow>, route: String, pages: MutableMap<String, Int>, cursors: MutableMap<String, String>, busy: Boolean, modifier: Modifier, resultsFocus: Int, search: () -> Unit) {
+private fun JourneyPages(rows: List<JourneyRow>, route: String, pages: MutableMap<String, Int>, cursors: MutableMap<String, String>, busy: Boolean, modifier: Modifier, resultsFocus: Int, accept: () -> Unit, search: () -> Unit) {
     val keyboard = LocalSoftwareKeyboardController.current
     val focus = remember { FocusRequester() }
     BoxWithConstraints(modifier) {
@@ -199,6 +219,7 @@ private fun JourneyPages(rows: List<JourneyRow>, route: String, pages: MutableMa
             KeyEvent.KEYCODE_BUTTON_L1, KeyEvent.KEYCODE_PAGE_UP -> { move(-1); true }
             KeyEvent.KEYCODE_BUTTON_R1, KeyEvent.KEYCODE_PAGE_DOWN -> { move(1); true }
             KeyEvent.KEYCODE_BUTTON_Y -> { search(); true }
+            KeyEvent.KEYCODE_BUTTON_START -> { if (!busy) accept(); true }
             else -> false
         } }
         LaunchedEffect(route, page, focusPage, busy, resultsFocus) { if (!busy && rows.isNotEmpty() && !MainActivity.typing) { withFrameNanos { }; runCatching { focus.requestFocus() } } }

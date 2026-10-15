@@ -1,5 +1,6 @@
 import unittest
-from local_library import library_rows, matches, page_target, page_bindings
+from local_library import LocalSearch, library_rows, matches, page_target, page_bindings
+from unittest.mock import patch
 
 
 class LocalLibraryTests(unittest.TestCase):
@@ -32,6 +33,20 @@ class LocalLibraryTests(unittest.TestCase):
         self.assertEqual(mapping["pageup"], ("button", 8, 1))
         self.assertEqual(mapping["pagedown"], ("button", 9, 1))
         self.assertEqual(mapping["a"], ("button", 1, 1))
+
+    def test_results_are_cached_until_accept(self):
+        with patch("local_library.library_rows", wraps=library_rows) as lookup:
+            search = LocalSearch(self.games)
+            initial = search.rows
+            for draft in ["p", "po", "poke", "pokemon"]:
+                self.assertIs(search.rows, initial)
+            self.assertEqual(lookup.call_count, 1)
+            self.assertEqual({row[1] for row in search.accept(draft)}, {"emerald", "red"})
+            self.assertEqual(lookup.call_count, 2)
+            search.accept(" pokemon ")
+            self.assertEqual(lookup.call_count, 2)
+            search.accept("")
+            self.assertEqual({r[0] for r in search.rows}, {"system"})
 
 
 if __name__ == "__main__":

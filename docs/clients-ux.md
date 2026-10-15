@@ -40,7 +40,9 @@ Items:
 4. **Game lists**: tick lists; leaving after a change syncs. The screen also has **Download the lists' games now**.
    **Journeys** sits next to game-related actions on Android and pygame: console → game → save slots.
    The console picker searches console names and all local games; inside a console, search stays scoped to its
-   games. Filtering happens on each edit, locally, without server requests. Back preserves the search and page.
+   games. Typing edits a draft only; **Accept** on the keyboard, the keyboard's Done action or START applies it.
+   Local results are computed once per accepted query and cached, not filtered/sorted per frame.
+   The server catalog also waits for explicit acceptance. Back preserves the applied search and page.
    Slots have a persistent local number, name, save count and an **IN USE** marker for this console.
    **Empty slot** starts fresh. Copy, rename and conflict actions belong inside a slot's details.
    Slot numbers are display labels on a console; synchronized identity is still the Journey UUID, not the number.
@@ -61,6 +63,11 @@ Items:
 - Desktop standard-gamepad shoulders generate page keys: the focused list handles them first, otherwise its
   scroll container pages and moves focus. Existing typing controls retain normal text input.
 - Onion uses the firmware's native prompt binary; its button behavior is not changed by pygame/Android code.
+
+Slot actions use direct names: **Create slot**, **Use Slot N**, **Copy slot**. Android shows a separate
+**Before continuing** notice: close the emulator if it is open, with **OK** and **Cancel**. Linux checks the
+running emulator processes and skips the notice when the game is known to be stopped; unknown/running states
+get the same notice. Entering from ES-DE alone is not evidence that another emulator has closed.
 
 ## Settings (submenu)
 

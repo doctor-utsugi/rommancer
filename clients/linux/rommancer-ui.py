@@ -6,7 +6,7 @@ status and sign out. Syncing itself is done by rommancer-sync.sh next to this fi
 """
 import functools
 import base64
-from local_library import library_rows, system_name, page_target, page_bindings
+from local_library import LocalSearch, system_name, page_target, page_bindings
 import json
 import math
 import os
@@ -652,14 +652,10 @@ KEYBOARD = [
     "zxcvbnm.-_",
     ":/?=&+#!*~",
 ]
+INPUT_KEYS = [list(line) for line in KEYBOARD] + [["Accept"]]
 
 # ---------- browsing the server's games (docs/browse.md) ----------
 
-# A search goes out this long after the last edit of its text
-try:
-    SEARCH_DEBOUNCE = float(os.environ.get("ROMMANCER_SEARCH_DEBOUNCE", "2.0"))
-except ValueError:
-    SEARCH_DEBOUNCE = 2.0
 BROWSE_PAGE = 50
 
 
@@ -948,7 +944,7 @@ class App:
         foot = pygame.Rect(0, s.h - fh, s.w, fh)
         kh = int(s.h * 0.075)
         # The keyboard sits over the footer and leaves the bar and a few rows in sight
-        keys = pygame.Rect(mx, foot.top - m - len(KEYBOARD) * kh, s.w - 2 * mx, len(KEYBOARD) * kh) if kb else None
+        keys = pygame.Rect(mx, foot.top - m - len(INPUT_KEYS) * kh, s.w - 2 * mx, len(INPUT_KEYS) * kh) if kb else None
         return {"m": m, "x": mx, "w": s.w - 2 * mx, "bar": bar, "sec_y": sec_y, "top": sec_y + s.small.get_linesize() + int(m * 0.5),
                 "bottom": (keys.top if kb else foot.top) - int(m * 0.5), "keys": keys, "kh": kh, "foot": foot,
                 "step": s.font.get_linesize() + int(s.h * 0.012)}
@@ -1023,10 +1019,11 @@ class App:
         pygame.draw.rect(s.surf, BG, (0, keys.top - lay["m"] // 2, s.w, lay["foot"].top - keys.top + lay["m"] // 2))
         kw, kh = keys.w // 10, lay["kh"]
         gap = max(3, kh // 10)
-        for r, line in enumerate(KEYBOARD):
+        for r, line in enumerate(INPUT_KEYS):
             for c, ch in enumerate(line):
-                ch = ch.upper() if kb["upper"] else ch
-                rect = pygame.Rect(keys.x + c * kw, keys.y + r * kh, kw - gap, kh - gap)
+                accept = ch == "Accept"
+                ch = ch.upper() if kb["upper"] and not accept else ch
+                rect = pygame.Rect(keys.x + c * kw, keys.y + r * kh, (keys.w if accept else kw) - gap, kh - gap)
                 hot = (r, c) == (kb["row"], kb["col"])
                 pygame.draw.rect(s.surf, ACCENT if hot else KEY, rect, border_radius=6)
                 img = s.font.render(ch, True, BG if hot else FG)
@@ -1134,7 +1131,7 @@ class App:
             self.browse_footer(lay, None if typing else foot() if foot else None, T["search_keys"] if typing else keys + "   " + page_hint)
             s.flip()
             view["first"] = first
-            if near_end and n - sel <= 10:
+            if near_end and not typing and n - sel <= 10:
                 near_end()
             a = self.next_action(timeout=0)
             if a is None:
@@ -1143,18 +1140,21 @@ class App:
             if typing:
                 value = search["text"]
                 if a in ("pageup", "pagedown"):
-                    search["kb"] = False
                     view["bar"] = None
                     view["sel"] = page_target(sel, -1 if a == "pageup" else 1, n, fit)
-                    continue
+                    return "leave-edit", None
                 if isinstance(a, tuple):
                     value += a[1]
                 elif a in ("up", "down"):
-                    kb["row"] = (kb["row"] + (1 if a == "down" else -1)) % len(KEYBOARD)
+                    kb["row"] = (kb["row"] + (1 if a == "down" else -1)) % len(INPUT_KEYS)
+                    kb["col"] = min(kb["col"], len(INPUT_KEYS[kb["row"]]) - 1)
                 elif a in ("left", "right"):
-                    kb["col"] = (kb["col"] + (1 if a == "right" else -1)) % 10
+                    kb["col"] = (kb["col"] + (1 if a == "right" else -1)) % len(INPUT_KEYS[kb["row"]])
                 elif a == "a":
-                    ch = KEYBOARD[kb["row"]][kb["col"]]
+                    ch = INPUT_KEYS[kb["row"]][kb["col"]]
+                    if ch == "Accept":
+                        view["bar"], view["sel"], view["first"] = None, 0, 0
+                        return "submit", None
                     value += ch.upper() if kb["upper"] else ch
                 elif a == "b":
                     if not value:
@@ -1221,10 +1221,11 @@ class App:
                 txt = txt[1:]
             s.text(txt, (box.x + 10, box.y + 6))
             kw, kh = (s.w - 60) // 10, int(s.h * 0.1)
-            for r, line in enumerate(KEYBOARD):
+            for r, line in enumerate(INPUT_KEYS):
                 for c, ch in enumerate(line):
-                    ch = ch.upper() if upper else ch
-                    rect = pygame.Rect(30 + c * kw, int(s.h * 0.3) + r * kh, kw - 6, kh - 6)
+                    accept = ch == "Accept"
+                    ch = ch.upper() if upper and not accept else ch
+                    rect = pygame.Rect(30 + c * kw, int(s.h * 0.3) + r * kh, (10 * kw if accept else kw) - 6, kh - 6)
                     hot = (r, c) == (row, col)
                     pygame.draw.rect(s.surf, ACCENT if hot else (50, 55, 72), rect, border_radius=6)
                     img = s.font.render(ch, True, BG if hot else FG)
@@ -1234,15 +1235,19 @@ class App:
             if isinstance(a, tuple):
                 value += a[1]
             elif a == "up":
-                row = (row - 1) % len(KEYBOARD)
+                row = (row - 1) % len(INPUT_KEYS)
+                col = min(col, len(INPUT_KEYS[row]) - 1)
             elif a == "down":
-                row = (row + 1) % len(KEYBOARD)
+                row = (row + 1) % len(INPUT_KEYS)
+                col = min(col, len(INPUT_KEYS[row]) - 1)
             elif a == "left":
-                col = (col - 1) % 10
+                col = (col - 1) % len(INPUT_KEYS[row])
             elif a == "right":
-                col = (col + 1) % 10
+                col = (col + 1) % len(INPUT_KEYS[row])
             elif a == "a":
-                ch = KEYBOARD[row][col]
+                ch = INPUT_KEYS[row][col]
+                if ch == "Accept":
+                    return value
                 value += ch.upper() if upper else ch
             elif a == "b":
                 value = value[:-1]
@@ -1842,24 +1847,19 @@ class App:
                     return
 
     def browse_games(self, picks, systems, system=None):
-        """A system's games (SYSTEM), or the search over every system (None: it opens with the keyboard), paged as the
-        selection gets near the end. A ticks a game (ones on this console or downloading soon are not tickable). Y or
-        the magnifier opens the search in the bar: it filters on the server as typed, SEARCH_DEBOUNCE seconds after
-        the last edit of the text (moving over the keys does not count), the old answer faded meanwhile; only the
-        latest query's answer shows. START on the keyboard searches at once and moves to the results; B closes the
-        search and clears it (back to the system's games, or to the systems). None for B, else as browse_review"""
+        """Browse a system or all games; Accept/START applies the draft query once."""
         slug = system["slug"] if system else "-"
-        q = {"open": system is None, "kb": system is None, "text": "", "due": None, "applied": ""}
+        q = {"open": system is None, "kb": system is None, "text": "", "applied": ""}
         # PAGED is shown; NEXT is the answer on its way for the latest query, swapped in once it comes
         st = {"paged": Paged(self, slug, show_all=self.browse_all) if system else None, "next": None}
         view = {"sel": 0}
+        frozen = {"rows": None}
 
         def wanted():
             t = q["text"].strip()
             return t if len(t) >= 2 else ""
 
         def ask():
-            q["due"] = None
             q["applied"] = wanted()
             if not system and not q["applied"]:
                 st["paged"], st["next"] = None, None
@@ -1869,20 +1869,15 @@ class App:
 
         def edit(value):
             q["text"] = value
-            # An answer on its way is for an older text
-            st["next"] = None
-            q["due"] = time.time() + SEARCH_DEBOUNCE if wanted() != q["applied"] else None
 
         def close():
-            q.update(open=False, kb=False, text="", due=None)
+            q.update(open=False, kb=False, text="")
             view["bar"] = None
             if q["applied"] or st["next"]:
                 q["applied"] = ""
                 ask()
 
         def poll():
-            if q["due"] and time.time() >= q["due"]:
-                ask()
             n = st["next"]
             if n and (n.total is not None or n.failed or n.denied):
                 st["paged"], st["next"] = n, None
@@ -1890,9 +1885,11 @@ class App:
 
         def pending():
             p = st["paged"]
-            return bool(q["due"] or st["next"] or (p and p.total is None and not (p.failed or p.denied)))
+            return bool(st["next"] or (p and p.total is None and not (p.failed or p.denied)))
 
         def rows():
+            if q["kb"] and frozen["rows"] is not None:
+                return frozen["rows"]
             p = st["paged"]
             out = []
             for gid, size, state, sys_slug, title in list(p.rows) if p else []:
@@ -1902,6 +1899,7 @@ class App:
                     out.append((f"       {title}", (f"{where} · {right}", right) if where else right, DIM))
                 else:
                     out.append((f"{'[x]' if picks.ticked(gid, sys_slug) else '[  ]'} {title}", (f"{where} · {human(size)}", human(size)) if where else human(size), FG))
+            frozen["rows"] = out if q["kb"] else None
             return out
 
         def tail():
@@ -1939,7 +1937,7 @@ class App:
             keys = T["b_found_keys"] if q["open"] and system else T["b_games_keys"]
             act, i = self.browse_list(where, rows, view, section, T["b_hint_games"], keys,
                                       foot=lambda: self.picks_foot(picks, systems), near_end=lambda: st["paged"] and st["paged"].load(),
-                                      tail=tail, search=search, poll=poll, faded=lambda: bool(st["paged"] and (q["due"] or st["next"])))
+                                       tail=tail, search=search, poll=poll, faded=lambda: bool(st["paged"] and st["next"]))
             paged = st["paged"]
             if paged and paged.denied:
                 self.browse_off = True
@@ -1952,10 +1950,13 @@ class App:
                 close()
             elif act == "search":
                 q["open"] = q["kb"] = True
+            elif act == "leave-edit":
+                q["kb"] = False
+                q["text"] = q["applied"]
             elif act == "submit":
                 q["kb"] = False
                 # At once, unless this very text's answer is there or on its way
-                if q["due"] or wanted() != q["applied"]:
+                if wanted() != q["applied"] or (st["paged"] is None and st["next"] is None):
                     ask()
             elif act == "owned":
                 # The list again from the server, with or without the games already here
@@ -2165,21 +2166,24 @@ class App:
             self.message("Sync your inventory first. Supported RetroArch games appear here.")
             return
         system = None
-        views, searches = {}, {}
+        views, searches, local_searches = {}, {}, {}
         while True:
             key = system or "all"
             view = views.setdefault(key, {"sel": 0, "first": 0, "bar": None})
             search = searches.setdefault(key, {"text": "", "hint": "Search consoles or all games" if system is None else "Search games on this console", "kb": False, "busy": False})
+            if key not in local_searches:
+                local_searches[key] = LocalSearch(games, system)
+            local = local_searches[key]
             def edit(value):
                 search["text"] = value
-                view["sel"], view["first"] = 0, 0
             search["edit"] = edit
             def found():
-                return library_rows(games, system, search["text"])
+                return local.rows
+            display = [(r[2], r[3], FG) for r in found()]
             action, at = self.browse_list(
                 "Journeys" if system is None else system_name(system),
-                lambda: [(r[2], r[3], FG) for r in found()], view,
-                lambda: (f"{len(found())} results" if search["text"] else "Choose a console" if system is None else "Choose a game", False),
+                lambda: display, view,
+                lambda: (f"{len(found())} results" if local.applied else "Choose a console" if system is None else "Choose a game", False),
                 "Local library", "A: Open   B: Back   Y: Search", search=search,
                 tail=lambda: "No matches. Try another name." if not found() else "")
             if action in ("b", "quit"):
@@ -2190,11 +2194,14 @@ class App:
             if action == "search":
                 search["kb"] = True
                 continue
-            if action in ("submit", "close"):
+            if action in ("submit", "close", "leave-edit"):
                 search["kb"] = False
                 view["bar"] = None
-                if action == "close":
-                    edit("")
+                if action != "submit":
+                    edit(local.applied)
+                else:
+                    local.accept(search["text"])
+                    view["sel"], view["first"] = 0, 0
                 continue
             if action != "a" or at is None:
                 continue
@@ -2205,7 +2212,9 @@ class App:
             game = next(g for g in games if g[1] == chosen[1])
             identity = enrolled.get(game[1])
             if identity is None:
-                if self.menu(game[2], ["Set up Slot 1", "Cancel"], info=["Close the emulator first.", "Your existing saves become Slot 1. Nothing is overwritten."], wide=True) != 0:
+                if self.menu(game[2], ["Set up Slot 1", "Cancel"], info=["Your existing saves become Slot 1. Nothing is overwritten."], wide=True) != 0:
+                    continue
+                if not self.journey_close_notice():
                     continue
                 result = self.in_thread(lambda: self.client("journeys", "enroll", game[1], timeout=180), "Keeping current saves safe")
                 identity = next((p[1] for p in (result or []) if len(p) >= 2 and p[0] == "enrolled"), None)
@@ -2214,6 +2223,12 @@ class App:
                     continue
                 enrolled[game[1]] = identity
             self.journey_slots(identity, game[2].rsplit(".", 1)[0], decode)
+
+    def journey_close_notice(self):
+        state = self.in_thread(lambda: self.client("journeys", "runtime", timeout=10), "Checking game")
+        if state and ["runtime", "stopped"] in state:
+            return True
+        return self.menu("Before continuing", ["OK", "Cancel"], info=["If the emulator is open, close it before continuing.", "An open emulator can write over the slot you are about to use."], wide=True) == 0
 
     def journey_slots(self, identity, title, decode):
         cursor = 0
@@ -2259,8 +2274,6 @@ class App:
                 if target[1] not in cached:
                     self.message("Download required. Connect and reopen this screen.")
                     continue
-                if self.menu("Close the emulator first", ["Game closed · Continue", "Cancel"], info=["If offline, use the cached progress. Changes sync when connected.", "Your other slots keep their progress."], wide=True) != 0:
-                    continue
                 if selected == "switch":
                     args = ("switch", identity, target[1], "1")
                 elif selected == "sync":
@@ -2271,12 +2284,14 @@ class App:
                         continue
                     args = (selected, identity, name or "New slot", "1")
             else:
-                if self.menu("Start in a new slot", ["Game closed · Create and use slot", "Cancel"], info=["Start with no saves or states.", "Your other slots keep their progress."], wide=True) != 0:
+                if self.menu("Start in a new slot", ["Create slot", "Cancel"], info=["Start with no saves or states.", "Your other slots keep their progress."], wide=True) != 0:
                     continue
                 name = self.keyboard("Slot name", "New game")
                 if name is None:
                     continue
                 args = ("new", identity, name or "New game", "1")
+            if not self.journey_close_notice():
+                continue
             result = self.in_thread(lambda: self.client("journeys", *args, timeout=180), "Preparing save slot")
             self.message("\n".join(" · ".join(p) for p in result) if result else "Could not complete the change. Saved copies are kept.")
 

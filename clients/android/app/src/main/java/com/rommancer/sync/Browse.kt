@@ -52,7 +52,6 @@ import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
@@ -70,12 +69,8 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-
-/** The search goes out this long after the last edit of its text; the keyboard's Search key does not wait */
-private const val SEARCH_DEBOUNCE = 2_000L
 
 /** Text on the accent fill, the bars' background, a game already here */
 private val Ink = Color(0xFF0B1220)
@@ -230,9 +225,12 @@ private fun BrowseBar(title: String, rows: RowFocus, onBack: () -> Unit, actions
  */
 @Composable
 private fun RowScope.SearchField(
-    text: String, onText: (String) -> Unit, hint: String, busy: Boolean, field: FocusRequester, rows: RowFocus,
-    editing: Boolean, onEdit: () -> Unit, onLeave: () -> Unit, onSubmit: () -> Unit, onClose: () -> Unit,
+    text: String, hint: String, busy: Boolean, field: FocusRequester, rows: RowFocus,
+    editing: Boolean, submission: SearchSubmission, onEdit: () -> Unit, onLeave: () -> Unit, onSubmit: (String) -> Unit, onClose: () -> Unit,
 ) {
+    var draft by remember(text, editing) { mutableStateOf(text) }
+    SideEffect { submission.accept = { onSubmit(draft.trim()) } }
+    DisposableEffect(submission) { onDispose { submission.accept = null } }
     val shape = RoundedCornerShape(18.dp)
     if (!editing) {
         BarButton(onEdit, Modifier.weight(3f), onFocused = { rows.at = -1 }) { c ->
@@ -244,7 +242,7 @@ private fun RowScope.SearchField(
     var had by remember { mutableStateOf(false) }
     DisposableEffect(Unit) { onDispose { MainActivity.typing = false } }
     BasicTextField(
-        text, onText,
+        draft, { draft = it },
         Modifier.weight(3f).focusRequester(field).onFocusChanged {
             MainActivity.typing = it.isFocused
             if (it.isFocused) {
@@ -255,13 +253,13 @@ private fun RowScope.SearchField(
         singleLine = true,
         textStyle = TextStyle(color = Color.White, fontSize = 17.sp),
         cursorBrush = SolidColor(Accent),
-        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
-        keyboardActions = KeyboardActions(onSearch = { onSubmit() }),
+        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+        keyboardActions = KeyboardActions(onDone = { onSubmit(draft.trim()) }),
         decorationBox = { inner ->
             Row(Modifier.clip(shape).border(2.dp, Accent, shape).padding(horizontal = 12.dp, vertical = 7.dp), verticalAlignment = Alignment.CenterVertically) {
                 Icon(Icons.Default.Search, null, tint = Accent, modifier = Modifier.size(18.dp))
                 Box(Modifier.weight(1f).padding(horizontal = 8.dp)) {
-                    if (text.isEmpty()) Text(hint, color = Dim, fontSize = 17.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    if (draft.isEmpty()) Text(hint, color = Dim, fontSize = 17.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     inner()
                 }
                 if (busy) CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp, color = Accent)
@@ -269,6 +267,7 @@ private fun RowScope.SearchField(
         },
     )
     }
+    if (editing) BarButton({ onSubmit(draft.trim()) }) { color -> Text("Accept", color = color, fontSize = 15.sp) }
     BarButton(onClose, onFocused = { rows.at = -1 }) { c -> Icon(Icons.Default.Close, stringResource(R.string.browse_search_close), tint = c, modifier = Modifier.size(20.dp)) }
 }
 
@@ -401,8 +400,7 @@ internal fun BrowseSystems(
 }
 
 /**
- * One system's games (SYSTEM null: every system, searched), paged; the bar's search filters on the server as typed.
- * Only the latest query's answer shows. A ticks, Y searches, L1/R1 page, START reviews, B closes the search first
+ * One system's games, searched only on Accept/START. Late responses are discarded by query generation.
  */
 @Composable
 internal fun BrowseGames(
@@ -416,6 +414,7 @@ internal fun BrowseGames(
     val rows = remember { RowFocus(list) }
     val field = remember { FocusRequester() }
     val keyboard = LocalSoftwareKeyboardController.current
+    val submission = remember { SearchSubmission() }
     var applied by remember { mutableStateOf(text.trim()) }
     var games by remember { mutableStateOf(emptyList<SyncEngine.BrowseGame>()) }
     var total by remember { mutableIntStateOf(-1) }
@@ -445,9 +444,11 @@ internal fun BrowseGames(
         }
     }
 
-    fun searchNow() {
-        applied = text.trim()
+    fun searchNow(value: String) {
+        applied = value
+        onText(value)
         keyboard?.hide()
+        MainActivity.typing = false
         editing = false
         focusResults = true
     }
@@ -469,11 +470,6 @@ internal fun BrowseGames(
     }
 
     BackHandler(enabled = open && system != null) { closeSearch() }
-    LaunchedEffect(text) {
-        if (text.trim() == applied) return@LaunchedEffect
-        delay(SEARCH_DEBOUNCE)
-        applied = text.trim()
-    }
     LaunchedEffect(applied, showAll) {
         games = emptyList()
         total = -1
@@ -485,7 +481,7 @@ internal fun BrowseGames(
     LaunchedEffect(list) {
         snapshotFlow {
             val last = list.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: -1
-            games.isNotEmpty() && games.size < total && last >= games.size - 10 && !loading && failure == null
+            !editing && games.isNotEmpty() && games.size < total && last >= games.size - 10 && !loading && failure == null
         }.collect { if (it) load(false) }
     }
     LaunchedEffect(games.isNotEmpty(), focusResults) {
@@ -505,7 +501,7 @@ internal fun BrowseGames(
     PadKeys { key ->
         when (key) {
             KeyEvent.KEYCODE_BUTTON_Y -> openSearch()
-            KeyEvent.KEYCODE_BUTTON_START -> if (!pick.isEmpty) onReview()
+            KeyEvent.KEYCODE_BUTTON_START -> if (editing) submission.accept?.invoke() else if (!pick.isEmpty) onReview()
             KeyEvent.KEYCODE_BUTTON_L1, KeyEvent.KEYCODE_PAGE_UP -> scope.launch { rows.page(-1, games.size) }
             KeyEvent.KEYCODE_BUTTON_R1, KeyEvent.KEYCODE_PAGE_DOWN -> scope.launch { rows.page(1, games.size) }
             else -> return@PadKeys false
@@ -521,15 +517,14 @@ internal fun BrowseGames(
     }
     val names = remember(known, fetched) { known.ifEmpty { fetched.orEmpty() }.associate { it.slug to it.name } }
     val title = system?.name ?: stringResource(R.string.browse_all_systems)
-    // Typed but not searched yet, or the first page on its way: the spinner says the server is being asked
-    val waiting = text.trim() != applied || (loading && games.isEmpty())
+    val waiting = loading && games.isEmpty()
     Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
         BrowseBar(title, rows, onBack) {
             if (open) {
                 SearchField(
-                    text, onText, if (system == null) stringResource(R.string.browse_search_all) else stringResource(R.string.browse_search_in, system.name),
+                    text, if (system == null) stringResource(R.string.browse_search_all) else stringResource(R.string.browse_search_in, system.name),
                     busy = waiting || loading, field = field, rows = rows, editing = editing, onEdit = { openSearch() },
-                    onLeave = { editing = false; keyboard?.hide() }, onSubmit = { searchNow() }, onClose = { closeSearch() },
+                    submission = submission, onLeave = { keyboard?.hide() }, onSubmit = { searchNow(it) }, onClose = { closeSearch() },
                 )
             } else {
                 SearchButton(rows) { openSearch() }
@@ -554,8 +549,7 @@ internal fun BrowseGames(
                 },
             )
         }
-        // Faded while typed and not searched yet: those games are not the answer
-        LazyColumn(Modifier.weight(1f).fillMaxWidth().alpha(if (text.trim() != applied) 0.35f else 1f), state = list) {
+        LazyColumn(Modifier.weight(1f).fillMaxWidth(), state = list) {
             items(games.size + if (games.isNotEmpty() && games.size < total) 1 else 0) { i ->
                 if (i >= games.size) {
                     Text(stringResource(R.string.browse_loading), color = Dim, fontSize = 14.sp, modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp))

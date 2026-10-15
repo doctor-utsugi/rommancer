@@ -6,6 +6,13 @@ j_uuid() {
   fi
 }
 j_decode() { printf '%s' "$1" | base64 -d; }
+j_runtime() {
+  jprocesses="$(ps -A -o comm= 2>/dev/null)" || jprocesses=""
+  if [ -n "$jprocesses" ]; then
+    if printf '%s\n' "$jprocesses" | grep -qiE 'retroarch|minarch|drastic|ppsspp|mupen64|duckstation|retrorun|azahar|citra|lime3ds'; then printf 'running\n'; else printf 'stopped\n'; fi
+  elif game_running; then printf 'running\n'
+  else printf 'unknown\n'; fi
+}
 j_init() {
   JROOT="$STATE/journeys/$(printf '%s\n%s' "$SERVER" "$TOKEN" | sha1sum | cut -d' ' -f1)"
   mkdir -p "$JROOT/blobs"
@@ -231,6 +238,7 @@ j_switch() {
 j_run() (
   j_init
   jaction="${1:-games}"; shift || true
+  if [ "$jaction" = runtime ]; then printf 'runtime\t%s\n' "$(j_runtime)"; exit 0; fi
   if [ "$jaction" = games ]; then
     j_api GET games - "$JROOT/games.new" && mv "$JROOT/games.new" "$JROOT/games"
     cat "$JROOT/games" 2>/dev/null

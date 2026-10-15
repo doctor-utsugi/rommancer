@@ -42,7 +42,7 @@ validation; live write-destination overrides, cache eviction/pinning UI and auto
 
 ## Console flow
 
-Android 0.20.0 and Linux 1.80.0 introduce a console-first selector with local typeahead search and game-style
+Android 0.20.0 and Linux 1.80.0 introduced a console-first selector with local search and game-style
 save slots. The top-level search includes all local games and matching console names. A console's search
 filters only its games. L/R changes pages; B returns one level, preserving the query and page. Slots show a
 persistent local number, name, file count and **IN USE**. An empty slot starts a new game; copying and renaming
@@ -50,7 +50,16 @@ are actions inside slot details. The technical Journey identifier and synchroniz
 These versions were deployed on 2026-10-15. Android and Linux downloads include the new selector and paging.
 Desktop paging code is included in the repository; a new native desktop installer has not been published.
 
-Open **Journeys**, choose a console and game, and confirm the emulator is closed when setting up Slot 1. Its current local
+The client revision deployed on 2026-10-15 (Android 0.21.0 / 59 and Linux 1.81.0) replaces search-as-you-type
+with explicit **Accept** / START. Draft edits do not search locally or query the catalog. Local results are
+cached rather than rebuilt every render frame. The Linux keyboard has a selectable Accept row; Android
+provides an Accept button and the keyboard's Done action. Slot buttons no longer include “Game closed”:
+Android displays a separate OK notice; Linux omits it when a process check confirms no emulator is running.
+This client-only release did not require new database migrations or a service restart. Previous client
+files are backed up in `/home/salamando/rommancer-backups/accept-20261015-59/`; the public APK, Linux update
+manifest and all changed runtime files were verified by checksum after publication.
+
+Open **Journeys**, choose a console and game, and set up Slot 1. Close an open emulator when the notice appears. Its current local
 files become a new preserved Journey. The first enrollment is named `Main`; later consoles import into
 `From <console>` so existing shared progress is never overwritten just because a console was registered.
 Choose an existing Journey explicitly to continue that branch on another console.
@@ -60,7 +69,7 @@ a complete source checkpoint; if newer server progress is known, apply it or res
 An offline copy may be older than the server. Unsynchronized progress stays durable locally until reconnect.
 
 Linux game hooks can prepare incoming progress before launch. On Android, without a complete privileged
-process snapshot, close the emulator and use **Game closed · Apply pending change / latest progress**. The app never treats its own foreground activity
+process snapshot, close the emulator and use **Apply pending changes**. The app never treats its own foreground activity
 as evidence that a background emulator has exited. After changing Journeys, reopen the game to load the
 selected progress; changing files does not hot-load an emulator's RAM.
 
