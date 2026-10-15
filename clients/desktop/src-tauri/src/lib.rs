@@ -66,7 +66,7 @@ struct AppState {
     /// Devices being synced (a card's root, or "pc"), with their cancel flag
     running: Mutex<HashMap<String, Arc<AtomicBool>>>,
     /// Devices whose browse download waits for the sync running now
-    queued: Mutex<HashSet<String>>,
+    queued: Mutex<HashMap<String, Mode>>,
     /// Roots present at the last look, to notice insertions
     present: Mutex<HashSet<String>>,
     /// Recent log lines per device, with their time (ms)
@@ -677,9 +677,10 @@ fn start_sync(app: &AppHandle, state: &AppState, key: String, mode: Mode, roms: 
     {
         let mut running = state.running.lock().unwrap();
         if running.contains_key(&key) {
-            // A browse download is not dropped: it starts when this sync ends
-            if mode == Mode::Games {
-                state.queued.lock().unwrap().insert(key);
+            // Asked for while a sync runs: it starts when that one ends (a full sync covers any other)
+            let mut queued = state.queued.lock().unwrap();
+            if queued.get(&key) != Some(&Mode::Full) {
+                queued.insert(key, mode);
             }
             return Ok(());
         }
@@ -803,6 +804,10 @@ fn start_sync(app: &AppHandle, state: &AppState, key: String, mode: Mode, roms: 
             Err(_) if was_cancelled => log("sync: cancelled".into()),
             Err(e) => log(format!("error: {e:#}")),
         }
+        // Sending games and deleting them do not look at saves: the conflicts known stay as they were
+        if mode == Mode::Pulls || mode == Mode::Prune {
+            out.conflicts = app.state::<AppState>().last.lock().unwrap().get(&key).map(|f| f.outcome.conflicts).unwrap_or(0);
+        }
         let at = now_ms();
         let ok_at = if result.is_ok() { at } else { app.state::<AppState>().last.lock().unwrap().get(&key).map(|f| f.ok_at).unwrap_or(0) };
         let fin = Finished {
@@ -830,8 +835,8 @@ fn start_sync(app: &AppHandle, state: &AppState, key: String, mode: Mode, roms: 
 
 /// The browse download that waited for the sync of KEY, once that sync ended
 fn start_queued(app: &AppHandle, state: &AppState, key: &str) {
-    if state.queued.lock().unwrap().remove(key) {
-        let _ = start_sync(app, state, key.to_string(), Mode::Games, None);
+    if let Some(mode) = state.queued.lock().unwrap().remove(key) {
+        let _ = start_sync(app, state, key.to_string(), mode, None);
     }
 }
 
@@ -1307,7 +1312,7 @@ pub fn run() {
                 settings: Mutex::new(settings),
                 user: Mutex::new(user),
                 running: Mutex::new(HashMap::new()),
-                queued: Mutex::new(HashSet::new()),
+                queued: Mutex::new(HashMap::new()),
                 present: Mutex::new(HashSet::new()),
                 logs: Mutex::new(HashMap::new()),
                 last: Mutex::new(last),

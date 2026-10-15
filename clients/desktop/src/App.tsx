@@ -136,6 +136,14 @@ const APP_SETTINGS = '__settings'
 const time = (ms: number) => new Date(ms).toLocaleTimeString(locale(), { hour: '2-digit', minute: '2-digit' })
 
 /** "today, 18:52", "yesterday, 18:52" or the date */
+/** An error as the user can act on it; the technical text stays in the log */
+function friendly(e: unknown) {
+  const m = String(e).replace(/^Error: /, '')
+  if (/error sending request|connection|dns|timed? ?out|unreachable|network/i.test(m)) return t('errOffline')
+  if (/\b401\b|unauthori[sz]ed|expired/i.test(m)) return t('errAuth')
+  return m.length > 140 ? t('errOther') : m
+}
+
 function when(ms: number) {
   const d = new Date(ms)
   const day = (x: Date) => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime()
@@ -170,6 +178,14 @@ function summaryLines(o: Outcome) {
   const lines = facts.filter(([, n]) => n > 0).map(([k, n]) => tn(k, n))
   if (o.restart?.length) lines.push(t('sumRestart', { list: o.restart.join(', ') }))
   return lines
+}
+
+/** A log line as read: the summary facts ("sum<TAB>saves-up<TAB>3") in words */
+function logLine(line: string) {
+  const [tag, what, n] = line.split('\t')
+  if (tag !== 'sum' || !what) return line
+  const key = (what === 'errors' ? 'sum_errors' : `sum_${what.replace('-', '_')}`) as Key
+  return tn(key, Number(n))
 }
 
 export function App() {
@@ -318,6 +334,8 @@ function Main({ status, onChange }: { status: Status; onChange: () => void }) {
         })
         setResults((r) => ({ ...r, [e.payload.root]: e.payload }))
         onChange()
+        // A card's free space changes with what the sync wrote
+        loadCards()
         void notifyFinished(e.payload, e.payload.root === PC ? pcName.current : (cardsRef.current.find((c) => c.root === e.payload.root)?.label ?? e.payload.root))
       }),
     ]
@@ -599,7 +617,7 @@ function PcSetup({ onDone }: { onDone: () => void }) {
       setFound(list)
       setPick(list.length - 1)
     } catch (e) {
-      setError(String(e))
+      setError(friendly(e))
     }
   }
   const chooseRoms = async () => {
@@ -724,9 +742,15 @@ function DeviceHome({
   const userSync = useRef(false)
   const latestConflicts = useRef(conflicts)
   latestConflicts.current = conflicts
+  // Asked for during another sync: it waits for that one, and the screen says so
+  const [queued, setQueued] = useState(false)
+  useEffect(() => {
+    if (!syncing) setQueued(false)
+  }, [syncing])
   const sync = (mode = 'full', roms?: boolean) => {
     userSync.current = true
-    void invoke('sync_device', { key: syncKey, mode, roms: roms ?? null }).catch((e) => setError(String(e)))
+    if (syncing) setQueued(true)
+    void invoke('sync_device', { key: syncKey, mode, roms: roms ?? null }).catch((e) => setError(friendly(e)))
   }
   useEffect(() => {
     if (syncing || !userSync.current) return
@@ -747,11 +771,11 @@ function DeviceHome({
   const [holdLater, setHoldLater] = useState(false)
   const pruneSet = (on: boolean) =>
     void invoke('prune_set', { key: syncKey, on })
-      .catch((e) => setError(String(e)))
+      .catch((e) => setError(friendly(e)))
       .finally(loadPrune)
   const pruneConfirm = () =>
     void invoke('prune_confirm', { key: syncKey })
-      .catch((e) => setError(String(e)))
+      .catch((e) => setError(friendly(e)))
       .finally(loadPrune)
   const device = t(pc ? 'devicePc' : 'deviceCard')
   // What the deletion needs from the user, one question at a time; leaving one takes the answer that deletes nothing
@@ -785,7 +809,7 @@ function DeviceHome({
     ['lists', t('tabLists')],
     ['browse', t('tabBrowse')],
     ['games', t('tabGames')],
-    ...(prune ? [['settings', t('settingsNav')] as [View, string]] : []),
+    ...(prune ? [['settings', t('tabCleanup')] as [View, string]] : []),
     ['status', t('tabStatus')],
   ]
   return (
@@ -799,7 +823,8 @@ function DeviceHome({
               {l.text}
             </p>
           ))}
-          {live && <p className="accent small">{live}</p>}
+          {/* On Home the progress box says it already */}
+          {live && view !== 'home' && <p className="accent small">{live}</p>}
         </div>
         {syncing ? (
           <button onClick={() => void invoke('cancel_sync', { root: syncKey })}>{t('cancel')}</button>
@@ -828,8 +853,10 @@ function DeviceHome({
           )}
           {question && !syncing && <PruneQuestion q={question} />}
           {syncing && <ProgressBox p={progress} />}
-          {result && <LastSync result={result} onDetails={() => setView('status')} />}
-          {deviceId && <Summary deviceId={deviceId} onSend={() => sync('pulls')} refreshKey={result} />}
+          {queued && <p className="muted small">{t('queuedNote')}</p>}
+          {/* The last result would contradict the sync running now */}
+          {result && !syncing && <LastSync result={result} onDetails={() => setView('status')} />}
+          {deviceId && <Summary deviceId={deviceId} onSend={() => sync('pulls')} refreshKey={result} busy={syncing} />}
           {children}
         </>
       )}
@@ -850,14 +877,21 @@ function DeviceHome({
       {view === 'settings' && prune && (
         <div className="panel">
           <label className="check top">
-            <input type="checkbox" checked={prune.on} onChange={(e) => pruneSet(e.target.checked)} />
+            <input
+              type="checkbox"
+              checked={prune.on}
+              onChange={(e) => {
+                if (e.target.checked && !confirm(t('pruneOnConfirm', { device }))) return
+                pruneSet(e.target.checked)
+              }}
+            />
             <span>
               {t('pruneSetting')}
               <span className="muted small block">{t('pruneSettingHelp', { device })}</span>
             </span>
           </label>
           <div style={{ borderTop: '1px solid var(--border)', paddingTop: 10, marginTop: 10 }}>
-            <button disabled={syncing || prune.cleanable === 0} onClick={() => sync('clean')}>
+            <button disabled={syncing || prune.cleanable === 0} onClick={() => confirm(t('pruneCleanConfirm', { n: prune.cleanable, device })) && sync('clean')}>
               {t('pruneClean', { n: prune.cleanable })}
             </button>
             <span className="muted small block">{t('pruneCleanHelp', { device })}</span>
@@ -907,7 +941,7 @@ function PruneQuestion({ q }: { q: Question }) {
 }
 
 /** The result of the last sync: one fact per line, or "All up to date" */
-function LastSync({ result, onDetails }: { result: Finished; onDetails: () => void }) {
+function LastSync({ result, onDetails }: { result: Finished; onDetails?: () => void }) {
   const lines = summaryLines(result.outcome)
   const errors = result.outcome.errors + result.outcome.games_failed
   return (
@@ -921,10 +955,12 @@ function LastSync({ result, onDetails }: { result: Finished; onDetails: () => vo
       ) : (
         !result.ok && (
           <p className="error">
-            {t('syncFailed', { msg: result.message })}{' '}
-            <button className="link" onClick={onDetails}>
-              {t('seeDetails')}
-            </button>
+            {t('syncFailed', { msg: friendly(result.message) })}{' '}
+            {onDetails && (
+              <button className="link" onClick={onDetails}>
+                {t('seeDetails')}
+              </button>
+            )}
           </p>
         )
       )}
@@ -936,9 +972,11 @@ function LastSync({ result, onDetails }: { result: Finished; onDetails: () => vo
       {errors > 0 && (
         <p className="warn fact">
           {tn('sum_errors', errors)}{' '}
-          <button className="link" onClick={onDetails}>
-            {t('seeDetails')}
-          </button>
+          {onDetails && (
+            <button className="link" onClick={onDetails}>
+              {t('seeDetails')}
+            </button>
+          )}
         </p>
       )}
       {result.ok && !lines.length && !errors && <p className="ok fact">{t('allUpToDate')}</p>}
@@ -951,7 +989,7 @@ function Conflicts({ syncKey, isPc, onLater }: { syncKey: string; isPc: boolean;
   const [rows, setRows] = useState<Conflict[] | null>(null)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
-  const load = useCallback(() => void invoke<Conflict[]>('conflicts', { key: syncKey }).then(setRows, (e) => setError(String(e))), [syncKey])
+  const load = useCallback(() => void invoke<Conflict[]>('conflicts', { key: syncKey }).then(setRows, (e) => setError(friendly(e))), [syncKey])
   useEffect(load, [load])
   const keep = async (id: number, which: 'device' | 'server') => {
     setBusy(true)
@@ -960,7 +998,7 @@ function Conflicts({ syncKey, isPc, onLater }: { syncKey: string; isPc: boolean;
       await invoke('resolve_conflict', { key: syncKey, id, keep: which })
       load()
     } catch (e) {
-      setError(String(e))
+      setError(friendly(e))
     } finally {
       setBusy(false)
     }
@@ -976,7 +1014,7 @@ function Conflicts({ syncKey, isPc, onLater }: { syncKey: string; isPc: boolean;
         <ConflictCard key={c.id} c={c} isPc={isPc} busy={busy} onKeep={(side) => void keep(c.id, side)} />
       ))}
       <div className="row end">
-        <button onClick={onLater}>{t('decideLater')}</button>
+        <button onClick={onLater}>{t(rows.length ? 'decideLater' : 'back')}</button>
       </div>
     </div>
   )
@@ -1048,11 +1086,11 @@ function StatusView({
       <div className="panel">
         {row(t('statusVersion'), version)}
         {row(t('account'), t('accountLine', { user: status.username ?? '', server: status.server.replace(/^https?:\/\//, '') }))}
-        {row(t('statusDevice'), deviceId ? `${name} (#${deviceId})` : name)}
+        {row(t('statusDevice'), name)}
         {pc && (
           <>
-            {row(t('pcSaves'), `${pc.saves_dir} · ${layoutText(pc.saves_layout)}`)}
-            {row(t('pcStates'), `${pc.states_dir} · ${layoutText(pc.states_layout)}`)}
+            {row(t('pcSaves'), pc.saves_dir)}
+            {row(t('pcStates'), pc.states_dir)}
             {row(t('pcGames'), pc.roms_dir)}
             {pc.cfg && row(t('pcConfig'), pc.cfg)}
           </>
@@ -1062,13 +1100,13 @@ function StatusView({
       {pc && <LaunchBox status={status} />}
       {pc && ['ES-DE', 'Pegasus'].map((name) => <FrontendPanel key={name} name={name} frontend={status.frontends.find((f) => f.name === name) ?? null} pickable />)}
       {pc && status.frontends.filter((f) => f.name !== 'ES-DE' && f.name !== 'Pegasus').map((f) => <FrontendPanel key={f.name} name={f.name} frontend={f} />)}
-      {result && <LastSync result={result} onDetails={() => {}} />}
+      {result && <LastSync result={result} />}
       <div className="panel">
         <h2>{t('statusLog')}</h2>
         {!log.length ? (
           <p className="muted small">{t('statusLogEmpty')}</p>
         ) : (
-          <pre className="log">{log.map(([at, line]) => `${new Date(at).toLocaleTimeString(locale())}  ${line}`).join('\n')}</pre>
+          <pre className="log">{log.map(([at, line]) => `${new Date(at).toLocaleTimeString(locale())}  ${logLine(line)}`).join('\n')}</pre>
         )}
       </div>
     </>
@@ -1084,7 +1122,7 @@ function LaunchBox({ status }: { status: Status }) {
     try {
       await invoke('launchbox_set', { dir })
     } catch (e) {
-      setError(String(e))
+      setError(friendly(e))
     }
   }
   const pick = async () => {
@@ -1121,7 +1159,7 @@ function FrontendPanel({ name, frontend: f, pickable }: { name: string; frontend
     try {
       await invoke('frontend_set', { name, dir })
     } catch (e) {
-      setError(String(e))
+      setError(friendly(e))
     }
   }
   const pick = async () => {
@@ -1171,7 +1209,7 @@ function CardView({
   const [deviceId, setDeviceId] = useState<number | null>(card.link?.device_id ?? null)
   const [error, setError] = useState('')
   useEffect(() => {
-    if (card.link && !deviceId) invoke<number>('device_id', { root: card.root }).then(setDeviceId, (e) => setError(String(e)))
+    if (card.link && !deviceId) invoke<number>('device_id', { root: card.root }).then(setDeviceId, (e) => setError(friendly(e)))
   }, [card.link, card.root, deviceId])
   const subtitle = [t(card.removable ? 'sdCard' : 'folder'), card.root, card.total_bytes > 0 ? t('free', { free: bytes(card.free_bytes), total: bytes(card.total_bytes) }) : ''].filter(Boolean).join(' · ')
   const removeFolder = !card.removable && (
@@ -1306,7 +1344,7 @@ function LinkForm({ card, onLinked }: { card: Card; onLinked: () => void }) {
       await fn()
       onLinked()
     } catch (e) {
-      setError(String(e))
+      setError(friendly(e))
     } finally {
       setBusy(false)
     }
@@ -1447,31 +1485,27 @@ interface Inventory {
   allowPull: boolean
 }
 
-const pct = (n: number, total: number) => (total ? (n / total) * 100 : 0)
-const fmtPct = (v: number) => `${v < 1 ? v.toFixed(3) : v < 10 ? v.toFixed(2) : v.toFixed(1)} %`
 
-function Summary({ deviceId, onSend, refreshKey }: { deviceId: number; onSend: () => void; refreshKey: unknown }) {
+function Summary({ deviceId, onSend, refreshKey, busy }: { deviceId: number; onSend: () => void; refreshKey: unknown; busy: boolean }) {
   const [inv, setInv] = useState<Inventory | null>(null)
   const [error, setError] = useState('')
-  useEffect(() => void api<Inventory>('GET', `/devices/${deviceId}/inventory`).then(setInv, (e) => setError(String(e))), [deviceId, refreshKey])
+  useEffect(() => void api<Inventory>('GET', `/devices/${deviceId}/inventory`).then(setInv, (e) => setError(friendly(e))), [deviceId, refreshKey])
   if (error) return <p className="error">{error}</p>
   if (!inv) return <p className="muted">…</p>
-  if (!inv.inventoryAt) return <p className="muted">{t('noInventory')}</p>
+  if (!inv.inventoryAt) return <p className="muted">{t(busy ? 'noInventoryBusy' : 'noInventory')}</p>
   const s = inv.summary
   const send = async () => {
     await api('POST', `/devices/${deviceId}/pull`, { identified: true })
     onSend()
   }
+  // While a sync runs, its progress says what is being sent; the offer to send comes back when it ends
   return (
     <div className="panel">
       <p className="muted small">{t('games', { n: inv.items.length })}</p>
-      {s && s.newGames > 0 ? (
+      {busy ? null : s && s.newGames > 0 ? (
         <>
           <h2>{t('newGames', { n: s.newGames })}</h2>
-          <p className="small">
-            {t('collection')}: <strong>{fmtPct(pct(s.collection.before, s.collection.total))}</strong> → <strong className="accent">{fmtPct(pct(s.collection.after, s.collection.total))}</strong>
-            {s.newBytes > 0 && <span className="muted"> · {bytes(s.newBytes)}</span>}
-          </p>
+          {s.newBytes > 0 && <p className="small muted">{bytes(s.newBytes)}</p>}
           {s.waiting < s.newFiles && (
             <button className="primary" onClick={() => void send()}>
               {t('sendMissing')}
@@ -1489,8 +1523,9 @@ function Summary({ deviceId, onSend, refreshKey }: { deviceId: number; onSend: (
 function Lists({ deviceId, name, onCopy }: { deviceId: number; name: string; onCopy: () => void }) {
   const [lists, setLists] = useState<{ id: number; name: string; _count?: { items: number } }[] | null>(null)
   const [picked, setPicked] = useState<Set<number>>(new Set())
+  const [error, setError] = useState('')
   useEffect(() => {
-    void api<typeof lists>('GET', '/lists?scope=all').then(setLists)
+    void api<typeof lists>('GET', '/lists?scope=all').then(setLists, (e) => setError(friendly(e)))
     void api<{ id: number }[]>('GET', `/devices/${deviceId}/lists`).then((l) => setPicked(new Set(l.map((x) => x.id))))
   }, [deviceId])
   const [systems, setSystems] = useState<SystemsInfo | null>(null)
@@ -1501,7 +1536,7 @@ function Lists({ deviceId, name, onCopy }: { deviceId: number; name: string; onC
   useEffect(loadPlan, [loadPlan])
   const loadSystems = useCallback(() => void api<SystemsInfo>('GET', `/devices/${deviceId}/list-systems`).then(setSystems), [deviceId])
   useEffect(loadSystems, [loadSystems])
-  if (!lists) return <p className="muted">…</p>
+  if (!lists) return error ? <p className="error">{error}</p> : <p className="muted">…</p>
   if (!lists.length) return <p className="muted">{t('noLists')}</p>
   // Ticking a list subscribes the card right away; copying happens on the next sync (or now, with the button)
   const toggle = async (id: number, on: boolean) => {
@@ -1520,7 +1555,7 @@ function Lists({ deviceId, name, onCopy }: { deviceId: number; name: string; onC
         <label key={l.id} className="check">
           <input type="checkbox" checked={picked.has(l.id)} onChange={(e) => void toggle(l.id, e.target.checked)} />
           {l.name}
-          {l._count && <span className="muted small"> · {l._count.items}</span>}
+          {l._count && <span className="muted small"> · {t('listGamesN', { n: l._count.items })}</span>}
           {picked.has(l.id) && <span className="accent small"> · {t('subscribed')}</span>}
         </label>
       ))}
@@ -1936,7 +1971,7 @@ function Games({ deviceId, refreshKey, onSend }: { deviceId: number; refreshKey:
   const [system, setSystem] = useState('')
   const [show, setShow] = useState<'all' | 'new' | 'unidentified' | 'onServer'>('all')
   const [error, setError] = useState('')
-  const load = useCallback(() => void api<typeof data>('GET', `/devices/${deviceId}/inventory`).then(setData, (e) => setError(String(e))), [deviceId])
+  const load = useCallback(() => void api<typeof data>('GET', `/devices/${deviceId}/inventory`).then(setData, (e) => setError(friendly(e))), [deviceId])
   useEffect(load, [load, refreshKey])
   const items = data?.items ?? []
   const systems = useMemo(() => [...new Map(items.filter((i) => i.system).map((i) => [i.system!, i.systemName ?? i.system!])).entries()].sort((a, b) => a[1].localeCompare(b[1])), [items])
@@ -1957,7 +1992,7 @@ function Games({ deviceId, refreshKey, onSend }: { deviceId: number; refreshKey:
   }
   return (
     <div className="panel">
-      <p className="muted small">{t('gamesAt', { n: items.length, when: new Date(data.inventoryAt).toLocaleString(locale()) })}</p>
+      <p className="muted small">{t('gamesAt', { n: items.length, when: when(new Date(data.inventoryAt).getTime()) })}</p>
       <div className="row">
         <input className="grow" value={q} onChange={(e) => setQ(e.target.value)} placeholder={t('searchCard')} />
         <select style={{ width: 'auto' }} value={system} onChange={(e) => setSystem(e.target.value)}>
@@ -1994,11 +2029,9 @@ function Games({ deviceId, refreshKey, onSend }: { deviceId: number; refreshKey:
             ) : i.pullPending ? (
               <span className="muted small">{t('sending')}</span>
             ) : (
-              data.allowPull && (
-                <button className="small-btn" onClick={() => void send(i.path)}>
-                  {t('sendOne')}
-                </button>
-              )
+              <button className="small-btn" onClick={() => void send(i.path)}>
+                {t('sendOne')}
+              </button>
             )}
           </div>
         ))}
@@ -2113,7 +2146,7 @@ function SystemsDialog({ deviceId, info, onClose }: { deviceId: number; info: Sy
       })
       onClose(true)
     } catch (e) {
-      setError(String(e))
+      setError(friendly(e))
     }
   }
   return (

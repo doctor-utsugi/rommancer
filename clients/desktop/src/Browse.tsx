@@ -380,7 +380,7 @@ export function Browse({ syncKey, refreshKey, onDone, onExit }: { syncKey: strin
               </button>
               <button className={'chip' + (all ? '' : ' on')} title={t('browseOwnedHelp')} aria-pressed={!all} onMouseDown={(e) => e.preventDefault()} onClick={() => setAll(!all)}>
                 <Icon d={all ? ICON.eye : ICON.eyeOff} size={13} />
-                {t(all ? 'browseShowOwned' : 'browseHideOwned')}
+                {t('browseHideOwned')}
               </button>
             </>
           )}
