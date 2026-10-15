@@ -146,7 +146,7 @@ linkPublicRouter.post('/enroll', express.urlencoded({ extended: false, limit: '6
 });
 
 // Self-update: devices compare these hashes with their copies and fetch what changed
-const CLIENT_FILES = ['rommancer-sync.sh', 'rommancer-ui.py', 'savepoint.png', 'cacert.pem', 'CREDITS.txt', 'icon.png', 'rommancer-art.png'];
+const CLIENT_FILES = ['rommancer-sync.sh', 'journeys.sh', 'rommancer-ui.py', 'local_library.py', 'savepoint.png', 'cacert.pem', 'CREDITS.txt', 'icon.png', 'rommancer-art.png'];
 
 linkPublicRouter.get('/client/manifest', (_req, res) => {
   const lines = CLIENT_FILES.filter((f) => fs.existsSync(path.join(CLIENT_DIR, f))).map((f) => `file\t${f}\t${crypto.createHash('sha1').update(fs.readFileSync(path.join(CLIENT_DIR, f))).digest('hex')}`);
@@ -244,6 +244,8 @@ function packageFiles(flavor: (typeof FLAVORS)[number], server: string, enrollTo
   const ca = fs.readFileSync(path.join(CLIENT_DIR, 'cacert.pem'));
   const common = (dir: string): PackageFile[] => [
     { name: `${dir}/rommancer-sync.sh`, content: script, mode: 0o755 },
+    { name: `${dir}/journeys.sh`, content: fs.readFileSync(path.join(CLIENT_DIR, 'journeys.sh')), mode: 0o755 },
+    { name: `${dir}/local_library.py`, content: fs.readFileSync(path.join(CLIENT_DIR, 'local_library.py')) },
     { name: `${dir}/cacert.pem`, content: ca },
     { name: `${dir}/server.txt`, content: server + '\n' },
     { name: `${dir}/enroll.txt`, content: enrollToken + '\n' },

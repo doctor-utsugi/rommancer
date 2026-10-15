@@ -93,6 +93,7 @@ async function deviceRomBase(sink: Sink, romsDir: string, romName: string | null
 
 /** Save sync with a device reachable by mounted SD or SSH. */
 export async function syncDeviceSaves(deviceId: number, direction: 'pull' | 'push' | 'both', ctx?: JobContext) {
+  if (await prisma.journeyBinding.count({ where: { deviceId } })) throw new Error('Use the Journey-aware client to sync this device');
   const device = await prisma.device.findUniqueOrThrow({ where: { id: deviceId }, include: { firmware: true } });
   if (device.connType === 'AGENT') throw new Error('This device syncs by itself with its event scripts');
   const layout = layoutOf(device);

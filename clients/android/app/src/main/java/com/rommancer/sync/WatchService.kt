@@ -100,8 +100,10 @@ class WatchService : Service() {
     /** An emulator came to the front: once, whether the game plays the server's latest save */
     private fun gameCheck() {
         val playing = Foreground.emulator(this) != null
-        if (playing && !inGame && store.gameNote) {
-            note(
+        if (playing && !inGame) {
+            val journeyNotice = Journeys(this, store).takeNotice()
+            if (journeyNotice != null) { note(journeyNotice); store.addLog(journeyNotice) }
+            else if (store.gameNote) note(
                 if (offlineSince != 0L) getString(R.string.note_start_offline, java.text.DateFormat.getTimeInstance(java.text.DateFormat.SHORT).format(java.util.Date(offlineSince)))
                 else getString(R.string.note_start_ok),
             )

@@ -1,0 +1,62 @@
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import fs from 'node:fs/promises';
+import path from 'node:path';
+import os from 'node:os';
+import crypto from 'node:crypto';
+import { execFileSync } from 'node:child_process';
+
+const helper = path.resolve(import.meta.dirname, '../../clients/linux/journeys.sh');
+const hash = (b: string) => crypto.createHash('sha1').update(b).digest('hex');
+const b64 = (v: string) => Buffer.from(v).toString('base64');
+
+test('Linux Journey switch preserves whole blocks, removes auto-resume, and rolls back interrupted replacement', async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'journey-local-'));
+  try {
+    const identity = 'a'.repeat(40), main = crypto.randomUUID(), fresh = crypto.randomUUID();
+    const jd = path.join(root, identity), blobs = path.join(root, 'blobs'), saves = path.join(root, 'saves');
+    await fs.mkdir(path.join(jd, main), { recursive: true });
+    await fs.mkdir(path.join(jd, fresh)); await fs.mkdir(blobs); await fs.mkdir(saves);
+    const save = path.join(saves, 'Same game.srm'), state = path.join(saves, 'Same game.state');
+    await fs.writeFile(save, 'original SRAM'); await fs.writeFile(state + '.auto', 'original auto state');
+    await fs.writeFile(state + '42', 'slot forty two');
+    await fs.writeFile(path.join(saves, 'Other game.srm'), 'unrelated');
+    await fs.writeFile(path.join(jd, 'binding'), `binding\tb\t${identity}\t${main}\t0\nlayout\temulator\t${b64('ra-mgba')}\nlayout\tsavePath\t${b64(save)}\nlayout\tstatePath\t${b64(state)}\n`);
+    await fs.writeFile(path.join(jd, 'active'), `${main} 0\n`);
+    await fs.writeFile(path.join(jd, 'list'), `journey\t${main}\t0\t${b64('Main')}\tlocal\njourney\t${fresh}\t0\t${b64('Fresh')}\tlocal\n`);
+    await fs.writeFile(path.join(jd, fresh, 'manifest'), '');
+    const run = (script: string) => execFileSync('sh', ['-c', `set -eu; . "$HELPER"; TAB="$(printf '\t')"; JROOT="$FIXTURE"; CACHE="$FIXTURE/hash-cache"; CACHE_DISK="$FIXTURE/hash-disk"; sha1() { sha1sum "$1" | cut -d' ' -f1; }; game_running() { return 1; }; j_room() { return 0; }; j_refresh() { return 0; }; j_load "$IDENTITY"; JCLOSED=1; ${script}`], { env: { ...process.env, HELPER: helper, FIXTURE: root, IDENTITY: identity, ROMMANCER_JOURNEY_SETTLE: '0' }, encoding: 'utf8' });
+    run(`game_running() { return 0; }; j_switch '${fresh}'`);
+    assert.equal((await fs.readFile(path.join(jd, 'pending'), 'utf8')).trim(), fresh);
+    assert.equal(await fs.readFile(save, 'utf8'), 'original SRAM', 'an open emulator only queues the switch');
+    run(`j_switch '${fresh}'`);
+    await assert.rejects(fs.stat(save)); await assert.rejects(fs.stat(state + '.auto')); await assert.rejects(fs.stat(state + '42'));
+    assert.equal(await fs.readFile(path.join(saves, 'Other game.srm'), 'utf8'), 'unrelated');
+    const manifest = await fs.readFile(path.join(jd, main, 'manifest'), 'utf8');
+    assert.match(manifest, /ra-mgba\/state\/-1/); assert.match(manifest, /ra-mgba\/state\/42/);
+    run(`j_switch '${main}'`);
+    assert.equal(await fs.readFile(save, 'utf8'), 'original SRAM');
+    assert.equal(await fs.readFile(state + '.auto', 'utf8'), 'original auto state');
+    const journal = path.join(jd, 'journal'); await fs.mkdir(journal);
+    await fs.writeFile(path.join(journal, 'old'), manifest); await fs.writeFile(path.join(journal, 'target'), '');
+    await fs.copyFile(path.join(jd, 'active'), path.join(journal, 'active'));
+    await fs.unlink(save); await fs.writeFile(state + '.auto', 'partial bad replacement');
+    run('j_recover');
+    assert.equal(await fs.readFile(save, 'utf8'), 'original SRAM');
+    assert.equal(await fs.readFile(state + '.auto', 'utf8'), 'original auto state');
+    assert.equal(await fs.readFile(path.join(blobs, hash('original SRAM')), 'utf8'), 'original SRAM');
+    await assert.rejects(fs.stat(journal));
+    await fs.mkdir(journal);
+    await fs.writeFile(path.join(journal, 'old'), manifest); await fs.writeFile(path.join(journal, 'target'), '');
+    await fs.writeFile(path.join(journal, 'active'), `${main} 2\n`);
+    await fs.writeFile(path.join(jd, 'active'), `${fresh} 3\n`);
+    await fs.unlink(save);
+    run('j_recover');
+    assert.equal((await fs.readFile(path.join(jd, 'active'), 'utf8')).trim(), `${main} 2`, 'a crash before the durable done marker restores selection too');
+    assert.equal(await fs.readFile(save, 'utf8'), 'original SRAM');
+    await fs.mkdir(journal); await fs.writeFile(path.join(journal, 'done'), 'done');
+    await fs.writeFile(path.join(jd, 'active'), `${fresh} 3\n`);
+    run('j_recover');
+    assert.equal((await fs.readFile(path.join(jd, 'active'), 'utf8')).trim(), `${fresh} 3`, 'a committed transaction is not rolled back');
+  } finally { await fs.rm(root, { recursive: true, force: true }); }
+});

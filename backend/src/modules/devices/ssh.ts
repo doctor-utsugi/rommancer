@@ -112,7 +112,7 @@ export async function installClient(device: Device & { firmware: Firmware }, ser
   await sftp.connect(await connectConfig(device));
   try {
     await sftp.mkdir(`${dir}/.rommancer`, true);
-    for (const f of ['rommancer-sync.sh', 'cacert.pem']) await sftp.put(fs.readFileSync(path.join(CLIENT_DIR, f)), `${dir}/${f}`);
+    for (const f of ['rommancer-sync.sh', 'journeys.sh', 'local_library.py', 'cacert.pem']) await sftp.put(fs.readFileSync(path.join(CLIENT_DIR, f)), `${dir}/${f}`);
     await sftp.put(Buffer.from(`SERVER=${server}\nTOKEN=${token}\nUSER=\n`), `${dir}/.rommancer/config`);
     await sftp.chmod(`${dir}/.rommancer/config`, 0o600);
   } finally {

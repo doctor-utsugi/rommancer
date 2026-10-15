@@ -88,7 +88,7 @@ private const val LONG_BYTES = 2_000_000_000L
 
 /** Takes the browse keys (X, Y, START, L1/R1 and the page keys) while the screen shows */
 @Composable
-private fun PadKeys(handler: (Int) -> Boolean) {
+internal fun PadKeys(handler: (Int) -> Boolean) {
     val current by rememberUpdatedState(handler)
     DisposableEffect(Unit) {
         val h: (Int) -> Boolean = { current(it) }
@@ -614,4 +614,3 @@ internal fun BrowseCheckLines(c: SyncEngine.BrowseCheck, pick: SyncEngine.Browse
     if (c.needGames > LONG_GAMES || c.needBytes > LONG_BYTES) Text(stringResource(R.string.browse_long), color = Warn, fontSize = 15.sp)
     return true
 }
-

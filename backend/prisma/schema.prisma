@@ -81,6 +81,8 @@ enum HackType {
 }
 
 model User {
+  journeys           Journey[]
+  journeyBlobs       JourneyBlob[]
   id                 Int       @id @default(autoincrement())
   username           String    @unique @db.VarChar(64)
   email              String    @unique @db.VarChar(191)
@@ -530,6 +532,8 @@ model Firmware {
 }
 
 model Device {
+  journeyBindings    JourneyBinding[]
+  journeyRevisions   JourneyRevision[]
   id              Int                   @id @default(autoincrement())
   userId          Int
   name            String                @db.VarChar(128)
@@ -631,6 +635,89 @@ model Device {
   saveStates      SaveDeviceState[]
   conflicts       SaveConflict[]
   deviceCards     DeviceCard[]
+}
+
+model RomIdentity {
+  id          String   @id @db.Char(40)
+  platform    String   @db.VarChar(32)
+  digest      String   @db.Char(40)
+  title       String   @db.VarChar(255)
+  journeys    Journey[]
+  bindings    JourneyBinding[]
+
+  @@unique([platform, digest])
+}
+
+model Journey {
+  id          String   @id @db.Char(36)
+  userId      Int
+  identityId  String   @db.Char(40)
+  name        String   @db.VarChar(80)
+  head        Int      @default(0)
+  metadata    Int      @default(0)
+  archived    Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  identity    RomIdentity @relation(fields: [identityId], references: [id])
+  revisions   JourneyRevision[]
+
+  @@index([userId, identityId])
+}
+
+model JourneyRevision {
+  id          String   @id @db.Char(36)
+  journeyId   String   @db.Char(36)
+  number      Int
+  base        Int
+  manifest    Json
+  conflict    Boolean  @default(false)
+  sourceDeviceId Int?
+  sourceDevice Device? @relation(fields: [sourceDeviceId], references: [id], onDelete: SetNull)
+  createdAt   DateTime @default(now())
+  journey     Journey  @relation(fields: [journeyId], references: [id], onDelete: Cascade)
+
+  @@index([journeyId, number])
+}
+
+model JourneyBlob {
+  userId      Int
+  sha1        String   @db.Char(40)
+  size        Int
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([userId, sha1])
+}
+
+model JourneyBinding {
+  id          String   @id @db.Char(36)
+  deviceId    Int
+  identityId  String   @db.Char(40)
+  romPath     String   @db.VarChar(1024)
+  layout      Json
+  journeyId   String   @db.Char(36)
+  generation  Int      @default(0)
+  operation   String   @db.Char(36)
+  updatedAt   DateTime @updatedAt
+  device      Device   @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+  identity    RomIdentity @relation(fields: [identityId], references: [id])
+  commands    JourneyCommand[]
+
+  @@unique([deviceId, identityId])
+}
+
+model JourneyCommand {
+  id          String   @id @db.Char(36)
+  bindingId   String   @db.Char(36)
+  journeyId   String   @db.Char(36)
+  generation  Int
+  status      String   @default("pending") @db.VarChar(32)
+  error       String?  @db.VarChar(255)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  binding     JourneyBinding @relation(fields: [bindingId], references: [id], onDelete: Cascade)
+
+  @@index([bindingId, status])
 }
 
 model Emulator {

@@ -63,6 +63,8 @@ function toUser(p: Claims): AuthUser {
 // Routes that accept the file token in the URL
 const FILE_ROUTES = [/^\/media\/\d+$/, /^\/lists\/\d+\/(download|export)$/, /^\/saves\/\d+\/versions\/\d+\/download$/, /^\/saves\/\d+\/rom$/, /^\/saves\/\d+\/versions\/\d+\/thumb$/, /^\/saves\/shared\/\d+\/(thumb|download)$/, /^\/saves\/cards\/\d+\/snapshots\/\d+$/, /^\/hacks\/\d+\/download$/, /^\/roms\/\d+\/download$/, /^\/link\/package\/[a-z]+$/, /^\/devices\/\d+\/config\/versions\/\d+\/(zip|file)$/];
 
+FILE_ROUTES.push(/^\/journeys\/[a-f0-9-]{36}\/blob\/[a-f0-9]{40}$/);
+
 export function requireAuth(req: Request, _res: Response, next: NextFunction) {
   const h = req.headers.authorization;
   try {

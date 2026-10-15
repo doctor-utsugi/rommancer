@@ -1,4 +1,5 @@
 import { NavLink, Outlet } from 'react-router'
+import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import {
   Activity,
@@ -6,6 +7,7 @@ import {
   Cable,
   GitMerge,
   Library,
+  Menu,
   RefreshCw,
   Database,
   FileSearch,
@@ -50,13 +52,15 @@ function Item({ to, icon: Icon, label }: { to: string; icon: typeof Home; label:
 export function Layout() {
   const { t } = useTranslation()
   const { user, logout, can } = useAuth()
+  const [navigationOpen, setNavigationOpen] = useState(false)
   const switchLang = async (next: string) => {
     await setLanguage(next)
     await patch('/users/me', { locale: next }).catch(() => {})
   }
   return (
-    <div className="flex min-h-screen">
-      <aside className="sticky top-0 flex h-screen w-60 shrink-0 flex-col gap-1 overflow-y-auto border-r bg-sidebar p-3">
+    <div className="flex min-h-screen flex-col md:flex-row">
+      <header className="flex items-center justify-between border-b bg-sidebar px-4 py-3 md:hidden"><span className="font-semibold">{t('app.name')}</span><Button variant="outline" size="sm" aria-expanded={navigationOpen} aria-controls="main-navigation" onClick={() => setNavigationOpen(!navigationOpen)}><Menu className="size-4" />{t('common.menu')}</Button></header>
+      <aside id="main-navigation" onClick={(e) => { if ((e.target as HTMLElement).closest('a')) setNavigationOpen(false) }} className={cn('top-0 h-auto w-full shrink-0 flex-col gap-1 overflow-y-auto border-r bg-sidebar p-3 md:sticky md:flex md:h-screen md:w-60', navigationOpen ? 'flex' : 'hidden')}>
         <div className="mb-4 flex items-center gap-2 px-2 pt-1 text-lg font-semibold">
           <img src="/logo.png" alt="" className="size-7" />
           {t('app.name')}

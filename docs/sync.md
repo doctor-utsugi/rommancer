@@ -3,6 +3,10 @@
 Rommancer Sync keeps emulator saves and save states in step across handhelds and PCs, Steam Cloud style.
 Each console runs a small client that talks to a self-hosted Rommancer server.
 
+Journeys keep independent blocks of saves and savestates for an exact ROM, with a separate selection on each
+console. Supported clients can create, duplicate and switch offline-cached blocks. See [Journeys](journeys.md)
+for setup, supported adapters, closed-game switching and the current capability matrix.
+
 ## How a console is set up
 
 Everything happens on the console, with the gamepad:

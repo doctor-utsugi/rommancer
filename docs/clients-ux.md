@@ -38,12 +38,29 @@ Items:
    entry is there right after it. With a single conflict, Android opens its screen directly.
 3. **Watch game download** / **Watch games being sent**: only while one runs.
 4. **Game lists**: tick lists; leaving after a change syncs. The screen also has **Download the lists' games now**.
+   **Journeys** sits next to game-related actions on Android and pygame: console → game → save slots.
+   The console picker searches console names and all local games; inside a console, search stays scoped to its
+   games. Filtering happens on each edit, locally, without server requests. Back preserves the search and page.
+   Slots have a persistent local number, name, save count and an **IN USE** marker for this console.
+   **Empty slot** starts fresh. Copy, rename and conflict actions belong inside a slot's details.
+   Slot numbers are display labels on a console; synchronized identity is still the Journey UUID, not the number.
 5. **Browse server games**: the server's games by system or by search, ticked one by one or a whole system, then a
    review and the download (docs/browse.md). The games already on the console are left out unless the toggle on top
    (`Show games already on this console: no/yes`) says otherwise. Hidden when the account may not download games.
 6. **Settings** (submenu, see below).
 7. **Status**: version, install date, account, server, last sync result (the summary below), last log lines.
 8. **Exit** (consoles only; Android and PC use their system back/close).
+
+## Paging and focus
+
+- Android and pygame list screens accept **L/R** (L1/R1) and Page Up/Page Down. At the ends, stay on the
+  first/last page. A selects and B returns one level. Search has a Y shortcut where available.
+- Journey screens use the full viewport with a fixed paging footer, not the decorative save-point column.
+- Pygame's shared menus and browse lists page by their visible row count. Android Journey pages adapt to the
+  available height; generic menu lists move focus by a viewport, while catalog lists use their lazy-list pager.
+- Desktop standard-gamepad shoulders generate page keys: the focused list handles them first, otherwise its
+  scroll container pages and moves focus. Existing typing controls retain normal text input.
+- Onion uses the firmware's native prompt binary; its button behavior is not changed by pygame/Android code.
 
 ## Settings (submenu)
 

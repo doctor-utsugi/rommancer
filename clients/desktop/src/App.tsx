@@ -10,6 +10,7 @@ import { isPermissionGranted, requestPermission, sendNotification } from '@tauri
 import { bytes, locale, t, tn, type Key } from './i18n'
 import { SavePoint } from './SavePoint'
 import { Browse } from './Browse'
+import { useGamepadPaging } from './useGamepadPaging'
 
 interface PcInfo {
   name: string
@@ -189,6 +190,7 @@ function logLine(line: string) {
 }
 
 export function App() {
+  useGamepadPaging()
   const [status, setStatus] = useState<Status | null>(null)
   const refresh = useCallback(() => void invoke<Status>('status').then(setStatus), [])
   useEffect(refresh, [refresh])

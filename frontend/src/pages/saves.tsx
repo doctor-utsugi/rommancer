@@ -14,6 +14,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Empty, Field, NativeSelect, PageHeader, errMsg, formatBytes, formatDate } from '@/components/common'
 import { WEB_SYSTEMS, openPlayer } from '@/lib/play'
+import { Journeys } from '@/components/journeys'
 
 const family = (f: string) => (f.startsWith('ps1') ? 'ps1' : f)
 
@@ -60,10 +61,11 @@ export function SavesPage() {
       </PageHeader>
       <Conflicts />
       <Tabs defaultValue="mine">
-        <TabsList>
+        <TabsList className="h-auto flex-wrap">
           <TabsTrigger value="mine">{t('more.saves.mine')}</TabsTrigger>
           <TabsTrigger value="shared">{t('more.saves.shared')}</TabsTrigger>
           <TabsTrigger value="cards">{t('more.saves.cards')}</TabsTrigger>
+          <TabsTrigger value="journeys">{t('journeys.title')}</TabsTrigger>
         </TabsList>
         <TabsContent value="mine" className="space-y-3">
           <div className="flex flex-wrap items-center gap-1">
@@ -96,6 +98,7 @@ export function SavesPage() {
         <TabsContent value="cards">
           <MemoryCards />
         </TabsContent>
+        <TabsContent value="journeys"><Journeys /></TabsContent>
       </Tabs>
       {open && <VersionsDialog saveId={open} onClose={() => setOpen(null)} />}
       {uploading && <UploadDialog onClose={() => setUploading(false)} />}

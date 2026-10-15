@@ -13,6 +13,14 @@ import android.os.Process
  * usage access when the user allowed it, Shizuku otherwise; unknown (never holds anything) without either.
  */
 object Foreground {
+    enum class JourneyState { RUNNING, STOPPED, UNKNOWN }
+
+    fun journeyState(context: Context): JourneyState {
+        if (emulator(context) != null) return JourneyState.RUNNING
+        if (!Privileged.ready || !Privileged.quiet) return JourneyState.UNKNOWN
+        val names = Privileged.processNames() ?: return JourneyState.UNKNOWN
+        return if (names.any { name -> EMULATORS.any { name.contains(it, ignoreCase = true) } }) JourneyState.RUNNING else JourneyState.STOPPED
+    }
     fun allowed(context: Context): Boolean = runCatching {
         val ops = context.getSystemService(AppOpsManager::class.java)
         @Suppress("DEPRECATION")

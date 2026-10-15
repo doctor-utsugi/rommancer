@@ -25,7 +25,7 @@
 #                                   so any computer with this script can sync it. Without a command: sync.
 set -u
 # Raised with every change of this client (any change reaches devices: they update by content, not by this)
-CLIENT_VERSION=1.78.0
+CLIENT_VERSION=1.80.0
 # A clock before this date is surely wrong (no battery-backed clock); kept apart from the version, which may run ahead
 CLOCK_MIN=20261001
 # Onion keeps curl (with TLS) and friends outside the default PATH
@@ -879,6 +879,7 @@ cmd_sync() {
   rm -f "$WORK/priority"
   trap 'drop_lock' EXIT
   trap 'drop_lock; exit 1' INT TERM
+  if command -v j_all >/dev/null 2>&1; then j_all "${JOURNEY_CLOSED:-0}"; fi
   req="$WORK/request"; plan="$WORK/plan"
   if ! touch "$STATE/.write-test" 2>/dev/null; then
     log "storage is read-only, skipping sync"; drop_lock; return 1
@@ -896,7 +897,7 @@ cmd_sync() {
   sed -n "s/^backups$TAB//p" "$plan" > "$WORK/keep" && [ -s "$WORK/keep" ] && mv "$WORK/keep" "$STATE/backups-keep"
   [ "$pset" = 1 ] && rm -f "$STATE/prune-set"
   prune_answer "$(grep "^prune$TAB" "$plan" | head -n 1)"
-  ups=0; downs=0; errs=0; moved=0; sup=0; stup=0; sdown=0; stdown=0; total="$(grep -vc "^probe$TAB\|^backups$TAB\|^prune$TAB\|^clocksync$TAB" "$plan")"
+  ups=0; downs=0; errs="$(cat "$WORK/journey-errors" 2>/dev/null || printf 0)"; moved=0; sup=0; stup=0; sdown=0; stdown=0; total="$(grep -vc "^probe$TAB\|^backups$TAB\|^prune$TAB\|^clocksync$TAB" "$plan")"
   : > "$WORK/received"
   # A running game keeps its save in memory and writes it back over whatever arrived: downloads wait for it to end
   ingame=0; game_running && ingame=1
@@ -1965,6 +1966,7 @@ $(t conflictfoot "$c_tz" "$c_base")"
 # Right before a game starts (Onion's runtime, EmulationStation's event): sends what changed here, settles its
 # conflicts on screen and fetches the server's saves, for that rom only
 cmd_game_start() {
+  if command -v j_before_start >/dev/null 2>&1; then j_before_start "$1" || return 1; fi
   touch "$WORK/playing"
   # What the game starts with, for the daemon's note on its screen: got, ok, offline or local (not synced)
   echo local > "$WORK/game-start"
@@ -2979,7 +2981,10 @@ cmd_unlink() {
   echo "Unlinked"
 }
 
+[ ! -f "$DIR/journeys.sh" ] || . "$DIR/journeys.sh"
+
 case "${1:-}" in
+  journeys) shift; cmd_journeys "$@" ;;
   link) shift; cmd_link "${1:-$SERVER}" ;;
   enroll) cmd_enroll ;;
   hints) detect; printf 'name\t%s\nfirmware\t%s\nroot\t%s\nmodel\t%s\nstate\t%s\n' "$NAME" "$FW" "$ROOT" "$MODEL" "$STATE" ;;
@@ -3013,7 +3018,7 @@ case "${1:-}" in
     [ -z "$SD" ] || sync ;;
   game-start) cmd_game_start "${2:-}" ;;
   # After a game: copies for the server may go on, and the game's saves go up
-  game-stop) rm -f "$WORK/playing"; cmd_sync; refresh_lists after-game ;;
+  game-stop) rm -f "$WORK/playing"; JOURNEY_CLOSED=1 cmd_sync; refresh_lists after-game ;;
   conflicts) cmd_conflicts ;;
   lists) cmd_lists ;;
   lists-preview) shift; lists_post lists/preview "$@" ;;

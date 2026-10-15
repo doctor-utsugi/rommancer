@@ -101,6 +101,12 @@ object Privileged {
 
     fun running(pkg: String) = exec("pidof ${q(pkg)}").first == 0
 
+    fun processNames(): List<String>? = runCatching {
+        val (code, bytes) = exec("ps -A -o NAME")
+        val lines = bytes.toString(Charsets.UTF_8).lines().map { it.trim() }.filter { it.isNotEmpty() }
+        if (code != 0 || lines.firstOrNull() != "NAME") null else lines.drop(1)
+    }.getOrNull()
+
     /** The package of the activity in front ("topResumedActivity=ActivityRecord{... u0 pkg/.Activity ...}") */
     fun foreground(): String? = runCatching {
         val out = exec("dumpsys activity activities | grep -m 1 -E 'topResumedActivity|mResumedActivity'").second.toString(Charsets.UTF_8)

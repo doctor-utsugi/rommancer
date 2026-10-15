@@ -1,8 +1,37 @@
 {
+  "journeys": {
+    "title": "Journeys",
+    "explain": "Un Journey contiene todos los saves y savestates de una ROM exacta. Cada consola elige el suyo; verlo aquí no cambia ninguna consola.",
+    "search": "Buscar juego o Journey",
+    "empty": "Configura Journeys para un juego compatible desde Rommancer Sync en tu consola. Sus guardados actuales se conservarán.",
+    "exactRom": "ROM exacta",
+    "files": "archivos",
+    "content": "Archivos e historial",
+    "copy": "Copia",
+    "duplicate": "Duplicar",
+    "rename": "Renombrar",
+    "selectedOn": "Última selección comunicada en:",
+    "useAll": "Usar en todas las consolas…",
+    "archive": "Archivar",
+    "unarchive": "Recuperar Journey archivado",
+    "showArchived": "Journeys archivados",
+    "new": "Nuevo Journey",
+    "lastSeen": "Último contacto",
+    "allExplain": "Solicitar «{{name}}» en las consolas indicadas. Las desconectadas esperan a reconectarse. Los juegos abiertos deben cerrarse primero. Es una solicitud puntual, no una selección global.",
+    "duplicateExplain": "Copiar el último bloque del servidor conservando el original. Las consolas mantienen su selección. No incluye progreso sin sincronizar.",
+    "noFiles": "Este Journey todavía no tiene bloques guardados.",
+    "conflict": "Progreso en conflicto (conservado)",
+    "restore": "Usar este bloque",
+    "restoreExplain": "Usar este bloque como progreso más reciente del Journey. El actual se conserva en el historial. Las consolas lo recibirán cuando puedan aplicarlo con seguridad.",
+    "restoreConflict": "El progreso cambió durante la restauración. Se conservaron ambos bloques; actualiza y vuelve a intentarlo.",
+    "action": { "new": "Crear Journey", "duplicate": "Duplicar Journey", "rename": "Renombrar Journey", "all": "Solicitar en todas las consolas" },
+    "status": { "pending": "Esperando a la consola", "waiting": "Esperando al cierre del juego / confirmación local", "downloading": "Descargando", "applied": "Aplicado", "error": "Necesita atención", "superseded": "Sustituido", "cancelled": "Cancelado" }
+  },
   "app": {
     "name": "Rommancer"
   },
   "common": {
+    "menu": "Menú",
     "save": "Guardar",
     "cancel": "Cancelar",
     "delete": "Eliminar",

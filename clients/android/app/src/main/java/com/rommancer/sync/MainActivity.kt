@@ -65,6 +65,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInRoot
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
@@ -115,7 +117,14 @@ class MainActivity : ComponentActivity() {
 
     // Gamepads: A selects like the D-pad centre, B goes back; the browse screens take X, Y, START, L1 and R1
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
-        if (event.keyCode in PAD) pad?.let { if (event.action != KeyEvent.ACTION_DOWN || it(event.keyCode)) return true }
+        if (event.keyCode in PAD) {
+            if (event.action == KeyEvent.ACTION_DOWN && pad?.invoke(event.keyCode) == true) return true
+            val direction = when (event.keyCode) { KeyEvent.KEYCODE_BUTTON_L1, KeyEvent.KEYCODE_PAGE_UP -> -1; KeyEvent.KEYCODE_BUTTON_R1, KeyEvent.KEYCODE_PAGE_DOWN -> 1; else -> 0 }
+            if (direction != 0) {
+                if (event.action == KeyEvent.ACTION_DOWN) MenuPaging.move(direction, window.decorView.height)
+                return true
+            }
+        }
         val mapped = when (event.keyCode) {
             KeyEvent.KEYCODE_BUTTON_A -> KeyEvent.KEYCODE_DPAD_CENTER
             KeyEvent.KEYCODE_BUTTON_B -> KeyEvent.KEYCODE_BACK
@@ -143,6 +152,7 @@ class MainActivity : ComponentActivity() {
 }
 
 private sealed interface Screen {
+    data object Journeys : Screen
     data object Menu : Screen
     data object Settings : Screen
     data class Working(val title: String) : Screen
@@ -202,6 +212,7 @@ private fun App(resumes: Int) {
                     Text(stringResource(R.string.app_title), fontSize = 26.sp, fontWeight = FontWeight.SemiBold, color = Accent)
                     Text("  $version", fontSize = 14.sp, color = Dim, modifier = Modifier.padding(bottom = 4.dp))
                 }
+                if (!browsing && scroll.maxValue > 0) Text("L / R · Change page", fontSize = 12.sp, color = Dim)
                 when {
                     !canRead -> StoragePermission()
                     linked -> Linked(store, !scrolls, { ownScroll = it }) { linked = false }
@@ -243,14 +254,18 @@ private fun SavePoint() {
 @Composable
 internal fun MenuItem(text: String, focus: FocusRequester? = null, sub: String? = null, color: Color = Color.White, alert: Boolean = false, onClick: () -> Unit) {
     var focused by remember { mutableStateOf(false) }
+    val requester = focus ?: remember { FocusRequester() }
+    val pageRow = remember(requester) { MenuPaging.Row(requester) }
+    DisposableEffect(pageRow) { MenuPaging.rows.add(pageRow); onDispose { MenuPaging.rows.remove(pageRow) } }
     TextButton(
         onClick = onClick,
         contentPadding = PaddingValues(horizontal = 14.dp, vertical = 8.dp),
         modifier = Modifier
             .fillMaxWidth()
             .then(if (alert) Modifier.background(color.copy(alpha = 0.18f), RoundedCornerShape(10.dp)) else Modifier)
-            .then(if (focus != null) Modifier.focusRequester(focus) else Modifier)
-            .onFocusChanged { focused = it.isFocused }
+            .focusRequester(requester)
+            .onGloballyPositioned { pageRow.y = it.positionInRoot().y }
+            .onFocusChanged { focused = it.isFocused; pageRow.focused = it.isFocused }
             .border(2.dp, if (focused) Accent else Color.Transparent, RoundedCornerShape(10.dp)),
     ) {
         Column(Modifier.fillMaxWidth()) {
@@ -644,7 +659,7 @@ private fun Linked(store: Store, ownScroll: Boolean, setOwnScroll: (Boolean) -> 
     fun leaveBrowse() {
         screen = if (browsePick.isEmpty) Screen.Menu else Screen.BrowseDiscard
     }
-    val browsing = screen == Screen.Browse || screen is Screen.BrowseGames
+    val browsing = screen == Screen.Browse || screen is Screen.BrowseGames || screen == Screen.Journeys
     SideEffect { if (browsing != ownScroll) setOwnScroll(browsing) }
 
     fun unlink() {
@@ -684,6 +699,7 @@ private fun Linked(store: Store, ownScroll: Boolean, setOwnScroll: (Boolean) -> 
     }
 
     when (val s = screen) {
+        Screen.Journeys -> JourneysScreen(store) { screen = Screen.Menu }
         Screen.Menu -> {
             // The state, the most urgent first: saves in conflict, no server since when, when it last synced
             val n = conflicts?.size ?: WatchService.conflicts
@@ -712,6 +728,8 @@ private fun Linked(store: Store, ownScroll: Boolean, setOwnScroll: (Boolean) -> 
             if (live != null) MenuItem(titleWatchRoms) { screen = Screen.Watch(titleWatchRoms, pulls = false) }
             if (pullLive != null) MenuItem(titleWatchPulls) { screen = Screen.Watch(titleWatchPulls, pulls = true) }
             MenuItem(stringResource(R.string.lists)) { lists = null; listsError = null; listAt = null; screen = Screen.Lists; loadLists() }
+            val journeyState by produceState<String?>(null) { while (true) { value = withContext(Dispatchers.IO) { runCatching { Journeys(context, store).status() }.getOrNull() }; delay(5_000) } }
+            MenuItem("Journeys", sub = journeyState ?: "Choose independent progress for each game", alert = journeyState != null) { screen = Screen.Journeys }
             if (!browseDenied) MenuItem(stringResource(R.string.browse)) { openBrowse() }
             MenuItem(stringResource(R.string.settings)) { screen = Screen.Settings }
             MenuItem(stringResource(R.string.status)) { screen = Screen.Status }

@@ -5,6 +5,8 @@ Everything is done with the gamepad: server address, log in or create an account
 status and sign out. Syncing itself is done by rommancer-sync.sh next to this file.
 """
 import functools
+import base64
+from local_library import library_rows, system_name, page_target, page_bindings
 import json
 import math
 import os
@@ -334,7 +336,7 @@ class Pad:
         self.joys = [pygame.joystick.Joystick(i) for i in range(pygame.joystick.get_count())]
         self.maps = {}
         for j in self.joys:
-            m = es_mapping(j)
+            m = page_bindings(es_mapping(j))
             # Generic fallback: SDL's usual south/east buttons and the first hat
             self.maps[j.get_instance_id()] = m or {"a": ("button", 0, 1), "b": ("button", 1, 1), "x": ("button", 2, 1), "y": ("button", 3, 1),
                                                    "pageup": ("button", 4, 1), "pagedown": ("button", 5, 1),
@@ -852,7 +854,7 @@ class App:
                 return None
             time.sleep(0.016)
 
-    def menu(self, title, items, info=(), start=0, notes=None, sub=None, wide=False, big_info=False):
+    def menu(self, title, items, info=(), start=0, notes=None, sub=None, wide=False, big_info=False, slots=None):
         """ITEMS: labels, or a function giving them (called again every second, for what arrives later or changes:
         the conflicts, a download under way); the selection stays on its label. INFO: lines above them, texts or
         facts (icon, text, colour), or a function giving them. NOTES: per item, a line under the selected one saying
@@ -873,7 +875,7 @@ class App:
                 fetched = time.time()
                 sel = labels.index(was) if was in labels else min(sel, len(labels) - 1)
             s = self.screen
-            s.frame(title, T["menu_keys"], head)
+            s.frame(title, T["menu_keys"] + "   L / R: Page", head)
             if not wide:
                 s.sprite()
             x, width = s.left(), s.column(wide)
@@ -881,17 +883,33 @@ class App:
             y += int(s.h * 0.04)
             n = len(labels)
             step = int(s.font.get_linesize() * (1.4 if n <= 5 else 1.12 if n <= 7 else 1.0 if n <= 8 else 0.92))
+            if slots:
+                step = s.font.get_linesize() + s.small.get_linesize() * 2 + 24
             note = notes[sel] if notes and sel < len(notes) else ""
             note_h = s.small.get_linesize() if note else 0
             # As many as fit above the footer; the window follows the selection
             fit = max(1, (int(s.h * 0.9) - y - note_h) // step)
-            first = min(max(first, sel - fit + 1), sel)
+            first = (sel // fit) * fit
+            s.text(f"{sel // fit + 1} / {max(1, (n + fit - 1) // fit)}", (s.w - x - 65, int(s.h * .14)), s.small, DIM)
             # Small triangles say there is more above or below (the default font may lack arrow glyphs)
             tri = max(4, step // 6)
             top_y = y
             if first:
                 pygame.draw.polygon(s.surf, DIM, [(x - 8, top_y + tri), (x - 8 - tri, top_y + 3 * tri), (x - 8 + tri, top_y + 3 * tri)])
             for i in range(first, min(n, first + fit)):
+                if slots:
+                    number, detail, badge = slots[i]
+                    rect = pygame.Rect(x, y, width, step - 8)
+                    pygame.draw.rect(s.surf, mix(BG, ACCENT, .15) if badge == "IN USE" else BAR, rect, border_radius=10)
+                    pygame.draw.rect(s.surf, ACCENT if i == sel else DIM, rect, 2 if i == sel else 1, border_radius=10)
+                    s.text(str(number).zfill(2), (x + 14, y + 12), s.font, ACCENT)
+                    left = x + s.font.size("00")[0] + 30
+                    s.text(s.clip(labels[i], s.font, width - (left - x) - 20), (left, y + 8), s.font, FG)
+                    s.text(s.clip(detail, s.small, width - (left - x) - 20), (left, y + 10 + s.font.get_linesize()), s.small, DIM)
+                    if badge:
+                        s.text(badge, (left, y + 10 + s.font.get_linesize() + s.small.get_linesize()), s.small, ACCENT)
+                    y += step
+                    continue
                 color = ACCENT if i == sel else FG
                 r = s.text(s.clip(labels[i], s.font, width), (x + 10, y), s.font, color)
                 if i == sel:
@@ -913,6 +931,8 @@ class App:
                 sel = (sel - 1) % n
             elif a == "down":
                 sel = (sel + 1) % n
+            elif a in ("pageup", "pagedown"):
+                sel = page_target(sel, -1 if a == "pageup" else 1, n, fit)
             elif a in ("a", "start"):
                 return sel
             elif a in ("b", "quit"):
@@ -1076,8 +1096,7 @@ class App:
             top, step = lay["top"], lay["step"]
             extra = tail() if tail else ""
             fit = max(1, (lay["bottom"] - top) // step - (1 if extra else 0))
-            first = min(max(view.get("first", 0), sel - fit + 1), sel)
-            first = max(0, min(first, n - fit))
+            first = (sel // fit) * fit
             stale = bool(faded and faded())
             on_rows = focus is None and not typing
             y = top
@@ -1111,7 +1130,8 @@ class App:
                 pygame.draw.polygon(s.surf, DIM, [(ax - tri, b + tri), (ax + tri, b + tri), (ax, b + 3 * tri)])
             if typing:
                 self.browse_keyboard(lay, kb)
-            self.browse_footer(lay, None if typing else foot() if foot else None, T["search_keys"] if typing else keys)
+            page_hint = f"L / R: Page  {sel // fit + 1}/{max(1, (n + fit - 1) // fit)}"
+            self.browse_footer(lay, None if typing else foot() if foot else None, T["search_keys"] if typing else keys + "   " + page_hint)
             s.flip()
             view["first"] = first
             if near_end and n - sel <= 10:
@@ -1122,6 +1142,11 @@ class App:
                 continue
             if typing:
                 value = search["text"]
+                if a in ("pageup", "pagedown"):
+                    search["kb"] = False
+                    view["bar"] = None
+                    view["sel"] = page_target(sel, -1 if a == "pageup" else 1, n, fit)
+                    continue
                 if isinstance(a, tuple):
                     value += a[1]
                 elif a in ("up", "down"):
@@ -1149,7 +1174,10 @@ class App:
                 if value != search["text"]:
                     search["edit"](value)
                 continue
-            if focus is not None:
+            if a in ("pageup", "pagedown"):
+                view["bar"] = None
+                sel = page_target(sel, -1 if a == "pageup" else 1, n, fit)
+            elif focus is not None:
                 if a == "down":
                     view["bar"] = None
                 elif a in ("left", "right"):
@@ -2120,9 +2148,137 @@ class App:
         if self.live.get("pulls"):
             e.append((self.watch_pulls, T["pulls_watch"]))
         e.append((self.lists, T["lists"]))
+        e.append((self.journeys, "Journeys"))
         if not self.browse_off:
             e.append((self.browse, T["browse"]))
         return e + [(self.settings_menu, T["settings"]), (self.status, T["status"]), (None, T["quit"])]
+
+    def journeys(self):
+        decode = lambda value: base64.b64decode(value).decode("utf-8")
+        rows = self.in_thread(lambda: self.client("journeys", "games", timeout=60), "Loading journeys")
+        if rows is None:
+            self.message("Could not load journeys. Check the server connection.", BAD)
+            return
+        enrolled = {p[2]: p[1] for p in rows if len(p) >= 3 and p[0] == "enrolled"}
+        games = [(p[0], p[1], decode(p[2]), p[3]) for p in rows if len(p) >= 4 and p[0] == "game"]
+        if not games:
+            self.message("Sync your inventory first. Supported RetroArch games appear here.")
+            return
+        system = None
+        views, searches = {}, {}
+        while True:
+            key = system or "all"
+            view = views.setdefault(key, {"sel": 0, "first": 0, "bar": None})
+            search = searches.setdefault(key, {"text": "", "hint": "Search consoles or all games" if system is None else "Search games on this console", "kb": False, "busy": False})
+            def edit(value):
+                search["text"] = value
+                view["sel"], view["first"] = 0, 0
+            search["edit"] = edit
+            def found():
+                return library_rows(games, system, search["text"])
+            action, at = self.browse_list(
+                "Journeys" if system is None else system_name(system),
+                lambda: [(r[2], r[3], FG) for r in found()], view,
+                lambda: (f"{len(found())} results" if search["text"] else "Choose a console" if system is None else "Choose a game", False),
+                "Local library", "A: Open   B: Back   Y: Search", search=search,
+                tail=lambda: "No matches. Try another name." if not found() else "")
+            if action in ("b", "quit"):
+                if system is None or action == "quit":
+                    return
+                system = None
+                continue
+            if action == "search":
+                search["kb"] = True
+                continue
+            if action in ("submit", "close"):
+                search["kb"] = False
+                view["bar"] = None
+                if action == "close":
+                    edit("")
+                continue
+            if action != "a" or at is None:
+                continue
+            chosen = found()[at]
+            if chosen[0] == "system":
+                system = chosen[1]
+                continue
+            game = next(g for g in games if g[1] == chosen[1])
+            identity = enrolled.get(game[1])
+            if identity is None:
+                if self.menu(game[2], ["Set up Slot 1", "Cancel"], info=["Close the emulator first.", "Your existing saves become Slot 1. Nothing is overwritten."], wide=True) != 0:
+                    continue
+                result = self.in_thread(lambda: self.client("journeys", "enroll", game[1], timeout=180), "Keeping current saves safe")
+                identity = next((p[1] for p in (result or []) if len(p) >= 2 and p[0] == "enrolled"), None)
+                if not identity:
+                    self.message("Could not set up journeys. Current files are kept.", BAD)
+                    continue
+                enrolled[game[1]] = identity
+            self.journey_slots(identity, game[2].rsplit(".", 1)[0], decode)
+
+    def journey_slots(self, identity, title, decode):
+        cursor = 0
+        while True:
+            rows = self.in_thread(lambda: self.client("journeys", "list", identity, timeout=180), "Preparing offline copies")
+            if rows is None:
+                self.message("Journeys need attention. Check Status for details.", BAD)
+                return
+            active = next((p[1] for p in rows if p[0] == "active"), None)
+            cached = {p[1] for p in rows if p[0] == "cached"}
+            slots = [p for p in rows if len(p) >= 4 and p[0] == "journey"]
+            conflicts = {p[1] for p in rows if p[0] == "conflict"}
+            incompatible = {p[1] for p in rows if p[0] == "incompatible"}
+            numbers = {p[1]: int(p[2]) for p in rows if len(p) >= 3 and p[0] == "slot"}
+            counts = {p[1]: int(p[2]) for p in rows if len(p) >= 3 and p[0] == "content"}
+            slots.sort(key=lambda p: numbers.get(p[1], 999999))
+            labels = [decode(p[3]) for p in slots] + ["Empty slot"]
+            cards = [(numbers.get(p[1], i + 1), "Two versions · Needs attention" if p[1] in conflicts else "Download required" if p[1] not in cached else f"{counts.get(p[1], 0)} saves and states · Available offline", "IN USE" if p[1] == active else "OTHER-CORE STATES KEPT" if p[1] in incompatible else "") for i, p in enumerate(slots)]
+            cards.append((max(numbers.values(), default=len(slots)) + 1, "Start fresh without changing your other slots", "NEW GAME"))
+            at = self.menu(title + " · Save slots", labels, info=["Choose a slot to continue. Each slot keeps all saves."], start=cursor, wide=True, slots=cards)
+            if at is None:
+                return
+            cursor = at
+            if at < len(slots):
+                target = slots[at]
+                current = target[1] == active
+                actions = [("sync", "Apply pending changes") if current else ("switch", f"Use Slot {numbers.get(target[1], at + 1)}")]
+                if current:
+                    actions.append(("duplicate", "Copy this slot to a new slot…"))
+                actions.append(("rename", "Rename slot"))
+                if current and active in conflicts:
+                    actions.append(("keep-both", "Keep both versions"))
+                actions.append(("back", "Back"))
+                choice = self.menu(f"Slot {numbers.get(target[1], at + 1)} · {decode(target[3])}", [a[1] for a in actions], info=["In use on this console" if current else "Only this console changes slots."], wide=True)
+                if choice is None or actions[choice][0] == "back":
+                    continue
+                selected = actions[choice][0]
+                if selected == "rename":
+                    name = self.keyboard("Slot name", decode(target[3]))
+                    if name:
+                        self.in_thread(lambda: self.client("journeys", "rename", identity, target[1], name, timeout=30), "Saving slot name")
+                    continue
+                if target[1] not in cached:
+                    self.message("Download required. Connect and reopen this screen.")
+                    continue
+                if self.menu("Close the emulator first", ["Game closed · Continue", "Cancel"], info=["If offline, use the cached progress. Changes sync when connected.", "Your other slots keep their progress."], wide=True) != 0:
+                    continue
+                if selected == "switch":
+                    args = ("switch", identity, target[1], "1")
+                elif selected == "sync":
+                    args = ("sync", identity, "1")
+                else:
+                    name = self.keyboard("New slot name", "Recovered progress" if selected == "keep-both" else decode(target[3]) + " copy")
+                    if name is None:
+                        continue
+                    args = (selected, identity, name or "New slot", "1")
+            else:
+                if self.menu("Start in a new slot", ["Game closed · Create and use slot", "Cancel"], info=["Start with no saves or states.", "Your other slots keep their progress."], wide=True) != 0:
+                    continue
+                name = self.keyboard("Slot name", "New game")
+                if name is None:
+                    continue
+                args = ("new", identity, name or "New game", "1")
+            result = self.in_thread(lambda: self.client("journeys", *args, timeout=180), "Preparing save slot")
+            self.message("\n".join(" · ".join(p) for p in result) if result else "Could not complete the change. Saved copies are kept.")
 
     def run(self):
         # Opened while the daemon downloads the lists' games: their progress first (B stops them)

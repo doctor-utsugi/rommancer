@@ -11,7 +11,7 @@ import { sha256 } from '../../lib/crypto.js';
 import { HttpError, badRequest } from '../../lib/http.js';
 import { copiesSystem, folderFor, layoutOf, systemFilterOf, type DeviceLayout } from '../devices/sink.js';
 import { raDefaults } from '../../seed/data.js';
-import { contentFor, decide, deviceFileName, deviceThumbPath, findLogicalSave, receiveFromDevice, saveDirs, saveHash, setBase, settleHeldConflict, sha1 } from './core.js';
+import { contentFor, coreVersionOf, decide, deviceFileName, deviceThumbPath, findLogicalSave, receiveFromDevice, saveDirs, saveHash, setBase, settleHeldConflict, sha1 } from './core.js';
 import { THUMB_MAX, identifyRom, parseSaveFile, readThumb, saveHistory, storeThumb, looseRomFile, romForSave } from './service.js';
 import fs from 'node:fs';
 import crypto from 'node:crypto';
@@ -35,6 +35,7 @@ import { takeNudge } from './nudge.js';
 import { CORE_NAMES } from './core-names.js';
 import { romOfSystem, systemForFolder, systemForPlatform, systemIndex } from '../scanner/systems.js';
 import { FAN_WORK, FIRST_ASK, normTitle, probeRound, probesOf, serialMatch, wantsProbe } from './probe.js';
+import { isManaged } from '../journeys/service.js';
 
 export const agentRouter = Router();
 
@@ -81,6 +82,8 @@ export async function deviceFromToken(req: Request): Promise<AgentDevice> {
   const root = b64(req.header('x-device-root-b64'));
   const temp = b64(req.header('x-device-root-temp-b64'));
   const moved = ROOT.test(root) && root.length <= 512 && trimRoot(root) !== trimRoot(device.rootPath);
+  if ((moved || ROOT.test(temp)) && await prisma.journeyBinding.count({ where: { deviceId: device.id } }))
+    throw new HttpError(409, 'Journey-managed consoles require explicit path reconciliation before changing their storage mount');
   // "Seen" needs no write on every request (a rom download is one): the web app calls a device online for a minute
   const stale = !device.lastSeenAt || Date.now() - device.lastSeenAt.getTime() > SEEN_EVERY_MS;
   if (stale || moved) await prisma.device.update({ where: { id: device.id }, data: { lastSeenAt: new Date(), ...(moved ? { rootPath: root } : {}) } });
@@ -411,6 +414,21 @@ async function romContext(device: AgentDevice, romPath: string) {
 }
 
 type RomCtx = Awaited<ReturnType<typeof romContext>>;
+
+export async function journeyLayout(device: AgentDevice, rom: string) {
+  if (/[\t\r\n]/.test(rom) || !rom.startsWith('/') || /\.(m3u|cue)$/i.test(rom)) throw badRequest('Unsupported journey ROM path');
+  const ctx = await romContext(device, rom);
+  if (device.firmware.slug === 'onion' || ctx.emu.saveFormat !== 'raw' || !ctx.emu.core || ctx.layout.savesLayout === 'minui' || ctx.layout.savesLayout.startsWith('card-'))
+    throw badRequest('Journeys currently require a RetroArch raw-save adapter; shared cards and launcher resume stores need an adapter');
+  const files = candidatePaths(ctx);
+  const save = files.find((f) => f.kind === 'SAVE');
+  const state = files.find((f) => f.kind === 'STATE' && f.slot === 0);
+  if (!save || !state || ctx.emu.stateExt !== '.state') throw badRequest('Unsupported journey save layout');
+  const version = coreVersionOf(device, ctx.emu);
+  return { platform: ctx.slug, emulator: ctx.emu.slug, saveAdapter: 'raw',
+    stateAdapter: `${ctx.emu.slug}-v${sha1(Buffer.from(version ?? `unknown-device-${device.id}`)).slice(0, 12)}`,
+    savePath: save.path, statePath: state.path, coreVersion: version ?? 'unknown' };
+}
 
 /**
  * RESUME: the state an emulator writes by itself when a game is closed or the console switched off (RetroArch's
@@ -893,7 +911,10 @@ agentRouter.post('/sync', express.text({ limit: '16mb', type: '*/*' }), async (r
     ).map((v) => v.sha1),
   );
   const romsOfSaves: { path: string; baseName: string; gameId: number | null; slug: string }[] = [];
+  const managedBindings = await prisma.journeyBinding.findMany({ where: { deviceId: device.id } });
+  const managedRoms = new Set(managedBindings.map((b) => b.romPath));
   for (const { path: rom, hashes } of withSaves) {
+    if (managedRoms.has(rom)) continue;
     const found = await romContext(device, rom).catch(() => null);
     if (!found) continue;
     const ctx = await withCtr(found, ctrSavePath(ctrTitles, titleIds.get(rom)));
@@ -981,7 +1002,15 @@ agentRouter.post('/sync', express.text({ limit: '16mb', type: '*/*' }), async (r
     if (device.clockSync !== on || (on && device.clockSyncWant)) await prisma.device.update({ where: { id: device.id }, data: { clockSync: on, ...(on ? { clockSyncWant: false } : {}) } });
   }
   await prisma.device.update({ where: { id: device.id }, data: { lastSyncAt: new Date() } });
-  res.type('text/plain').send(out.join('\n') + (out.length ? '\n' : ''));
+  const safe = out.filter((line) => {
+    const [action, p] = line.split('\t');
+    if (!['get', 'put', 'aside', 'tget', 'tput', 'cget'].includes(action)) return true;
+    return !managedBindings.some((b) => {
+      const l = b.layout as Record<string, string>;
+      return p === l.savePath || p?.startsWith(l.statePath);
+    });
+  });
+  res.type('text/plain').send(safe.join('\n') + (safe.length ? '\n' : ''));
 });
 
 /**
@@ -1069,6 +1098,7 @@ agentRouter.post('/prune/saves', express.text({ limit: '4mb', type: '*/*' }), as
   const coreEmus = (await prisma.emulator.findMany({ where: { core: { not: null } } })) as Emulator[];
   const out = new Set<string>();
   for (const rom of gone) {
+    if (await isManaged(device.id, rom)) continue;
     if (stems.has(rom.replace(/\.[^./]+$/, ''))) continue;
     const ctx = await romContext(device, rom).catch(() => null);
     if (!ctx) continue;
@@ -1609,6 +1639,7 @@ async function conflictLine(c: { id: number; deviceVersionId: number; serverVers
  */
 agentRouter.post('/start', express.text({ limit: '1mb', type: '*/*' }), async (req, res) => {
   const device = await deviceFromToken(req);
+  if (await isManaged(device.id, b64(req.header('x-rom-b64')))) return res.type('text/plain').send('journey\t1\n');
   const ctx = await romContext(device, b64(req.header('x-rom-b64')));
   const present = new Map<string, string>();
   for (const line of String(req.body ?? '').split('\n')) {
@@ -1646,6 +1677,7 @@ agentRouter.post('/start', express.text({ limit: '1mb', type: '*/*' }), async (r
 // Download of a version converted for the device's emulator; records the base
 agentRouter.get('/file', async (req, res) => {
   const device = await deviceFromToken(req);
+  if (await isManaged(device.id, b64(req.header('x-rom-b64')), b64(req.header('x-path-b64')))) throw new HttpError(409, 'Use the Journey client for this ROM');
   const ctx = await withCtr(await romContext(device, b64(req.header('x-rom-b64'))));
   const target = b64(req.header('x-path-b64'));
   const versionId = Number(req.query.v);
@@ -1660,6 +1692,7 @@ agentRouter.get('/file', async (req, res) => {
 // Game end: upload of a save or savestate file as it is on the device
 agentRouter.post('/upload', express.raw({ limit: '128mb', type: '*/*' }), async (req, res) => {
   const device = await deviceFromToken(req);
+  if (await isManaged(device.id, b64(req.header('x-rom-b64')), b64(req.header('x-path-b64')))) throw new HttpError(409, 'Use the Journey client for this ROM');
   const filePath = b64(req.header('x-path-b64'));
   const buf = Buffer.isBuffer(req.body) ? req.body : Buffer.alloc(0);
   if (!buf.length) throw badRequest('Empty file');

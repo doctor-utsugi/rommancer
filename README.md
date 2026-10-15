@@ -8,6 +8,10 @@ Stack: Node 22 + Express + Prisma + MySQL 8.4 · React + TypeScript + Vite + sha
 
 ## Rommancer Sync
 
+Journeys provide independent save/savestate blocks per exact ROM, selected separately on each console.
+The initial Android/Linux RetroArch adapter supports cached offline switching; see [Journeys](docs/journeys.md)
+for its capability matrix and rollout requirements.
+
 Save syncing between consoles (Onion, Knulli, Batocera, ROCKNIX, muOS, ArkOS, NextUI, PC): see [docs/sync.md](docs/sync.md). Storage on the server (folders, disks, destinations): [docs/storage.md](docs/storage.md). Console configuration (RetroAchievements, WiFi, copies): [docs/device-config.md](docs/device-config.md). Lists, favourites and sublists: [docs/lists.md](docs/lists.md).
 
 ## Structure

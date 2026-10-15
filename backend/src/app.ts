@@ -20,6 +20,7 @@ import { configRouter } from './modules/devconfig/routes.js';
 import { linkPublicRouter, linkRouter } from './modules/link/routes.js';
 import { env } from './config/env.js';
 import './modules/sync/service.js';
+import { journeysRouter, journeysAgentRouter } from './modules/journeys/routes.js';
 
 export function createApp() {
   const app = express();
@@ -43,6 +44,7 @@ export function createApp() {
   api.use('/auth', express.json({ limit: '1mb' }), authRouter);
   // Device scripts: authenticated with their own token
   api.use('/agent/config', configAgentRouter);
+  api.use('/agent/journeys', journeysAgentRouter);
   api.use('/agent/browse', browseRouter);
   api.use('/agent', agentRouter);
   api.use('/link', linkPublicRouter);
@@ -60,6 +62,7 @@ export function createApp() {
   api.use('/scrape', scrapeRouter);
   api.use('/ra', raRouter);
   api.use('/saves', savesRouter);
+  api.use('/journeys', journeysRouter);
   api.use('/link', linkRouter);
   api.use('/', collectionRouter);
 

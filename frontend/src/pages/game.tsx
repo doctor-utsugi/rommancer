@@ -17,6 +17,7 @@ import { Empty, Field, JobProgress, NativeSelect, errMsg, formatBytes, useJob } 
 import { AddToListButton } from '@/components/add-to-list'
 import { WEB_SYSTEMS, openPlayer } from '@/lib/play'
 import { MySaves, SharedSaves, VersionsDialog } from './saves'
+import { Journeys } from '@/components/journeys'
 
 const ALL_MEDIA = ['COVER', 'BOX_BACK', 'BOX_SIDE', 'BOX_3D', 'SUPPORT', 'SCREENSHOT', 'TITLE', 'FLYER', 'FANART', 'WHEEL', 'MARQUEE', 'MANUAL', 'VIDEO']
 const LARGE = ['MANUAL', 'VIDEO']
@@ -464,6 +465,7 @@ export function GamePage() {
         {can('saves') && (
           <TabsContent value="saves">
             <GameSaves gameId={g.id} />
+            <section className="mt-6 space-y-3"><h3 className="font-medium">{t('journeys.title')}</h3><Journeys gameId={g.id} /></section>
           </TabsContent>
         )}
       </Tabs>

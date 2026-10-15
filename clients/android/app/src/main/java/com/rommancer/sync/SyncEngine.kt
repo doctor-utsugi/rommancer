@@ -214,6 +214,7 @@ class SyncEngine(private val context: Context, private val store: Store, private
     fun sync(): Summary = locked { syncOnce() }
 
     private fun syncOnce(): Summary {
+        val journeySummary = Journeys(context, store).sync()
         val server = store.server
         val api = Api(server, store.token ?: error("Not linked"))
         report(Progress("connecting"))
@@ -227,6 +228,7 @@ class SyncEngine(private val context: Context, private val store: Store, private
         val exts = roots.firstOrNull { it[0] == "exts" }?.get(1)?.split(' ')?.filter { it.isNotBlank() }.orEmpty()
 
         val request = StringBuilder()
+        CoreVersions.read().forEach { (name, version) -> request.append("core\t").append(name).append('\t').append(version).append('\n') }
         val romHashes = HashMap<String, String>()
         val romFiles = romsDir?.listFiles()?.filter { it.isDirectory && !it.name.startsWith(".") }
             ?.flatMap { system -> system.listFiles()?.filter { it.isFile && !it.name.startsWith(".") && isRom(it.name, exts) }.orEmpty() }.orEmpty()
@@ -316,7 +318,7 @@ class SyncEngine(private val context: Context, private val store: Store, private
         )
         if (pruneSent) store.pruneSet = false
         pruneAnswer(plan.lines().firstOrNull { it.startsWith("prune\t") })
-        val sum = Summary()
+        val sum = journeySummary
         // Games whose save or state arrived, for the notification
         val received = linkedSetOf<String>()
         plan.lines().firstOrNull { it.startsWith("backups\t") }?.substringAfter('\t')?.trim()?.toIntOrNull()?.let { store.backupsKeep = it }
@@ -938,6 +940,7 @@ class SyncEngine(private val context: Context, private val store: Store, private
     }
 
     companion object {
+        fun <T> journeyLocked(block: () -> T): T = synchronized(LOCK, block)
         private val WAKE = Any()
         private var wakeHolders = 0
         private var wakeLock: PowerManager.WakeLock? = null
