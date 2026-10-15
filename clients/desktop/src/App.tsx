@@ -8,6 +8,7 @@ import { disable, enable, isEnabled } from '@tauri-apps/plugin-autostart'
 import { isPermissionGranted, requestPermission, sendNotification } from '@tauri-apps/plugin-notification'
 import { bytes, locale, t, tn, type Key } from './i18n'
 import { SavePoint } from './SavePoint'
+import { Browse } from './Browse'
 
 interface PcInfo {
   name: string
@@ -674,11 +675,11 @@ function PcSetup({ onDone }: { onDone: () => void }) {
   )
 }
 
-type View = 'home' | 'conflicts' | 'lists' | 'games' | 'add' | 'settings' | 'status'
+type View = 'home' | 'conflicts' | 'lists' | 'browse' | 'games' | 'settings' | 'status'
 
 /**
  * The home screen of a device, the same for this PC and for a card: header, state line, live work, then
- * Sync now, Conflicts (only when there are), Lists, Games, Add games and Status
+ * Sync now, Conflicts (only when there are), Lists, Browse server games, Games and Status
  */
 function DeviceHome({
   syncKey,
@@ -776,8 +777,8 @@ function DeviceHome({
     ['home', t('tabHome')],
     ...(conflicts > 0 ? [['conflicts', t('conflictsBtn', { n: conflicts })] as [View, string]] : []),
     ['lists', t('tabLists')],
+    ['browse', t('tabBrowse')],
     ['games', t('tabGames')],
-    ['add', t('tabAdd')],
     ...(prune ? [['settings', t('settingsNav')] as [View, string]] : []),
     ['status', t('tabStatus')],
   ]
@@ -828,8 +829,18 @@ function DeviceHome({
       )}
       {view === 'conflicts' && <Conflicts syncKey={syncKey} isPc={!!pc} onLater={() => setView('home')} />}
       {view === 'lists' && deviceId && <Lists deviceId={deviceId} name={title} onCopy={() => sync('full', true)} />}
+      {view === 'browse' && deviceId && (
+        <Browse
+          syncKey={syncKey}
+          refreshKey={result?.mode === 'games' ? result.at : 0}
+          onDone={() => {
+            userSync.current = true
+            setView('home')
+          }}
+          onExit={() => setView('home')}
+        />
+      )}
       {view === 'games' && deviceId && <Games deviceId={deviceId} refreshKey={result} onSend={() => sync('pulls')} />}
-      {view === 'add' && deviceId && <AddGames deviceId={deviceId} onAdded={() => sync('full', true)} />}
       {view === 'settings' && prune && (
         <div className="panel">
           <label className="check top">
@@ -2141,54 +2152,6 @@ function SystemsDialog({ deviceId, info, onClose }: { deviceId: number; info: Sy
           </button>
         </div>
       </div>
-    </div>
-  )
-}
-
-function AddGames({ deviceId, onAdded }: { deviceId: number; onAdded: () => void }) {
-  const [q, setQ] = useState('')
-  const [items, setItems] = useState<{ id: number; title: string; system: { name: string } }[]>([])
-  const [picked, setPicked] = useState<Set<number>>(new Set())
-  const [msg, setMsg] = useState('')
-  useEffect(() => {
-    const id = setTimeout(() => {
-      if (q.trim().length < 2) return setItems([])
-      void api<{ items: typeof items }>('GET', `/games?status=owned&pageSize=50&q=${encodeURIComponent(q.trim())}`).then((r) => setItems(r.items))
-    }, 300)
-    return () => clearTimeout(id)
-  }, [q])
-  const shown = useMemo(() => items, [items])
-  const send = async () => {
-    const r = await api<{ added: number }>('POST', `/devices/${deviceId}/send`, { gameIds: [...picked] })
-    setMsg(t('added', { n: r.added }))
-    setPicked(new Set())
-    onAdded()
-  }
-  return (
-    <div className="panel">
-      <input autoFocus value={q} onChange={(e) => setQ(e.target.value)} placeholder={t('search')} />
-      <div className="results">
-        {shown.map((g) => (
-          <label key={g.id} className="check">
-            <input
-              type="checkbox"
-              checked={picked.has(g.id)}
-              onChange={(e) => {
-                const n = new Set(picked)
-                if (e.target.checked) n.add(g.id)
-                else n.delete(g.id)
-                setPicked(n)
-              }}
-            />
-            <span className="grow">{g.title}</span>
-            <span className="muted small">{g.system?.name}</span>
-          </label>
-        ))}
-      </div>
-      {msg && <p className="ok">{msg}</p>}
-      <button className="primary" disabled={!picked.size} onClick={() => void send()}>
-        {t('sendToCard', { n: picked.size })}
-      </button>
     </div>
   )
 }

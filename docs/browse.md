@@ -145,12 +145,42 @@ summary and `games-show`). Space measured on the roms folder from `/agent/roots`
 walking up to an existing parent.
 
 ### Android
-- Home item **Browse server games** after Game lists. Browse screens have their own root without the outer `verticalScroll`
-  (a `LazyColumn` with `weight(1f)`, header above, hint/selection bar below).
-- Keys: A opens a system / ticks a game, X ticks a whole system, Y focuses the search, START opens the review, L1/R1
-  page. Initial focus on the first row (no keyboard popping up); the IME Search action searches at once and moves focus
-  to the results. One focus stop per row.
+- Home item **Browse server games** after Game lists. Browse screens have their own root without the outer
+  `verticalScroll`, and take the whole screen (no app title, no save point): a `LazyColumn` with `weight(1f)` between
+  the top bar and a fixed footer.
+- Top bar on one line, as on the desktop: back, where this is (`Browse server games`, the system, `All systems`), a
+  magnifier and the `Hide owned` chip (on by default; off shows the games already here). The magnifier (or Y) turns
+  into the search field in the bar, hiding the chip: it filters as typed (2 s debounce; the IME Search key searches at
+  once and moves focus to the results), a spinner inside it while the debounce runs or the request is out, the list
+  faded until the answer comes. X or B closes it (and clears it); on the systems screen the magnifier opens the search
+  over every system. Every bar button is a focus stop, filled while focused.
+- Under the bar the section line (`SYSTEMS · 10 WITH GAMES TO DOWNLOAD`, `GAMES · 236`, `RESULTS · 1 GAME`, or the
+  spinner with `SEARCHING THE SERVER…`) with the list's own key on the right (`X tick all`, `L1/R1 page`).
+- Rows on one line, the cursor row filled with the accent: tick, title, the system (searching every system), size or
+  `On this console` (green ✓) / `Downloading soon` (↓). A tap on the row opens a system / ticks a game; a tap on the
+  box ticks a whole system.
+- Footer: `N games selected · size` with **Review download · START**, or the keys' hint when nothing is ticked.
+- Keys: A opens a system / ticks a game, X ticks a whole system, Y opens the search, START opens the review, L1/R1
+  page. Initial focus on the first row (no keyboard popping up). The activity resizes for the keyboard
+  (`adjustResize`).
 - Selection held in `Linked`; Back: games → systems → home (asking first when something is ticked).
 - Space: `SyncEngine.space()` (roms folder from `/agent/roots`, nearest existing parent, StatFs); sent on check, add
   and `/agent/roms`. Without a measurement the add is refused client-side.
 - Download: `roms()` then `sync()`, the existing progress screen, then Result with the `games-show` line.
+
+### Desktop app (`clients/desktop`)
+- Tab **Browse server games** after Lists, on this PC and on every linked card (`src/Browse.tsx`). Each device browses
+  as itself (its token); the Rust commands are `browse_systems`, `browse_games` (`all`: no `show=new`), `browse_check`
+  and `browse_add` (`src-tauri/src/browse.rs`).
+- Top bar on one line: back, the breadcrumb (`Server games › system`), a magnifier that turns into the search field
+  (it takes the place of the `Hide owned` / `Show owned` chip; owned games hidden by default), with `Searching the
+  server…` and a spinner inside it while the 2 s debounce runs or the request is out; Enter searches at once, Escape or
+  X closes it and clears the search. Under it the section line (`SYSTEMS · 18 with games to download`, `RESULTS · 6
+  games`), then dense one-line rows; games page by `offset` (100) as the end of the list comes into view.
+- Keys: arrows / PageUp / PageDown / Home / End move the filled cursor row, Space ticks, Enter opens a system (ticks a
+  game), `/` or Ctrl+F opens the search, Escape or Backspace goes back. Everything works with the mouse too.
+- A fixed footer with `N games selected · size` and **Review download**: the server's check in a dialog, then
+  `browse_add`. Space: the roms folder this PC knows (a card: the server's roms folder), nearest existing parent,
+  measured on `check`, `add` and `/agent/roms`; without a measurement the add is refused here.
+- Download: a `games` sync (the list games, then the inventory pass), queued after a sync already running; on this
+  PC the frontends' collections are written and ES-DE/Pegasus are named to restart, as after a full sync.

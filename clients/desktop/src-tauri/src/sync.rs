@@ -672,7 +672,9 @@ impl<'a> Engine<'a> {
     /// Roms of the lists assigned to this card that are not on it yet; never deletes anything
     pub fn roms(&mut self, out: &mut Outcome) -> Result<()> {
         self.progress("roms-plan", 0, 0);
-        let plan: Vec<_> = pairs(&self.api.get_text("/agent/roms")?).into_iter().filter(|r| r.len() >= 4 && r[0] == "rom").collect();
+        // Measured live, so the plan's budget is the one a browse check accepted
+        let space: Vec<(&str, String)> = crate::browse::space(&self.api, self.roms_dir.as_deref(), &self.root).map(|s| ("X-Space", s)).into_iter().collect();
+        let plan: Vec<_> = pairs(&self.api.get_text_with("/agent/roms", &space)?).into_iter().filter(|r| r.len() >= 4 && r[0] == "rom").collect();
         let mut arrived: Vec<PathBuf> = Vec::new();
         for (i, r) in plan.iter().enumerate() {
             self.check()?;

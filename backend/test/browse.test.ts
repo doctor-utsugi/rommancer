@@ -222,3 +222,31 @@ test('browse: the Linux client picks a game, downloads it and then counts it as 
   // By default the client leaves out what the console has
   assert.doesNotMatch(await sh('browse-games', 'snes', '0', `${RUN} mega hero`), new RegExp(`^game\t${games[`${RUN} Mega Hero`]}\t`, 'm'));
 });
+
+test('browse: the desktop app picks a game, downloads it and then counts it as here', { skip: process.env.ROMMANCER_DESKTOP !== '1' && 'ROMMANCER_DESKTOP=1 runs it (cargo)' }, async () => {
+  const name = `${RUN}-desk`;
+  const root = path.join(DATA, name);
+  fs.mkdirSync(path.join(root, 'roms'), { recursive: true });
+  const dev = await enrol(name);
+  const { execFile } = await import('node:child_process');
+  const { promisify } = await import('node:util');
+  const env = {
+    ...process.env,
+    ROMMANCER_TEST_SERVER: base,
+    ROMMANCER_TEST_TOKEN: dev,
+    ROMMANCER_TEST_ROOT: root,
+    ROMMANCER_TEST_SYSTEM: 'snes',
+    ROMMANCER_TEST_QUERY: `${RUN} mega hero`,
+    RUSTUP_HOME: process.env.RUSTUP_HOME ?? path.join(process.env.HOME!, '.rustup'),
+    CARGO_HOME: process.env.CARGO_HOME ?? path.join(process.env.HOME!, '.cargo'),
+  };
+  const out = (
+    await promisify(execFile)('cargo', ['test', '-q', '--lib', 'browse_against_server', '--', '--ignored', '--nocapture'], { cwd: path.join(ROOT, 'clients/desktop/src-tauri'), env, maxBuffer: 1 << 26 })
+  ).stdout;
+  assert.match(out, new RegExp(`^GAME ${games[`${RUN} Mega Hero`]} 1000 new `, 'm'));
+  assert.match(out, /^CHECK need=1000 games=1 fits=true$/m);
+  assert.match(out, /^ADDED 1$/m);
+  assert.match(out, /^OUT games_down=1 failed=0$/m);
+  assert.match(out, /^STATE here$/m, 'the inventory pass after the download marks it as here');
+  assert.equal(fs.statSync(path.join(root, 'roms/snes', `${RUN} Mega Hero (USA).sfc`)).size, 1000);
+});

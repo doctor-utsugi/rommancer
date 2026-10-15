@@ -2,6 +2,7 @@
 //! background like a console), plus the SD cards and folders of other consoles, synced when they appear.
 
 mod api;
+mod browse;
 mod card;
 mod ctr;
 mod folder;
@@ -64,6 +65,8 @@ struct AppState {
     user: Mutex<Option<Arc<UserApi>>>,
     /// Devices being synced (a card's root, or "pc"), with their cancel flag
     running: Mutex<HashMap<String, Arc<AtomicBool>>>,
+    /// Devices whose browse download waits for the sync running now
+    queued: Mutex<HashSet<String>>,
     /// Roots present at the last look, to notice insertions
     present: Mutex<HashSet<String>>,
     /// Recent log lines per device, with their time (ms)
@@ -143,6 +146,7 @@ fn game_hook(app: &AppHandle, req: hook::Request) -> String {
                 log(format!("game-start: {e:#}"));
             }
             state.running.lock().unwrap().remove(pc::KEY);
+            start_queued(app, &state, pc::KEY);
             "ok".into()
         }
         "/game-end" => {
@@ -619,6 +623,8 @@ enum Mode {
     Prune,
     /// Saves, then the saves of the games deleted for being in no list
     Clean,
+    /// The games picked by browsing the server: the list games, then the inventory pass that counts them as here
+    Games,
 }
 
 impl Mode {
@@ -628,6 +634,7 @@ impl Mode {
             "pulls" => Mode::Pulls,
             "prune" => Mode::Prune,
             "clean" => Mode::Clean,
+            "games" => Mode::Games,
             _ => Mode::Full,
         }
     }
@@ -638,6 +645,7 @@ impl Mode {
             Mode::Pulls => "pulls",
             Mode::Prune => "prune",
             Mode::Clean => "clean",
+            Mode::Games => "games",
         }
     }
 }
@@ -669,6 +677,10 @@ fn start_sync(app: &AppHandle, state: &AppState, key: String, mode: Mode, roms: 
     {
         let mut running = state.running.lock().unwrap();
         if running.contains_key(&key) {
+            // A browse download is not dropped: it starts when this sync ends
+            if mode == Mode::Games {
+                state.queued.lock().unwrap().insert(key);
+            }
             return Ok(());
         }
         running.insert(key.clone(), cancel.clone());
@@ -717,9 +729,16 @@ fn start_sync(app: &AppHandle, state: &AppState, key: String, mode: Mode, roms: 
             Mode::Saves | Mode::Clean => vec!["saves"],
             Mode::Pulls => vec!["sending"],
             Mode::Prune => vec!["prune"],
+            Mode::Games => vec!["games", "saves"],
         };
         let mut out = sync::Outcome::default();
         let mut run = || -> anyhow::Result<()> {
+            if mode == Mode::Games {
+                engine.roms(&mut out)?;
+                engine.sync(&mut out)?;
+                out.conflicts = engine.conflicts().map(|c| c.len() as u32).unwrap_or(0);
+                return Ok(());
+            }
             if mode != Mode::Pulls && mode != Mode::Prune {
                 engine.sync(&mut out)?;
                 out.conflicts = engine.conflicts().map(|c| c.len() as u32).unwrap_or(0);
@@ -752,7 +771,7 @@ fn start_sync(app: &AppHandle, state: &AppState, key: String, mode: Mode, roms: 
             Ok(())
         };
         let result = run();
-        if is_pc && mode == Mode::Full && result.is_ok() {
+        if is_pc && (mode == Mode::Full || mode == Mode::Games) && result.is_ok() {
             let libs = libraries(&app.state::<AppState>());
             let mut restart = collections::write(&t.api(), &libs).unwrap_or_else(|e| {
                 log(format!("error: frontend collections: {e:#}"));
@@ -804,8 +823,56 @@ fn start_sync(app: &AppHandle, state: &AppState, key: String, mode: Mode, roms: 
         }
         state.running.lock().unwrap().remove(&key);
         let _ = app.emit("sync-finished", fin);
+        start_queued(&app, &state, &key);
     });
     Ok(())
+}
+
+/// The browse download that waited for the sync of KEY, once that sync ended
+fn start_queued(app: &AppHandle, state: &AppState, key: &str) {
+    if state.queued.lock().unwrap().remove(key) {
+        let _ = start_sync(app, state, key.to_string(), Mode::Games, None);
+    }
+}
+
+/// A device's API, the roms folder it knows for itself and its root, to browse the server's games from it
+fn browse_target(state: &AppState, key: &str) -> Result<(DeviceApi, Option<String>, String), String> {
+    let t = target(state, key)?;
+    Ok((t.api(), t.roms_dir(), t.root()))
+}
+
+/// The systems the server can send to a device; "denied" when its account may not download games
+#[tauri::command]
+async fn browse_systems(state: State<'_, AppState>, key: String) -> Result<Vec<browse::System>, String> {
+    let (api, _, _) = browse_target(&state, &key)?;
+    tauri::async_runtime::spawn_blocking(move || browse::systems(&api).map_err(|e| e.to_string())).await.map_err(|e| e.to_string())?
+}
+
+/// A page of the server's games: of SYSTEM (none: every system), matching Q, and with ALL also the games already here
+#[tauri::command]
+#[allow(clippy::too_many_arguments)]
+async fn browse_games(state: State<'_, AppState>, key: String, system: Option<String>, q: String, offset: u64, limit: u64, all: bool) -> Result<browse::Page, String> {
+    let (api, _, _) = browse_target(&state, &key)?;
+    tauri::async_runtime::spawn_blocking(move || browse::games(&api, system.as_deref(), &q, offset, limit.clamp(1, 200), all).map_err(|e| e.to_string())).await.map_err(|e| e.to_string())?
+}
+
+/// What a pick would add and whether it fits, with the free space measured now where the roms go
+#[tauri::command]
+async fn browse_check(state: State<'_, AppState>, key: String, pick: browse::Pick) -> Result<browse::Check, String> {
+    let (api, roms, root) = browse_target(&state, &key)?;
+    tauri::async_runtime::spawn_blocking(move || browse::check(&api, &pick, browse::space(&api, roms.as_deref(), &root).as_deref()).map_err(|e| e.to_string())).await.map_err(|e| e.to_string())?
+}
+
+/// Puts a pick in the device's picks when it fits, then downloads it (after the sync running now, if one is)
+#[tauri::command]
+async fn browse_add(app: AppHandle, state: State<'_, AppState>, key: String, pick: browse::Pick) -> Result<browse::Check, String> {
+    let (api, roms, root) = browse_target(&state, &key)?;
+    let c = tauri::async_runtime::spawn_blocking(move || browse::add(&api, &pick, browse::space(&api, roms.as_deref(), &root).as_deref()).map_err(|e| e.to_string())).await.map_err(|e| e.to_string())??;
+    if let Some(n) = c.added.filter(|_| !c.nospace) {
+        push_log(&app, &key, format!("browse: {n} games picked"));
+        start_sync(&app, &state, key, Mode::Games, None)?;
+    }
+    Ok(c)
 }
 
 #[tauri::command]
@@ -1237,6 +1304,7 @@ pub fn run() {
                 settings: Mutex::new(settings),
                 user: Mutex::new(user),
                 running: Mutex::new(HashMap::new()),
+                queued: Mutex::new(HashSet::new()),
                 present: Mutex::new(HashSet::new()),
                 logs: Mutex::new(HashMap::new()),
                 last: Mutex::new(last),
@@ -1321,7 +1389,11 @@ pub fn run() {
             prune_set,
             prune_confirm,
             set_tray,
-            local_wifi
+            local_wifi,
+            browse_systems,
+            browse_games,
+            browse_check,
+            browse_add
         ])
         .run(tauri::generate_context!())
         .expect("error while running Rommancer");
