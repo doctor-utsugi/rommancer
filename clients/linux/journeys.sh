@@ -271,7 +271,7 @@ j_run() (
   j_recover || exit 1
   case "$jaction" in
     list)
-      if ! j_refresh >/dev/null 2>&1; then
+      if [ "${1:-}" != cached ] && ! j_refresh >/dev/null 2>&1; then
         [ ! -f "$JD/refused" ] || { printf 'Server refused Journey sync; check Status for adapter or account changes\n' >&2; exit 1; }
         printf 'Offline: showing cached journeys\n' >&2
       fi

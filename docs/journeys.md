@@ -42,6 +42,11 @@ validation; live write-destination overrides, cache eviction/pinning UI and auto
 
 ## Console flow
 
+Deployed client revision: Android 0.22.0 (60) and Linux 1.82.0 make the active slot visibly green and show
+the last local/server update time. A completed switch returns to the slot list without a success dialog;
+pending synchronization is displayed on the slot. This revision was published as `powerquest-20261015-60`,
+with previous client/web files backed up in `/home/salamando/rommancer-backups/powerquest-20261015-60/`.
+
 Android 0.20.0 and Linux 1.80.0 introduced a console-first selector with local search and game-style
 save slots. The top-level search includes all local games and matching console names. A console's search
 filters only its games. L/R changes pages; B returns one level, preserving the query and page. Slots show a

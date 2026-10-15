@@ -53,11 +53,21 @@
   window.EJS_startOnLoaded = true;
   window.EJS_disableDatabases = true;
   window.EJS_Buttons = { saveState: false, loadState: false, saveSavFiles: false, loadSavFiles: false, netplay: false, cacheManager: false };
-  window.EJS_onGameStart = () => {
+  const { prepareState } = await import('./savestate.js');
+  window.EJS_onGameStart = async () => {
     if (rom) return;
     const gm = window.EJS_emulator.gameManager;
     try {
-      if (cfg.kind === 'STATE') gm.loadState(file);
+      if (cfg.kind === 'STATE') {
+        gm.toggleMainLoop(0);
+        try {
+          const prepared = await prepareState(file, gm.getState(), window.EJS_emulator.getCore(), cfg.core);
+          gm.loadState(prepared.data);
+          if (prepared.adapted) document.getElementById('note').textContent += es
+            ? ' Estado adaptado entre versiones de Gambatte. El original no se ha modificado.'
+            : ' State adapted between Gambatte versions. The original is unchanged.';
+        } finally { gm.toggleMainLoop(1); }
+      }
       else {
         // The game's save where the core reads it, then the game started again with it
         const p = gm.getSaveFilePath();

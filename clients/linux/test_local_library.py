@@ -1,5 +1,5 @@
 import unittest
-from local_library import LocalSearch, library_rows, matches, page_target, page_bindings
+from local_library import LocalSearch, library_rows, matches, page_target, page_bindings, slot_updated
 from unittest.mock import patch
 
 
@@ -47,6 +47,11 @@ class LocalLibraryTests(unittest.TestCase):
             self.assertEqual(lookup.call_count, 2)
             search.accept("")
             self.assertEqual({r[0] for r in search.rows}, {"system"})
+
+    def test_slot_update_dates_handle_remote_and_local_times(self):
+        self.assertIn("2026", slot_updated("2026-10-15T12:00:00Z"))
+        self.assertTrue(slot_updated("1792065600").startswith("Updated: "))
+        self.assertEqual(slot_updated("local"), "Update date unavailable")
 
 
 if __name__ == "__main__":

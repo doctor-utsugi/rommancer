@@ -12,7 +12,7 @@ import java.util.UUID
 
 class Journeys(private val context: Context, private val store: Store) {
     data class Game(val rom: String, val title: String, val identity: String? = null, val system: String = "unknown")
-    data class Item(val id: String, val name: String, val revision: Int, val cached: Boolean, val current: Boolean, val conflict: Boolean, val incompatible: Int, val slot: Int = 0, val files: Int = 0)
+    data class Item(val id: String, val name: String, val revision: Int, val cached: Boolean, val current: Boolean, val conflict: Boolean, val incompatible: Int, val slot: Int = 0, val files: Int = 0, val updatedAt: Long = 0, val pendingSync: Boolean = false)
     private val api = Api(store.server, store.token ?: error("Not linked"))
     private val root = File(context.filesDir, "journeys/" + digest((store.server + "\n" + store.token).toByteArray())).apply { mkdirs() }
     private val blobs = File(root, "blobs").apply { mkdirs() }
@@ -75,7 +75,9 @@ class Journeys(private val context: Context, private val store: Store) {
         save(d, s)
         ordered.map { id ->
             val j = items.getJSONObject(id)
-            Item(id, j.optString("name", "Journey"), j.optInt("head"), complete(j), id == s.getString("active"), j.has("conflict"), entries(j.optString("manifest")).count { path(s.getJSONObject("layout"), it.first) == null }, j.getInt("slot"), entries(j.optString("manifest")).count { !it.first.contains("/thumb/") })
+            val remoteTime = runCatching { java.time.Instant.parse(j.optString("syncedAt")).toEpochMilli() }.getOrDefault(0L)
+            val updated = if (j.optBoolean("dirty")) j.optLong("localUpdatedAt", remoteTime) else remoteTime
+            Item(id, j.optString("name", "Journey"), j.optInt("head"), complete(j), id == s.getString("active"), j.has("conflict"), entries(j.optString("manifest")).count { path(s.getJSONObject("layout"), it.first) == null }, j.getInt("slot"), entries(j.optString("manifest")).count { !it.first.contains("/thumb/") }, updated, j.optBoolean("dirty") || j.optBoolean("create") || (id == s.getString("active") && s.has("selection")))
         }.sortedBy { it.slot }
     }
 
@@ -123,7 +125,7 @@ class Journeys(private val context: Context, private val store: Store) {
         }
         val id = uuid()
         item(s, id).put("name", name.trim().ifEmpty { if (duplicate) "${source.optString("name", "Saved game")} copy".take(80) else "New game" })
-            .put("manifest", if (duplicate) source.getString("manifest") else "").put("base", 0).put("dirty", true).put("create", true)
+            .put("manifest", if (duplicate) source.getString("manifest") else "").put("base", 0).put("dirty", true).put("create", true).put("localUpdatedAt", System.currentTimeMillis())
         save(d, s)
         switch(identity, id, closed)
     }
@@ -174,7 +176,7 @@ class Journeys(private val context: Context, private val store: Store) {
         capture(d, s)
         val id = uuid()
         item(s, id).put("name", (source.optString("name", "Journey") + " — This console").take(80))
-            .put("manifest", source.getString("manifest")).put("base", 0).put("dirty", true).put("create", true)
+            .put("manifest", source.getString("manifest")).put("base", 0).put("dirty", true).put("create", true).put("localUpdatedAt", System.currentTimeMillis())
         source.put("dirty", false); source.remove("outbox"); source.remove("operation")
         save(d, s)
         switch(identity, id, closed)
@@ -249,7 +251,7 @@ class Journeys(private val context: Context, private val store: Store) {
         val savePrefix = layout.optString("saveAdapter", layout.getString("emulator")) + "/save/"
         val kept = j.optString("manifest").lineSequence().filter { it.isNotBlank() && !it.startsWith(prefix) && !it.startsWith(savePrefix) }.map { "$it\n" }.toList()
         val manifest = (kept + second.lineSequence().filter { it.isNotBlank() }.map { "$it\n" }).sorted().joinToString("")
-        if (manifest != j.optString("manifest")) { j.put("manifest", manifest).put("dirty", true); save(d, s) }
+        if (manifest != j.optString("manifest")) { j.put("manifest", manifest).put("dirty", true).put("localUpdatedAt", System.currentTimeMillis()); save(d, s) }
     }
     private fun synchronize(d: File, s: JSONObject) {
         val items = s.getJSONObject("items")

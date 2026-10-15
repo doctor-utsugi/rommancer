@@ -29,7 +29,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
-private data class JourneyRow(val key: String, val title: String, val detail: String, val badge: String = "", val slot: Int? = null, val active: Boolean = false, val action: () -> Unit)
+private val SlotGreen = Color(0xFF70E5A0)
+private data class JourneyRow(val key: String, val title: String, val detail: String, val badge: String = "", val slot: Int? = null, val active: Boolean = false, val updated: String = "", val action: () -> Unit)
 
 @Composable
 internal fun JourneysScreen(store: Store, onBack: () -> Unit) {
@@ -75,9 +76,16 @@ internal fun JourneysScreen(store: Store, onBack: () -> Unit) {
         scope.launch {
             val current = game
             val result = withContext(Dispatchers.IO) {
-                runCatching { val text = task(); text to current?.identity?.let { engine.items(it) } }
+                runCatching { val text = task(); text to current?.identity?.let { engine.items(it, false) } }
             }
-            result.onSuccess { (text, list) -> message = text; if (list != null) slots = list; selected = null; action = null }
+            result.onSuccess { (text, list) ->
+                message = if (text.contains("queued", ignoreCase = true)) text else ""
+                if (list != null) slots = list
+                selected = null; action = null
+                val slotRoute = "${system ?: "consoles"}/${current?.rom}/slots/"
+                list?.firstOrNull { it.current }?.let { cursors[slotRoute] = it.id }
+                pages.remove(slotRoute)
+            }
                 .onFailure { failed = true; message = it.message ?: "Could not complete the change. Your saved copies are kept." }
             busy = false
         }
@@ -159,7 +167,8 @@ internal fun JourneysScreen(store: Store, onBack: () -> Unit) {
         else -> {
             slots.forEach { item ->
                 val detail = when { item.conflict -> "Two versions of this progress · Choose how to continue"; !item.cached -> "Download required"; item.files == 0 -> "No progress yet · Ready to start"; else -> "${item.files} saves and states · Available offline" }
-                rows += JourneyRow(item.id, item.name, detail + if (item.incompatible > 0) " · Some states use another core" else "", if (item.current) "IN USE" else if (item.conflict) "CONFLICT" else "", item.slot, item.current) { selected = item }
+                val updated = if (item.updatedAt > 0) "Updated: " + java.text.SimpleDateFormat("dd MMM yyyy · HH:mm", java.util.Locale.ENGLISH).format(java.util.Date(item.updatedAt)) else "Update date unavailable"
+                rows += JourneyRow(item.id, item.name, detail + if (item.incompatible > 0) " · Some states use another core" else "", if (item.current) "IN USE" else if (item.conflict) "CONFLICT" else "", item.slot, item.current, updated + if (item.pendingSync) " · Pending sync" else "") { selected = item }
             }
             rows += JourneyRow("empty", "Empty slot", "Start fresh without changing your other slots", "NEW GAME", (slots.maxOfOrNull { it.slot } ?: 0) + 1) { action = "new"; name = "" }
             row("pending", "Apply pending changes", "Load any queued switch or newer progress.") { warnThen { engine.applyPending(g.identity) } }
@@ -182,7 +191,9 @@ internal fun JourneysScreen(store: Store, onBack: () -> Unit) {
         } else if (action != null) {
             OutlinedTextField(name, { name = it.take(80) }, Modifier.fillMaxWidth().onFocusChanged { MainActivity.typing = it.isFocused }, singleLine = true, label = { Text(if (action == "rename") "Slot name" else "Slot name (optional)") },
                 keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done), keyboardActions = KeyboardActions(onDone = { keyboard?.hide(); focusManager.clearFocus(); MainActivity.typing = false; resultsFocus++ }))
-        } else if (target == null) Text("Choose a slot to continue. Each slot keeps all of this game's saves.", color = Dim, fontSize = 14.sp)
+        } else if (target == null) {
+            slots.firstOrNull { it.current }?.let { Text("IN USE ON THIS CONSOLE · Slot ${it.slot} · ${it.name}", color = SlotGreen, fontSize = 15.sp, fontWeight = FontWeight.Bold) }
+        }
         if (busy) LinearProgressIndicator(Modifier.fillMaxWidth())
         if (message.isNotBlank()) Text(message, color = if (failed) MaterialTheme.colorScheme.error else Accent, fontSize = 14.sp, maxLines = 3)
         if (!busy && rows.isEmpty()) Text(if (games.isEmpty()) "No supported games yet. Run Sync now to update your local inventory." else "No matches. Try another name.", color = Dim)
@@ -203,11 +214,12 @@ private fun JourneyPages(rows: List<JourneyRow>, route: String, pages: MutableMa
     val keyboard = LocalSoftwareKeyboardController.current
     val focus = remember { FocusRequester() }
     BoxWithConstraints(modifier) {
-        val size = (maxHeight.value.minus(46) / if (rows.any { it.slot != null }) 92 else 68).toInt().coerceAtLeast(1)
+        val size = (maxHeight.value.minus(46) / if (rows.any { it.slot != null }) 114 else 68).toInt().coerceAtLeast(1)
         val total = ((rows.size - 1).coerceAtLeast(0) / size) + 1
-        val page = (pages[route] ?: 0).coerceIn(0, total - 1)
+        val preferred = rows.indexOfFirst { it.key == cursors[route] }.takeIf { it >= 0 } ?: rows.indexOfFirst { it.active }.coerceAtLeast(0)
+        val page = (pages[route] ?: (preferred / size)).coerceIn(0, total - 1)
         val visible = rows.drop(page * size).take(size)
-        val cursor = cursors[route]?.takeIf { key -> visible.any { it.key == key } } ?: visible.firstOrNull()?.key
+        val cursor = cursors[route]?.takeIf { key -> visible.any { it.key == key } } ?: visible.firstOrNull { it.active }?.key ?: visible.firstOrNull()?.key
         var focusPage by remember { mutableIntStateOf(0) }
         fun move(direction: Int) { if (!busy) {
             val next = LocalLibrary.page(page, direction, rows.size, size)
@@ -228,16 +240,18 @@ private fun JourneyPages(rows: List<JourneyRow>, route: String, pages: MutableMa
                 items(visible, key = { it.key }) { row ->
                     var focused by remember { mutableStateOf(false) }
                     Row(Modifier.fillMaxWidth().then(if (row.key == cursor) Modifier.focusRequester(focus) else Modifier)
-                        .onFocusChanged { focused = it.isFocused; if (it.isFocused) cursors[route] = row.key }.background(if (row.active) Accent.copy(alpha = .14f) else Color(0xFF1B202C), RoundedCornerShape(10.dp))
-                        .border(if (focused) 2.dp else 1.dp, if (focused) Accent else if (row.active) Accent.copy(alpha = .6f) else Color(0xFF454D5E), RoundedCornerShape(10.dp))
+                        .onFocusChanged { focused = it.isFocused; if (it.isFocused) cursors[route] = row.key }.background(if (row.active) Color(0xFF123C29) else Color(0xFF1B202C), RoundedCornerShape(10.dp))
+                        .border(if (focused) 3.dp else if (row.active) 2.dp else 1.dp, if (row.active) SlotGreen else if (focused) Accent else Color(0xFF454D5E), RoundedCornerShape(10.dp))
                         .clickable(enabled = !busy, onClick = row.action).padding(12.dp), horizontalArrangement = Arrangement.spacedBy(14.dp)) {
-                        row.slot?.let { Text(it.toString().padStart(2, '0'), fontSize = 28.sp, fontWeight = FontWeight.Bold, color = Accent) }
+                        row.slot?.let { Text(it.toString().padStart(2, '0'), fontSize = 28.sp, fontWeight = FontWeight.Bold, color = if (row.active) SlotGreen else Accent) }
                         Column(Modifier.weight(1f)) {
                             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                                 Text(row.title, modifier = Modifier.weight(1f), fontSize = 18.sp, fontWeight = FontWeight.Medium, maxLines = 1)
-                                if (row.badge.isNotBlank()) Text(row.badge, color = Accent, fontSize = 12.sp)
+                                if (row.badge.isNotBlank()) Text(row.badge, color = if (row.active) Color(0xFF082315) else Accent, fontSize = 13.sp, fontWeight = FontWeight.Bold,
+                                    modifier = if (row.active) Modifier.background(SlotGreen, RoundedCornerShape(4.dp)).padding(horizontal = 7.dp, vertical = 3.dp) else Modifier)
                             }
                             if (row.detail.isNotBlank()) Text(row.detail, color = Color(0xFFB7BECD), fontSize = 13.sp, maxLines = 2)
+                            if (row.updated.isNotBlank()) Text(row.updated, color = if (row.active) Color(0xFFB7F5CF) else Color(0xFFB7BECD), fontSize = 12.sp, maxLines = 2)
                         }
                     }
                 }

@@ -92,6 +92,39 @@ class SearchUiTests(unittest.TestCase):
         self.assertEqual(notices[0][1], ["OK", "Cancel"])
         self.assertIn("If the emulator is open", notices[0][2]["info"][0])
 
+    def test_switch_returns_to_slots_without_success_confirmation(self):
+        current = ["first"]
+        menus = []
+        commands = []
+        encode = lambda value: base64.b64encode(value.encode()).decode()
+        def client(*args, **kwargs):
+            commands.append(args)
+            if args[1] == "switch":
+                current[0] = args[3]
+                return [["Current slot: Challenge · waiting to sync"]]
+            return [["active", current[0], "1"], ["journey", "first", "1", encode("Main"), "2026-10-15T12:00:00Z"],
+                    ["journey", "second", "1", encode("Challenge"), "2026-10-15T13:00:00Z"],
+                    ["slot", "first", "1"], ["slot", "second", "2"], ["cached", "first"], ["cached", "second"],
+                    ["pending-sync", "second"]]
+        def menu(title, labels, **kwargs):
+            menus.append((title, kwargs))
+            if "slots" in kwargs:
+                if current[0] == "first":
+                    return 1
+                self.assertEqual(kwargs["start"], 1)
+                self.assertEqual(kwargs["slots"][1][2], "IN USE")
+                self.assertIn("Updated:", kwargs["slots"][1][3])
+                self.assertIn("Pending sync", kwargs["slots"][1][1])
+                return None
+            return 0
+        self.app.client = client
+        self.app.menu = menu
+        self.app.journey_close_notice = lambda: True
+        self.app.message = lambda *args, **kwargs: self.fail("Success must not open a blocking message")
+        self.app.journey_slots("identity", "Power Quest", lambda value: base64.b64decode(value).decode())
+        self.assertEqual(commands[-1], ("journeys", "list", "identity", "cached"))
+        self.assertEqual(len(menus), 3)
+
 
 if __name__ == "__main__":
     unittest.main()

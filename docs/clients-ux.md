@@ -44,6 +44,10 @@ Items:
    Local results are computed once per accepted query and cached, not filtered/sorted per frame.
    The server catalog also waits for explicit acceptance. Back preserves the applied search and page.
    Slots have a persistent local number, name, save count and an **IN USE** marker for this console.
+   The active slot keeps a green background, border and high-contrast badge even when another row has focus.
+   Show its last update date; use the local checkpoint time while dirty, otherwise the last server update.
+   A successful switch returns directly to the slot list and focuses the active slot. Pending synchronization
+   is a non-blocking status on the slot, never an acknowledgement screen. Errors may interrupt the flow.
    **Empty slot** starts fresh. Copy, rename and conflict actions belong inside a slot's details.
    Slot numbers are display labels on a console; synchronized identity is still the Journey UUID, not the number.
 5. **Browse server games**: the server's games by system or by search, ticked one by one or a whole system, then a

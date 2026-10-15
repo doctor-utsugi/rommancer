@@ -1,5 +1,6 @@
 import re
 import unicodedata
+from datetime import datetime
 
 SYSTEM_NAMES = {
     "gba": "Game Boy Advance", "gb": "Game Boy", "gbc": "Game Boy Color", "nes": "NES / Famicom",
@@ -13,6 +14,14 @@ SYSTEM_NAMES = {
 
 def system_name(slug):
     return SYSTEM_NAMES.get(slug, slug.upper())
+
+
+def slot_updated(value):
+    try:
+        date = datetime.fromtimestamp(int(value)).astimezone() if value.isdigit() else datetime.fromisoformat(value.replace("Z", "+00:00")).astimezone()
+        return "Updated: " + date.strftime("%d %b %Y · %H:%M")
+    except (ValueError, OverflowError, OSError):
+        return "Update date unavailable"
 
 
 def normalize(text):

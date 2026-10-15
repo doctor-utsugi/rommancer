@@ -6,7 +6,7 @@ status and sign out. Syncing itself is done by rommancer-sync.sh next to this fi
 """
 import functools
 import base64
-from local_library import LocalSearch, system_name, page_target, page_bindings
+from local_library import LocalSearch, system_name, page_target, page_bindings, slot_updated
 import json
 import math
 import os
@@ -398,6 +398,8 @@ BG = (18, 20, 28)
 FG = (235, 235, 240)
 DIM = (140, 145, 160)
 ACCENT = (110, 170, 255)
+SLOT_GREEN = (112, 229, 160)
+SLOT_ACTIVE_BG = (18, 60, 41)
 BAD = (255, 120, 120)
 WARN = (255, 190, 90)
 # The browse screens' bars, the search field, the keyboard's keys
@@ -894,16 +896,24 @@ class App:
                 pygame.draw.polygon(s.surf, DIM, [(x - 8, top_y + tri), (x - 8 - tri, top_y + 3 * tri), (x - 8 + tri, top_y + 3 * tri)])
             for i in range(first, min(n, first + fit)):
                 if slots:
-                    number, detail, badge = slots[i]
+                    number, detail, badge = slots[i][:3]
+                    updated = slots[i][3] if len(slots[i]) > 3 else ""
+                    active = badge == "IN USE"
                     rect = pygame.Rect(x, y, width, step - 8)
-                    pygame.draw.rect(s.surf, mix(BG, ACCENT, .15) if badge == "IN USE" else BAR, rect, border_radius=10)
-                    pygame.draw.rect(s.surf, ACCENT if i == sel else DIM, rect, 2 if i == sel else 1, border_radius=10)
-                    s.text(str(number).zfill(2), (x + 14, y + 12), s.font, ACCENT)
+                    pygame.draw.rect(s.surf, SLOT_ACTIVE_BG if active else BAR, rect, border_radius=10)
+                    pygame.draw.rect(s.surf, SLOT_GREEN if active else ACCENT if i == sel else DIM, rect, 3 if i == sel else 2 if active else 1, border_radius=10)
+                    s.text(str(number).zfill(2), (x + 14, y + 12), s.font, SLOT_GREEN if active else ACCENT)
                     left = x + s.font.size("00")[0] + 30
-                    s.text(s.clip(labels[i], s.font, width - (left - x) - 20), (left, y + 8), s.font, FG)
+                    badge_width = s.small.size(badge)[0] + 16 if badge else 0
+                    s.text(s.clip(labels[i], s.font, width - (left - x) - 28 - badge_width), (left, y + 8), s.font, FG)
                     s.text(s.clip(detail, s.small, width - (left - x) - 20), (left, y + 10 + s.font.get_linesize()), s.small, DIM)
+                    if updated:
+                        s.text(s.clip(updated, s.small, width - (left - x) - 20), (left, y + 10 + s.font.get_linesize() + s.small.get_linesize()), s.small, (183, 245, 207) if active else DIM)
                     if badge:
-                        s.text(badge, (left, y + 10 + s.font.get_linesize() + s.small.get_linesize()), s.small, ACCENT)
+                        badge_rect = pygame.Rect(rect.right - badge_width - 10, y + 8, badge_width, s.small.get_linesize() + 4)
+                        if active:
+                            pygame.draw.rect(s.surf, SLOT_GREEN, badge_rect, border_radius=4)
+                        s.text(badge, (badge_rect.x + 8, badge_rect.y + 2), s.small, (8, 35, 21) if active else ACCENT)
                     y += step
                     continue
                 color = ACCENT if i == sel else FG
@@ -2232,8 +2242,11 @@ class App:
 
     def journey_slots(self, identity, title, decode):
         cursor = 0
+        focus_active = True
+        cached_only = False
         while True:
-            rows = self.in_thread(lambda: self.client("journeys", "list", identity, timeout=180), "Preparing offline copies")
+            rows = self.in_thread(lambda: self.client("journeys", "list", identity, *( ["cached"] if cached_only else [] ), timeout=180), "Loading save slots")
+            cached_only = False
             if rows is None:
                 self.message("Journeys need attention. Check Status for details.", BAD)
                 return
@@ -2244,11 +2257,20 @@ class App:
             incompatible = {p[1] for p in rows if p[0] == "incompatible"}
             numbers = {p[1]: int(p[2]) for p in rows if len(p) >= 3 and p[0] == "slot"}
             counts = {p[1]: int(p[2]) for p in rows if len(p) >= 3 and p[0] == "content"}
+            updated = {p[1]: slot_updated(p[2]) for p in rows if len(p) >= 3 and p[0] == "modified"}
+            pending_sync = {p[1] for p in rows if len(p) >= 2 and p[0] == "pending-sync"}
             slots.sort(key=lambda p: numbers.get(p[1], 999999))
             labels = [decode(p[3]) for p in slots] + ["Empty slot"]
-            cards = [(numbers.get(p[1], i + 1), "Two versions · Needs attention" if p[1] in conflicts else "Download required" if p[1] not in cached else f"{counts.get(p[1], 0)} saves and states · Available offline", "IN USE" if p[1] == active else "OTHER-CORE STATES KEPT" if p[1] in incompatible else "") for i, p in enumerate(slots)]
-            cards.append((max(numbers.values(), default=len(slots)) + 1, "Start fresh without changing your other slots", "NEW GAME"))
-            at = self.menu(title + " · Save slots", labels, info=["Choose a slot to continue. Each slot keeps all saves."], start=cursor, wide=True, slots=cards)
+            cards = [(numbers.get(p[1], i + 1), "Two versions · Needs attention" if p[1] in conflicts else "Download required" if p[1] not in cached else f"{counts.get(p[1], 0)} saves and states" + (" · Pending sync" if p[1] in pending_sync else " · Available offline"), "IN USE" if p[1] == active else "OTHER CORE" if p[1] in incompatible else "", updated.get(p[1], slot_updated(p[4] if len(p) > 4 else ""))) for i, p in enumerate(slots)]
+            cards.append((max(numbers.values(), default=len(slots)) + 1, "Start fresh without changing your other slots", "NEW GAME", ""))
+            active_index = next((i for i, slot in enumerate(slots) if slot[1] == active), None)
+            if focus_active and active_index is not None:
+                cursor = active_index
+            focus_active = False
+            info = [(None, f"IN USE · Slot {numbers.get(active, active_index + 1)} · {decode(slots[active_index][3])}", SLOT_GREEN)] if active_index is not None else ["Choose a slot to continue."]
+            if any(p[0] == "pending" for p in rows):
+                info.append((None, "Slot change queued. Close the emulator to continue.", WARN))
+            at = self.menu(title + " · Save slots", labels, info=info, start=cursor, wide=True, slots=cards)
             if at is None:
                 return
             cursor = at
@@ -2293,7 +2315,11 @@ class App:
             if not self.journey_close_notice():
                 continue
             result = self.in_thread(lambda: self.client("journeys", *args, timeout=180), "Preparing save slot")
-            self.message("\n".join(" · ".join(p) for p in result) if result else "Could not complete the change. Saved copies are kept.")
+            if result is None:
+                self.message("Could not complete the change. Saved copies are kept.", BAD)
+            else:
+                focus_active = True
+                cached_only = True
 
     def run(self):
         # Opened while the daemon downloads the lists' games: their progress first (B stops them)
