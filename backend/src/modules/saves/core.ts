@@ -140,6 +140,38 @@ export type Decision =
 
 export interface DeviceFileInfo {
   sha1: string;
+  /** The file itself, when the device sent it: lets an empty or padded save be told from a different one */
+  buf?: Buffer;
+}
+
+/** A save that holds no data: every byte erased (0x00) or never written (0xFF) */
+const blank = (b: Buffer) => b.every((x) => x === 0 || x === 0xff);
+
+/** One save padded to another size (8 KiB of data in a 128 KiB file): the longer one only adds blank bytes */
+function samePadded(a: Buffer, b: Buffer) {
+  const [short, long] = a.length <= b.length ? [a, b] : [b, a];
+  return long.subarray(0, short.length).equals(short) && blank(long.subarray(short.length));
+}
+
+/** Whether the device's file is the server's current version (converted for it, or only padded otherwise) */
+async function holdsCurrent(save: Save & { emulator: Emulator }, emu: Emulator, deviceFile: DeviceFileInfo) {
+  if (!save.currentVersionId) return false;
+  const content = await contentFor(save, save.currentVersionId, emu).catch(() => null);
+  if (!content) return false;
+  return saveHash(content, emu.saveFormat) === deviceFile.sha1 || (!!deviceFile.buf && save.kind === 'SAVE' && samePadded(content, deviceFile.buf));
+}
+
+/**
+ * Closes the device's open conflict on a save once the device holds the server's version (picked on the device,
+ * or copied over by hand); true when there is no open conflict left
+ */
+export async function settleHeldConflict(save: Save & { emulator: Emulator }, device: Device, emu: Emulator, deviceFile: DeviceFileInfo) {
+  const open = await prisma.saveConflict.findFirst({ where: { saveId: save.id, deviceId: device.id, resolvedAt: null } });
+  if (!open) return true;
+  if (!(await holdsCurrent(save, emu, deviceFile))) return false;
+  await prisma.saveConflict.update({ where: { id: open.id }, data: { resolvedAt: new Date(), resolution: 'server' } });
+  await setBase(save.id, device.id, save.currentVersionId, deviceFile.sha1);
+  return true;
 }
 
 /** Decides what to do with a save on a device. */
@@ -149,7 +181,7 @@ export const saveHash = (buf: Buffer, format: string) => (format === 'ctrdir' ? 
 export async function decide(save: (Save & { emulator: Emulator }) | null, device: Device, emu: Emulator, deviceFile: DeviceFileInfo | null): Promise<Decision> {
   if (!save) return deviceFile ? { action: 'upload' } : { action: 'none' };
   const open = await prisma.saveConflict.findFirst({ where: { saveId: save.id, deviceId: device.id, resolvedAt: null } });
-  if (open) return { action: 'none' };
+  if (open) return deviceFile && (await settleHeldConflict(save, device, emu, deviceFile)) ? { action: 'adopt' } : { action: 'none' };
   const base = await prisma.saveDeviceState.findUnique({ where: { saveId_deviceId: { saveId: save.id, deviceId: device.id } } });
   const current = save.currentVersionId;
   if (!deviceFile) return current ? { action: 'download', versionId: current } : { action: 'none' };
@@ -162,6 +194,12 @@ export async function decide(save: (Save & { emulator: Emulator }) | null, devic
   // Both sides "changed": if the content already matches, only the base is recorded
   const serverContent = await contentFor(save, current, emu).catch(() => null);
   if (serverContent && saveHash(serverContent, emu.saveFormat) === deviceFile.sha1) return { action: 'adopt' };
+  if (serverContent && deviceFile.buf && save.kind === 'SAVE') {
+    if (samePadded(serverContent, deviceFile.buf)) return { action: 'adopt' };
+    // A save never written to gives way to the other side: no progress is lost
+    if (blank(deviceFile.buf)) return { action: 'download', versionId: current };
+    if (blank(serverContent)) return { action: 'upload' };
+  }
   return { action: 'conflict' };
 }
 
@@ -195,7 +233,7 @@ export async function receiveFromDevice(
   // A save folder is kept as the canonical tar of its files, whichever client packed it
   if (emu.saveFormat === 'ctrdir') buf = readPspFolder(buf).tar;
   const deviceSha1 = saveHash(buf, emu.saveFormat);
-  const d = await decide(save, device, emu, { sha1: deviceSha1 });
+  const d = await decide(save, device, emu, { sha1: deviceSha1, buf });
   // Stored in the logical save's format (converted if it comes from another compatible emulator)
   const toSaveFormat = (target: Save & { emulator: Emulator }) =>
     kind === 'STATE' || target.emulator.saveFormat === emu.saveFormat ? buf : convertSave(buf, emu.saveFormat as SaveFormat, target.emulator.saveFormat as SaveFormat);
@@ -220,6 +258,8 @@ export async function receiveFromDevice(
     await setBase(save.id, device.id, base?.versionId ?? null, deviceSha1);
     return { action: 'conflict' as const, saveId: save.id, versionId: r.version.id };
   }
+  // The device's file holds nothing: its base is left behind the server's version, so the next sync downloads it
+  if (d.action === 'download' && save && blank(buf)) await setBase(save.id, device.id, null, deviceSha1);
   return { action: d.action === 'download' ? ('server-newer' as const) : ('unchanged' as const), saveId: save?.id ?? null, versionId: null };
 }
 

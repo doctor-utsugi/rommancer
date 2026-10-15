@@ -197,7 +197,7 @@ export async function syncDeviceSaves(deviceId: number, direction: 'pull' | 'pus
         const dest = path.posix.join(s.kind === 'SAVE' ? dirs.saves : dirs.states, deviceFileName(base, target, s.kind, s.slot, minui));
         const exists = await sink.stat(dest);
         const deviceBuf = exists ? await sink.getBuffer(dest) : null;
-        const d = await decide(logical, device, target, deviceBuf ? { sha1: sha1(deviceBuf) } : null);
+        const d = await decide(logical, device, target, deviceBuf ? { sha1: sha1(deviceBuf), buf: deviceBuf } : null);
         if (d.action === 'download') {
           let content: Buffer;
           try {

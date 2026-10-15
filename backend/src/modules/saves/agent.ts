@@ -11,7 +11,7 @@ import { sha256 } from '../../lib/crypto.js';
 import { HttpError, badRequest } from '../../lib/http.js';
 import { copiesSystem, folderFor, layoutOf, systemFilterOf, type DeviceLayout } from '../devices/sink.js';
 import { raDefaults } from '../../seed/data.js';
-import { contentFor, decide, deviceFileName, deviceThumbPath, findLogicalSave, receiveFromDevice, saveDirs, saveHash, setBase, sha1 } from './core.js';
+import { contentFor, decide, deviceFileName, deviceThumbPath, findLogicalSave, receiveFromDevice, saveDirs, saveHash, setBase, settleHeldConflict, sha1 } from './core.js';
 import { THUMB_MAX, identifyRom, parseSaveFile, readThumb, saveHistory, storeThumb, looseRomFile, romForSave } from './service.js';
 import fs from 'node:fs';
 import crypto from 'node:crypto';
@@ -1617,7 +1617,7 @@ agentRouter.post('/start', express.text({ limit: '1mb', type: '*/*' }), async (r
     const save = await findLogicalSave(device.userId, ctx.emu, f.kind, f.slot, ctx.baseName, ident?.gameId ?? null, false, device.id);
     const deviceSha1 = present.get(f.path);
     const open = save && deviceSha1 ? await prisma.saveConflict.findFirst({ where: { saveId: save.id, deviceId: device.id, resolvedAt: null } }) : null;
-    if (open) {
+    if (open && !(await settleHeldConflict(save!, device, ctx.emu, { sha1: deviceSha1! }))) {
       out.push(await conflictLine(open));
       continue;
     }
