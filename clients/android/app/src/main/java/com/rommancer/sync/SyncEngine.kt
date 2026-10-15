@@ -196,6 +196,20 @@ class SyncEngine(private val context: Context, private val store: Store, private
         return roms.any { system -> system.listFiles()?.any { it.isDirectory && it.list()?.any { n -> n.endsWith(".srm") || n.contains(".state") } == true } == true }
     }
 
+    /**
+     * Whether RetroArch keeps saves and states in a folder per core ("saves,states"), told by where they are: with a
+     * flat layout Rommancer never writes in those folders. Its retroarch.cfg sits in Android/data, closed to this app
+     */
+    private fun retroArchSorted(): String? {
+        fun sorted(dir: String, isSave: (String) -> Boolean) = File(root, dir).listFiles()?.any { sub ->
+            sub.isDirectory && !sub.name.startsWith(".") && sub.list()?.any(isSave) == true
+        } == true
+        return listOfNotNull(
+            "saves".takeIf { sorted("RetroArch/saves") { it.endsWith(".srm") } },
+            "states".takeIf { sorted("RetroArch/states") { it.contains(".state") } },
+        ).joinToString(",").ifEmpty { null }
+    }
+
     // The screen, the background worker and the save watcher may all ask at once: one pass at a time
     fun sync(): Summary = locked { syncOnce() }
 
@@ -207,7 +221,7 @@ class SyncEngine(private val context: Context, private val store: Store, private
         // The server keeps where the roms are, as found here, and which version of the app this is
         val version = runCatching { context.packageManager.getPackageInfo(context.packageName, 0).versionName }.getOrNull()
         val chosen = runCatching { api.text("/agent/roms-folder", "POST", romsFolderReport().toByteArray()) }.getOrNull()
-        val roots = api.text("/agent/roots", headers = listOfNotNull(version?.let { "X-Client-Version" to it }).toMap()).lines().mapNotNull { l -> l.split('\t', limit = 2).takeIf { it.size == 2 } }
+        val roots = api.text("/agent/roots", headers = listOfNotNull(version?.let { "X-Client-Version" to it }, retroArchSorted()?.let { "X-RetroArch-Sorted" to it }).toMap()).lines().mapNotNull { l -> l.split('\t', limit = 2).takeIf { it.size == 2 } }
         val romsDir = roots.firstOrNull { it[0] == "roms" }?.get(1)?.let(::File)
         val saveDirs = roots.filter { it[0] == "saves" }.map { File(it[1]) }
         val exts = roots.firstOrNull { it[0] == "exts" }?.get(1)?.split(' ')?.filter { it.isNotBlank() }.orEmpty()

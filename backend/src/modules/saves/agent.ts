@@ -1462,11 +1462,33 @@ agentRouter.post('/roms-folder', express.text({ limit: '1mb', type: '*/*' }), as
   res.type('text/plain').send(chosen ? `roms\t${chosen}\n` : '');
 });
 
+/**
+ * The Android app finds RetroArch keeping its saves or states in a folder per core (header "X-RetroArch-Sorted:
+ * saves,states"): a flat layout becomes "core". What the device was synced against is forgotten, so a save that
+ * differs from the server's is a conflict to settle, never an upload over it
+ */
+async function followRetroArch<D extends Awaited<ReturnType<typeof deviceFromToken>>>(device: D, sorted: string): Promise<D> {
+  const kinds = new Set(sorted.split(',').map((k) => k.trim()));
+  const layout = layoutOf(device);
+  const change: Record<string, string> = {};
+  if (kinds.has('saves') && layout.savesLayout === 'flat') change.savesLayout = 'core';
+  if (kinds.has('states') && layout.statesLayout === 'flat') change.statesLayout = 'core';
+  if (!Object.keys(change).length) return device;
+  const overrides = { ...((device.overrides ?? {}) as Record<string, unknown>), ...change };
+  await prisma.$transaction([
+    prisma.device.update({ where: { id: device.id }, data: { overrides: overrides as Prisma.InputJsonValue } }),
+    prisma.saveDeviceState.deleteMany({ where: { deviceId: device.id } }),
+  ]);
+  return { ...device, overrides };
+}
+
 agentRouter.get('/roots', async (req, res) => {
-  const device = await deviceFromToken(req);
+  let device = await deviceFromToken(req);
   // Clients that send no log say their version here
   const version = (req.header('x-client-version') ?? '').slice(0, 32);
   if (version && version !== device.clientVersion) await prisma.device.update({ where: { id: device.id }, data: { clientVersion: version, clientUpdatedAt: new Date() } });
+  const sorted = req.header('x-retroarch-sorted');
+  if (sorted) device = await followRetroArch(device, sorted);
   const layout = layoutOf(device);
   const abs = (p: string) => path.posix.join(device.rootPath, p);
   // Saves and states each next to the roms or in their own folder
