@@ -96,4 +96,11 @@ test('saves: empty and padded copies are no conflict; a conflict settles once th
   const stale = await prisma.save.findFirstOrThrow({ where: { userId: a.userId, baseName: `${name} Stale` } });
   const kept = await prisma.saveVersion.findUniqueOrThrow({ where: { id: stale.currentVersionId! } });
   assert.equal(kept.sha1, sha1(other), 'the server keeps the newer save');
+
+  // Only the device changed, to the same save padded, or to an empty file: neither goes up
+  await receiveFromDevice(a, null, emu, 'SAVE', 0, `${name} Grow`, data);
+  assert.equal((await receiveFromDevice(a, null, emu, 'SAVE', 0, `${name} Grow`, padded)).action, 'unchanged');
+  assert.equal((await receiveFromDevice(a, null, emu, 'SAVE', 0, `${name} Grow`, Buffer.alloc(8192, 0xff))).action, 'server-newer');
+  const grow = await prisma.save.findFirstOrThrow({ where: { userId: a.userId, baseName: `${name} Grow` } });
+  assert.equal((await prisma.saveVersion.findUniqueOrThrow({ where: { id: grow.currentVersionId! } })).sha1, sha1(data));
 });

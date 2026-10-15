@@ -189,9 +189,17 @@ export async function decide(save: (Save & { emulator: Emulator }) | null, devic
   const deviceChanged = !base || deviceFile.sha1 !== base.deviceSha1;
   const serverChanged = !base || current !== base.versionId;
   if (!deviceChanged && !serverChanged) return { action: 'none' };
+  // Only this device changed, but its file is the server's save padded to its core's size, or holds nothing (a
+  // core that failed to load the save and wrote empty memory): neither is progress
+  if (deviceChanged && !serverChanged && deviceFile.buf && save.kind === 'SAVE') {
+    const serverContent = await contentFor(save, current, emu).catch(() => null);
+    if (serverContent && samePadded(serverContent, deviceFile.buf)) return { action: 'adopt' };
+    if (serverContent && blank(deviceFile.buf) && !blank(serverContent)) return { action: 'download', versionId: current };
+  }
   // A file back at a version the server already moved past is a stale copy (a console off since, an emulator
-  // writing the save it had in memory), not new progress: it must not take every other device back with it
-  if (deviceChanged && !serverChanged && base && save.emulator.saveFormat === emu.saveFormat) {
+  // writing the save it had in memory), not new progress: it must not take every other device back with it.
+  // A 3DS save folder's hash is its manifest's, never a stored version's
+  if (deviceChanged && !serverChanged && base && save.emulator.saveFormat === emu.saveFormat && emu.saveFormat !== 'ctrdir') {
     const old = await prisma.saveVersion.findFirst({ where: { saveId: save.id, sha1: deviceFile.sha1, id: { not: current } }, select: { id: true } });
     if (old) return { action: 'conflict' };
   }

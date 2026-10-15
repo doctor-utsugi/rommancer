@@ -462,10 +462,12 @@ const SHA1 = /^[0-9a-f]{40}$/;
 async function gameByHash(hashes: string[], systemId: number | undefined): Promise<{ gameId: number; romId: number | null } | null> {
   const list = hashes.filter((h) => SHA1.test(h));
   if (!list.length) return null;
-  const part = await prisma.romPart.findFirst({
-    where: { OR: [{ sha1: { in: list } }, { headerlessSha1: { in: list } }], ...(systemId ? { rom: { game: { systemId } } } : {}) },
-    select: { rom: { select: { id: true, gameId: true } } },
-  });
+  const byContent = { OR: [{ sha1: { in: list } }, { headerlessSha1: { in: list } }] };
+  const select = { rom: { select: { id: true, gameId: true } } };
+  // The folder's system first; the same content is that game in any folder (see gameByHashIn)
+  const part =
+    (systemId ? await prisma.romPart.findFirst({ where: { ...byContent, rom: { game: { systemId } } }, select }) : null) ??
+    (await prisma.romPart.findFirst({ where: byContent, select }));
   if (part) return { gameId: part.rom.gameId, romId: part.rom.id };
   const hack = await prisma.romHack.findFirst({ where: { OR: [{ sha1: { in: list } }, { headerlessSha1: { in: list } }] }, select: { gameId: true } });
   return hack ? { gameId: hack.gameId, romId: null } : null;
