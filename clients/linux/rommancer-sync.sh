@@ -25,7 +25,7 @@
 #                                   so any computer with this script can sync it. Without a command: sync.
 set -u
 # Raised with every change of this client (any change reaches devices: they update by content, not by this)
-CLIENT_VERSION=1.73.0
+CLIENT_VERSION=1.74.0
 # A clock before this date is surely wrong (no battery-backed clock); kept apart from the version, which may run ahead
 CLOCK_MIN=20261001
 # Onion keeps curl (with TLS) and friends outside the default PATH
@@ -62,8 +62,6 @@ take_lock() {
 drop_lock() { rm -rf "$LOCK" 2>/dev/null; }
 WATCH_SECONDS="${ROMMANCER_WATCH_SECONDS:-15}"
 FULL_SECONDS="${ROMMANCER_FULL_SECONDS:-300}"
-# During a game its save goes up at most this often (games that rewrite their save all the time); the last one when it ends
-GAME_UP_SECONDS="${ROMMANCER_GAME_UP_SECONDS:-300}"
 # Roms up to this size are hashed (once, cached) so games are recognised whatever their file name
 HASH_MAX="${ROMMANCER_HASH_MAX:-67108864}"
 TAB="$(printf '\t')"
@@ -94,8 +92,10 @@ ALLOW_SSH=1
 # GAME_SYNC=1 fetches a game's saves right before it starts; GAME_ASK=1 then settles its conflicts on screen
 GAME_SYNC=1
 GAME_ASK=1
-# GAME_MSG=1 says on the game's screen, as it starts, whether its save is the server's latest
+# GAME_MSG=1 says on the game's screen, as it starts, whether its save is the server's latest; GAME_UP_MSG=1 also
+# says so each time a save made in the game reaches the server
 GAME_MSG=1
+GAME_UP_MSG=0
 # PRUNE_ROMS=1 deletes roms that are in none of the lists the console has (cmd_prune). The console owns it:
 # a change made here or an answer to one made in the web app leaves $STATE/prune-set until the server hears it
 PRUNE_ROMS=0
@@ -835,6 +835,7 @@ state_text() {
     start-got) t s_start_got ;;
     start-offline) t s_start_offline "$off_at" ;;
     start-local) t s_start_local ;;
+    uploaded) t s_uploaded ;;
     offline) t s_offline "$off_at" ;;
     online) t s_online ;;
     conflicts) t s_conflicts "$n" ;;
@@ -1256,7 +1257,7 @@ cmd_daemon() {
     ended=0
     if game_running; then
       if [ "${in_game:-0}" != 1 ]; then
-        in_game=1; game_up=$(date +%s)
+        in_game=1
         how="$(cat "$WORK/game-start" 2>/dev/null)"; rm -f "$WORK/game-start"
         [ -f "$WORK/offline-since" ] && how=offline
         # Read now: the menus change it while the daemon runs
@@ -1277,18 +1278,13 @@ cmd_daemon() {
       sleep 3; since=$((since + 3))
       [ "$(fingerprint)" = "$fp" ] || fp="$last"
     fi
-    # A save changed during a game waits until the last one went up GAME_UP_SECONDS ago (or the game ends)
-    changed=0
-    if [ "$fp" != "$last" ]; then
-      changed=1
-      [ "${in_game:-0}" = 1 ] && [ $(( $(date +%s) - ${game_up:-0} )) -lt "$GAME_UP_SECONDS" ] && changed=0
-    fi
-    if [ "$changed" = 1 ] || [ "$since" -ge "$FULL_SECONDS" ] || [ "$nudged" = 1 ]; then
+    if [ "$fp" != "$last" ] || [ "$since" -ge "$FULL_SECONDS" ] || [ "$nudged" = 1 ]; then
       # Not "full": rom_line (inside cmd_sync) uses that name for a hash
       full_pass=0; [ "$since" -ge "$FULL_SECONDS" ] && full_pass=1
       if cmd_sync; then
         last="$(fingerprint)"; since=0
-        [ "${in_game:-0}" = 1 ] && game_up=$(date +%s)
+        # A save made during the game reached the server: said only when asked for
+        [ "${in_game:-0}" = 1 ] && [ "${ups:-0}" -gt 0 ] && grep -q "^GAME_UP_MSG=1" "$SETTINGS" 2>/dev/null && ra_msg "Rommancer: $(state_text uploaded)"
       fi
       [ "$full_pass" = 1 ] && lists_scan
       [ "$full_pass" = 1 ] && cmd_config > /dev/null 2>&1
@@ -2156,7 +2152,7 @@ t() {
       prune) echo "Delete games in no list: $2" ;; pruneclean) echo "Delete saves of deleted games ($2)" ;;
       settingsinfo) echo "Before each game: its saves are fetched, save conflicts asked about, and a note on its screen says whether the save is the latest. Request games: the server copies the ones it lacks. SSH: syncs even while the app is closed. No list: deletes the games that are in none." ;;
       gamesync) echo "Sync before each game: $2" ;; gameask) echo "Ask about conflicts before a game: $2" ;;
-      gamemsg) echo "Save note when a game starts: $2" ;;
+      gamemsg) echo "Save note when a game starts: $2" ;; gameupmsg) echo "Note on each save uploaded in a game: $2" ;;
       unlinkask) echo "Disconnect this console from $2? Its saves stay on it, but it stops syncing." ;; unlinkgo) echo "Disconnect" ;;
       restarttitle) echo "Restart to finish" ;; restartnow) echo "Restart now" ;; restarting) echo "Restarting..." ;;
       restartask) echo "Rommancer fetches each game's save right before the game starts. Onion turns this on after a restart." ;;
@@ -2213,7 +2209,7 @@ t() {
       f_conflicts) if [ "$2" = 1 ]; then echo "${WARN}1 save in conflict"; else echo "$WARN$2 saves in conflict"; fi ;;
       f_errors) if [ "$2" = 1 ]; then echo "${WARN}1 error"; else echo "$WARN$2 errors"; fi ;;
       s_start_ok) echo "saves up to date" ;; s_start_got) echo "latest save fetched from the server" ;;
-      s_start_local) echo "playing this console's save, not synced with the server" ;; s_start_offline) echo "offline since $2. This save may not be the latest" ;;
+      s_start_local) echo "playing this console's save, not synced with the server" ;; s_uploaded) echo "save stored on the server" ;; s_start_offline) echo "offline since $2. This save may not be the latest" ;;
       s_offline) echo "no connection to the server since $2. Saves stay on the console and go up when the network is back" ;;
       s_online) echo "connected again, saves synced" ;; s_conflicts) echo "$2 saves in conflict: choose which one counts in the app" ;;
       clockask) echo "This console does not set its own clock. Rommancer needs the right time to reach the server and date your saves. Set the time from the internet (and wait for it at power-on)?" ;;
@@ -2804,23 +2800,25 @@ setup_settings() {
     if [ "$GAME_SYNC" = 1 ]; then s_gsync="$(t yes)"; else s_gsync="$(t no)"; fi
     if [ "$GAME_ASK" = 1 ]; then s_gask="$(t yes)"; else s_gask="$(t no)"; fi
     if [ "$GAME_MSG" = 1 ]; then s_gmsg="$(t yes)"; else s_gmsg="$(t no)"; fi
+    if [ "$GAME_UP_MSG" = 1 ]; then s_gupmsg="$(t yes)"; else s_gupmsg="$(t no)"; fi
     if [ "$PRUNE_ROMS" = 1 ]; then s_prune="$(t yes)"; else s_prune="$(t no)"; fi
     s_clean="$(cat "$STATE/pruned" 2>/dev/null | grep -c .)"
     s_host="${SERVER#*://}"; s_host="${s_host%%/*}"
-    menu "$(t settings)" "$(t settingsinfo)" -s "$s_sel" "$(t gamesync "$s_gsync")" "$(t gameask "$s_gask")" "$(t gamemsg "$s_gmsg")" "$(t allowpull "$s_pull")" \
+    menu "$(t settings)" "$(t settingsinfo)" -s "$s_sel" "$(t gamesync "$s_gsync")" "$(t gameask "$s_gask")" "$(t gamemsg "$s_gmsg")" "$(t gameupmsg "$s_gupmsg")" "$(t allowpull "$s_pull")" \
       "$(t allowssh "$s_ssh")" "$(t prune "$s_prune")" "$(t pruneclean "$s_clean")" "$(t account "${USER_NAME:-?}" "$s_host")" "$(t unlink)..." "$(t back)"; rc=$?
     s_sel="$rc"
     case $rc in
       0) if [ "$GAME_SYNC" = 1 ]; then GAME_SYNC=0; else GAME_SYNC=1; fi; set_setting GAME_SYNC "$GAME_SYNC" ;;
       1) if [ "$GAME_ASK" = 1 ]; then GAME_ASK=0; else GAME_ASK=1; fi; set_setting GAME_ASK "$GAME_ASK" ;;
       2) if [ "$GAME_MSG" = 1 ]; then GAME_MSG=0; else GAME_MSG=1; fi; set_setting GAME_MSG "$GAME_MSG" ;;
-      3) if [ "$ALLOW_PULL" = 1 ]; then ALLOW_PULL=0; else ALLOW_PULL=1; fi; set_setting ALLOW_PULL "$ALLOW_PULL" ;;
-      4) if [ "$ALLOW_SSH" = 1 ]; then ALLOW_SSH=0; else ALLOW_SSH=1; fi; set_setting ALLOW_SSH "$ALLOW_SSH" ;;
-      5) if [ "$PRUNE_ROMS" = 1 ]; then v=0; else v=1; fi
+      3) if [ "$GAME_UP_MSG" = 1 ]; then GAME_UP_MSG=0; else GAME_UP_MSG=1; fi; set_setting GAME_UP_MSG "$GAME_UP_MSG" ;;
+      4) if [ "$ALLOW_PULL" = 1 ]; then ALLOW_PULL=0; else ALLOW_PULL=1; fi; set_setting ALLOW_PULL "$ALLOW_PULL" ;;
+      5) if [ "$ALLOW_SSH" = 1 ]; then ALLOW_SSH=0; else ALLOW_SSH=1; fi; set_setting ALLOW_SSH "$ALLOW_SSH" ;;
+      6) if [ "$PRUNE_ROMS" = 1 ]; then v=0; else v=1; fi
          panel "Rommancer Sync" "$(t syncing)"; sh "$DIR/$(basename "$0")" prune set "$v" > /dev/null 2>&1; panel_close; PRUNE_ROMS="$v" ;;
-      6) with_progress "$(t pruneclean "$s_clean")" sh "$DIR/$(basename "$0")" prune clean ;;
-      7) ;;
-      8) menu "$(t unlink)" "$(t unlinkask "$s_host")" "$(t unlinkgo)" "$(t cancel)"
+      7) with_progress "$(t pruneclean "$s_clean")" sh "$DIR/$(basename "$0")" prune clean ;;
+      8) ;;
+      9) menu "$(t unlink)" "$(t unlinkask "$s_host")" "$(t unlinkgo)" "$(t cancel)"
          if [ $? = 0 ]; then
            keep="$SERVER"; cmd_unlink > /dev/null; TOKEN=""; USER_NAME=""; SERVER="$keep"; PRUNE_ROMS=0
            return 1

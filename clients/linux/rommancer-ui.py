@@ -102,6 +102,8 @@ TEXTS = {
         "game_ask_note": "A save in conflict is settled on screen before the game starts.",
         "game_msg": "Save note when a game starts: {v}",
         "game_msg_note": "A short note on the game's screen: whether it plays the server's latest save.",
+        "game_up_msg": "Note on each save uploaded in a game: {v}",
+        "game_up_msg_note": "Every save made in a game goes up at once; this also says so on the game's screen.",
         "allow_pull": "The server may request games: {v}",
         "allow_pull_note": "It copies the games it lacks from this console.",
         "allow_ssh": "Server SSH access: {v}",
@@ -1226,8 +1228,8 @@ class App:
             pass
         return cfg
 
-    def toggle(self, key):
-        on = self.settings().get(key, "1") == "1"
+    def toggle(self, key, default="1"):
+        on = self.settings().get(key, default) == "1"
         subprocess.run(["sh", SCRIPT, "set", key, "0" if on else "1"], capture_output=True, timeout=30)
 
     # ---------- deleting games that are in no list ----------
@@ -1733,11 +1735,11 @@ class App:
 
             self.cleanable = (self.prune_state().get("cleanable") or ["0"])[0]
             items = [T["game_sync"].format(v=yn("GAME_SYNC", "1")), T["game_ask"].format(v=yn("GAME_ASK", "1")),
-                     T["game_msg"].format(v=yn("GAME_MSG", "1")), T["allow_pull"].format(v=yn("ALLOW_PULL", "1")), T["allow_ssh"].format(v=yn("ALLOW_SSH", "1")), T["prune"].format(v=yn("PRUNE_ROMS", "0")),
+                     T["game_msg"].format(v=yn("GAME_MSG", "1")), T["game_up_msg"].format(v=yn("GAME_UP_MSG", "0")), T["allow_pull"].format(v=yn("ALLOW_PULL", "1")), T["allow_ssh"].format(v=yn("ALLOW_SSH", "1")), T["prune"].format(v=yn("PRUNE_ROMS", "0")),
                      T["prune_clean"].format(n=self.cleanable), T["account"].format(user=self.cfg.get("USER") or "?", host=self.host()), T["logout"], T["back"]]
-            notes = [T["game_sync_note"], T["game_ask_note"], T["game_msg_note"], T["allow_pull_note"], T["allow_ssh_note"], T["prune_note"], T["prune_clean_note"], "", "", ""]
+            notes = [T["game_sync_note"], T["game_ask_note"], T["game_msg_note"], T["game_up_msg_note"], T["allow_pull_note"], T["allow_ssh_note"], T["prune_note"], T["prune_clean_note"], "", "", ""]
             pick = self.menu(T["settings"], items, notes=notes, start=sel, wide=True)
-            if pick is None or pick == 9:
+            if pick is None or pick == 10:
                 return
             sel = pick
             if pick == 0:
@@ -1747,14 +1749,16 @@ class App:
             elif pick == 2:
                 self.toggle("GAME_MSG")
             elif pick == 3:
-                self.toggle("ALLOW_PULL")
+                self.toggle("GAME_UP_MSG", "0")
             elif pick == 4:
-                self.toggle("ALLOW_SSH")
+                self.toggle("ALLOW_PULL")
             elif pick == 5:
-                self.prune_set(cfg.get("PRUNE_ROMS", "0") != "1")
+                self.toggle("ALLOW_SSH")
             elif pick == 6:
+                self.prune_set(cfg.get("PRUNE_ROMS", "0") != "1")
+            elif pick == 7:
                 self.run_with_progress("prune", T["prune_clean"].format(n=self.cleanable), "clean")
-            elif pick == 8 and self.logout():
+            elif pick == 9 and self.logout():
                 return
 
     def logout(self):

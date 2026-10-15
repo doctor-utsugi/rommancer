@@ -21,6 +21,9 @@ object Privileged {
 
     val ready get() = state() == State.READY
 
+    /** Through Shizuku: root managers announce each su call on screen, which is no way to check something often */
+    val quiet get() = shizuku()
+
     private fun shizuku() = runCatching { Shizuku.pingBinder() && !Shizuku.isPreV11() && Shizuku.checkSelfPermission() == PackageManager.PERMISSION_GRANTED }.getOrDefault(false)
 
     @Volatile private var rootKnown: Boolean? = null

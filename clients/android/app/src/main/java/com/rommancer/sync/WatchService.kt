@@ -11,7 +11,10 @@ import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.os.Build
 import android.os.FileObserver
+import android.os.Handler
 import android.os.IBinder
+import android.os.Looper
+import android.widget.Toast
 import java.io.File
 import java.util.concurrent.Executors
 import java.util.concurrent.ScheduledFuture
@@ -36,6 +39,7 @@ class WatchService : Service() {
         startInForeground()
         worker.execute { watch() }
         worker.scheduleWithFixedDelay({ poll() }, POLL_SECONDS, POLL_SECONDS, TimeUnit.SECONDS)
+        worker.scheduleWithFixedDelay({ runCatching { gameCheck() } }, GAME_SECONDS, GAME_SECONDS, TimeUnit.SECONDS)
         // New system folders appear when roms arrive: look for them now and then
         worker.scheduleWithFixedDelay({ watch() }, RESCAN_MINUTES, RESCAN_MINUTES, TimeUnit.MINUTES)
     }
@@ -83,8 +87,30 @@ class WatchService : Service() {
     @Synchronized
     private fun later() {
         pending?.cancel(false)
-        pending = worker.schedule({ runCatching { engine().sync() } }, QUIET_SECONDS, TimeUnit.SECONDS)
+        pending = worker.schedule({
+            runCatching {
+                val sum = engine().sync()
+                if (inGame && sum.savesUp + sum.statesUp > 0 && store.gameUpNote) note(getString(R.string.note_uploaded))
+            }
+        }, QUIET_SECONDS, TimeUnit.SECONDS)
     }
+
+    @Volatile private var inGame = false
+
+    /** An emulator came to the front: once, whether the game plays the server's latest save */
+    private fun gameCheck() {
+        val playing = Foreground.emulator(this) != null
+        if (playing && !inGame && store.gameNote) {
+            note(
+                if (offlineSince != 0L) getString(R.string.note_start_offline, java.text.DateFormat.getTimeInstance(java.text.DateFormat.SHORT).format(java.util.Date(offlineSince)))
+                else getString(R.string.note_start_ok),
+            )
+        }
+        inGame = playing
+    }
+
+    /** A short note over the game */
+    private fun note(text: String) = Handler(Looper.getMainLooper()).post { Toast.makeText(applicationContext, "Rommancer: $text", Toast.LENGTH_LONG).show() }
 
     private var fails = 0
     private var failFirst = 0L
@@ -159,6 +185,7 @@ class WatchService : Service() {
         private const val POLL_SECONDS = 15L
         private const val RESCAN_MINUTES = 10L
         private const val QUIET_SECONDS = 5L
+        private const val GAME_SECONDS = 5L
 
         /** Since when the server cannot be reached (ms, 0 when it can), for the app's header */
         @Volatile var offlineSince = 0L

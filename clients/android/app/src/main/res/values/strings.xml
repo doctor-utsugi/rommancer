@@ -117,6 +117,13 @@
     <!-- Settings -->
     <string name="set_watch">Upload saves when saved: %1$s</string>
     <string name="set_watch_sub">Each save goes to the server a few seconds after the game writes it.</string>
+    <string name="set_game_note">Save note when a game starts: %1$s</string>
+    <string name="set_game_note_sub">A short note over the game: whether it plays the server\'s latest save. Needs usage access (below) or Shizuku.</string>
+    <string name="set_game_up_note">Note on each save uploaded in a game: %1$s</string>
+    <string name="set_game_up_note_sub">Every save made in a game goes up at once; this also says so over the game.</string>
+    <string name="note_start_ok">saves up to date</string>
+    <string name="note_start_offline">offline since %1$s. This save may not be the latest</string>
+    <string name="note_uploaded">save stored on the server</string>
     <string name="set_pull">The server may request games: %1$s</string>
     <string name="set_pull_sub">Games the server lacks are sent from this device when it asks for them.</string>
     <string name="set_prune">Delete games in no list: %1$s</string>

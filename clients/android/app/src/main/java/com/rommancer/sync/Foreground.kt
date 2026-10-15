@@ -21,8 +21,8 @@ object Foreground {
         mode == AppOpsManager.MODE_ALLOWED
     }.getOrDefault(false)
 
-    /** The package in front; null when it cannot be told */
-    fun current(context: Context): String? {
+    /** The package in front; null when it cannot be told. QUIET: not through su (its manager says so on screen) */
+    fun current(context: Context, quiet: Boolean = false): String? {
         if (allowed(context)) {
             val usm = context.getSystemService(UsageStatsManager::class.java)
             val now = System.currentTimeMillis()
@@ -35,7 +35,7 @@ object Foreground {
             }
             return top
         }
-        return if (Privileged.ready) Privileged.foreground() else null
+        return if (Privileged.ready && (!quiet || Privileged.quiet)) Privileged.foreground() else null
     }
 
     fun playing(context: Context): Boolean {
@@ -43,11 +43,21 @@ object Foreground {
         return top !in frontends(context)
     }
 
+    /** The emulator in front, when the app in front is one (the game notes are not for browsers or settings) */
+    fun emulator(context: Context): String? = current(context, quiet = true)?.takeIf { pkg -> EMULATORS.any { it in pkg.lowercase() } }
+
     private fun frontends(context: Context): Set<String> {
         val home = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME)
         val launchers = context.packageManager.queryIntentActivities(home, 0).map { it.activityInfo.packageName }
         return (launchers + context.packageName + FRONTENDS).toSet()
     }
+
+    // Words in emulators' package names
+    private val EMULATORS = listOf(
+        "retroarch", "ppsspp", "duckstation", "aethersx2", "nethersx2", "armsx2", "dolphin", "azahar", "citra", "lime3ds",
+        "melonds", "drastic", "flycast", "redream", "mupen64", "lemuroid", "yabasanshiro", "vita3k", "yuzu", "eden_emulator",
+        "scummvm", "explusalpha", "mame", "epsxe", "fpse", "pizzaboy", "myboy", "mgba", "johnemulators", "sudachi", "citron",
+    )
 
     // Frontends and system screens a game is never played in
     private val FRONTENDS = listOf("org.es_de.frontend", "com.android.systemui", "com.android.settings", "com.android.packageinstaller", "com.google.android.packageinstaller")

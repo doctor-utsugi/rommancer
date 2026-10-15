@@ -700,6 +700,14 @@ private fun Linked(store: Store, ownScroll: Boolean, setOwnScroll: (Boolean) -> 
                 if (store.watch) WatchService.start(context) else WatchService.stop(context)
                 settingsTick++
             }
+            MenuItem(stringResource(R.string.set_game_note, if (store.gameNote) yes else no), sub = stringResource(R.string.set_game_note_sub)) {
+                store.gameNote = !store.gameNote
+                settingsTick++
+            }
+            MenuItem(stringResource(R.string.set_game_up_note, if (store.gameUpNote) yes else no), sub = stringResource(R.string.set_game_up_note_sub)) {
+                store.gameUpNote = !store.gameUpNote
+                settingsTick++
+            }
             MenuItem(stringResource(R.string.set_pull, if (store.allowPull) yes else no), sub = stringResource(R.string.set_pull_sub)) {
                 store.allowPull = !store.allowPull
                 settingsTick++

@@ -72,6 +72,16 @@ class Store(context: Context) {
         get() = prefs.getBoolean("watch", true)
         set(v) = prefs.edit().putBoolean("watch", v).apply()
 
+    /** A note over the game as it starts: whether it plays the server's latest save */
+    var gameNote: Boolean
+        get() = prefs.getBoolean("gameNote", true)
+        set(v) = prefs.edit().putBoolean("gameNote", v).apply()
+
+    /** A note over the game each time a save made in it reaches the server */
+    var gameUpNote: Boolean
+        get() = prefs.getBoolean("gameUpNote", false)
+        set(v) = prefs.edit().putBoolean("gameUpNote", v).apply()
+
     /** Dolphin's user folder, shared through the system folder picker (a document tree URI) */
     var dolphinTree: String?
         get() = prefs.getString("dolphinTree", null)
