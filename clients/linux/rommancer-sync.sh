@@ -25,7 +25,7 @@
 #                                   so any computer with this script can sync it. Without a command: sync.
 set -u
 # Raised with every change of this client (any change reaches devices: they update by content, not by this)
-CLIENT_VERSION=1.77.0
+CLIENT_VERSION=1.78.0
 # A clock before this date is surely wrong (no battery-backed clock); kept apart from the version, which may run ahead
 CLOCK_MIN=20261001
 # Onion keeps curl (with TLS) and friends outside the default PATH
@@ -1969,6 +1969,8 @@ cmd_game_start() {
   # What the game starts with, for the daemon's note on its screen: got, ok, offline or local (not synced)
   echo local > "$WORK/game-start"
   rom="$1"; [ -n "$TOKEN" ] && [ -f "$rom" ] && [ "$GAME_SYNC" = 1 ] || return 0
+  # A script started from the menu (this app's own launcher, a port) is no game with saves to fetch
+  case "$rom" in *.sh) return 0 ;; esac
   # Known to be offline: the game starts at once with its local save
   [ -f "$WORK/offline-since" ] && { log "game-start: offline, playing local save"; echo offline > "$WORK/game-start"; return 0; }
   fix_clock
