@@ -100,9 +100,10 @@ to send yet`, `No games match "q"`, `Every game here is on this console already 
 with the toggle off), `Could not reach the server` (+ details), `Your account cannot download games` (and the home item
 is hidden once `denied` was seen).
 
-Games already on the console (all clients): hidden by default. A toggle row on top of the systems screen and of every
-games screen (system or search) reads `Show games already on this console: no` / `yes`; one setting for the whole
-browse session, starting at `no`. Toggling a games screen asks the server for the list again (with or without
+Games already on the console (all clients): hidden by default. Onion has a toggle row on top of the systems screen and
+of every games screen (system or search) reading `Show games already on this console: no` / `yes`; pygame, Android and
+the desktop app have the `Hide owned` chip in the top bar instead (on = `no`). One setting for the whole browse session,
+starting with them hidden. Toggling a games screen asks the server for the list again (with or without
 `show=new`). With it off, systems with nothing left to download are left out. With it on, the states read `on this
 console` (here) and `downloading soon` (queued), dimmed and not tickable; the words here/queued never show on screen.
 
@@ -111,22 +112,40 @@ newBytes), `(12 on this console)` after it when here > 0 and it fits (pygame, An
 console` for a system with nothing left (shown only with the toggle on).
 
 ### pygame UI (`rommancer-ui.py`)
-- Home item **Browse server games** after Game lists.
-- `pick_list()` widget: returns (action, index) for a, x, y, start, b, keeps its scroll, pages with L1/R1
-  (`pageup`/`pagedown`: added to the fallback map, buttons 4/5, and to the keyboard map), loads the next page in a
-  background thread when the selection gets near the end (`Loading…` row), no wrap in paged lists. The selected row is
-  a filled accent bar with its texts in the background colour. A row's right text may be a tuple of choices, longest
-  first (the first that leaves the label whole shows).
+- Home item **Browse server games** after Game lists. Gamepad only, laid out for 640x480 and up (sizes scale with the
+  screen's height).
+- The browse screens are one widget, `browse_list()`, with the Android/desktop layout and no title or save point:
+  - **Top bar, one line**: where this is (`Server games`, or the system), a drawn magnifier (ring and handle) and the
+    `Hide owned` chip (a drawn tick while on; on by default). UP from the first row moves into the bar, LEFT/RIGHT
+    between the magnifier and the chip; the focused one is filled with the accent, like the cursor row (which is then
+    only outlined). A on the chip toggles it; A on the magnifier, or Y anywhere, opens the search.
+  - **Search in the bar**: the field takes the place of the magnifier and the chip (hidden meanwhile), with the
+    magnifier inside it, the placeholder `Search Super Nintendo…` / `Search every system…`, and the drawn spinner at
+    its right end while the debounce runs or the request is out. Typing uses the on-screen keyboard, drawn over the
+    bottom of the list (bar, section line and about six rows stay in sight at 480p); the list filters on the server as
+    typed (debounce from text edits only), the old answer faded until the new one comes, and only the latest query's
+    answer shows. Keyboard keys: `A key  B delete  X shift  Y space  START results  SELECT close`; B on an empty field
+    closes the search too. START moves the focus to the results (searching at once if the text changed); there Y or A
+    on the field edits again, and B closes the search and clears it (back to the system's games, or to the systems).
+    In a system the search is limited to it; from the systems screen it searches every system (its own screen, opened
+    with the keyboard, the system's name on each row).
+  - **Section line** under the bar, upper case: `SYSTEMS · 10 WITH GAMES TO DOWNLOAD` (`SYSTEMS · 12` with owned games
+    shown), `GAMES · 236`, `RESULTS · 6 GAMES`, or the spinner with `SEARCHING THE SERVER…` (`LOADING…` for a system's
+    first page), with the list's own key on the right (`X tick all`, `L1/R1 page`).
+  - **Rows** on one line, the cursor row a filled accent bar with its texts in the background colour. A row's right
+    text may be a tuple of choices, longest first (the first that leaves the label whole shows). Systems: `[x] Super
+    Nintendo  112 to download · 1.1 GB  (12 on this console)`; games: `[x] Title  4 MB`, with owned games shown `on
+    this console`/`downloading soon` dimmed and not tickable. A tail line, never selected, says `Loading…`, `No games
+    match "xyz"`, `Could not reach the server` (A tries again) and the like.
+  - **Fixed footer**: `N games selected · size` with a `START` cap and `review` when something is ticked, else the
+    keys: `A open  X tick all  Y search  B back` (systems), `A tick  L1/R1 page  Y search  B back` (games), `A tick
+    L1/R1 page  Y edit  B close the search` (a system's search).
+- Paging: L1/R1 (`pageup`/`pagedown`: added to the fallback map, buttons 4/5, and to the keyboard map) move a page;
+  the next page loads in a background thread when the selection gets near the end; no wrap. X ticks a whole system,
+  START opens the review from any screen, B leaves (asking first when something is ticked).
 - Held d-pad/hat/stick repeats (300 ms, then every 60 ms) in `next_action`, for every screen.
-- Systems: the toggle row, `Search the server…`, then `[x] Super Nintendo  112 to download · 1.1 GB  (12 on this
-  console)`; the cursor starts on Search. Footer `A open  X tick all  Y search  START download  B back`.
-- Games: the toggle row, then `[x] Title  4 MB`; with the toggle on, `on this console`/`downloading soon` dimmed and not
-  tickable. The cursor starts on the first game. Footer `A tick  L1/R1 page  Y search  START download  B back`.
-- Search: its own screen; the keyboard with one status line under the field (`Searching the server…` with a drawn
-  spinner while the debounce runs or the request is out, `12 games match`, `No games match "xyz"`); START opens the
-  results (a Games list with the query in the sub line); Y or B there go back to the keyboard with the text kept.
-  Debounce from text edits only. `ROMMANCER_SEARCH_DEBOUNCE` (default 2.0) and a `wait:SECONDS` token in
-  `ROMMANCER_UI_TEST` for tests.
+- `ROMMANCER_SEARCH_DEBOUNCE` (default 2.0) and a `wait:SECONDS` token in `ROMMANCER_UI_TEST` for tests (with `up`,
+  `down`, `left`, `right`, `a`, `b`, `x`, `y`, `start`, `select`, `pageup`, `pagedown` and `type:TEXT`).
 - Network calls run in threads; the shell's `browse-games` uses `http_once` and a short timeout.
 
 ### Onion (shell + `prompt`/`kbinput`)

@@ -188,12 +188,25 @@ TEXTS = {
         "show_list": "They show in the game list",
         "st_games": "Games",
         "browse": "Browse server games",
-        "b_search": "Search the server…",
-        "search": "Search server games",
-        "b_show": "Show games already on this console: {v}",
-        "search_keys": "A key  B delete  X shift  Y space  START results  SELECT back",
-        "b_systems_keys": "A open  X tick all  Y search  START download  B back",
-        "b_games_keys": "A tick  L1/R1 page  Y search  START download  B back",
+        "b_where": "Server games",
+        "b_hide": "Hide owned",
+        "b_search_all": "Search every system…",
+        "b_search_in": "Search {name}…",
+        "b_sec_systems": "Systems · {n} with games to download",
+        "b_sec_systems_all": "Systems · {n}",
+        "b_sec_games": "Games · {n}",
+        "b_sec_results": "Results · {n} games",
+        "b_sec_results1": "Results · 1 game",
+        "b_sec_search": "Results",
+        "b_type": "Type two letters or more to search",
+        "b_hint_systems": "X tick all",
+        "b_hint_games": "L1/R1 page",
+        "b_review": "review",
+        "b_allhave": "You already have every game the server can send to this console",
+        "search_keys": "A key  B delete  X shift  Y space  START results  SELECT close",
+        "b_systems_keys": "A open  X tick all  Y search  B back",
+        "b_games_keys": "A tick  L1/R1 page  Y search  B back",
+        "b_found_keys": "A tick  L1/R1 page  Y edit  B close the search",
         "b_counts": "{n} to download · {size}",
         "b_here_n": "({n} on this console)",
         "b_allhere": "all on this console",
@@ -204,13 +217,8 @@ TEXTS = {
         "b_nonew": "Every game here is on this console already or downloading soon",
         "b_selected": "{n} games selected · {size}",
         "b_selected1": "1 game selected · {size}",
-        "b_nothing": "Nothing selected yet",
-        "b_found": "“{q}” · {n} games",
-        "b_found1": "“{q}” · 1 game",
         "loading": "Loading…",
         "searching": "Searching the server…",
-        "b_match": "{n} games match",
-        "b_match1": "1 game matches",
         "b_nomatch": "No games match “{q}”",
         "b_none": "The server has no games to send yet",
         "b_denied": "Your account cannot download games",
@@ -390,6 +398,15 @@ DIM = (140, 145, 160)
 ACCENT = (110, 170, 255)
 BAD = (255, 120, 120)
 WARN = (255, 190, 90)
+# The browse screens' bars, the search field, the keyboard's keys
+BAR = (30, 34, 46)
+FIELD = (40, 44, 60)
+KEY = (50, 55, 72)
+
+
+def mix(a, b, t):
+    """Colour A moved T of the way to B"""
+    return tuple(int(a[i] + (b[i] - a[i]) * t) for i in range(3))
 
 
 def human(n):
@@ -589,6 +606,19 @@ class Screen:
             pygame.draw.line(self.surf, BG, (x + size // 2, y + size // 3), (x + size // 2, y + size * 2 // 3), 2)
             pygame.draw.rect(self.surf, BG, (x + size // 2 - 1, y + size * 3 // 4, 2, 2))
 
+    def magnifier(self, center, size, color):
+        """The search icon, drawn (no font has it for sure): a ring and its handle, SIZE across"""
+        w = max(2, size // 8)
+        r = int(size * 0.34)
+        cx, cy = center[0] - size // 8, center[1] - size // 8
+        pygame.draw.circle(self.surf, color, (cx, cy), r, w)
+        d = int(r * 0.72)
+        pygame.draw.line(self.surf, color, (cx + d, cy + d), (center[0] + size // 2 - w // 2, center[1] + size // 2 - w // 2), w + 1)
+
+    def tick(self, x, y, size, color):
+        """A tick mark, SIZE across, drawn"""
+        pygame.draw.lines(self.surf, color, False, [(x, y + size * 0.55), (x + size * 0.38, y + size * 0.9), (x + size, y + size * 0.12)], max(2, size // 6))
+
     def lines(self, entries, x, y, width, font=None):
         """Lines from Y down: plain texts (dim) or facts (icon, text, colour), each wrapped to WIDTH; the Y after them"""
         font = font or self.small
@@ -763,10 +793,11 @@ class App:
         self.script = [a.strip() for a in os.environ.get("ROMMANCER_UI_TEST", "").split(",") if a.strip()]
         self.clock = pygame.time.Clock()
         self.queue, self.wait_until = [], 0.0
-        # Browsing: hidden once the server said the account may not download; the search's text and latest answer
-        # (only the answer of the latest generation shows)
-        self.browse_off, self.search_text, self.search_gen, self.search_res = False, "", 0, None
-        # Whether the games already on this console are listed too: one setting for the whole browse session
+        # Browsing: hidden once the server said the account may not download; the searches' generation (only the
+        # latest one's answer shows)
+        self.browse_off, self.search_gen = False, 0
+        # Whether the games already on this console are listed too (the Hide owned chip off): one setting for the whole
+        # browse session
         self.browse_all = False
         # Conflicts are counted in the background so the menu never waits for the network
         self.conflict_count = None
@@ -887,47 +918,200 @@ class App:
             elif a in ("b", "quit"):
                 return None
 
-    def pick_list(self, title, rows, footer, sub=None, view=None, wrap=True, near_end=None, tail=None):
-        """A list for browsing: (action, index) for a, x, y and start (index None with no rows), (b or quit, None).
-        ROWS: a function giving (label, right text, colour) per row, read every frame (pages arrive meanwhile); VIEW: a
-        dict keeping the selection and the scroll between calls; NEAR_END(): called while the selection is near the
-        last row (the next page loads); TAIL(): a dim line after the rows (Loading…), never selected; SUB: the line
-        under the title, or a function giving it. L1/R1 move a page; WRAP: past the last row is the first. A right text
-        may be a tuple of choices, longest first: the first that leaves the label whole is shown"""
-        view = {} if view is None else view
+    def browse_layout(self, kb):
+        """Where the browse screens' parts go: the bar, the section line, the rows, the keyboard (KB) and the footer"""
+        s = self.screen
+        m, mx = max(4, int(s.h * 0.02)), max(14, int(s.w * 0.03))
+        bar = pygame.Rect(mx, m, s.w - 2 * mx, s.font.get_height() + 2 * int(s.h * 0.018))
+        sec_y = bar.bottom + int(m * 0.6)
+        fh = s.small.get_linesize() + 2 * int(s.h * 0.018)
+        foot = pygame.Rect(0, s.h - fh, s.w, fh)
+        kh = int(s.h * 0.075)
+        # The keyboard sits over the footer and leaves the bar and a few rows in sight
+        keys = pygame.Rect(mx, foot.top - m - len(KEYBOARD) * kh, s.w - 2 * mx, len(KEYBOARD) * kh) if kb else None
+        return {"m": m, "x": mx, "w": s.w - 2 * mx, "bar": bar, "sec_y": sec_y, "top": sec_y + s.small.get_linesize() + int(m * 0.5),
+                "bottom": (keys.top if kb else foot.top) - int(m * 0.5), "keys": keys, "kh": kh, "foot": foot,
+                "step": s.font.get_linesize() + int(s.h * 0.012)}
+
+    def bar_button(self, rect, focused, on=False):
+        """A bar item: filled with the accent while focused, outlined in it while ON (a filter that is on); the colour
+        its contents take"""
+        s = self.screen
+        radius = rect.h // 2
+        if focused or on:
+            pygame.draw.rect(s.surf, ACCENT if focused else mix(BAR, ACCENT, 0.2), rect, border_radius=radius)
+        pygame.draw.rect(s.surf, ACCENT if focused or on else mix(BAR, DIM, 0.5), rect, 1, border_radius=radius)
+        return BG if focused else ACCENT if on else FG
+
+    def browse_bar(self, lay, where, focus, search):
+        """The bar, one line: where this is, then the magnifier and the Hide owned chip, or the open search field in
+        their place. FOCUS: the bar item focused (0 magnifier or field, 1 chip), None"""
+        s = self.screen
+        bar = lay["bar"]
+        pygame.draw.rect(s.surf, BAR, bar, border_radius=bar.h // 3)
+        inset = max(3, int(s.h * 0.008))
+        ih = bar.h - 2 * inset
+        tx = bar.x + int(s.w * 0.02)
+        ty = bar.y + (bar.h - s.font.get_height()) // 2
+        if search is None:
+            pad = int(ih * 0.45)
+            tick = int(s.small.get_height() * 0.6) if not self.browse_all else 0
+            chip_w = 2 * pad + s.small.size(T["b_hide"])[0] + (tick + pad // 2 if tick else 0)
+            chip = pygame.Rect(bar.right - inset - chip_w, bar.y + inset, chip_w, ih)
+            mag = pygame.Rect(chip.x - inset * 2 - ih, bar.y + inset, ih, ih)
+            s.text(s.clip(where, s.font, mag.x - tx - inset * 2), (tx, ty), s.font, FG)
+            color = self.bar_button(mag, focus == 0)
+            s.magnifier(mag.center, int(ih * 0.62), color)
+            color = self.bar_button(chip, focus == 1, on=not self.browse_all)
+            x = chip.x + pad
+            if tick:
+                s.tick(x, chip.centery - tick // 2, tick, color)
+                x += tick + pad // 2
+            s.text(T["b_hide"], (x, chip.centery - s.small.get_height() // 2), s.small, color)
+            return
+        # The search open: the field takes the place of the magnifier and the chip
+        title_w = min(s.font.size(where)[0], int(bar.w * 0.34))
+        s.text(s.clip(where, s.font, title_w), (tx, ty), s.font, FG)
+        field = pygame.Rect(tx + title_w + int(s.w * 0.02), bar.y + inset, 0, ih)
+        field.w = bar.right - inset - field.x
+        hot = focus == 0 and not search["kb"]
+        pygame.draw.rect(s.surf, ACCENT if hot else FIELD, field, border_radius=ih // 3)
+        if search["kb"]:
+            pygame.draw.rect(s.surf, ACCENT, field, 2, border_radius=ih // 3)
+        icon = int(ih * 0.6)
+        s.magnifier((field.x + ih // 2, field.centery), icon, BG if hot else ACCENT)
+        x = field.x + ih
+        right = field.right - int(ih * 0.3)
+        if search["busy"]:
+            r = s.small.get_height() // 2
+            spinner(s.surf, (right - r, field.centery), r)
+            right -= 2 * r + int(ih * 0.3)
+        text, color = search["text"], BG if hot else FG
+        if search["kb"]:
+            text += "_"
+        if not search["text"]:
+            text, color = (search["hint"], BG if hot else DIM) if not search["kb"] else ("_", FG)
+        # The end of a long text stays in sight
+        while s.font.size(text)[0] > right - x and len(text) > 1:
+            text = text[1:]
+        s.text(text, (x, field.centery - s.font.get_height() // 2), s.font, color)
+
+    def browse_keyboard(self, lay, kb):
+        """The on-screen keyboard over the bottom of the list, KB its state (row, col, upper)"""
+        s = self.screen
+        keys = lay["keys"]
+        pygame.draw.rect(s.surf, BG, (0, keys.top - lay["m"] // 2, s.w, lay["foot"].top - keys.top + lay["m"] // 2))
+        kw, kh = keys.w // 10, lay["kh"]
+        gap = max(3, kh // 10)
+        for r, line in enumerate(KEYBOARD):
+            for c, ch in enumerate(line):
+                ch = ch.upper() if kb["upper"] else ch
+                rect = pygame.Rect(keys.x + c * kw, keys.y + r * kh, kw - gap, kh - gap)
+                hot = (r, c) == (kb["row"], kb["col"])
+                pygame.draw.rect(s.surf, ACCENT if hot else KEY, rect, border_radius=6)
+                img = s.font.render(ch, True, BG if hot else FG)
+                s.surf.blit(img, img.get_rect(center=rect.center))
+
+    def browse_footer(self, lay, foot, hint):
+        """The fixed footer: FOOT (what is ticked, then START review) when something is, else the keys' HINT"""
+        s = self.screen
+        r = lay["foot"]
+        pygame.draw.rect(s.surf, BAR, r)
+        ty = r.y + (r.h - s.small.get_height()) // 2
+        if not foot:
+            s.text(s.clip(hint, s.small, s.w - 2 * lay["x"]), (s.w // 2, ty), s.small, DIM, center=True)
+            return
+        label = T["b_review"]
+        lw, kw = s.small.size(label)[0], s.small.size("START")[0]
+        pad = max(4, int(s.h * 0.01))
+        kx = r.right - lay["x"] - lw - pad * 3 - kw
+        key = pygame.Rect(kx, ty - pad // 2, kw + 2 * pad, s.small.get_height() + pad)
+        pygame.draw.rect(s.surf, ACCENT, key, border_radius=key.h // 3)
+        s.text("START", (key.x + pad, ty), s.small, BG)
+        s.text(label, (key.right + pad, ty), s.small, FG)
+        s.text(s.clip(foot, s.small, kx - 2 * lay["x"]), (lay["x"], ty), s.small, ACCENT)
+
+    def browse_list(self, where, rows, view, section, hint, keys, foot=None, near_end=None, tail=None, search=None, poll=None, faded=None):
+        """The browse screens: the bar, the section line, one-line rows and a fixed footer, all with the pad.
+        ROWS: a function giving (label, right text, colour) per row, read every frame (pages arrive meanwhile); a right
+        text may be a tuple of choices, longest first (the first that leaves the label whole shows). VIEW: a dict
+        keeping the selection, the scroll, the bar's focus ("bar": None, 0 the magnifier or field, 1 the chip) and the
+        keyboard's state between calls. SECTION(): (text, busy) for the line under the bar, HINT its right end; KEYS:
+        the footer's hint, FOOT(): its text when something is ticked. NEAR_END(): called while the selection is near
+        the last row; TAIL(): a dim line after the rows, never selected. SEARCH: None (closed) or a dict with "text",
+        "hint" (the field's placeholder), "kb" (the keyboard is open), "busy" (the spinner) and "edit" (called with each
+        new text), or a function giving it. POLL(): called every frame; FADED(): whether the rows are a stale answer.
+        Returns (action, row index or None): a, x, start; "search" (Y, or A on the magnifier or field), "owned" (A on
+        the chip), "submit" (START on the keyboard: the focus goes to the results), "close" (SELECT on the keyboard,
+        or B with the field empty), b, quit"""
+        s = self.screen
+        kb = view.setdefault("kb", {"row": 0, "col": 0, "upper": False})
+        live = search
         while True:
+            if poll:
+                poll()
+            search = live() if callable(live) else live
+            typing = bool(search and search["kb"])
+            lay = self.browse_layout(typing)
             items = rows()
             n = len(items)
             sel = min(max(view.get("sel", 0), 0), max(n - 1, 0))
-            s = self.screen
-            s.frame(title, footer, sub() if callable(sub) else sub)
-            x, width = s.left(), s.column(True)
-            top, step = int(s.h * 0.17), s.font.get_linesize() + int(s.h * 0.012)
+            bar_n = 1 if search else 2
+            focus = view.get("bar")
+            if focus is not None:
+                focus = min(focus, bar_n - 1)
+            s.surf.fill(BG)
+            self.browse_bar(lay, where, None if typing else focus, search)
+            text, busy = section()
+            x, width = lay["x"], lay["w"]
+            sx = x + int(s.w * 0.012)
+            if busy:
+                r = s.small.get_height() // 2 - 1
+                spinner(s.surf, (sx + r, lay["sec_y"] + s.small.get_height() // 2), r)
+                sx += 2 * r + int(s.w * 0.012)
+            hw = s.small.size(hint)[0] if hint else 0
+            if hint:
+                s.text(hint, (x + width - hw - int(s.w * 0.012), lay["sec_y"]), s.small, DIM)
+            s.text(s.clip(text.upper(), s.small, x + width - hw - sx - int(s.w * 0.04)), (sx, lay["sec_y"]), s.small, ACCENT if busy else DIM)
+            top, step = lay["top"], lay["step"]
             extra = tail() if tail else ""
-            fit = max(1, (int(s.h * 0.9) - top) // step - (1 if extra else 0))
+            fit = max(1, (lay["bottom"] - top) // step - (1 if extra else 0))
             first = min(max(view.get("first", 0), sel - fit + 1), sel)
             first = max(0, min(first, n - fit))
+            stale = bool(faded and faded())
+            on_rows = focus is None and not typing
             y = top
             for i in range(first, min(n, first + fit)):
                 label, right, color = items[i]
                 if isinstance(right, tuple):
                     right = next((r for r in right if s.small.size(r)[0] + s.font.size(label)[0] + 40 <= width), right[-1])
                 rw = s.small.size(right)[0] if right else 0
-                # The selected row is a filled bar, its texts in the background colour: seen at a glance
-                if i == sel:
-                    pygame.draw.rect(s.surf, ACCENT, pygame.Rect(x, y - 4, width + 8, s.font.get_height() + 8), border_radius=8)
+                hot = i == sel and on_rows
+                row = pygame.Rect(x, y - 4, width, s.font.get_height() + 8)
+                # The cursor row is a filled bar, its texts in the background colour; outlined while the focus is elsewhere
+                if hot:
+                    pygame.draw.rect(s.surf, ACCENT, row, border_radius=8)
+                elif i == sel:
+                    pygame.draw.rect(s.surf, mix(BG, ACCENT, 0.45), row, 1, border_radius=8)
+                dim, fg = (BG, BG) if hot else (DIM, color)
+                if stale and not hot:
+                    dim, fg = mix(BG, dim, 0.45), mix(BG, fg, 0.45)
                 if right:
-                    s.text(right, (x + width - rw, y + (s.font.get_height() - s.small.get_height()) // 2), s.small, BG if i == sel else DIM)
-                s.text(s.clip(label, s.font, width - rw - 30), (x + 10, y), s.font, BG if i == sel else color)
+                    s.text(right, (x + width - rw - 10, y + (s.font.get_height() - s.small.get_height()) // 2), s.small, dim)
+                s.text(s.clip(label, s.font, width - rw - 36), (x + 10, y), s.font, fg)
                 y += step
             if extra and first + fit >= n:
-                s.text(s.clip(extra, s.font, width - 10), (x + 10, y), s.font, DIM)
+                s.text(s.clip(extra, s.font, width - 20), (x + 10, y), s.font, DIM)
             tri = max(4, step // 6)
+            ax = x // 2
             if first:
-                pygame.draw.polygon(s.surf, DIM, [(x - 8, top + tri), (x - 8 - tri, top + 3 * tri), (x - 8 + tri, top + 3 * tri)])
+                pygame.draw.polygon(s.surf, DIM, [(ax, top + tri), (ax - tri, top + 3 * tri), (ax + tri, top + 3 * tri)])
             if first + fit < n:
                 b = top + (fit - 1) * step
-                pygame.draw.polygon(s.surf, DIM, [(x - 8 - tri, b + tri), (x - 8 + tri, b + tri), (x - 8, b + 3 * tri)])
+                pygame.draw.polygon(s.surf, DIM, [(ax - tri, b + tri), (ax + tri, b + tri), (ax, b + 3 * tri)])
+            if typing:
+                self.browse_keyboard(lay, kb)
+            self.browse_footer(lay, None if typing else foot() if foot else None, T["search_keys"] if typing else keys)
             s.flip()
             view["first"] = first
             if near_end and n - sel <= 10:
@@ -935,30 +1119,72 @@ class App:
             a = self.next_action(timeout=0)
             if a is None:
                 self.clock.tick(SPRITE_FPS)
+                continue
+            if typing:
+                value = search["text"]
+                if isinstance(a, tuple):
+                    value += a[1]
+                elif a in ("up", "down"):
+                    kb["row"] = (kb["row"] + (1 if a == "down" else -1)) % len(KEYBOARD)
+                elif a in ("left", "right"):
+                    kb["col"] = (kb["col"] + (1 if a == "right" else -1)) % 10
+                elif a == "a":
+                    ch = KEYBOARD[kb["row"]][kb["col"]]
+                    value += ch.upper() if kb["upper"] else ch
+                elif a == "b":
+                    if not value:
+                        return "close", None
+                    value = value[:-1]
+                elif a == "x":
+                    kb["upper"] = not kb["upper"]
+                elif a == "y":
+                    value += " "
+                elif a == "start":
+                    view["bar"], view["sel"], view["first"] = None, 0, 0
+                    return "submit", None
+                elif a == "select":
+                    return "close", None
+                elif a == "quit":
+                    return "quit", None
+                if value != search["text"]:
+                    search["edit"](value)
+                continue
+            if focus is not None:
+                if a == "down":
+                    view["bar"] = None
+                elif a in ("left", "right"):
+                    view["bar"] = min(max(focus + (1 if a == "right" else -1), 0), bar_n - 1)
+                elif a == "a":
+                    return ("owned" if focus == 1 else "search"), None
             elif a == "up":
-                sel = sel - 1 if sel > 0 else (n - 1 if wrap else 0)
+                if sel > 0:
+                    sel -= 1
+                else:
+                    view["bar"] = 0
             elif a == "down":
-                sel = sel + 1 if sel < n - 1 else (0 if wrap else sel)
+                sel = min(sel + 1, max(n - 1, 0))
             elif a == "pageup":
                 sel = max(0, sel - fit)
             elif a == "pagedown":
                 sel = min(max(n - 1, 0), sel + fit)
-            # Kept as asked while rows are still arriving (the first page), so the selection lands where it was meant
-            if a is not None:
+            elif a in ("a", "x"):
                 view["sel"] = sel
-            if a in ("a", "x", "y", "start"):
+                return a, (sel if n else None)
+            # Kept as asked while rows are still arriving (the first page), so the selection lands where it was meant
+            view["sel"] = sel
+            if a == "y":
+                return "search", None
+            if a == "start":
                 return a, (sel if n else None)
             if a in ("b", "quit"):
                 return a, None
 
-    def keyboard(self, title, value="", secret=False, live=None, on_edit=None, keys=None):
-        """The on-screen keyboard: the text on START, None on SELECT. LIVE: a function giving a status line (text,
-        colour, and True for a spinner before it) under the field, called every frame (the keyboard then never waits
-        for a key); ON_EDIT(text): after each change of the text; KEYS: the footer's hints"""
+    def keyboard(self, title, value="", secret=False):
+        """The on-screen keyboard: the text on START, None on SELECT"""
         row, col, upper = 0, 0, False
         while True:
             s = self.screen
-            s.frame(title, keys or T["keys"])
+            s.frame(title, T["keys"])
             shown = "*" * len(value) if secret else value
             box = pygame.Rect(30, int(s.h * 0.15), s.w - 60, int(s.font.get_linesize() * 1.4))
             pygame.draw.rect(s.surf, (40, 44, 60), box, border_radius=8)
@@ -966,15 +1192,6 @@ class App:
             while s.font.size(txt)[0] > box.w - 20 and len(txt) > 1:
                 txt = txt[1:]
             s.text(txt, (box.x + 10, box.y + 6))
-            if live:
-                status, color, *spin = live()
-                if status:
-                    tx, ty = box.x + 10, box.bottom + int(s.h * 0.01)
-                    if spin and spin[0]:
-                        r = s.small.get_height() // 2
-                        spinner(s.surf, (tx + r, ty + r), r)
-                        tx += 2 * r + 10
-                    s.text(s.clip(status, s.small, box.x + box.w - 10 - tx), (tx, ty), s.small, color)
             kw, kh = (s.w - 60) // 10, int(s.h * 0.1)
             for r, line in enumerate(KEYBOARD):
                 for c, ch in enumerate(line):
@@ -985,11 +1202,7 @@ class App:
                     img = s.font.render(ch, True, BG if hot else FG)
                     s.surf.blit(img, img.get_rect(center=rect.center))
             s.flip()
-            a = self.next_action(timeout=0 if live else None)
-            if a is None:
-                self.clock.tick(SPRITE_FPS)
-                continue
-            before = value
+            a = self.next_action()
             if isinstance(a, tuple):
                 value += a[1]
             elif a == "up":
@@ -1013,8 +1226,6 @@ class App:
                 return value
             elif a in ("select", "quit"):
                 return None
-            if on_edit and value != before:
-                on_edit(value)
 
     def message(self, text, color=FG, wait=True, title=None, lines=None):
         """TEXT on its own screen (or LINES: texts and facts, one per line), until A or B when WAIT"""
@@ -1521,13 +1732,12 @@ class App:
         self.browse_off = True
         self.message(T["b_denied"], BAD)
 
-    def picks_line(self, picks, systems, head=""):
-        """The sub line: what is ticked so far (approximate)"""
+    def picks_foot(self, picks, systems):
+        """The footer's text: what is ticked so far (approximate; the review asks the server), None when nothing is"""
         if not picks:
-            return (head or T["b_nothing"]), DIM
+            return None
         n, size = picks.totals(systems)
-        sel = T["b_selected1" if n == 1 else "b_selected"].format(n=n, size=human(size))
-        return (f"{head} · {sel}" if head else sel), ACCENT
+        return T["b_selected1" if n == 1 else "b_selected"].format(n=n, size=human(size))
 
     def browse_systems(self):
         """slug → system the server can send here; None when there is nothing to browse (said on screen)"""
@@ -1551,15 +1761,16 @@ class App:
         return systems
 
     def browse(self):
-        """The systems (the toggle for the games already here, then Search…): A opens one, X ticks it whole, Y
-        searches, START reviews and downloads what is ticked. Leaving with games ticked asks first"""
+        """The systems: A opens one, X ticks it whole, Y (or the magnifier) searches every system, the chip shows or
+        hides the systems with nothing left to download, START reviews and downloads what is ticked. Leaving with games
+        ticked asks first"""
         systems = self.browse_systems()
         if systems is None:
             return
-        picks, view = Picks(), {"sel": 1}
+        picks, view = Picks(), {"sel": 0}
         self.browse_all = False
         while True:
-            # With the toggle off, the systems with nothing left to download are left out
+            # With owned games hidden, the systems with nothing left to download are left out
             order = [s for s in systems.values() if self.browse_all or s["games"] > s["here"]]
 
             def system_right(s):
@@ -1570,10 +1781,13 @@ class App:
                 return (f"{todo}  {T['b_here_n'].format(n=s['here'])}", todo) if s["here"] else todo
 
             def rows():
-                return [self.show_row(), (T["b_search"], "", FG)] + [
-                    (f"{picks.mark(s['slug'])} {s['name']}", system_right(s), FG) for s in order]
+                return [(f"{picks.mark(s['slug'])} {s['name']}", system_right(s), FG) for s in order]
 
-            act, i = self.pick_list(T["browse"], rows, T["b_systems_keys"], sub=lambda: self.picks_line(picks, systems), view=view)
+            def section():
+                return T["b_sec_systems_all" if self.browse_all else "b_sec_systems"].format(n=len(order)), False
+
+            act, i = self.browse_list(T["b_where"], rows, view, section, T["b_hint_systems"], T["b_systems_keys"],
+                                      foot=lambda: self.picks_foot(picks, systems), tail=lambda: "" if order else T["b_allhave"])
             r = None
             if act == "quit":
                 return
@@ -1581,18 +1795,16 @@ class App:
                 n = picks.totals(systems)[0]
                 if not picks or self.menu(T["browse"], [T["b_discard_go"], T["cancel"]], info=[T["b_discard1" if n == 1 else "b_discard"].format(n=n)]) == 0:
                     return
-            elif act == "a" and i == 0:
+            elif act == "owned":
                 self.browse_all = not self.browse_all
-            elif act == "y" or (act == "a" and i == 1):
-                r = self.browse_search(picks, systems)
+            elif act == "search":
+                r = self.browse_games(picks, systems)
             elif act == "start":
                 r = self.browse_review(picks, systems)
-            elif act == "x" and i >= 2:
-                picks.toggle_system(order[i - 2]["slug"])
-            elif act == "a" and i >= 2:
-                r = self.browse_games(picks, systems, system=order[i - 2])
-                if r == "y":
-                    r = self.browse_search(picks, systems)
+            elif act == "x" and i is not None:
+                picks.toggle_system(order[i]["slug"])
+            elif act == "a" and i is not None:
+                r = self.browse_games(picks, systems, system=order[i])
             if r == "leave":
                 return
             if r == "done":
@@ -1601,123 +1813,140 @@ class App:
                 if systems is None:
                     return
 
-    def show_row(self):
-        """The toggle row on top of the browse lists"""
-        return T["b_show"].format(v=T["yes"] if self.browse_all else T["no"]), "", FG
+    def browse_games(self, picks, systems, system=None):
+        """A system's games (SYSTEM), or the search over every system (None: it opens with the keyboard), paged as the
+        selection gets near the end. A ticks a game (ones on this console or downloading soon are not tickable). Y or
+        the magnifier opens the search in the bar: it filters on the server as typed, SEARCH_DEBOUNCE seconds after
+        the last edit of the text (moving over the keys does not count), the old answer faded meanwhile; only the
+        latest query's answer shows. START on the keyboard searches at once and moves to the results; B closes the
+        search and clears it (back to the system's games, or to the systems). None for B, else as browse_review"""
+        slug = system["slug"] if system else "-"
+        q = {"open": system is None, "kb": system is None, "text": "", "due": None, "applied": ""}
+        # PAGED is shown; NEXT is the answer on its way for the latest query, swapped in once it comes
+        st = {"paged": Paged(self, slug, show_all=self.browse_all) if system else None, "next": None}
+        view = {"sel": 0}
 
-    def browse_games(self, picks, systems, system=None, paged=None):
-        """A system's games (SYSTEM) or a search's (PAGED), paged as the selection gets near the end, under the toggle
-        row; A ticks a game (ones on this console or downloading soon are not tickable). "y" for Y, None for B, else
-        as browse_review"""
-        paged = paged or Paged(self, system["slug"], show_all=self.browse_all)
-        view = {"sel": 1}
+        def wanted():
+            t = q["text"].strip()
+            return t if len(t) >= 2 else ""
+
+        def ask():
+            q["due"] = None
+            q["applied"] = wanted()
+            if not system and not q["applied"]:
+                st["paged"], st["next"] = None, None
+                return
+            self.search_gen += 1
+            st["next"] = Paged(self, slug, q["applied"], gen=self.search_gen, show_all=self.browse_all)
+
+        def edit(value):
+            q["text"] = value
+            # An answer on its way is for an older text
+            st["next"] = None
+            q["due"] = time.time() + SEARCH_DEBOUNCE if wanted() != q["applied"] else None
+
+        def close():
+            q.update(open=False, kb=False, text="", due=None)
+            view["bar"] = None
+            if q["applied"] or st["next"]:
+                q["applied"] = ""
+                ask()
+
+        def poll():
+            if q["due"] and time.time() >= q["due"]:
+                ask()
+            n = st["next"]
+            if n and (n.total is not None or n.failed or n.denied):
+                st["paged"], st["next"] = n, None
+                view["sel"], view["first"] = 0, 0
+
+        def pending():
+            p = st["paged"]
+            return bool(q["due"] or st["next"] or (p and p.total is None and not (p.failed or p.denied)))
 
         def rows():
-            out = [self.show_row()]
-            for gid, size, state, slug, title in list(paged.rows):
+            p = st["paged"]
+            out = []
+            for gid, size, state, sys_slug, title in list(p.rows) if p else []:
+                where = systems[sys_slug]["name"] if not system and sys_slug in systems else ""
                 if state in ("here", "queued"):
-                    out.append((f"       {title}", T[f"b_{state}"], DIM))
+                    right = T[f"b_{state}"]
+                    out.append((f"       {title}", (f"{where} · {right}", right) if where else right, DIM))
                 else:
-                    out.append((f"{'[x]' if picks.ticked(gid, slug) else '[  ]'} {title}", human(size), FG))
+                    out.append((f"{'[x]' if picks.ticked(gid, sys_slug) else '[  ]'} {title}", (f"{where} · {human(size)}", human(size)) if where else human(size), FG))
             return out
 
         def tail():
-            if paged.denied:
+            p = st["paged"]
+            if not p:
+                return "" if pending() else T["b_type"]
+            if p.denied:
                 return T["b_denied"]
-            if paged.failed:
+            if p.failed:
                 return T["lists_fail"]
-            if paged.loading:
+            if p.loading:
                 return T["loading"]
-            if paged.total == 0:
-                return T["b_nomatch"].format(q=paged.query) if paged.query else T["b_none"] if paged.show_all else T["b_nonew"]
+            if p.total == 0:
+                return T["b_nomatch"].format(q=p.query) if p.query else T["b_none"] if p.show_all else T["b_nonew"]
             return ""
 
-        def sub():
-            if system:
-                head = T["b_games_n" if paged.show_all else "b_todo_n"].format(n=system["games"] if paged.show_all else system["games"] - system["here"])
-            else:
-                head = T["b_found1" if paged.total == 1 else "b_found"].format(q=paged.query, n=paged.total if paged.total is not None else "…")
-            return self.picks_line(picks, systems, head)
+        def section():
+            p = st["paged"]
+            if pending():
+                return T["searching" if q["open"] and (q["text"].strip() or q["applied"]) else "loading"], True
+            if p and p.total is not None and p.query:
+                return T["b_sec_results1" if p.total == 1 else "b_sec_results"].format(n=p.total), False
+            if p and p.total is not None:
+                return T["b_sec_games"].format(n=p.total), False
+            return T["b_sec_search"], False
 
-        title = system["name"] if system else T["search"]
+        def search():
+            if not q["open"]:
+                return None
+            return {"text": q["text"], "kb": q["kb"], "busy": pending(), "edit": edit,
+                    "hint": T["b_search_in"].format(name=system["name"]) if system else T["b_search_all"]}
+
+        where = system["name"] if system else T["b_where"]
         while True:
-            act, i = self.pick_list(title, rows, T["b_games_keys"], sub=sub, view=view, wrap=False, near_end=paged.load, tail=tail)
-            if paged.denied:
+            keys = T["b_found_keys"] if q["open"] and system else T["b_games_keys"]
+            act, i = self.browse_list(where, rows, view, section, T["b_hint_games"], keys,
+                                      foot=lambda: self.picks_foot(picks, systems), near_end=lambda: st["paged"] and st["paged"].load(),
+                                      tail=tail, search=search, poll=poll, faded=lambda: bool(st["paged"] and (q["due"] or st["next"])))
+            paged = st["paged"]
+            if paged and paged.denied:
                 self.browse_off = True
                 return "leave"
             if act == "quit":
                 return "leave"
-            if act == "b":
-                return None
-            if act == "y":
-                return "y"
-            if act == "start":
+            if act in ("b", "close"):
+                if not q["open"] or not system:
+                    return None
+                close()
+            elif act == "search":
+                q["open"] = q["kb"] = True
+            elif act == "submit":
+                q["kb"] = False
+                # At once, unless this very text's answer is there or on its way
+                if q["due"] or wanted() != q["applied"]:
+                    ask()
+            elif act == "owned":
+                # The list again from the server, with or without the games already here
+                self.browse_all = not self.browse_all
+                if system or q["applied"]:
+                    self.search_gen += 1
+                    st["next"] = Paged(self, slug, q["applied"], gen=self.search_gen, show_all=self.browse_all)
+            elif act == "start":
                 r = self.browse_review(picks, systems)
                 if r:
                     return r
-            elif act == "a" and i == 0:
-                # The list again from the server, with or without the games already here
-                self.browse_all = not self.browse_all
-                paged = Paged(self, paged.system, paged.query, gen=paged.gen, show_all=self.browse_all)
-                if not system:
-                    self.search_res = paged
-                view["first"] = 0
-            elif act == "a" and paged.failed:
+            elif act == "a" and paged and paged.failed:
                 # A tries again
                 paged.failed = False
                 paged.load()
-            elif act == "a" and i and i <= len(paged.rows):
-                gid, size, state, slug, _ = paged.rows[i - 1]
+            elif act == "a" and paged and i is not None and i < len(paged.rows):
+                gid, size, state, sys_slug, _ = paged.rows[i]
                 if state == "new":
-                    picks.toggle(gid, size, slug)
-
-    def start_search(self, text):
-        self.search_gen += 1
-        self.search_res = Paged(self, "-", text.strip(), gen=self.search_gen, show_all=self.browse_all)
-
-    def browse_search(self, picks, systems):
-        """The keyboard with one status line under the field; START opens the results, where Y or B come back to the
-        keyboard with the text kept. A search goes out SEARCH_DEBOUNCE seconds after the last edit of the text (moving
-        over the keys does not count), and only the latest one's answer shows"""
-        st = {"text": self.search_text, "due": None}
-
-        def edit(value):
-            st["text"] = value
-            # An answer on its way is for an older text
-            self.search_gen += 1
-            self.search_res = None
-            st["due"] = time.time() + SEARCH_DEBOUNCE if len(value.strip()) >= 2 else None
-
-        def live():
-            if st["due"] and time.time() >= st["due"]:
-                st["due"] = None
-                self.start_search(st["text"])
-            r = self.search_res if self.search_res and self.search_res.gen == self.search_gen else None
-            if st["due"] or (r and r.total is None and not (r.failed or r.denied)):
-                return T["searching"], ACCENT, True
-            if not r:
-                return "", DIM
-            if r.denied:
-                return T["b_denied"], BAD
-            if r.failed:
-                return T["lists_fail"], BAD
-            if r.total == 0:
-                return T["b_nomatch"].format(q=r.query), WARN
-            return T["b_match1" if r.total == 1 else "b_match"].format(n=r.total), DIM
-
-        while True:
-            text = self.keyboard(T["search"], st["text"], live=live, on_edit=edit, keys=T["search_keys"])
-            if text is None:
-                return None
-            self.search_text = st["text"] = text
-            st["due"] = None
-            r = self.search_res
-            # START searches at once unless the answer for this very text (and toggle) is there or on its way
-            if not r or r.gen != self.search_gen or r.query != text.strip() or r.show_all != self.browse_all:
-                self.start_search(text)
-            res = self.browse_games(picks, systems, paged=self.search_res)
-            if res not in (None, "y"):
-                return res
+                    picks.toggle(gid, size, sys_slug)
 
     def browse_nospace(self, c):
         line = T["b_nospace"].format(need=human(c["bytes"]), usable=human(c["usable"])) if c["usable"] is not None else T["b_nospace_unknown"]
