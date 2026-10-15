@@ -159,6 +159,8 @@ const en = {
   fromWeb: 'Download from the web (with your account)',
   copy: 'Copy',
   updatedBanner: 'A newer version of the app has been installed.',
+  availableBanner: 'Rommancer {version} is available: install the new package to update.',
+  downloadUpdate: 'Download',
   restart: 'Restart',
   g_knulli_title: 'Knulli / Batocera',
   g_knulli_steps: 'Download the package from the web: it already carries your server and account.|Unzip it on the card\'s SHARE partition.|On the console: Tools → Rommancer Sync. It links itself.|It syncs in the background from power-on.',

@@ -167,6 +167,12 @@ linkPublicRouter.get('/client/file/:name', (req, res) => {
 // The desktop companion's installers (clients/desktop/build-release.sh puts them there)
 const DESKTOP_DIR = path.resolve(CLIENT_DIR, '../desktop/release');
 const DESKTOP_FILES = ['rommancer-desktop-setup.exe', 'rommancer-desktop.deb', 'rommancer-desktop.AppImage'];
+// The version of those installers (release/version.txt): the app updates itself when the server has a newer one
+linkPublicRouter.get('/desktop/version', (_req, res) => {
+  const f = path.join(DESKTOP_DIR, 'version.txt');
+  if (!fs.existsSync(f)) throw new HttpError(404, 'Not built yet');
+  res.type('text/plain').send(`version\t${fs.readFileSync(f, 'utf8').trim()}\n`);
+});
 linkPublicRouter.get('/desktop/:name', (req, res) => {
   const name = String(req.params.name);
   if (!DESKTOP_FILES.includes(name) || !fs.existsSync(path.join(DESKTOP_DIR, name))) throw new HttpError(404, 'Not built yet');

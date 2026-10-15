@@ -16,6 +16,7 @@ mod playnite;
 mod pc;
 mod prune;
 mod sync;
+mod update;
 mod wifi;
 
 use api::{DeviceApi, RootHeader, UserApi};
@@ -1142,6 +1143,46 @@ fn watch_update(app: AppHandle) {
     });
 }
 
+/// Looks for a newer app on the server an hour apart and installs it while no sync or game runs
+fn auto_update(app: AppHandle) {
+    std::thread::spawn(move || {
+        let mut announced = String::new();
+        std::thread::sleep(Duration::from_secs(60));
+        loop {
+            let state = app.state::<AppState>();
+            let server = state.settings.lock().unwrap().server.clone();
+            let busy = !state.running.lock().unwrap().is_empty() || state.playing.lock().unwrap().is_some();
+            let hidden = app.get_webview_window("main").map(|w| !w.is_visible().unwrap_or(false)).unwrap_or(true);
+            match update::newer(&server) {
+                Some(v) if !busy => match update::kind() {
+                    update::Kind::Replace(p) => match update::replace(&server, &p) {
+                        // watch_update tells an open window; one in the tray restarts at once
+                        Ok(()) if hidden => app.restart(),
+                        Ok(()) => push_log(&app, pc::KEY, format!("updated to {v}")),
+                        Err(e) => push_log(&app, pc::KEY, format!("update to {v}: {e:#}")),
+                    },
+                    update::Kind::Installer => match update::install(&server, hidden) {
+                        Ok(()) => app.exit(0),
+                        Err(e) => push_log(&app, pc::KEY, format!("update to {v}: {e:#}")),
+                    },
+                    update::Kind::Announce if announced != v => {
+                        let _ = app.emit("update-available", &v);
+                        announced = v;
+                    }
+                    update::Kind::Announce => {}
+                },
+                // Busy: try again soon
+                Some(_) => {
+                    std::thread::sleep(Duration::from_secs(300));
+                    continue;
+                }
+                None => {}
+            }
+            std::thread::sleep(Duration::from_secs(3600));
+        }
+    });
+}
+
 #[tauri::command]
 fn restart_app(app: AppHandle) {
     app.restart();
@@ -1237,6 +1278,7 @@ pub fn run() {
                 }
             }
             watch_update(handle.clone());
+            auto_update(handle.clone());
             watch_pc(handle.clone());
             watch_cards(handle);
             Ok(())

@@ -283,12 +283,17 @@ function Main({ status, onChange }: { status: Status; onChange: () => void }) {
   const [progress, setProgress] = useState<Record<string, Progress>>({})
   const [results, setResults] = useState<Record<string, Finished>>({})
   const [updated, setUpdated] = useState(false)
+  const [available, setAvailable] = useState('')
   const [version, setVersion] = useState('')
   useEffect(() => {
     void getVersion().then(setVersion)
     void invoke<Record<string, Finished>>('results').then((r) => setResults((now) => ({ ...r, ...now })))
     const u = listen('app-updated', () => setUpdated(true))
-    return () => void u.then((f) => f())
+    const n = listen<string>('update-available', (e) => setAvailable(e.payload))
+    return () => {
+      void u.then((f) => f())
+      void n.then((f) => f())
+    }
   }, [])
   const loadCards = useCallback(() => void invoke<Card[]>('cards').then(setCards), [])
   // The listener below lives as long as the window: it reads the cards and this PC's name through refs
@@ -437,6 +442,14 @@ function Main({ status, onChange }: { status: Status; onChange: () => void }) {
             <span className="grow">{t('updatedBanner')}</span>
             <button className="primary" onClick={() => void invoke('restart_app')}>
               {t('restart')}
+            </button>
+          </div>
+        )}
+        {available && !updated && (
+          <div className="banner">
+            <span className="grow">{t('availableBanner', { version: available })}</span>
+            <button className="primary" onClick={() => void openUrl(`${status.server}/api/v1/link/desktop/rommancer-desktop.deb`)}>
+              {t('downloadUpdate')}
             </button>
           </div>
         )}
