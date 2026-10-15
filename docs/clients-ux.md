@@ -38,8 +38,9 @@ Items:
    entry is there right after it. With a single conflict, Android opens its screen directly.
 3. **Watch game download** / **Watch games being sent**: only while one runs.
 4. **Game lists**: tick lists; leaving after a change syncs. The screen also has **Download the lists' games now**.
-5. **Browse games**: the server's games by system or by search, ticked one by one or a whole system, then a review and
-   the download (docs/browse.md). Hidden when the account may not download games.
+5. **Browse server games**: the server's games by system or by search, ticked one by one or a whole system, then a
+   review and the download (docs/browse.md). The games already on the console are left out unless the toggle on top
+   (`Show games already on this console: no/yes`) says otherwise. Hidden when the account may not download games.
 6. **Settings** (submenu, see below).
 7. **Status**: version, install date, account, server, last sync result (the summary below), last log lines.
 8. **Exit** (consoles only; Android and PC use their system back/close).

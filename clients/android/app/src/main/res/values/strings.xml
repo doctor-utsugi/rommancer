@@ -35,7 +35,7 @@
     <string name="watch_download">Watch the game download</string>
     <string name="watch_pulls">Watch sending games to the server</string>
     <string name="lists">Game lists</string>
-    <string name="browse">Browse games</string>
+    <string name="browse">Browse server games</string>
     <string name="settings">Settings</string>
     <string name="status">Status</string>
     <string name="press_back">Back</string>
@@ -68,10 +68,10 @@
     <string name="list_drop_go">Remove and delete %1$d games</string>
 
     <!-- Browsing the server's games -->
-    <string name="browse_search_all">Search all games…</string>
-    <string name="browse_search">Search</string>
+    <string name="browse_search_all">Search the server’s games…</string>
+    <string name="browse_search">Search the server</string>
     <string name="browse_all_systems">All systems</string>
-    <string name="browse_searching">Searching…</string>
+    <string name="browse_searching">Searching the server…</string>
     <string name="browse_loading">Loading…</string>
     <string name="browse_contacting">Contacting the server...</string>
     <string name="browse_empty">The server has no games to send yet</string>
@@ -86,9 +86,15 @@
         <item quantity="one">%d game matches</item>
         <item quantity="other">%d games match</item>
     </plurals>
-    <string name="browse_system_sub">%1$s · %2$s · %3$d here</string>
-    <string name="browse_here">here</string>
-    <string name="browse_queued">queued</string>
+    <string name="browse_here">On this console</string>
+    <string name="browse_queued">Downloading soon</string>
+    <string name="browse_here_count">%1$d already on this console</string>
+    <string name="browse_show_all">Show games already on this console: %1$s</string>
+    <string name="browse_all_here">You already have every game the server can send to this console</string>
+    <plurals name="browse_to_download">
+        <item quantity="one">1 game to download</item>
+        <item quantity="other">%1$d games to download</item>
+    </plurals>
     <string name="browse_selected">Review: %1$s selected · %2$s</string>
     <string name="browse_hint_systems">A open · X tick all · Y search · START download · B back</string>
     <string name="browse_hint_games">A tick · L1/R1 page · Y search · START download · B back</string>

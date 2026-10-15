@@ -6,6 +6,7 @@ status and sign out. Syncing itself is done by rommancer-sync.sh next to this fi
 """
 import functools
 import json
+import math
 import os
 import re
 import ssl
@@ -186,30 +187,34 @@ TEXTS = {
         "show_arkos": "EmulationStation restarts to show them when you close Rommancer Sync",
         "show_list": "They show in the game list",
         "st_games": "Games",
-        "browse": "Browse games",
-        "b_search": "Search…",
-        "search": "Search games",
+        "browse": "Browse server games",
+        "b_search": "Search the server…",
+        "search": "Search server games",
+        "b_show": "Show games already on this console: {v}",
         "search_keys": "A key  B delete  X shift  Y space  START results  SELECT back",
         "b_systems_keys": "A open  X tick all  Y search  START download  B back",
         "b_games_keys": "A tick  L1/R1 page  Y search  START download  B back",
-        "b_counts": "{n} · {size}",
-        "b_here_n": "({n} here)",
+        "b_counts": "{n} to download · {size}",
+        "b_here_n": "({n} on this console)",
+        "b_allhere": "all on this console",
         "b_games_n": "{n} games",
-        "b_here": "here",
-        "b_queued": "queued",
+        "b_todo_n": "{n} to download",
+        "b_here": "on this console",
+        "b_queued": "downloading soon",
+        "b_nonew": "Every game here is on this console already or downloading soon",
         "b_selected": "{n} games selected · {size}",
         "b_selected1": "1 game selected · {size}",
         "b_nothing": "Nothing selected yet",
         "b_found": "“{q}” · {n} games",
         "b_found1": "“{q}” · 1 game",
         "loading": "Loading…",
-        "searching": "Searching…",
+        "searching": "Searching the server…",
         "b_match": "{n} games match",
         "b_match1": "1 game matches",
         "b_nomatch": "No games match “{q}”",
         "b_none": "The server has no games to send yet",
         "b_denied": "Your account cannot download games",
-        "b_have": "Nothing to download: those games are already here or on their way",
+        "b_have": "Nothing to download: those games are on this console already or downloading soon",
         "b_ask": "Download {n} games ({size})?",
         "b_ask1": "Download 1 game ({size})?",
         "b_usable": "Usable space: {usable} ({free} free, {kept} kept free)",
@@ -626,6 +631,17 @@ except ValueError:
 BROWSE_PAGE = 50
 
 
+def spinner(surf, center, radius):
+    """A ring of dots turning (drawn: the default font may lack the glyphs), brightest at the head"""
+    head = int(time.time() * 12) % 8
+    dot = max(2, radius // 4)
+    for i in range(8):
+        k = (i - head) % 8
+        a = 2 * math.pi * i / 8
+        c = tuple(int(DIM[j] + (ACCENT[j] - DIM[j]) * (1 - k / 7)) for j in range(3))
+        pygame.draw.circle(surf, c, (int(center[0] + (radius - dot) * math.sin(a)), int(center[1] - (radius - dot) * math.cos(a))), max(1, dot - k // 3))
+
+
 class Picks:
     """The games ticked while browsing: single games (id → (bytes, system)) and whole systems (slug → the games left
     out of it, id → bytes). Ticking a system clears its single ticks"""
@@ -675,9 +691,8 @@ class Picks:
         for slug, skip in self.systems.items():
             s = systems.get(slug)
             if s and s["games"]:
-                new = s["games"] - s["here"]
-                n += new - len(skip)
-                b += s["bytes"] * new // s["games"] - sum(skip.values())
+                n += s["games"] - s["here"] - len(skip)
+                b += s["new_bytes"] - sum(skip.values())
         return max(n, 0), max(b, 0)
 
     def body(self):
@@ -687,10 +702,11 @@ class Picks:
 
 class Paged:
     """The games of a system or of a search (SYSTEM "-"), fetched a page at a time in a thread while the list keeps
-    drawing. GEN: the search's generation, so only the latest answer shows"""
+    drawing. GEN: the search's generation, so only the latest answer shows; SHOW_ALL: the games already here or queued
+    too (the server leaves them out otherwise)"""
 
-    def __init__(self, app, system="-", query="", gen=0):
-        self.app, self.system, self.query, self.gen = app, system, query, gen
+    def __init__(self, app, system="-", query="", gen=0, show_all=False):
+        self.app, self.system, self.query, self.gen, self.show_all = app, system, query, gen, show_all
         # (id, bytes, state, system, title)
         self.rows, self.total = [], None
         self.loading = self.failed = self.denied = False
@@ -703,7 +719,8 @@ class Paged:
         threading.Thread(target=self._fetch, args=(len(self.rows),), daemon=True).start()
 
     def _fetch(self, offset):
-        out = self.app.client("browse-games", self.system, str(offset), self.query, str(BROWSE_PAGE), timeout=20)
+        out = self.app.client("browse-games", self.system, str(offset), self.query, str(BROWSE_PAGE),
+                              "all" if self.show_all else "new", timeout=20)
         if out is None:
             self.failed = True
         elif ["denied"] in out:
@@ -749,6 +766,8 @@ class App:
         # Browsing: hidden once the server said the account may not download; the search's text and latest answer
         # (only the answer of the latest generation shows)
         self.browse_off, self.search_text, self.search_gen, self.search_res = False, "", 0, None
+        # Whether the games already on this console are listed too: one setting for the whole browse session
+        self.browse_all = False
         # Conflicts are counted in the background so the menu never waits for the network
         self.conflict_count = None
         self.cleanable = "0"
@@ -873,7 +892,8 @@ class App:
         ROWS: a function giving (label, right text, colour) per row, read every frame (pages arrive meanwhile); VIEW: a
         dict keeping the selection and the scroll between calls; NEAR_END(): called while the selection is near the
         last row (the next page loads); TAIL(): a dim line after the rows (Loading…), never selected; SUB: the line
-        under the title, or a function giving it. L1/R1 move a page; WRAP: past the last row is the first"""
+        under the title, or a function giving it. L1/R1 move a page; WRAP: past the last row is the first. A right text
+        may be a tuple of choices, longest first: the first that leaves the label whole is shown"""
         view = {} if view is None else view
         while True:
             items = rows()
@@ -890,12 +910,15 @@ class App:
             y = top
             for i in range(first, min(n, first + fit)):
                 label, right, color = items[i]
+                if isinstance(right, tuple):
+                    right = next((r for r in right if s.small.size(r)[0] + s.font.size(label)[0] + 40 <= width), right[-1])
                 rw = s.small.size(right)[0] if right else 0
-                if right:
-                    s.text(right, (x + width - rw, y + (s.font.get_height() - s.small.get_height()) // 2), s.small, DIM)
-                s.text(s.clip(label, s.font, width - rw - 30), (x + 10, y), s.font, ACCENT if i == sel and color == FG else color)
+                # The selected row is a filled bar, its texts in the background colour: seen at a glance
                 if i == sel:
-                    pygame.draw.rect(s.surf, ACCENT, pygame.Rect(x, y - 4, width + 8, s.font.get_height() + 8), 2, border_radius=8)
+                    pygame.draw.rect(s.surf, ACCENT, pygame.Rect(x, y - 4, width + 8, s.font.get_height() + 8), border_radius=8)
+                if right:
+                    s.text(right, (x + width - rw, y + (s.font.get_height() - s.small.get_height()) // 2), s.small, BG if i == sel else DIM)
+                s.text(s.clip(label, s.font, width - rw - 30), (x + 10, y), s.font, BG if i == sel else color)
                 y += step
             if extra and first + fit >= n:
                 s.text(s.clip(extra, s.font, width - 10), (x + 10, y), s.font, DIM)
@@ -920,7 +943,9 @@ class App:
                 sel = max(0, sel - fit)
             elif a == "pagedown":
                 sel = min(max(n - 1, 0), sel + fit)
-            view["sel"] = sel
+            # Kept as asked while rows are still arriving (the first page), so the selection lands where it was meant
+            if a is not None:
+                view["sel"] = sel
             if a in ("a", "x", "y", "start"):
                 return a, (sel if n else None)
             if a in ("b", "quit"):
@@ -928,8 +953,8 @@ class App:
 
     def keyboard(self, title, value="", secret=False, live=None, on_edit=None, keys=None):
         """The on-screen keyboard: the text on START, None on SELECT. LIVE: a function giving a status line (text,
-        colour) under the field, called every frame (the keyboard then never waits for a key); ON_EDIT(text): after
-        each change of the text; KEYS: the footer's hints"""
+        colour, and True for a spinner before it) under the field, called every frame (the keyboard then never waits
+        for a key); ON_EDIT(text): after each change of the text; KEYS: the footer's hints"""
         row, col, upper = 0, 0, False
         while True:
             s = self.screen
@@ -942,12 +967,17 @@ class App:
                 txt = txt[1:]
             s.text(txt, (box.x + 10, box.y + 6))
             if live:
-                status, color = live()
+                status, color, *spin = live()
                 if status:
-                    s.text(s.clip(status, s.small, box.w - 20), (box.x + 10, box.bottom + int(s.h * 0.01)), s.small, color)
+                    tx, ty = box.x + 10, box.bottom + int(s.h * 0.01)
+                    if spin and spin[0]:
+                        r = s.small.get_height() // 2
+                        spinner(s.surf, (tx + r, ty + r), r)
+                        tx += 2 * r + 10
+                    s.text(s.clip(status, s.small, box.x + box.w - 10 - tx), (tx, ty), s.small, color)
             kw, kh = (s.w - 60) // 10, int(s.h * 0.1)
-            for r, keys in enumerate(KEYBOARD):
-                for c, ch in enumerate(keys):
+            for r, line in enumerate(KEYBOARD):
+                for c, ch in enumerate(line):
                     ch = ch.upper() if upper else ch
                     rect = pygame.Rect(30 + c * kw, int(s.h * 0.3) + r * kh, kw - 6, kh - 6)
                     hot = (r, c) == (row, col)
@@ -1508,27 +1538,40 @@ class App:
         if ["denied"] in out:
             self.browse_denied()
             return None
-        systems = {p[1]: {"slug": p[1], "games": int(p[2]), "bytes": int(p[3]), "here": int(p[4]), "name": "\t".join(p[5:]) or p[1]}
-                   for p in out if p[0] == "system" and len(p) >= 6 and all(v.isdigit() for v in p[2:5])}
+        systems = {}
+        for p in out:
+            if p[0] == "system" and len(p) >= 6 and all(v.isdigit() for v in p[2:5]):
+                games, size, here = int(p[2]), int(p[3]), int(p[4])
+                # newBytes: the size of the games not here yet (servers before it: a share of the whole size)
+                new_bytes = int(p[6]) if len(p) >= 7 and p[6].isdigit() else (size * (games - here) // games if games else 0)
+                systems[p[1]] = {"slug": p[1], "games": games, "bytes": size, "here": here, "new_bytes": new_bytes, "name": p[5] or p[1]}
         if not systems:
             self.message(T["b_none"])
             return None
         return systems
 
     def browse(self):
-        """The systems (Search… first): A opens one, X ticks it whole, Y searches, START reviews and downloads what is
-        ticked. Leaving with games ticked asks first"""
+        """The systems (the toggle for the games already here, then Search…): A opens one, X ticks it whole, Y
+        searches, START reviews and downloads what is ticked. Leaving with games ticked asks first"""
         systems = self.browse_systems()
         if systems is None:
             return
-        picks, view = Picks(), {}
+        picks, view = Picks(), {"sel": 1}
+        self.browse_all = False
         while True:
-            order = list(systems.values())
+            # With the toggle off, the systems with nothing left to download are left out
+            order = [s for s in systems.values() if self.browse_all or s["games"] > s["here"]]
+
+            def system_right(s):
+                new = s["games"] - s["here"]
+                if not new:
+                    return T["b_allhere"]
+                todo = T["b_counts"].format(n=new, size=human(s["new_bytes"]))
+                return (f"{todo}  {T['b_here_n'].format(n=s['here'])}", todo) if s["here"] else todo
 
             def rows():
-                return [(T["b_search"], "", FG)] + [
-                    (f"{picks.mark(s['slug'])} {s['name']}", T["b_counts"].format(n=s["games"], size=human(s["bytes"]))
-                     + (f"  {T['b_here_n'].format(n=s['here'])}" if s["here"] else ""), FG) for s in order]
+                return [self.show_row(), (T["b_search"], "", FG)] + [
+                    (f"{picks.mark(s['slug'])} {s['name']}", system_right(s), FG) for s in order]
 
             act, i = self.pick_list(T["browse"], rows, T["b_systems_keys"], sub=lambda: self.picks_line(picks, systems), view=view)
             r = None
@@ -1538,14 +1581,16 @@ class App:
                 n = picks.totals(systems)[0]
                 if not picks or self.menu(T["browse"], [T["b_discard_go"], T["cancel"]], info=[T["b_discard1" if n == 1 else "b_discard"].format(n=n)]) == 0:
                     return
-            elif act == "y" or (act == "a" and i == 0):
+            elif act == "a" and i == 0:
+                self.browse_all = not self.browse_all
+            elif act == "y" or (act == "a" and i == 1):
                 r = self.browse_search(picks, systems)
             elif act == "start":
                 r = self.browse_review(picks, systems)
-            elif act == "x" and i:
-                picks.toggle_system(order[i - 1]["slug"])
-            elif act == "a" and i:
-                r = self.browse_games(picks, systems, system=order[i - 1])
+            elif act == "x" and i >= 2:
+                picks.toggle_system(order[i - 2]["slug"])
+            elif act == "a" and i >= 2:
+                r = self.browse_games(picks, systems, system=order[i - 2])
                 if r == "y":
                     r = self.browse_search(picks, systems)
             if r == "leave":
@@ -1556,14 +1601,19 @@ class App:
                 if systems is None:
                     return
 
+    def show_row(self):
+        """The toggle row on top of the browse lists"""
+        return T["b_show"].format(v=T["yes"] if self.browse_all else T["no"]), "", FG
+
     def browse_games(self, picks, systems, system=None, paged=None):
-        """A system's games (SYSTEM) or a search's (PAGED), paged as the selection gets near the end; A ticks a game
-        (here or queued ones are not tickable). "y" for Y, None for B, else as browse_review"""
-        paged = paged or Paged(self, system["slug"])
-        view = {}
+        """A system's games (SYSTEM) or a search's (PAGED), paged as the selection gets near the end, under the toggle
+        row; A ticks a game (ones on this console or downloading soon are not tickable). "y" for Y, None for B, else
+        as browse_review"""
+        paged = paged or Paged(self, system["slug"], show_all=self.browse_all)
+        view = {"sel": 1}
 
         def rows():
-            out = []
+            out = [self.show_row()]
             for gid, size, state, slug, title in list(paged.rows):
                 if state in ("here", "queued"):
                     out.append((f"       {title}", T[f"b_{state}"], DIM))
@@ -1579,12 +1629,12 @@ class App:
             if paged.loading:
                 return T["loading"]
             if paged.total == 0:
-                return T["b_nomatch"].format(q=paged.query) if paged.query else T["b_none"]
+                return T["b_nomatch"].format(q=paged.query) if paged.query else T["b_none"] if paged.show_all else T["b_nonew"]
             return ""
 
         def sub():
             if system:
-                head = T["b_games_n"].format(n=system["games"])
+                head = T["b_games_n" if paged.show_all else "b_todo_n"].format(n=system["games"] if paged.show_all else system["games"] - system["here"])
             else:
                 head = T["b_found1" if paged.total == 1 else "b_found"].format(q=paged.query, n=paged.total if paged.total is not None else "…")
             return self.picks_line(picks, systems, head)
@@ -1605,18 +1655,25 @@ class App:
                 r = self.browse_review(picks, systems)
                 if r:
                     return r
+            elif act == "a" and i == 0:
+                # The list again from the server, with or without the games already here
+                self.browse_all = not self.browse_all
+                paged = Paged(self, paged.system, paged.query, gen=paged.gen, show_all=self.browse_all)
+                if not system:
+                    self.search_res = paged
+                view["first"] = 0
             elif act == "a" and paged.failed:
                 # A tries again
                 paged.failed = False
                 paged.load()
-            elif act == "a" and i is not None and i < len(paged.rows):
-                gid, size, state, slug, _ = paged.rows[i]
+            elif act == "a" and i and i <= len(paged.rows):
+                gid, size, state, slug, _ = paged.rows[i - 1]
                 if state == "new":
                     picks.toggle(gid, size, slug)
 
     def start_search(self, text):
         self.search_gen += 1
-        self.search_res = Paged(self, "-", text.strip(), gen=self.search_gen)
+        self.search_res = Paged(self, "-", text.strip(), gen=self.search_gen, show_all=self.browse_all)
 
     def browse_search(self, picks, systems):
         """The keyboard with one status line under the field; START opens the results, where Y or B come back to the
@@ -1637,7 +1694,7 @@ class App:
                 self.start_search(st["text"])
             r = self.search_res if self.search_res and self.search_res.gen == self.search_gen else None
             if st["due"] or (r and r.total is None and not (r.failed or r.denied)):
-                return T["searching"], DIM
+                return T["searching"], ACCENT, True
             if not r:
                 return "", DIM
             if r.denied:
@@ -1655,8 +1712,8 @@ class App:
             self.search_text = st["text"] = text
             st["due"] = None
             r = self.search_res
-            # START searches at once unless the answer for this very text is there or on its way
-            if not r or r.gen != self.search_gen or r.query != text.strip():
+            # START searches at once unless the answer for this very text (and toggle) is there or on its way
+            if not r or r.gen != self.search_gen or r.query != text.strip() or r.show_all != self.browse_all:
                 self.start_search(text)
             res = self.browse_games(picks, systems, paged=self.search_res)
             if res not in (None, "y"):

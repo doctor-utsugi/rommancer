@@ -48,28 +48,30 @@ async function deviceGames(device: AgentDevice) {
 
 const stateOf = (g: CatalogGame, d: { here: Set<number>; queued: Set<number> }) => (d.here.has(g.gameId) ? 'here' : d.queued.has(g.gameId) ? 'queued' : 'new');
 
-// "system<TAB>slug<TAB>games<TAB>bytes<TAB>here<TAB>name" per system with games to send that this console plays
+// "system<TAB>slug<TAB>games<TAB>bytes<TAB>here<TAB>name<TAB>newBytes" per system with games to send that this console
+// plays (newBytes: the size of the games not here yet)
 browseRouter.get('/systems', async (req, res) => {
   const device = await allowed(req);
   if (!device) return res.type('text/plain').send('denied\n');
   const cat = await catalog();
   const ok = plays(device);
   const mine = await deviceGames(device);
-  const by = new Map<string, { games: number; bytes: number; here: number }>();
+  const by = new Map<string, { games: number; bytes: number; here: number; fresh: number }>();
   for (const g of cat.games) {
     if (!ok(g.system)) continue;
-    const s = by.get(g.system) ?? { games: 0, bytes: 0, here: 0 };
+    const s = by.get(g.system) ?? { games: 0, bytes: 0, here: 0, fresh: 0 };
     s.games++;
     s.bytes += g.bytes;
     if (stateOf(g, mine) !== 'new') s.here++;
+    else s.fresh += g.bytes;
     by.set(g.system, s);
   }
   const rows = [...by].map(([slug, s]) => ({ slug, name: cat.systems.get(slug) ?? slug, ...s })).sort((a, b) => a.name.localeCompare(b.name));
-  res.type('text/plain').send(rows.map((r) => ['system', r.slug, r.games, r.bytes, r.here, field(r.name)].join('\t')).join('\n') + (rows.length ? '\n' : ''));
+  res.type('text/plain').send(rows.map((r) => ['system', r.slug, r.games, r.bytes, r.here, field(r.name), r.fresh].join('\t')).join('\n') + (rows.length ? '\n' : ''));
 });
 
 // "total<TAB>n", then "game<TAB>id<TAB>bytes<TAB>state<TAB>system<TAB>title": a system's games (or every system's), by
-// title or, with q, by how well they match it
+// title or, with q, by how well they match it; show=new leaves out the games here or queued
 browseRouter.get('/games', async (req, res) => {
   const device = await allowed(req);
   if (!device) return res.type('text/plain').send('denied\n');
@@ -89,6 +91,7 @@ browseRouter.get('/games', async (req, res) => {
       .map((x) => x.g);
   }
   const mine = await deviceGames(device);
+  if (req.query.show === 'new') games = games.filter((g) => stateOf(g, mine) === 'new');
   const page = games.slice(offset, offset + limit);
   const out = [`total\t${games.length}`, ...page.map((g) => ['game', g.gameId, g.bytes, stateOf(g, mine), g.system, field(g.title)].join('\t'))];
   res.type('text/plain').send(out.join('\n') + '\n');

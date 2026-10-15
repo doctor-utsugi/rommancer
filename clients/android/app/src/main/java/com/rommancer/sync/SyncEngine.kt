@@ -36,8 +36,8 @@ class SyncEngine(private val context: Context, private val store: Store, private
     /** What having only some lists would delete here: FILES deleted, UPLOAD sent to the server first, BYTES of both */
     data class ListsDrop(val files: Int, val upload: Int, val bytes: Long)
 
-    /** A system the server can send: GAMES sendable, BYTES their size, HERE of them on the device or queued */
-    data class BrowseSystem(val slug: String, val games: Int, val bytes: Long, val here: Int, val name: String) {
+    /** A system the server can send: GAMES sendable, BYTES their size, HERE of them on the device or queued, NEW_BYTES the size of the rest */
+    data class BrowseSystem(val slug: String, val games: Int, val bytes: Long, val here: Int, val name: String, val newBytes: Long) {
         val fresh: Int get() = (games - here).coerceAtLeast(0)
     }
 
@@ -80,7 +80,7 @@ class SyncEngine(private val context: Context, private val store: Store, private
                 val s = known.firstOrNull { it.slug == slug } ?: continue
                 val take = (s.fresh - skip.size).coerceAtLeast(0)
                 n += take
-                if (s.games > 0) bytes += s.bytes * take / s.games
+                if (s.fresh > 0) bytes += s.newBytes * take / s.fresh
             }
             return n to bytes
         }
@@ -748,11 +748,11 @@ class SyncEngine(private val context: Context, private val store: Store, private
     }
 
     fun browseSystems(): List<BrowseSystem> = browse("/agent/browse/systems").filter { it.size >= 6 && it[0] == "system" }
-        .map { BrowseSystem(it[1], it[2].toIntOrNull() ?: 0, it[3].toLongOrNull() ?: 0L, it[4].toIntOrNull() ?: 0, it[5]) }
+        .map { BrowseSystem(it[1], it[2].toIntOrNull() ?: 0, it[3].toLongOrNull() ?: 0L, it[4].toIntOrNull() ?: 0, it[5], it.getOrNull(6)?.toLongOrNull() ?: 0L) }
 
-    /** SYSTEM null: every system this device knows; Q under 2 characters lists by title */
-    fun browseGames(system: String?, q: String, offset: Int, limit: Int = 50): BrowsePage {
-        val query = listOfNotNull(system?.let { "system=${Api.enc(it)}" }, "q=${Api.enc(q)}", "offset=$offset", "limit=$limit").joinToString("&")
+    /** SYSTEM null: every system this device knows; Q under 2 characters lists by title; ALL also the games already here */
+    fun browseGames(system: String?, q: String, offset: Int, limit: Int = 50, all: Boolean = false): BrowsePage {
+        val query = listOfNotNull(system?.let { "system=${Api.enc(it)}" }, "q=${Api.enc(q)}", "offset=$offset", "limit=$limit", "show=new".takeIf { !all }).joinToString("&")
         val rows = browse("/agent/browse/games?$query")
         val total = rows.firstOrNull { it.size >= 2 && it[0] == "total" }?.get(1)?.toIntOrNull() ?: 0
         return BrowsePage(total, rows.filter { it.size >= 6 && it[0] == "game" }.map { BrowseGame(it[1], it[2].toLongOrNull() ?: 0L, it[3], it[4], it[5]) })

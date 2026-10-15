@@ -10,7 +10,7 @@
 #   rommancer-sync.sh install       start the daemon at boot and sync around each game (Knulli, Batocera, ArkOS, NextUI)
 #   rommancer-sync.sh update        fetch a newer client from the server (the daemon does it by itself)
 #   rommancer-sync.sh roms          download the roms of the lists assigned to this device
-#   rommancer-sync.sh browse-systems | browse-games SLUG|- OFFSET QUERY [LIMIT] | browse-check FILE | browse-add FILE | browse-get
+#   rommancer-sync.sh browse-systems | browse-games SLUG|- OFFSET QUERY [LIMIT [new|all]] | browse-check FILE | browse-add FILE | browse-get
 #                                   browse the server's games and download the ones picked (docs/browse.md)
 #   rommancer-sync.sh conflicts | resolve ID device|server
 #   rommancer-sync.sh game-start ROM   fetch that rom's saves (called by firmware game events)
@@ -25,7 +25,7 @@
 #                                   so any computer with this script can sync it. Without a command: sync.
 set -u
 # Raised with every change of this client (any change reaches devices: they update by content, not by this)
-CLIENT_VERSION=1.74.0
+CLIENT_VERSION=1.75.0
 # A clock before this date is surely wrong (no battery-backed clock); kept apart from the version, which may run ahead
 CLOCK_MIN=20261001
 # Onion keeps curl (with TLS) and friends outside the default PATH
@@ -1885,10 +1885,12 @@ browse_http() {
 
 cmd_browse_systems() { need_link; browse_http GET "$SERVER/api/v1/agent/browse/systems" - -; }
 
-# SLUG ("-": every system) OFFSET QUERY [LIMIT]
+# SLUG ("-": every system) OFFSET QUERY [LIMIT [SHOW]]: SHOW "new" (the default) leaves out the games already here
+# or queued, "all" lists them too
 cmd_browse_games() {
   need_link
   bq="?offset=${2:-0}&limit=${4:-50}"
+  [ "${5:-new}" = all ] || bq="$bq&show=new"
   [ -n "${1:-}" ] && [ "$1" != - ] && bq="$bq&system=$(urlenc "$1")"
   [ -n "${3:-}" ] && bq="$bq&q=$(urlenc "$3")"
   browse_http GET "$SERVER/api/v1/agent/browse/games$bq" - -
@@ -2166,15 +2168,18 @@ t() {
       w_roms) echo "Downloading games $2" ;; w_pulls) echo "Sending games to the server $2" ;;
       romswatch) echo "Watch game download" ;; pullswatch) echo "Watch games being sent to the server" ;;
       romsnow) echo "Download the lists' games now" ;;
-      browse) echo "Browse games" ;; b_search) echo "Search..." ;; b_searchtitle) echo "SEARCH GAMES" ;; checking) echo "Contacting the server..." ;;
-      b_info) echo "A opens a system: its games can be ticked one by one or all at once." ;;
+      browse) echo "Browse server games" ;; b_search) echo "Search the server..." ;; b_searchtitle) echo "SEARCH SERVER GAMES" ;; checking) echo "Contacting the server..." ;;
+      b_searching) echo "Searching the server..." ;; b_show) echo "Show games already on this console: $2" ;;
+      b_todo) echo "$2 to download · $3" ;; b_allhere) echo "all on this console" ;;
+      b_nonew) echo "Every game here is on this console already or downloading soon" ;;
+      b_info) echo "Games on the server, by system. A opens a system: its games can be ticked one by one or all at once." ;;
       b_dlsel) if [ -n "${2:-}" ]; then echo "Download selected ($2 · $3)"; else echo "Download selected"; fi ;;
       b_selall) echo "Select all $2 games ($3)" ;; b_unselall) echo "Unselect all" ;; b_more) echo "More..." ;;
       b_page) echo "Games $2-$3 of $4" ;; b_found) if [ "$3" = 1 ]; then echo "\"$2\": 1 game"; else echo "\"$2\": $3 games"; fi ;;
-      b_here) echo "here" ;; b_queued) echo "queued" ;;
+      b_here) echo "on this console" ;; b_queued) echo "downloading soon" ;;
       b_none) echo "The server has no games to send yet" ;; b_nomatch) echo "No games match \"$2\"" ;;
       b_fail) echo "Could not reach the server" ;; b_denied) echo "Your account cannot download games" ;;
-      b_have) echo "Nothing to download: those games are already here or on their way" ;;
+      b_have) echo "Nothing to download: those games are on this console already or downloading soon" ;;
       b_ask) if [ "$2" = 1 ]; then echo "Download 1 game ($3)?"; else echo "Download $2 games ($3)?"; fi ;;
       b_usable) echo "Usable space: $2 ($3 free, $4 kept free)" ;; b_pending) echo "Already waiting from your lists: $2" ;;
       b_whole) echo "$2: all $3 games, one version each; games the server gets later are not included" ;;
@@ -2569,13 +2574,15 @@ setup_lists() {
   return 0
 }
 
-# ---- Browse games on Onion (docs/browse.md): its menu has no X/Y, so every action is a row of its own ----
+# ---- Browse server games on Onion (docs/browse.md): its menu has no X/Y, so every action is a row of its own ----
 
 # The selection, "kind<TAB>id<TAB>bytes<TAB>system<TAB>games" lines: game (a game ticked), system (a whole system: its
 # slug as id, its games not here yet and their size, approximate) and skip (a game unticked inside a ticked system)
 B_SEL="$WORK/browse-sel"
 # Set once the server said the account may not download games: the home item goes
 B_DENIED=""
+# 1: the games already on this console (or queued) are listed too; one setting for the whole browse session
+B_ALL=""
 
 # "games<TAB>bytes" of the selection (approximate: the review asks the server)
 bsel_totals() { awk -F"$TAB" '$1 == "game" { n++; b += $3 } $1 == "system" { n += $5; b += $3 } $1 == "skip" { n--; b -= $3 } END { printf "%d\t%.0f\n", n, b }' "$B_SEL" 2>/dev/null; }
@@ -2591,7 +2598,7 @@ bsel_game() {
 bsel_system() {
   awk -F"$TAB" -v s="$1" '$4 != s' "$B_SEL" > "$B_SEL.new"
   if ! grep -q "^system$TAB$1$TAB" "$B_SEL"; then
-    awk -F"$TAB" -v s="$1" '$2 == s { n = $3 - $5; printf "system\t%s\t%.0f\t%s\t%d\n", s, ($3 > 0 ? $4 * n / $3 : 0), s, n }' "$WORK/browse-systems.rows" >> "$B_SEL.new"
+    awk -F"$TAB" -v s="$1" "$B_NEWB"'$2 == s { n = $3 - $5; printf "system\t%s\t%.0f\t%s\t%d\n", s, newb(), s, n }' "$WORK/browse-systems.rows" >> "$B_SEL.new"
   fi
   mv "$B_SEL.new" "$B_SEL"
 }
@@ -2599,14 +2606,24 @@ bsel_system() {
 # Human sizes inside awk, as human() does
 B_HUMAN='function h(b, i, u) { split("B KB MB GB TB", u, " "); i = 1; while (b >= 1024 && i < 5) { b /= 1024; i++ } return sprintf(i > 2 ? "%.1f %s" : "%d %s", b, u[i]) }'
 
-# The systems' rows, one awk for all (a fork per row is slow on a Miyoo): [x] all, [-] some games, [ ] none
+# The size of a system row's games not here yet: its 7th field (servers before it: a share of the whole size)
+B_NEWB='function newb() { return NF >= 7 ? $7 : ($3 > 0 ? $4 * ($3 - $5) / $3 : 0) }'
+
+# The systems shown: all of them with the toggle on, else the ones with games left to download
+browse_systems_shown() { awk -F"$TAB" -v all="$B_ALL" 'all == 1 || $3 - $5 > 0' "$WORK/browse-systems.rows" > "$WORK/browse-systems.shown"; }
+
+browse_show_label() { if [ "$B_ALL" = 1 ]; then t b_show "$(t yes)"; else t b_show "$(t no)"; fi; }
+
+# The systems' rows, one awk for all (a fork per row is slow on a Miyoo): [x] all, [-] some games, [ ] none; what is
+# left to download (Onion's row has no room for how many are here)
 browse_system_labels() {
-  awk -F"$TAB" -v sel="$B_SEL" "$B_HUMAN"'
+  awk -F"$TAB" -v sel="$B_SEL" -v todo="$(t b_todo N S)" -v allhere="$(t b_allhere)" "$B_HUMAN$B_NEWB"'
     FILENAME == sel { if ($1 == "system") sys[$2] = 1; else if ($1 == "skip") sk[$4] = 1; else if ($1 == "game") g[$4] = 1; next }
     { m = "[ ]"; if ($2 in sys) m = ($2 in sk) ? "[-]" : "[x]"; else if ($2 in g) m = "[-]"
-      print m " " substr($6, 1, 18) "  " $3 " · " h($4) }' "$B_SEL" "$WORK/browse-systems.rows"
+      n = $3 - $5; r = todo; sub(/N/, n, r); sub(/S/, h(newb()), r)
+      print m " " substr($6, 1, 18) "  " (n > 0 ? r : allhere) }' "$B_SEL" "$WORK/browse-systems.shown"
 }
-# A page's rows: here and queued games dimmed by having no box (not tickable)
+# A page's rows: games on this console or downloading soon (shown with the toggle on) have no box (not tickable)
 browse_game_labels() {
   awk -F"$TAB" -v sel="$B_SEL" -v here="$(t b_here)" -v queued="$(t b_queued)" "$B_HUMAN"'
     FILENAME == sel { if ($1 == "system") sys[$2] = 1; else if ($1 == "game") g[$2] = 1; else if ($1 == "skip") sk[$2] = 1; next }
@@ -2686,18 +2703,21 @@ $(t b_long)"
 # A games menu, 90 a page (Onion's menu takes about 100 rows): a system's (SLUG) or a search's (SLUG "-", QUERY).
 # The same codes as browse_review
 browse_games_menu() {
-  bg_slug="$1"; bg_q="${2:-}"; bg_off=0; bg_at=0; bg_load=1
+  bg_slug="$1"; bg_q="${2:-}"; bg_off=0; bg_at=1; bg_load=1
   bg_name="$(awk -F"$TAB" -v s="$bg_slug" '$2 == s { print $6; exit }' "$WORK/browse-systems.rows")"
   while :; do
     if [ "$bg_load" = 1 ]; then
-      panel "$(t browse)" "$(t checking)"
-      HTTP_MAX=20 cmd_browse_games "$bg_slug" "$bg_off" "$bg_q" 90 > "$WORK/browse-page" 2>/dev/null; bg_rc=$?
+      # A search says so: it is the server that searches, and it can take a moment
+      if [ -n "$bg_q" ]; then panel "$(t browse)" "$(t b_searching)"; else panel "$(t browse)" "$(t checking)"; fi
+      bg_show=new; [ "$B_ALL" = 1 ] && bg_show=all
+      HTTP_MAX=20 cmd_browse_games "$bg_slug" "$bg_off" "$bg_q" 90 "$bg_show" > "$WORK/browse-page" 2>/dev/null; bg_rc=$?
       panel_close
       [ "$bg_rc" = 0 ] || { browse_fail; return 0; }
       grep -qx denied "$WORK/browse-page" && { browse_denied; return 2; }
       bg_total="$(sed -n "s/^total$TAB//p" "$WORK/browse-page" | head -n 1)"
       grep "^game$TAB" "$WORK/browse-page" > "$WORK/browse-page.rows"
-      if [ ! -s "$WORK/browse-page.rows" ]; then
+      # With the toggle off an empty page stays on screen, so the toggle can show the games already here
+      if [ ! -s "$WORK/browse-page.rows" ] && [ "$B_ALL" = 1 ]; then
         if [ -n "$bg_q" ]; then panel "$(t browse)" "$(t b_nomatch "$bg_q")" wait; else panel "$(t browse)" "$(t b_none)" wait; fi
         return 0
       fi
@@ -2705,14 +2725,12 @@ browse_games_menu() {
     fi
     bg_n="$(grep -c . "$WORK/browse-page.rows")"
     case "$bg_total" in ''|*[!0-9]*) bg_total=$((bg_off + bg_n)) ;; esac
-    set --; bg_head=1
-    if [ "$bg_slug" != - ]; then
-      if grep -q "^system$TAB$bg_slug$TAB" "$B_SEL"; then set -- "$(t b_unselall)"
-      else
-        bg_all="$(awk -F"$TAB" -v s="$bg_slug" '$2 == s { print $3 "\t" $4; exit }' "$WORK/browse-systems.rows")"
-        set -- "$(t b_selall "${bg_all%%"$TAB"*}" "$(human "${bg_all#*"$TAB"}")")"
-      fi
-      bg_head=2
+    set -- "$(browse_show_label)"; bg_head=2
+    # Select all: the system's games not here yet (no row when there are none)
+    bg_all="$(awk -F"$TAB" -v s="$bg_slug" "$B_NEWB"'$2 == s { printf "%d\t%.0f\n", $3 - $5, newb(); exit }' "$WORK/browse-systems.rows")"
+    if grep -q "^system$TAB$bg_slug$TAB" "$B_SEL"; then set -- "$@" "$(t b_unselall)"; bg_head=3
+    elif [ "$bg_slug" != - ] && [ "${bg_all%%"$TAB"*}" -gt 0 ] 2>/dev/null; then
+      set -- "$@" "$(t b_selall "${bg_all%%"$TAB"*}" "$(human "${bg_all#*"$TAB"}")")"; bg_head=3
     fi
     if [ -s "$B_SEL" ]; then set -- "$@" "$(bsel_label)"; else set -- "$@" "$(t b_dlsel)"; fi
     browse_game_labels > "$WORK/browse-labels"
@@ -2720,9 +2738,15 @@ browse_games_menu() {
     bg_more=0; [ $((bg_off + bg_n)) -lt "$bg_total" ] && { bg_more=1; set -- "$@" "$(t b_more)"; }
     if [ -n "$bg_q" ]; then bg_title="$(t browse)"; bg_msg="$(t b_found "$bg_q" "$bg_total")"
     else bg_title="$bg_name"; bg_msg="$(t b_page $((bg_off + 1)) $((bg_off + bg_n)) "$bg_total")"; fi
+    if [ "$bg_n" = 0 ]; then
+      if [ -n "$bg_q" ]; then bg_msg="$(t b_nomatch "$bg_q")"; else bg_msg="$(t b_nonew)"; fi
+    fi
     menu "$bg_title" "$bg_msg" -s "$bg_at" "$@" "$(t back)"; bg_pick=$?
     bg_at="$bg_pick"
-    if [ "$bg_pick" -lt $((bg_head - 1)) ]; then
+    if [ "$bg_pick" = 0 ]; then
+      if [ "$B_ALL" = 1 ]; then B_ALL=""; else B_ALL=1; fi
+      bg_off=0; bg_load=1
+    elif [ "$bg_pick" -lt $((bg_head - 1)) ]; then
       bsel_system "$bg_slug"
     elif [ "$bg_pick" = $((bg_head - 1)) ]; then
       browse_review; bg_rc=$?
@@ -2733,10 +2757,10 @@ $(sed -n "$((bg_pick - bg_head + 1))p" "$WORK/browse-page.rows")
 EOR
       [ "$g_state" = new ] && bsel_game "$g_id" "$g_bytes" "$g_sys"
     elif [ "$bg_more" = 1 ] && [ "$bg_pick" = $((bg_head + bg_n)) ]; then
-      bg_off=$((bg_off + 90)); bg_load=1; bg_at=0
+      bg_off=$((bg_off + 90)); bg_load=1; bg_at=1
     elif [ "$bg_off" -gt 0 ]; then
       # Back from a later page goes to the one before it
-      bg_off=$((bg_off - 90)); [ "$bg_off" -lt 0 ] && bg_off=0; bg_load=1; bg_at=0
+      bg_off=$((bg_off - 90)); [ "$bg_off" -lt 0 ] && bg_off=0; bg_load=1; bg_at=1
     else return 0; fi
   done
 }
@@ -2748,10 +2772,10 @@ browse_search() {
   browse_games_menu - "$B_Q"
 }
 
-# The systems: Search, Download selected (when any), each system ticked as a whole or in part, Back (asks first when
-# something is selected)
+# The systems: the toggle for the games already here, Search, Download selected (when any), each system ticked as a
+# whole or in part, Back (asks first when something is selected)
 setup_browse() {
-  : > "$B_SEL"; bs_at=""; bs_load=1; B_Q=""
+  : > "$B_SEL"; bs_at=""; bs_def=1; bs_load=1; B_Q=""; B_ALL=""
   while :; do
     if [ "$bs_load" = 1 ]; then
       panel "$(t browse)" "$(t checking)"
@@ -2763,21 +2787,26 @@ setup_browse() {
       [ -s "$WORK/browse-systems.rows" ] || { panel "$(t browse)" "$(t b_none)" wait; return 0; }
       bs_load=0
     fi
-    set -- "$(t b_search)"; bs_head=1
-    [ -s "$B_SEL" ] && { set -- "$@" "$(bsel_label)"; bs_head=2; }
+    browse_systems_shown
+    set -- "$(browse_show_label)" "$(t b_search)"; bs_head=2
+    [ -s "$B_SEL" ] && { set -- "$@" "$(bsel_label)"; bs_head=3; }
     browse_system_labels > "$WORK/browse-labels"
     while IFS= read -r l; do set -- "$@" "$l"; done < "$WORK/browse-labels"
-    bs_n="$(grep -c . "$WORK/browse-systems.rows")"
-    # The cursor stays on the system last opened (the Download row comes and goes above it)
-    bs_sel="$(awk -F"$TAB" -v s="$bs_at" -v h="$bs_head" '$2 == s { print NR - 1 + h; exit }' "$WORK/browse-systems.rows")"
-    menu "$(t browse)" "$(t b_info)" -s "${bs_sel:-0}" "$@" "$(t back)"; bs_pick=$?
+    bs_n="$(grep -c . "$WORK/browse-systems.shown")"
+    # The cursor stays on the system last opened (the Download row comes and goes above it), else on the row last used
+    bs_sel="$(awk -F"$TAB" -v s="$bs_at" -v h="$bs_head" '$2 == s { print NR - 1 + h; exit }' "$WORK/browse-systems.shown")"
+    bs_info="$(t b_info)"; [ "$bs_n" = 0 ] && bs_info="$(t b_nonew)"
+    menu "$(t browse)" "$bs_info" -s "${bs_sel:-$bs_def}" "$@" "$(t back)"; bs_pick=$?
     bs_rc=0
     if [ "$bs_pick" = 0 ]; then
-      bs_at=""; browse_search; bs_rc=$?
-    elif [ "$bs_head" = 2 ] && [ "$bs_pick" = 1 ]; then
+      if [ "$B_ALL" = 1 ]; then B_ALL=""; else B_ALL=1; fi
+      bs_at=""; bs_def=0
+    elif [ "$bs_pick" = 1 ]; then
+      bs_at=""; bs_def=1; browse_search; bs_rc=$?
+    elif [ "$bs_head" = 3 ] && [ "$bs_pick" = 2 ]; then
       browse_review; bs_rc=$?
     elif [ "$bs_pick" -lt $((bs_head + bs_n)) ]; then
-      bs_at="$(sed -n "$((bs_pick - bs_head + 1))p" "$WORK/browse-systems.rows" | cut -f2)"
+      bs_at="$(sed -n "$((bs_pick - bs_head + 1))p" "$WORK/browse-systems.shown" | cut -f2)"
       browse_games_menu "$bs_at"; bs_rc=$?
     else
       if [ -s "$B_SEL" ]; then
@@ -2955,7 +2984,7 @@ case "${1:-}" in
   roms-stop) cmd_roms_stop ;;
   # Browsing the server's games (docs/browse.md): plain text answers, "denied" when the account may not download
   browse-systems) cmd_browse_systems ;;
-  browse-games) cmd_browse_games "${2:-}" "${3:-0}" "${4:-}" "${5:-50}" ;;
+  browse-games) cmd_browse_games "${2:-}" "${3:-0}" "${4:-}" "${5:-50}" "${6:-new}" ;;
   browse-check) cmd_browse_post check "${2:-}" ;;
   browse-add) cmd_browse_post add "${2:-}" ;;
   browse-get) cmd_browse_get ;;

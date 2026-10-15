@@ -36,12 +36,16 @@ errors. Every browse endpoint answers `denied` (one line) when the device's owne
 budget use the same numbers.
 
 1. `GET /agent/browse/systems` →
-   `system<TAB>slug<TAB>games<TAB>bytes<TAB>here<TAB>name` per system with sendable games that this device's layout
-   knows (layouts with an empty system map: every system). games = sendable games, bytes = their size, here = how many
-   of them are on the device or queued.
-2. `GET /agent/browse/games?system=SLUG&q=TEXT&offset=N&limit=M` → `total<TAB>n`, then
+   `system<TAB>slug<TAB>games<TAB>bytes<TAB>here<TAB>name<TAB>newBytes` per system with sendable games that this
+   device's layout knows (layouts with an empty system map: every system). games = sendable games, bytes = their size,
+   here = how many of them are on the device or queued, newBytes = the size of the games not here yet (what can still
+   be downloaded: games − here games, newBytes). Clients reading a server without the 7th field take
+   `bytes × (games − here) / games`.
+2. `GET /agent/browse/games?system=SLUG&q=TEXT&offset=N&limit=M&show=new` → `total<TAB>n`, then
    `game<TAB>id<TAB>bytes<TAB>state<TAB>system<TAB>title`, state `here` | `queued` | `new`. Without `system`: every
    system the device knows. Without `q` (or under 2 characters): by title. With `q`: fuzzy ranking. limit ≤ 200 (50).
+   `show=new` leaves out the games here or queued (total counts what is left); the clients send it unless the
+   "show games already on this console" toggle is on.
 3. `POST /agent/browse/check` body lines: `game<TAB>id`, `system<TAB>slug`, `skip<TAB>id` (a game unticked inside a
    ticked system). Answer:
    - `need<TAB>bytes<TAB>games` — what the selection adds (new games only)
@@ -91,38 +95,57 @@ result screen adds one fact about when the games show (`games-show` summary line
 - Android ES-DE: close ES-DE and open it again to see them (with Shizuku ready: a **Restart ES-DE** button); Daijishō:
   sync their platforms in Daijishō
 
-States: `Contacting the server...`, `The server has no games to send yet`, `No games match "q"`, `Could not reach the
-server` (+ details), `Your account cannot download games` (and the home item is hidden once `denied` was seen).
+States: `Contacting the server...`, `Searching the server…` (a search pending or in flight), `The server has no games
+to send yet`, `No games match "q"`, `Every game here is on this console already or downloading soon` (a list empty
+with the toggle off), `Could not reach the server` (+ details), `Your account cannot download games` (and the home item
+is hidden once `denied` was seen).
+
+Games already on the console (all clients): hidden by default. A toggle row on top of the systems screen and of every
+games screen (system or search) reads `Show games already on this console: no` / `yes`; one setting for the whole
+browse session, starting at `no`. Toggling a games screen asks the server for the list again (with or without
+`show=new`). With it off, systems with nothing left to download are left out. With it on, the states read `on this
+console` (here) and `downloading soon` (queued), dimmed and not tickable; the words here/queued never show on screen.
+
+System rows (all clients) show what can still be downloaded: `Super Nintendo  112 to download · 1.1 GB` (games − here,
+newBytes), `(12 on this console)` after it when here > 0 and it fits (pygame, Android; Onion drops it), and `all on this
+console` for a system with nothing left (shown only with the toggle on).
 
 ### pygame UI (`rommancer-ui.py`)
-- Home item **Browse games** after Game lists.
+- Home item **Browse server games** after Game lists.
 - `pick_list()` widget: returns (action, index) for a, x, y, start, b, keeps its scroll, pages with L1/R1
   (`pageup`/`pagedown`: added to the fallback map, buttons 4/5, and to the keyboard map), loads the next page in a
-  background thread when the selection gets near the end (`Loading…` row), no wrap in paged lists.
+  background thread when the selection gets near the end (`Loading…` row), no wrap in paged lists. The selected row is
+  a filled accent bar with its texts in the background colour. A row's right text may be a tuple of choices, longest
+  first (the first that leaves the label whole shows).
 - Held d-pad/hat/stick repeats (300 ms, then every 60 ms) in `next_action`, for every screen.
-- Systems: `Search…` first, then `[x] Super Nintendo  124 · 1.2 GB  (12 here)`. Footer `A open  X tick all  Y search
-  START download  B back`.
-- Games: `[x] Title  4 MB`, `here`/`queued` dimmed and not tickable. Footer `A tick  L1/R1 page  Y search  START
-  download  B back`.
-- Search: its own screen; the keyboard with one status line under the field (`Searching…`, `12 games match`, `No
-  games match "xyz"`); START opens the results (a Games list with the query in the sub line); Y or B there go back to
-  the keyboard with the text kept. Debounce from text edits only. `ROMMANCER_SEARCH_DEBOUNCE` (default 2.0) and a
-  `wait:SECONDS` token in `ROMMANCER_UI_TEST` for tests.
+- Systems: the toggle row, `Search the server…`, then `[x] Super Nintendo  112 to download · 1.1 GB  (12 on this
+  console)`; the cursor starts on Search. Footer `A open  X tick all  Y search  START download  B back`.
+- Games: the toggle row, then `[x] Title  4 MB`; with the toggle on, `on this console`/`downloading soon` dimmed and not
+  tickable. The cursor starts on the first game. Footer `A tick  L1/R1 page  Y search  START download  B back`.
+- Search: its own screen; the keyboard with one status line under the field (`Searching the server…` with a drawn
+  spinner while the debounce runs or the request is out, `12 games match`, `No games match "xyz"`); START opens the
+  results (a Games list with the query in the sub line); Y or B there go back to the keyboard with the text kept.
+  Debounce from text edits only. `ROMMANCER_SEARCH_DEBOUNCE` (default 2.0) and a `wait:SECONDS` token in
+  `ROMMANCER_UI_TEST` for tests.
 - Network calls run in threads; the shell's `browse-games` uses `http_once` and a short timeout.
 
 ### Onion (shell + `prompt`/`kbinput`)
-- No X/Y on `prompt`: explicit rows. Systems menu: `Search…`, `Download selected (3 · 48 MB)` (when any), the systems
-  (`[x]`/`[-]`/`[ ]`), `Back`. A system: `Select all 124 games (1.2 GB)` / `Unselect all`, `Download selected`, up to 90
-  games, `More…`, `Back`. The selection lives in `$WORK/browse-sel`. The cursor stays on the toggled row (`-s`).
-- Search: `kbinput` (no live typing on Onion: it runs when the keyboard closes), then the results as a games menu.
+- No X/Y on `prompt`: explicit rows. Systems menu: the toggle row, `Search the server...`, `Download selected (3 · 48
+  MB)` (when any), the systems (`[x] Super Nintendo  112 to download · 1.1 GB`, `[-]`/`[ ]`), `Back`. A system: the
+  toggle row, `Select all 112 games (1.1 GB)` (the games not here yet; no row when there are none) / `Unselect all`,
+  `Download selected`, up to 90 games, `More…`, `Back`. The toggle is `B_ALL`; the systems shown are
+  `$WORK/browse-systems.shown`. The selection lives in `$WORK/browse-sel`. The cursor stays on the toggled row (`-s`).
+- Search: `kbinput` (no live typing on Onion: it runs when the keyboard closes), then the results as a games menu; a
+  `Searching the server...` panel shows while the request runs.
 
 ### Shell commands (both Linux UIs)
-`browse-systems`, `browse-games SLUG|- OFFSET QUERY`, `browse-check FILE`, `browse-add FILE` (FILE: selection lines),
-`browse-get` (roms then sync, with progress, prints the summary and `games-show`). Space measured on the roms folder
-from `/agent/roots` (cached in `$STATE/roms-root`), walking up to an existing parent.
+`browse-systems`, `browse-games SLUG|- OFFSET QUERY [LIMIT [new|all]]` (`new`, the default, sends `show=new`),
+`browse-check FILE`, `browse-add FILE` (FILE: selection lines), `browse-get` (roms then sync, with progress, prints the
+summary and `games-show`). Space measured on the roms folder from `/agent/roots` (cached in `$STATE/roms-root`),
+walking up to an existing parent.
 
 ### Android
-- Home item **Browse games** after Game lists. Browse screens have their own root without the outer `verticalScroll`
+- Home item **Browse server games** after Game lists. Browse screens have their own root without the outer `verticalScroll`
   (a `LazyColumn` with `weight(1f)`, header above, hint/selection bar below).
 - Keys: A opens a system / ticks a game, X ticks a whole system, Y focuses the search, START opens the review, L1/R1
   page. Initial focus on the first row (no keyboard popping up); the IME Search action searches at once and moves focus

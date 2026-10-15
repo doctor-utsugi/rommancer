@@ -1,6 +1,7 @@
 package com.rommancer.sync
 
 import android.view.KeyEvent
+import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTapGestures
@@ -12,12 +13,14 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
@@ -36,6 +39,7 @@ import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
@@ -96,7 +100,8 @@ private class RowFocus(val list: LazyListState) {
 
 /**
  * One row of a browse list, one focus stop: TICK the box (tapped alone it calls ON_TICK, for touch), RIGHT a short
- * fact at the end, DIM for what cannot be picked
+ * fact at the end, DIM for what cannot be picked. The cursor row is filled whether the pad or a finger put it there
+ * (touch mode shows no focus at all)
  */
 @Composable
 private fun BrowseRow(
@@ -108,21 +113,24 @@ private fun BrowseRow(
         rows.requesters[index] = requester
         onDispose { if (rows.requesters[index] === requester) rows.requesters.remove(index) }
     }
-    var focused by remember { mutableStateOf(false) }
-    val color = if (focused) Accent else if (dim) Dim else Color.White
+    val cursor = rows.at == index
+    val color = if (cursor) Accent else if (dim) Dim else Color.White
+    val shape = RoundedCornerShape(10.dp)
     Row(
         Modifier
             .fillMaxWidth()
             .focusRequester(requester)
-            .onFocusChanged { focused = it.isFocused; if (it.isFocused) rows.at = index }
-            .border(2.dp, if (focused) Accent else Color.Transparent, RoundedCornerShape(10.dp))
-            .clickable(onClick = onClick)
-            .padding(horizontal = 14.dp, vertical = 8.dp),
+            .onFocusChanged { if (it.isFocused) rows.at = index }
+            .clip(shape)
+            .background(if (cursor) Accent.copy(alpha = 0.2f) else Color.Transparent)
+            .border(2.dp, if (cursor) Accent else Color.Transparent, shape)
+            .clickable { rows.at = index; onClick() }
+            .padding(horizontal = 14.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         if (tick != null) {
-            val tap = onTick?.let { t -> Modifier.pointerInput(t) { detectTapGestures { t() } } } ?: Modifier
-            Text(tick, fontSize = 20.sp, color = color, modifier = tap.padding(end = 10.dp))
+            val tap = onTick?.let { t -> Modifier.pointerInput(t) { detectTapGestures { rows.at = index; t() } } } ?: Modifier
+            Text(tick, fontSize = 24.sp, color = color, modifier = tap.padding(end = 12.dp))
         }
         Column(Modifier.weight(1f)) {
             Text(text, fontSize = 18.sp, color = color, maxLines = 1, overflow = TextOverflow.Ellipsis)
@@ -165,16 +173,19 @@ private fun BrowseFailure(failure: Pair<String, String>) {
 @Composable
 internal fun BrowseSystems(
     systems: List<SyncEngine.BrowseSystem>?, failure: Pair<String, String>?, denied: Boolean, pick: SyncEngine.BrowsePick, start: Int,
+    showAll: Boolean, onShowAll: () -> Unit,
     onOpen: (SyncEngine.BrowseSystem, Int) -> Unit, onSearch: () -> Unit, onTick: (String) -> Unit, onReview: () -> Unit,
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val list = rememberLazyListState()
     val rows = remember { RowFocus(list) }
-    val count = 1 + (systems?.size ?: 0)
+    // Systems with nothing left to download only show with the games already here
+    val shown = systems?.filter { showAll || it.fresh > 0 }
+    val count = 2 + (shown?.size ?: 0)
     PadKeys { key ->
         when (key) {
-            KeyEvent.KEYCODE_BUTTON_X -> systems?.getOrNull(rows.at - 1)?.let { if (it.fresh > 0) onTick(it.slug) }
+            KeyEvent.KEYCODE_BUTTON_X -> shown?.getOrNull(rows.at - 2)?.let { if (it.fresh > 0) onTick(it.slug) }
             KeyEvent.KEYCODE_BUTTON_Y -> onSearch()
             KeyEvent.KEYCODE_BUTTON_START -> if (!pick.isEmpty) onReview()
             KeyEvent.KEYCODE_BUTTON_L1, KeyEvent.KEYCODE_PAGE_UP -> scope.launch { rows.page(-1, count) }
@@ -188,26 +199,37 @@ internal fun BrowseSystems(
         when {
             denied -> Text(stringResource(R.string.browse_denied), fontSize = 18.sp, color = Warn)
             failure != null -> BrowseFailure(failure)
-            systems == null -> Text(stringResource(R.string.browse_contacting), color = Dim)
+            systems == null -> Searching(stringResource(R.string.browse_contacting))
             systems.isEmpty() -> Text(stringResource(R.string.browse_empty), color = Dim)
+            shown!!.isEmpty() -> Text(stringResource(R.string.browse_all_here), color = Dim)
         }
         if (!denied && failure == null && systems?.isNotEmpty() == true) {
             LazyColumn(Modifier.weight(1f).fillMaxWidth(), state = list) {
                 item { BrowseRow(0, rows, stringResource(R.string.browse_search_all), onClick = onSearch) }
-                items(systems.size) { i ->
-                    val s = systems[i]
-                    val sub = listOf(pluralStringResource(R.plurals.browse_games_count, s.games, s.games), size(context, s.bytes)).joinToString(" · ") +
-                        (if (s.here > 0) " · ${s.here} ${stringResource(R.string.browse_here)}" else "")
+                item { BrowseRow(1, rows, stringResource(R.string.browse_show_all, stringResource(if (showAll) R.string.yes else R.string.no)), onClick = onShowAll) }
+                items(shown!!.size) { i ->
+                    val s = shown[i]
+                    val parts = listOf(pluralStringResource(R.plurals.browse_to_download, s.fresh, s.fresh), size(context, s.newBytes)) +
+                        listOfNotNull(if (s.here > 0) stringResource(R.string.browse_here_count, s.here) else null)
                     BrowseRow(
-                        i + 1, rows, s.name, sub = sub, tick = tickOf(pick.state(s.slug)), dim = s.fresh == 0,
+                        i + 2, rows, s.name, sub = parts.joinToString(" · "), tick = tickOf(pick.state(s.slug)), dim = s.fresh == 0,
                         onTick = { if (s.fresh > 0) onTick(s.slug) }.takeIf { s.fresh > 0 },
-                    ) { onOpen(s, i + 1) }
+                    ) { onOpen(s, i + 2) }
                 }
             }
             // The cursor starts on the first row (or the system just left), and the keyboard stays closed
-            LaunchedEffect(Unit) { rows.focus(start.coerceIn(0, count - 1)) }
+            LaunchedEffect(Unit) { rows.at = start.coerceIn(0, count - 1); rows.focus(rows.at) }
         }
         BrowseFooter(pick, systems.orEmpty(), stringResource(R.string.browse_hint_systems), onReview)
+    }
+}
+
+/** A spinner and what it waits for: the server is being asked */
+@Composable
+private fun Searching(text: String) {
+    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(horizontal = 4.dp)) {
+        CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp, color = Accent)
+        Text(text, color = Accent, fontSize = 15.sp, modifier = Modifier.padding(start = 10.dp))
     }
 }
 
@@ -219,7 +241,8 @@ internal fun BrowseSystems(
 @Composable
 internal fun BrowseGames(
     store: Store, system: SyncEngine.BrowseSystem?, searchFirst: Boolean, known: List<SyncEngine.BrowseSystem>, text: String,
-    onText: (String) -> Unit, pick: SyncEngine.BrowsePick, onToggle: (SyncEngine.BrowseGame) -> Unit, onReview: () -> Unit, onDenied: () -> Unit,
+    onText: (String) -> Unit, pick: SyncEngine.BrowsePick, showAll: Boolean, onShowAll: () -> Unit,
+    onToggle: (SyncEngine.BrowseGame) -> Unit, onReview: () -> Unit, onDenied: () -> Unit,
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -242,7 +265,7 @@ internal fun BrowseGames(
         val q = applied
         loading = true
         scope.launch {
-            val r = withContext(Dispatchers.IO) { runCatching { SyncEngine(context, store).browseGames(system?.slug, q, offset) } }
+            val r = withContext(Dispatchers.IO) { runCatching { SyncEngine(context, store).browseGames(system?.slug, q, offset, all = showAll) } }
             if (g != gen) return@launch
             loading = false
             r.onSuccess { p ->
@@ -263,7 +286,7 @@ internal fun BrowseGames(
         delay(SEARCH_DEBOUNCE)
         applied = text.trim()
     }
-    LaunchedEffect(applied) {
+    LaunchedEffect(applied, showAll) {
         games = emptyList()
         total = -1
         failure = null
@@ -304,19 +327,24 @@ internal fun BrowseGames(
             label = { Text(stringResource(R.string.browse_search)) },
             keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
             keyboardActions = KeyboardActions(onSearch = { searchNow() }),
+            trailingIcon = if (text.trim() != applied || loading) ({ CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp, color = Accent) }) else null,
         )
         // What the list shows, said at once: the wait after typing reads as intended
+        val waiting = text.trim() != applied || (loading && games.isEmpty())
         val status = when {
             failure != null -> null
-            text.trim() != applied -> stringResource(R.string.browse_searching)
-            loading && games.isEmpty() -> stringResource(if (applied.isEmpty()) R.string.browse_contacting else R.string.browse_searching)
+            waiting -> stringResource(if (applied.isEmpty() && text.isBlank()) R.string.browse_contacting else R.string.browse_searching)
             total == 0 && applied.isNotEmpty() -> stringResource(R.string.browse_no_match, applied)
             total == 0 -> stringResource(R.string.browse_empty)
             total > 0 && applied.isNotEmpty() -> pluralStringResource(R.plurals.browse_games_match, total, total)
             total > 0 -> pluralStringResource(R.plurals.browse_games_count, total, total)
             else -> null
         }
-        if (status != null) Text(status, color = Dim, fontSize = 15.sp, modifier = Modifier.padding(horizontal = 4.dp))
+        if (status != null) {
+            if (waiting) Searching(status) else Text(status, color = Dim, fontSize = 15.sp, modifier = Modifier.padding(horizontal = 4.dp))
+        }
+        // The games already on this console stay out unless asked for
+        BrowseRow(-1, rows, stringResource(R.string.browse_show_all, stringResource(if (showAll) R.string.yes else R.string.no)), onClick = onShowAll)
         failure?.let { BrowseFailure(it) }
         LazyColumn(Modifier.weight(1f).fillMaxWidth(), state = list) {
             items(games.size + if (games.isNotEmpty() && games.size < total) 1 else 0) { i ->
@@ -333,7 +361,7 @@ internal fun BrowseGames(
                 }
                 BrowseRow(
                     i, rows, g.title, sub = if (system == null) names[g.system] ?: g.system else null,
-                    tick = if (!open) "·" else if (pick.ticked(g)) "☑" else "☐", right = right, dim = !open,
+                    tick = if (g.state == "here") "✓" else if (!open) "↓" else if (pick.ticked(g)) "☑" else "☐", right = right, dim = !open,
                     onTick = { onToggle(g) }.takeIf { open },
                 ) { if (open) onToggle(g) }
             }

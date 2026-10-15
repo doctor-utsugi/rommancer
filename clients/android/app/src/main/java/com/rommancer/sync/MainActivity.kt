@@ -561,6 +561,8 @@ private fun Linked(store: Store, ownScroll: Boolean, setOwnScroll: (Boolean) -> 
     var browseDenied by remember { mutableStateOf(false) }
     var browsePick by remember { mutableStateOf(SyncEngine.BrowsePick()) }
     var browseText by remember { mutableStateOf("") }
+    // The games already on this device stay out of the lists unless asked for
+    var browseShowAll by remember { mutableStateOf(false) }
     var browseAt by remember { mutableIntStateOf(0) }
     var browseChecked by remember { mutableStateOf<SyncEngine.BrowseCheck?>(null) }
     var browseCheckFailure by remember { mutableStateOf<Pair<String, String>?>(null) }
@@ -942,14 +944,14 @@ private fun Linked(store: Store, ownScroll: Boolean, setOwnScroll: (Boolean) -> 
         }
         // Drawn once the root stopped scrolling (the frame before, it still does)
         Screen.Browse -> if (ownScroll) BrowseSystems(
-            browseSystems, browseFailure, browseDenied, browsePick, browseAt,
+            browseSystems, browseFailure, browseDenied, browsePick, browseAt, browseShowAll, { browseShowAll = !browseShowAll },
             onOpen = { system, at -> browseText = ""; browseAt = at; screen = Screen.BrowseGames(system, search = false) },
             onSearch = { browseText = ""; browseAt = 0; screen = Screen.BrowseGames(null, search = true) },
             onTick = { browsePick = browsePick.toggle(it) },
             onReview = { browseReview(Screen.Browse) },
         )
         is Screen.BrowseGames -> if (ownScroll) BrowseGames(
-            store, s.system, s.search, browseSystems.orEmpty(), browseText, { browseText = it }, browsePick,
+            store, s.system, s.search, browseSystems.orEmpty(), browseText, { browseText = it }, browsePick, browseShowAll, { browseShowAll = !browseShowAll },
             onToggle = { browsePick = browsePick.toggle(it) },
             onReview = { browseReview(s) },
             onDenied = { browseDenied = true; screen = Screen.Browse },

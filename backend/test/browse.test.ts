@@ -141,6 +141,12 @@ test('browse: systems, search, the space check and adding a selection', async ()
   assert.equal(rom.status, 200);
   const after1 = await agent(dev, `/browse/games?system=snes&q=${encodeURIComponent(RUN)}`);
   assert.equal(after1.find((r) => Number(r[1]) === games[`${RUN} Quest VII`])?.[3], 'queued');
+  // By default the consoles ask only for what is not here or on its way
+  const fresh = await agent(dev, `/browse/games?system=snes&show=new&q=${encodeURIComponent(RUN)}`);
+  assert.ok(!fresh.some((r) => Number(r[1]) === games[`${RUN} Quest VII`]));
+  assert.ok(fresh.some((r) => Number(r[1]) === games[`${RUN} Quest VI`]));
+  const snesNow = (await agent(dev, '/browse/systems')).find((r) => r[1] === 'snes')!;
+  assert.equal(Number(snesNow[3]) - Number(snesNow[6]) >= 4000, true, 'newBytes leaves out the games picked');
   // Picked again: nothing new
   assert.deepEqual(line(await agent(dev, '/browse/add', { body: pick, space: [10 * GB, 32 * GB] }), 'added'), ['added', '0', '0']);
   // The space the check now counts: what the lists still have to bring
@@ -211,6 +217,8 @@ test('browse: the Linux client picks a game, downloads it and then counts it as 
   assert.match(out, /^sum\tgames-down\t1$/m);
   assert.match(out, /^sum\tgames-show\t1\tknulli$/m);
   assert.equal(fs.statSync(path.join(root, 'roms/snes', `${RUN} Mega Hero (USA).sfc`)).size, 1000);
-  const after = await sh('browse-games', 'snes', '0', `${RUN} mega hero`);
-  assert.match(after.split('\n')[1], /\there\tsnes\t/, 'the inventory pass after the download marks it as here');
+  const after = await sh('browse-games', 'snes', '0', `${RUN} mega hero`, '50', 'all');
+  assert.match(after.split('\n')[1], new RegExp(`^game\t${games[`${RUN} Mega Hero`]}\t1000\there\tsnes\t`), 'the inventory pass after the download marks it as here');
+  // By default the client leaves out what the console has
+  assert.doesNotMatch(await sh('browse-games', 'snes', '0', `${RUN} mega hero`), new RegExp(`^game\t${games[`${RUN} Mega Hero`]}\t`, 'm'));
 });
