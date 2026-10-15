@@ -8,6 +8,7 @@ import fs from 'node:fs';
 import { prisma } from '../../lib/prisma.js';
 import { romFiles } from '../lists/service.js';
 import { ownedRomIds, pickRom } from '../roms/service.js';
+import { romOfSystem } from '../scanner/systems.js';
 import { searchable, type Searchable } from './fuzzy.js';
 
 export interface CatalogGame {
@@ -56,28 +57,32 @@ async function build(): Promise<Catalog> {
   for (let i = 0; i < gameIds.length; i += 500) {
     const rows = await prisma.game.findMany({
       where: { id: { in: gameIds.slice(i, i + 500) } },
-      select: { id: true, title: true, system: { select: { slug: true } }, roms: { include: { parts: { select: { size: true } } } } },
+      select: { id: true, title: true, system: { select: { slug: true, extensions: true } }, roms: { include: { parts: { select: { size: true } } } } },
     });
     for (const g of rows) {
       // As a game sent from the web app: its best owned version, betas and demos only when there is nothing else
       const rom = pickRom(g.roms, { ownedOnly: true }, owned) ?? pickRom(g.roms, { ownedOnly: true, excludeFlags: [] }, owned);
       if (!rom) continue;
+      const files = await romFiles(rom.id);
+      // Only games: a file the library took in by mistake (a cheat list, a config) is not offered
+      if (!files.some((f) => romOfSystem(g.system.extensions, f.absPath) || (!!f.archiveEntry && romOfSystem(g.system.extensions, f.archiveEntry)))) continue;
       const parts = rom.parts.reduce((n, p) => n + Number(p.size), 0);
-      const bytes = await filesBytes(await romFiles(rom.id), parts);
+      const bytes = await filesBytes(files, parts);
       games.push({ gameId: g.id, romId: rom.id, hackId: null, system: g.system.slug, title: g.title, bytes, s: searchable(g.title) });
     }
   }
   // Games the server holds only as a romhack's file
   const hacks = await prisma.romHack.findMany({
     where: { files: { some: {} }, gameId: { notIn: gameIds.length ? gameIds : [0] } },
-    select: { id: true, gameId: true, title: true, game: { select: { system: { select: { slug: true } } } }, files: { take: 1, include: { romPath: true } } },
+    select: { id: true, gameId: true, title: true, game: { select: { system: { select: { slug: true, extensions: true } } } }, files: { take: 1, include: { romPath: true } } },
     orderBy: { id: 'asc' },
   });
   const seen = new Set<number>();
   for (const h of hacks) {
-    if (seen.has(h.gameId)) continue;
-    seen.add(h.gameId);
     const f = h.files[0];
+    const exts = h.game.system.extensions;
+    if (seen.has(h.gameId) || !(romOfSystem(exts, f.relativePath) || (!!f.archiveEntry && romOfSystem(exts, f.archiveEntry)))) continue;
+    seen.add(h.gameId);
     const bytes = f.archiveEntry ? 0 : await filesBytes([{ absPath: `${f.romPath.path}/${f.relativePath}` }], 0);
     games.push({ gameId: h.gameId, romId: null, hackId: h.id, system: h.game.system.slug, title: h.title, bytes, s: searchable(h.title) });
   }

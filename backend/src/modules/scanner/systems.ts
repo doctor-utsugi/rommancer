@@ -5,6 +5,15 @@ import { prisma } from '../../lib/prisma.js';
 export const ARCHIVE_EXTS = new Set(['.zip', '.7z']);
 export const EXTRA_EXTS = ['.zip', '.7z', '.chd', '.rvz', '.wia', '.bin', '.img', '.iso', '.cue'];
 
+/** Containers a rom of any system may come in: archives, disc images and their compressed forms, playlists */
+const ANY_SYSTEM_EXTS = new Set([...EXTRA_EXTS, '.wbfs', '.ciso', '.cso', '.zso', '.m3u']);
+
+/** Whether NAME can be a game of a system with these EXTENSIONS, not a cheat list, a config or a manual next to it */
+export function romOfSystem(extensions: unknown, name: string) {
+  const e = path.extname(name).toLowerCase();
+  return !!e && (ANY_SYSTEM_EXTS.has(e) || (Array.isArray(extensions) && extensions.some((x) => String(x).toLowerCase() === e)));
+}
+
 const EXTRA_FOLDERS: Record<string, string[]> = {
   nes: ['fc', 'famicom', 'nintendo', 'nes'],
   snes: ['sfc', 'superfamicom', 'supernintendo', 'snes'],

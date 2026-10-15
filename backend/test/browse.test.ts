@@ -72,6 +72,8 @@ before(async () => {
   await add('snes', `${RUN} Mega Hero`, [{ name: `${RUN} Mega Hero (USA).sfc`, regions: ['USA'], size: 1000 }]);
   await add('gb', `${RUN} Pocket One`, [{ name: `${RUN} Pocket One (World).gb`, regions: ['World'], size: 500 }]);
   await add('gb', `${RUN} Pocket Two`, [{ name: `${RUN} Pocket Two (World).gb`, regions: ['World'], size: 700 }]);
+  // A cheat list a console sent as if it were the game's rom: in the library, but no game to offer
+  await add('gb', `${RUN} Cheat List`, [{ name: `${RUN} Cheat List`, regions: [], size: 853 }]);
   server = createApp().listen(0);
   await new Promise((r) => server.once('listening', r));
   base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
@@ -109,6 +111,8 @@ test('browse: systems, search, the space check and adding a selection', async ()
   const systems = await agent(dev, '/browse/systems');
   const snes = systems.find((r) => r[1] === 'snes');
   assert.ok(snes && Number(snes[2]) >= 3, 'SNES is offered with its games');
+  const cheat = await agent(dev, `/browse/games?q=${encodeURIComponent(`${RUN} cheat list`)}`);
+  assert.ok(!cheat.some((r) => r[0] === 'game' && Number(r[1]) === games[`${RUN} Cheat List`]), 'a file without a rom extension is not offered');
 
   // One version per game (the USA one), sized by its file
   const all = await agent(dev, `/browse/games?system=snes&q=${encodeURIComponent(RUN)}&limit=200`);

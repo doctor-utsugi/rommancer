@@ -33,7 +33,7 @@ import { cardAction, cardHash, commitOffer, deviceCard, entryFolderState, findDe
 import { codecFor } from './cardcodec.js';
 import { takeNudge } from './nudge.js';
 import { CORE_NAMES } from './core-names.js';
-import { systemForFolder, systemForPlatform, systemIndex } from '../scanner/systems.js';
+import { romOfSystem, systemForFolder, systemForPlatform, systemIndex } from '../scanner/systems.js';
 import { FAN_WORK, FIRST_ASK, normTitle, probeRound, probesOf, serialMatch, wantsProbe } from './probe.js';
 
 export const agentRouter = Router();
@@ -880,7 +880,7 @@ agentRouter.post('/sync', express.text({ limit: '16mb', type: '*/*' }), async (r
       })
     ).map((v) => v.sha1),
   );
-  const romsOfSaves: { path: string; baseName: string; gameId: number | null }[] = [];
+  const romsOfSaves: { path: string; baseName: string; gameId: number | null; slug: string }[] = [];
   for (const { path: rom, hashes } of withSaves) {
     const found = await romContext(device, rom).catch(() => null);
     if (!found) continue;
@@ -906,7 +906,7 @@ agentRouter.post('/sync', express.text({ limit: '16mb', type: '*/*' }), async (r
     const gameId = known?.gameId ?? (hasLocal ? ((await identifyRom(ctx.baseName, systemId))?.gameId ?? null) : null);
     // Saves uploaded before the rom could be identified get their game now
     if (gameId && hasLocal) await prisma.save.updateMany({ where: { userId: device.userId, baseName: ctx.baseName, gameId: null }, data: { gameId } });
-    if (hasLocal) romsOfSaves.push({ path: rom, baseName: ctx.baseName, gameId });
+    if (hasLocal) romsOfSaves.push({ path: rom, baseName: ctx.baseName, gameId, slug: ctx.slug });
     // Several cores with their own file for this game on this device: each keeps its own save
     const exactOnly = emus.length > 1;
     for (const f of candidates) {
@@ -977,15 +977,17 @@ agentRouter.post('/sync', express.text({ limit: '16mb', type: '*/*' }), async (r
  * from the device once, so their saves get a game and can be played in the browser. Only where the device lets the
  * server fetch roms and its owner may upload them
  */
-async function pullRomsOfSaves(device: AgentDevice, roms: { path: string; baseName: string; gameId: number | null }[]) {
+async function pullRomsOfSaves(device: AgentDevice, roms: { path: string; baseName: string; gameId: number | null; slug: string }[]) {
   if (!roms.length || !device.allowPull) return;
   const user = await prisma.user.findUnique({ where: { id: device.userId }, select: { role: true, permissions: true } });
   if (!user || !hasPermission({ role: user.role, permissions: normalizePermissions(user.permissions) }, 'roms.upload')) return;
   const home = (p: string) => (device.homeRoot ? reroot(p, device.rootPath, device.homeRoot) : p);
   const asked = new Set((await prisma.devicePull.findMany({ where: { deviceId: device.id, path: { in: roms.map((r) => home(r.path)) } }, select: { path: true } })).map((p) => p.path));
+  const { exts } = await systemsByExtension();
   const missing: string[] = [];
   for (const r of roms) {
-    if (asked.has(home(r.path))) continue;
+    // A cheat list or a config named as the game is no rom to fetch
+    if (asked.has(home(r.path)) || !romOfSystem(exts.get(r.slug), r.path)) continue;
     if (!(await romForSave({ romId: null, gameId: r.gameId, baseName: r.baseName })) && !(await looseRomFile(r.baseName))) missing.push(home(r.path));
   }
   if (missing.length) await prisma.devicePull.createMany({ data: missing.map((p) => ({ deviceId: device.id, path: p })) });
@@ -1365,6 +1367,7 @@ agentRouter.post('/pull/:id', async (req, res) => {
           const base = inv?.baseGameId ? await prisma.game.findFirst({ where: { id: inv.baseGameId, systemId: system.id } }) : null;
           const lang = /\[T[+-]([A-Za-z]{2,3})/.exec(name)?.[1] ?? /\((english|spanish|french|german|italian|portuguese) v[\d.]+\)/i.exec(name)?.[1];
           const fan = base ? { gameId: base.id, kind: /\[T[+-]|\((english|spanish|french|german|italian|portuguese) v[\d.]+\)/i.test(name) ? 'translation' : 'hack', ...(lang ? { hackLanguage: lang.slice(0, 32) } : {}) } : null;
+          if (!romOfSystem(system.extensions, name)) throw badRequest(`Not a ${system.slug} game file`);
           try {
             fileId = (await ingestUnverified(tmp, name, owner, { systemId: system.id, ...(fan ?? (game ? { gameId: game.id } : { newGameTitle: title })) })).file?.id;
             result = 'stored as unverified';
