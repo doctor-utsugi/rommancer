@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import { getVersion } from '@tauri-apps/api/app'
+import { homeDir } from '@tauri-apps/api/path'
 import { open } from '@tauri-apps/plugin-dialog'
 import { openUrl } from '@tauri-apps/plugin-opener'
 import { disable, enable, isEnabled } from '@tauri-apps/plugin-autostart'
@@ -580,6 +581,8 @@ function PcSetup({ onDone }: { onDone: () => void }) {
   const [roms, setRoms] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
+  const [home, setHome] = useState('')
+  useEffect(() => void homeDir().then((h) => setHome(h.replace(/[\\/]$/, ''))), [])
   useEffect(() => {
     void invoke<{ found: RetroArch[]; roms_default: string; hostname: string }>('retroarch_detect').then((d) => {
       setFound(d.found)
@@ -626,25 +629,27 @@ function PcSetup({ onDone }: { onDone: () => void }) {
     }
   }
   if (!found) return <p className="muted">…</p>
-  const where = (dir: string | null, layout: string) => (dir ? `${dir} · ${layoutText(layout)}` : layoutText('rom'))
+  // Short paths: the home folder as ~
+  const short = (dir: string) => (home && dir.startsWith(home) ? '~' + dir.slice(home.length) : dir)
   return (
     <div className="cardview">
       <h1>{t('thisPc')}</h1>
       <p className="muted small">{t('pcSetupHelp')}</p>
       <div className="panel">
         <h2>{t('pcFound')}</h2>
+        {found.length > 1 && <p className="muted small">{t('pcFoundHelp')}</p>}
         {!found.length && <p className="muted small">{t('pcNotFound')}</p>}
         {found.map((f, i) => (
           <label key={f.cfg} className="check top">
             <input type="radio" name="ra" checked={i === pick} onChange={() => setPick(i)} />
             <span>
-              <span className="mono">{f.cfg}</span>
+              <span>RetroArch</span>
               {f.kind && <span className="muted small"> · {t(`pcKind_${f.kind}` as Key) || f.kind}</span>}
               <span className="muted small block">
-                {t('pcSaves')}: {where(f.saves_dir, f.saves_layout)}
+                {f.saves_dir ? t('pcSavesAt', { dir: short(f.saves_dir) }) : `${t('pcSaves')}: ${layoutText('rom')}`}
               </span>
               <span className="muted small block">
-                {t('pcStates')}: {where(f.states_dir, f.states_layout)}
+                {f.states_dir ? t('pcStatesAt', { dir: short(f.states_dir) }) : `${t('pcStates')}: ${layoutText('rom')}`}
               </span>
             </span>
           </label>
@@ -657,6 +662,7 @@ function PcSetup({ onDone }: { onDone: () => void }) {
         <label>
           {t('pcName')}
           <input value={name} onChange={(e) => setName(e.target.value)} />
+          <span className="muted small">{t('pcNameHelp')}</span>
         </label>
         <label>
           {t('pcRoms')}
