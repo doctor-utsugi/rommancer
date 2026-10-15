@@ -26,7 +26,9 @@ object Failure {
             chain.any { it is SSLException || it is java.security.cert.CertificateException } -> context.getString(R.string.fail_tls)
             chain.any { it is SocketTimeoutException } -> context.getString(R.string.fail_timeout, host)
             chain.any { it is ConnectException } -> context.getString(R.string.fail_reach, host)
-            e is ApiException -> context.getString(R.string.fail_server, host, "${e.status} ${e.message}")
+            // A proxy's page while the server restarts or is updated: no HTML on screen
+            e is ApiException && e.status in 502..504 -> context.getString(R.string.fail_restarting, host)
+            e is ApiException -> context.getString(R.string.fail_server, host, "${e.status} ${e.message?.takeUnless { it.trimStart().startsWith("<") } ?: ""}".trim())
             else -> e.message ?: e.javaClass.simpleName
         }
         val utc = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.ROOT).apply { timeZone = TimeZone.getTimeZone("UTC") }.format(Date())
@@ -40,7 +42,7 @@ object Failure {
         val version = runCatching { context.packageManager.getPackageInfo(context.packageName, 0).versionName }.getOrNull()
         val details = listOf(
             "Server: ${store.server}",
-            "Error: " + chain.joinToString(" <- ") { "${it.javaClass.simpleName}: ${it.message}" },
+            "Error: " + chain.joinToString(" <- ") { "${it.javaClass.simpleName}: ${it.message?.replace(Regex("<[^>]*>"), " ")?.replace(Regex("\\s+"), " ")?.trim()?.take(200)}" },
             "Clock (UTC): $utc",
             "Network: $transport${if (online) "" else " (no internet)"}",
             "App: $version",

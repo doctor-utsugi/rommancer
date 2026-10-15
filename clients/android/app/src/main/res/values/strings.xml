@@ -278,6 +278,7 @@
     <string name="fail_timeout">%1$s does not answer in time: check the network</string>
     <string name="fail_reach">Cannot reach %1$s: check the network</string>
     <string name="fail_server">%1$s answered with an error: %2$s</string>
+    <string name="fail_restarting">%1$s is restarting or being updated: try again in a minute</string>
 
     <!-- Notifications -->
     <string name="watch_channel">Save watcher</string>

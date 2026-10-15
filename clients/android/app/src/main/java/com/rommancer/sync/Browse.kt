@@ -40,6 +40,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -58,7 +59,9 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.InputMode
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalInputModeManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
@@ -92,6 +95,19 @@ private fun PadKeys(handler: (Int) -> Boolean) {
         MainActivity.pad = h
         onDispose { if (MainActivity.pad === h) MainActivity.pad = null }
     }
+}
+
+/**
+ * Touch mode gives a row no focus, so the first pad key would start from the top bar: when the pad takes over, the
+ * focus goes back to the cursor row
+ */
+@Composable
+private fun RefocusOnKeys(rows: RowFocus, count: Int) {
+    val mode = LocalInputModeManager.current.inputMode
+    // The first key may already have moved the focus (and the cursor) into the bar: the row from before it
+    val last = remember { intArrayOf(rows.at) }
+    SideEffect { if (mode == InputMode.Touch) last[0] = rows.at }
+    LaunchedEffect(mode) { if (mode == InputMode.Keyboard && last[0] in 0 until count) rows.focus(last[0]) }
 }
 
 /** Where the focus is in a browse list, and moving it to a row that may not be composed yet (paging) */
@@ -208,18 +224,34 @@ private fun BrowseBar(title: String, rows: RowFocus, onBack: () -> Unit, actions
 }
 
 /**
- * The search, open in the bar: TEXT as typed, a spinner while BUSY (waiting for the debounce or the server), X to
- * close it
+ * The search, open in the bar: TEXT, a spinner while BUSY (waiting for the debounce or the server), X to close it.
+ * Editable only while EDITING: once searched it shows the query (A or a tap edits it again), so a gamepad keyboard
+ * such as the Thor's no longer takes the pad's keys from the list
  */
 @Composable
 private fun RowScope.SearchField(
     text: String, onText: (String) -> Unit, hint: String, busy: Boolean, field: FocusRequester, rows: RowFocus,
-    onSubmit: () -> Unit, onClose: () -> Unit,
+    editing: Boolean, onEdit: () -> Unit, onLeave: () -> Unit, onSubmit: () -> Unit, onClose: () -> Unit,
 ) {
     val shape = RoundedCornerShape(18.dp)
+    if (!editing) {
+        BarButton(onEdit, Modifier.weight(3f), onFocused = { rows.at = -1 }) { c ->
+            Icon(Icons.Default.Search, null, tint = c, modifier = Modifier.size(18.dp))
+            Text(text.ifEmpty { hint }, color = if (text.isEmpty()) Dim else c, fontSize = 17.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f).padding(horizontal = 8.dp))
+            if (busy) CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp, color = Accent)
+        }
+    } else {
+    var had by remember { mutableStateOf(false) }
+    DisposableEffect(Unit) { onDispose { MainActivity.typing = false } }
     BasicTextField(
         text, onText,
-        Modifier.weight(3f).focusRequester(field).onFocusChanged { if (it.isFocused) rows.at = -1 },
+        Modifier.weight(3f).focusRequester(field).onFocusChanged {
+            MainActivity.typing = it.isFocused
+            if (it.isFocused) {
+                had = true
+                rows.at = -1
+            } else if (had) onLeave()
+        },
         singleLine = true,
         textStyle = TextStyle(color = Color.White, fontSize = 17.sp),
         cursorBrush = SolidColor(Accent),
@@ -236,6 +268,7 @@ private fun RowScope.SearchField(
             }
         },
     )
+    }
     BarButton(onClose, onFocused = { rows.at = -1 }) { c -> Icon(Icons.Default.Close, stringResource(R.string.browse_search_close), tint = c, modifier = Modifier.size(20.dp)) }
 }
 
@@ -361,6 +394,7 @@ internal fun BrowseSystems(
             }
             // The cursor starts on the first row (or the system just left), and the keyboard stays closed
             LaunchedEffect(Unit) { rows.at = start.coerceIn(0, count - 1); rows.focus(rows.at) }
+            RefocusOnKeys(rows, count)
         } else Spacer(Modifier.weight(1f))
         BrowseFooter(pick, systems.orEmpty(), stringResource(R.string.browse_hint_systems), rows, onReview)
     }
@@ -393,6 +427,7 @@ internal fun BrowseGames(
     // Searching every system has nothing to show without the field; a system's list opens it on demand
     var open by remember { mutableStateOf(system == null || searchFirst || text.isNotBlank()) }
     var focusField by remember { mutableIntStateOf(if (searchFirst) 1 else 0) }
+    var editing by remember { mutableStateOf(searchFirst) }
 
     fun load(first: Boolean) {
         val g = if (first) ++gen else gen
@@ -413,17 +448,20 @@ internal fun BrowseGames(
     fun searchNow() {
         applied = text.trim()
         keyboard?.hide()
+        editing = false
         focusResults = true
     }
 
     fun openSearch() {
         open = true
+        editing = true
         focusField++
     }
 
     fun closeSearch() {
         if (system == null) return onBack()
         keyboard?.hide()
+        editing = false
         onText("")
         applied = ""
         open = false
@@ -475,7 +513,13 @@ internal fun BrowseGames(
         true
     }
 
-    val names = remember(known) { known.associate { it.slug to it.name } }
+    RefocusOnKeys(rows, games.size)
+    // Searched before the systems arrived (or they could not be fetched): asked here, for the systems' names
+    var fetched by remember { mutableStateOf<List<SyncEngine.BrowseSystem>?>(null) }
+    LaunchedEffect(known.isEmpty()) {
+        if (known.isEmpty() && fetched == null) fetched = withContext(Dispatchers.IO) { runCatching { SyncEngine(context, store).browseSystems() }.getOrNull() }
+    }
+    val names = remember(known, fetched) { known.ifEmpty { fetched.orEmpty() }.associate { it.slug to it.name } }
     val title = system?.name ?: stringResource(R.string.browse_all_systems)
     // Typed but not searched yet, or the first page on its way: the spinner says the server is being asked
     val waiting = text.trim() != applied || (loading && games.isEmpty())
@@ -484,7 +528,8 @@ internal fun BrowseGames(
             if (open) {
                 SearchField(
                     text, onText, if (system == null) stringResource(R.string.browse_search_all) else stringResource(R.string.browse_search_in, system.name),
-                    busy = waiting || loading, field = field, rows = rows, onSubmit = { searchNow() }, onClose = { closeSearch() },
+                    busy = waiting || loading, field = field, rows = rows, editing = editing, onEdit = { openSearch() },
+                    onLeave = { editing = false; keyboard?.hide() }, onSubmit = { searchNow() }, onClose = { closeSearch() },
                 )
             } else {
                 SearchButton(rows) { openSearch() }

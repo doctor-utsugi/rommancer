@@ -7,6 +7,7 @@ import android.os.Build
 import android.graphics.BitmapFactory
 import android.net.Uri
 import android.os.Bundle
+import android.widget.FrameLayout
 import android.os.Environment
 import android.provider.Settings
 import android.text.format.DateUtils
@@ -17,7 +18,6 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.activity.compose.setContent
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -68,6 +68,7 @@ import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.platform.ComposeView
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
@@ -91,11 +92,20 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        setContent {
-            MaterialTheme(colorScheme = darkColorScheme(primary = Accent, background = Bg, surface = Bg)) {
-                Surface(Modifier.fillMaxSize(), color = Bg) { App(resumes.intValue) }
+        val compose = ComposeView(this).apply {
+            setContent {
+                MaterialTheme(colorScheme = darkColorScheme(primary = Accent, background = Bg, surface = Bg)) {
+                    Surface(Modifier.fillMaxSize(), color = Bg) { App(resumes.intValue) }
+                }
             }
         }
+        // A gamepad keyboard (the Thor's RuneBoard) can go on taking the pad's keys once hidden: unless a field is
+        // being typed in, they skip the keyboard and come straight to the app
+        setContentView(object : FrameLayout(this) {
+            override fun dispatchKeyEventPreIme(event: KeyEvent): Boolean =
+                if (!typing && (KeyEvent.isGamepadButton(event.keyCode) || event.keyCode in DPAD)) this@MainActivity.dispatchKeyEvent(event)
+                else super.dispatchKeyEventPreIme(event)
+        }.apply { addView(compose) })
     }
 
     override fun onResume() {
@@ -122,6 +132,13 @@ class MainActivity : ComponentActivity() {
 
         /** The screen that takes the PAD keys, whatever has the focus (an empty list has none); true when handled */
         var pad: ((Int) -> Boolean)? = null
+
+        /** A text field has the focus: the keyboard gets the keys first */
+        var typing = false
+
+        private val DPAD = setOf(
+            KeyEvent.KEYCODE_DPAD_UP, KeyEvent.KEYCODE_DPAD_DOWN, KeyEvent.KEYCODE_DPAD_LEFT, KeyEvent.KEYCODE_DPAD_RIGHT, KeyEvent.KEYCODE_DPAD_CENTER,
+        )
     }
 }
 
@@ -269,15 +286,15 @@ private fun Setup(store: Store, onLinked: () -> Unit) {
     val msgClosed = stringResource(R.string.signup_closed)
     val msgExists = stringResource(R.string.exists)
 
-    OutlinedTextField(server, { server = it.trim() }, Modifier.fillMaxWidth(), label = { Text(stringResource(R.string.server)) }, singleLine = true,
+    OutlinedTextField(server, { server = it.trim() }, Modifier.fillMaxWidth().typing(), label = { Text(stringResource(R.string.server)) }, singleLine = true,
         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri))
-    OutlinedTextField(user, { user = it.trim() }, Modifier.fillMaxWidth(), singleLine = true,
+    OutlinedTextField(user, { user = it.trim() }, Modifier.fillMaxWidth().typing(), singleLine = true,
         label = { Text(stringResource(if (signup) R.string.username else R.string.user)) })
     if (signup) {
-        OutlinedTextField(email, { email = it.trim() }, Modifier.fillMaxWidth(), singleLine = true, label = { Text(stringResource(R.string.email)) },
+        OutlinedTextField(email, { email = it.trim() }, Modifier.fillMaxWidth().typing(), singleLine = true, label = { Text(stringResource(R.string.email)) },
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email))
     }
-    OutlinedTextField(password, { password = it }, Modifier.fillMaxWidth(), singleLine = true, label = { Text(stringResource(R.string.password)) },
+    OutlinedTextField(password, { password = it }, Modifier.fillMaxWidth().typing(), singleLine = true, label = { Text(stringResource(R.string.password)) },
         visualTransformation = PasswordVisualTransformation(), keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password))
     error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
     Button(enabled = !busy && user.isNotBlank() && password.isNotBlank(), onClick = {
@@ -325,6 +342,9 @@ private fun syncedText(context: android.content.Context, at: Long): String {
         else -> context.getString(R.string.synced_at, java.text.SimpleDateFormat("d MMM", java.util.Locale.ENGLISH).format(java.util.Date(at)) + ", " + time)
     }
 }
+
+/** This field takes the keys before the app does while it has the focus (see MainActivity.typing) */
+internal fun Modifier.typing() = onFocusChanged { MainActivity.typing = it.isFocused }
 
 internal fun size(context: android.content.Context, bytes: Long) = android.text.format.Formatter.formatShortFileSize(context, bytes)
 
