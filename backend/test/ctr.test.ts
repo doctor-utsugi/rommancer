@@ -1,12 +1,14 @@
 /**
  * 3DS saves (Azahar/Citra save folders) synced by the shell client between two Linux consoles through a real server.
  * Requires: compose MySQL up. Uses the e2e test database without resetting it (each run makes its own user).
- * With ROMMANCER_DESKTOP=1 the desktop app's engine (cargo) joins as a third device.
+ * With ROMMANCER_DESKTOP=1 the desktop app's engine (cargo) joins as a third device; with ROMMANCER_DESKTOP=wine it is
+ * the Windows build, run by Wine, with Azahar in the Wine user's AppData.
  */
 import { after, before, test } from 'node:test';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { execFile, execSync } from 'node:child_process';
 import { promisify } from 'node:util';
@@ -154,11 +156,19 @@ test('3ds: Azahar save folders go between consoles whole, keyed by the rom title
   assert.deepEqual(readSave(saveDir(aSdmc, titleId)), { '00000001/main': 'B-MAIN-2', '00000001/system': 'A-SYS' });
   assert.deepEqual(readSave(saveDir(aSdmc, ciaId)), { '00000001/main': 'CIA-SAVE' }, 'the other game is untouched');
 
-  if (process.env.ROMMANCER_DESKTOP !== '1') return;
-  // The desktop app: same rom, Azahar in its home, picks up B's version
+  const desktop = process.env.ROMMANCER_DESKTOP;
+  if (desktop !== '1' && desktop !== 'wine') return;
+  // The desktop app: same rom, Azahar in its home (or AppData under Wine), picks up B's version
   const c = path.join(DATA, 'c');
   const cHome = path.join(DATA, 'c-home');
-  const cSdmc = path.join(cHome, '.local/share/azahar-emu/sdmc');
+  const prefix = path.join(DATA, 'wine');
+  const wine = { WINEPREFIX: prefix, WINEDEBUG: '-all', CARGO_TARGET_X86_64_PC_WINDOWS_GNU_RUNNER: 'wine' };
+  // Async: the test server runs in this process
+  if (desktop === 'wine') await execFileP('wineboot', ['-i'], { env: { ...process.env, ...wine } });
+  const cSdmc =
+    desktop === 'wine'
+      ? path.join(prefix, 'drive_c/users', os.userInfo().username, 'AppData/Roaming/Azahar/sdmc')
+      : path.join(cHome, '.local/share/azahar-emu/sdmc');
   fs.mkdirSync(path.join(c, 'roms/n3ds'), { recursive: true });
   fs.mkdirSync(path.join(cSdmc, 'Nintendo 3DS', NAND, 'title/00040000'), { recursive: true });
   fs.writeFileSync(path.join(c, 'roms/n3ds', 'Some Game (USA).3ds'), rom);
@@ -171,9 +181,9 @@ test('3ds: Azahar save folders go between consoles whole, keyed by the rom title
   const cToken = (await r.json()).token;
   const runC = async () =>
     (
-      await execFileP('cargo', ['test', '-q', 'engine_against_server', '--', '--ignored', '--nocapture'], {
+      await execFileP('cargo', ['test', '-q', ...(desktop === 'wine' ? ['--target', 'x86_64-pc-windows-gnu'] : []), 'engine_against_server', '--', '--ignored', '--nocapture'], {
         cwd: path.join(ROOT, 'clients/desktop/src-tauri'),
-        env: { ...process.env, HOME: cHome, ROMMANCER_TEST_SERVER: base, ROMMANCER_TEST_TOKEN: cToken, ROMMANCER_TEST_ROOT: c, RUSTUP_HOME: process.env.RUSTUP_HOME ?? path.join(process.env.HOME!, '.rustup'), CARGO_HOME: process.env.CARGO_HOME ?? path.join(process.env.HOME!, '.cargo') },
+        env: { ...process.env, ...(desktop === 'wine' ? wine : {}), HOME: cHome, ROMMANCER_TEST_SERVER: base, ROMMANCER_TEST_TOKEN: cToken, ROMMANCER_TEST_ROOT: c, RUSTUP_HOME: process.env.RUSTUP_HOME ?? path.join(process.env.HOME!, '.rustup'), CARGO_HOME: process.env.CARGO_HOME ?? path.join(process.env.HOME!, '.cargo') },
         maxBuffer: 1 << 26,
       })
     ).stdout;

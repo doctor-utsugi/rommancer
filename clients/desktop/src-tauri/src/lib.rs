@@ -1224,7 +1224,7 @@ fn auto_update(app: AppHandle) {
                 Some(v) if !busy => match update::kind() {
                     update::Kind::Replace(p) => match update::replace(&server, &p) {
                         // watch_update tells an open window; one in the tray restarts at once
-                        Ok(()) if hidden => app.restart(),
+                        Ok(()) if hidden => update::relaunch(&app, &p),
                         Ok(()) => push_log(&app, pc::KEY, format!("updated to {v}")),
                         Err(e) => push_log(&app, pc::KEY, format!("update to {v}: {e:#}")),
                     },
@@ -1252,7 +1252,10 @@ fn auto_update(app: AppHandle) {
 
 #[tauri::command]
 fn restart_app(app: AppHandle) {
-    app.restart();
+    match update::own_file() {
+        Some(p) => update::relaunch(&app, &p),
+        None => app.restart(),
+    }
 }
 
 /// Looks for cards every few seconds; a linked card that appears is synced when auto sync is on

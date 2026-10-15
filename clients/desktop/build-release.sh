@@ -3,7 +3,8 @@
 # mingw) and leaves them in release/ with stable names, where the server offers them for download.
 set -eu
 cd "$(dirname "$0")"
-cargo tauri build --bundles appimage,deb
+# linuxdeploy fails stripping or mounting on newer distros (gdk-pixbuf loaders)
+NO_STRIP=true APPIMAGE_EXTRACT_AND_RUN=1 cargo tauri build --bundles appimage,deb
 cargo tauri build --target x86_64-pc-windows-gnu
 # Only this version's bundles (older ones stay in target/ and would match too)
 V="$(sed -n 's/^ *"version": "\(.*\)",$/\1/p' src-tauri/tauri.conf.json | head -1)"

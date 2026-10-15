@@ -18,12 +18,15 @@ pub fn kind() -> Kind {
     if cfg!(windows) {
         return Kind::Installer;
     }
-    // Inside an AppImage the running binary is in a read-only mount; the image itself is the file to replace
-    let target = std::env::var_os("APPIMAGE").map(PathBuf::from).or_else(|| std::env::current_exe().ok());
-    match target {
+    match own_file() {
         Some(p) if writable_dir(&p) => Kind::Replace(p),
         _ => Kind::Announce,
     }
+}
+
+/// The file this app runs from: inside an AppImage the binary sits in a read-only mount, the image is the file
+pub fn own_file() -> Option<PathBuf> {
+    std::env::var_os("APPIMAGE").map(PathBuf::from).or_else(|| std::env::current_exe().ok())
 }
 
 fn writable_dir(p: &std::path::Path) -> bool {
@@ -91,4 +94,27 @@ pub fn install(server: &str, hidden: bool) -> anyhow::Result<()> {
     }
     cmd.spawn()?;
     Ok(())
+}
+
+/// Starts the app again from `target` and ends this one. Descriptors this process inherited are not passed on: an
+/// AppImage runtime writes to its pipe until every holder closes it, so the old image would stay mounted
+pub fn relaunch(app: &tauri::AppHandle, target: &std::path::Path) {
+    let mut cmd = std::process::Command::new(target);
+    cmd.args(std::env::args_os().skip(1));
+    #[cfg(unix)]
+    unsafe {
+        use std::os::unix::process::CommandExt;
+        cmd.pre_exec(|| {
+            for fd in 3..1024 {
+                let flags = libc::fcntl(fd, libc::F_GETFD);
+                if flags >= 0 && flags & libc::FD_CLOEXEC == 0 {
+                    libc::close(fd);
+                }
+            }
+            Ok(())
+        });
+    }
+    app.cleanup_before_exit();
+    let _ = cmd.spawn();
+    std::process::exit(0);
 }
