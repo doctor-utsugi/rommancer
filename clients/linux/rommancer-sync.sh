@@ -25,7 +25,7 @@
 #                                   so any computer with this script can sync it. Without a command: sync.
 set -u
 # Raised with every change of this client (any change reaches devices: they update by content, not by this)
-CLIENT_VERSION=1.76.0
+CLIENT_VERSION=1.77.0
 # A clock before this date is surely wrong (no battery-backed clock); kept apart from the version, which may run ahead
 CLOCK_MIN=20261001
 # Onion keeps curl (with TLS) and friends outside the default PATH
@@ -958,7 +958,7 @@ cmd_sync() {
   fi
   # The last log lines go to the server so problems can be seen without access to the device (a line repeated
   # in a row counted once, so a run of failures does not push everything else out)
-  { log_tail; lists_report; [ -f "$DIR/last-run.txt" ] && { echo "--- last-run.txt"; tail -n 20 "$DIR/last-run.txt"; }; } > "$WORK/report" 2>/dev/null
+  { log_tail; lists_report; [ -f "$DIR/last-run.txt" ] && { echo "--- last-run.txt"; run_tail "$DIR/last-run.txt"; }; } > "$WORK/report" 2>/dev/null
   http POST "$SERVER/api/v1/agent/log" "$WORK/report" - "X-Client-Version: $CLIENT_VERSION" >/dev/null 2>&1
   sum_line saves-up "$sup"; sum_line states-up "$stup"; sum_line saves-down "$sdown"; sum_line states-down "$stdown"
   sum_line conflicts "${nconf:-0}"; sum_line errors "$errs"
@@ -970,6 +970,12 @@ cmd_sync() {
 
 # The last 40 log lines, with a message repeated in a row kept once as "... (xN)"; the plain tail when that fails
 # (old BusyBox awks read "name (" as a function call)
+# The screens' output without what Onion's display and audio drivers print on every start (MI_AO, FB_, ioctl...)
+run_tail() {
+  esc="$(printf '\033')"
+  sed "s/$esc\[[0-9;]*m//g" "$1" | grep -v -E '^(\[MI |mi_ao|FB_|_gfx_|ioctl |SStar|\[?SDL_|open audio|opened /dev/dsp|close audio|default pipe size|new pipe size|open /dev/dsp)' | tail -n 20
+}
+
 log_tail() {
   tail -n 400 "$LOG" 2>/dev/null | awk '
     function out() { s = last; if (n > 0) s = s " (x" (n + 1) ")"; print s }
