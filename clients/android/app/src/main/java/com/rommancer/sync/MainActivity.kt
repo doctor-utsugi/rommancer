@@ -881,7 +881,8 @@ private fun Linked(store: Store, ownScroll: Boolean, setOwnScroll: (Boolean) -> 
             if (c.since.isNotEmpty()) Text(stringResource(R.string.conflict_since, c.since), color = Dim, fontSize = 14.sp)
             Text(stringResource(R.string.conflict_history), color = Dim, fontSize = 14.sp)
             cards.forEachIndexed { i, (side, who, at) ->
-                val label = stringResource(R.string.keep_one, if (side == "device") stringResource(R.string.this_device_short) else who, at.substringAfterLast(' '))
+                // The time alone only for today: two saves days or years apart must not read alike
+                val label = stringResource(R.string.keep_one, if (side == "device") stringResource(R.string.this_device_short) else who, at.removePrefix("Today "))
                 MenuItem(label, if (i == 0) firstItem else null) { run(label) { e -> e.resolve(c.id, side) } }
             }
             MenuItem(stringResource(R.string.press_back)) { screen = Screen.Conflicts }
