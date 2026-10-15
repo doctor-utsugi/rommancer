@@ -431,7 +431,9 @@ impl<'a> Engine<'a> {
                 self.progress("saves", i as u64, saves.len() as u64);
             }
             let h = self.sha1(s, 0)?;
-            request.push_str(&format!("file\t{}\t{h}\n", wire(s)));
+            // When it was written: the server dates the version by it
+            let mt = std::fs::metadata(s).and_then(|m| m.modified()).ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map_or(0, |d| d.as_secs());
+            request.push_str(&format!("file\t{}\t{h}\t{mt}\n", wire(s)));
         }
         for root in &folder_roots {
             request.push_str(&format!("dir\t{}\n", wire(root)));

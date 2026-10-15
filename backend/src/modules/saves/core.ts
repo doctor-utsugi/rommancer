@@ -187,6 +187,7 @@ export async function receiveFromDevice(
   buf: Buffer,
   known?: { gameId: number; romId: number | null } | null,
   exactOnly = false,
+  fileMtime?: Date,
 ) {
   const systemId = systemSlug ? (await prisma.system.findUnique({ where: { slug: systemSlug } }))?.id : undefined;
   const ident = known ?? (await identifyRom(baseName, systemId));
@@ -203,7 +204,7 @@ export async function receiveFromDevice(
   const coreVersion = kind === 'STATE' ? coreVersionOf(device, emu) : null;
 
   if (d.action === 'upload') {
-    const r = await storeVersion(keyFor(save), save ? toSaveFormat(save) : buf, new Date(), { sourceDeviceId: device.id, gameId: ident?.gameId ?? null, romId: ident?.romId ?? null, coreVersion });
+    const r = await storeVersion(keyFor(save), save ? toSaveFormat(save) : buf, fileMtime ?? new Date(), { sourceDeviceId: device.id, gameId: ident?.gameId ?? null, romId: ident?.romId ?? null, coreVersion });
     await setBase(r.save.id, device.id, r.version.id, deviceSha1);
     return { action: 'uploaded' as const, saveId: r.save.id, versionId: r.version.id };
   }
@@ -212,7 +213,7 @@ export async function receiveFromDevice(
     return { action: 'unchanged' as const, saveId: save.id, versionId: null };
   }
   if (d.action === 'conflict' && save) {
-    const r = await storeVersion(keyFor(save), toSaveFormat(save), new Date(), { sourceDeviceId: device.id, note: 'conflict', makeCurrent: false, force: true, coreVersion });
+    const r = await storeVersion(keyFor(save), toSaveFormat(save), fileMtime ?? new Date(), { sourceDeviceId: device.id, note: 'conflict', makeCurrent: false, force: true, coreVersion });
     await prisma.saveConflict.create({ data: { saveId: save.id, deviceId: device.id, deviceVersionId: r.version.id, serverVersionId: save.currentVersionId! } });
     // The device keeps its file; what it holds is recorded so the conflict is not repeated
     const base = await prisma.saveDeviceState.findUnique({ where: { saveId_deviceId: { saveId: save.id, deviceId: device.id } } });

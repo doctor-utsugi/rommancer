@@ -843,6 +843,7 @@ agentRouter.post('/sync', express.text({ limit: '16mb', type: '*/*' }), async (r
     else if (kind === 'fsys' && p && h) frontendSystems.push([p, h, h2 ?? '']);
     else if (kind === 'fgame' && p && h) frontendGames.push([p, h]);
   }
+  listedMtimes.set(device.id, mtimes);
   await storeCoreVersions(device, cores);
   if (typeof req.body === 'string' && req.body.length) device = await storeLauncher(device, await readLauncher(setups, launched));
   // An unreadable body (a client that sent no content type) must not wipe the device's list. The same list as last
@@ -1558,6 +1559,16 @@ function zoneLabel() {
 }
 
 /**
+ * When a save was written on the device, as its client listed it (seconds) or sends it with the upload: a version is
+ * dated by it, not by when it arrived. Dates ahead of the server's clock are not believed
+ */
+const listedMtimes = new Map<number, Map<string, number>>();
+function uploadMtime(deviceId: number, filePath: string, header?: string) {
+  const s = Number(header) || listedMtimes.get(deviceId)?.get(filePath) || 0;
+  return s > 0 && s * 1000 <= Date.now() + 60_000 ? new Date(s * 1000) : undefined;
+}
+
+/**
  * "conflict<TAB>id<TAB>game<TAB>kind<TAB>this device's date<TAB>server's date<TAB>server's device" (ISO dates), then for
  * the conflict screens: this device's name, both dates as read on screen, the time zone they are in, when both last
  * had the same save ("-": never) and which is newer ("device" or "server")
@@ -1571,10 +1582,12 @@ async function conflictLine(c: { id: number; deviceVersionId: number; serverVers
     prisma.saveDeviceState.findUnique({ where: { saveId_deviceId: { saveId: c.saveId, deviceId: c.deviceId } } }),
   ]);
   const common = base?.versionId && base.versionId !== c.deviceVersionId ? await prisma.saveVersion.findUnique({ where: { id: base.versionId } }) : null;
-  const newer = (mine?.createdAt.getTime() ?? 0) >= (theirs?.createdAt.getTime() ?? 0) ? 'device' : 'server';
+  // Each side dated by when its save was written, not uploaded
+  const at = (v: { fileMtime: Date } | null) => v?.fileMtime;
+  const newer = (at(mine)?.getTime() ?? 0) >= (at(theirs)?.getTime() ?? 0) ? 'device' : 'server';
   return [
-    'conflict', c.id, save?.baseName ?? '-', save?.kind ?? 'SAVE', mine?.createdAt.toISOString() ?? '-', theirs?.createdAt.toISOString() ?? '-', theirs?.sourceDevice?.name ?? 'web',
-    here?.name ?? '-', readableDate(mine?.createdAt), readableDate(theirs?.createdAt), zoneLabel(), common ? readableDate(common.createdAt) : '-', newer,
+    'conflict', c.id, save?.baseName ?? '-', save?.kind ?? 'SAVE', at(mine)?.toISOString() ?? '-', at(theirs)?.toISOString() ?? '-', theirs?.sourceDevice?.name ?? 'web',
+    here?.name ?? '-', readableDate(at(mine)), readableDate(at(theirs)), zoneLabel(), common ? readableDate(at(common)) : '-', newer,
   ].map((f) => String(f).replace(/[\t\n]/g, ' ')).join('\t');
 }
 
@@ -1683,7 +1696,7 @@ agentRouter.post('/upload', express.raw({ limit: '128mb', type: '*/*' }), async 
     res.type('text/plain').send(await cardUpload(device, dc, emu, filePath, buf, romPath));
     return;
   }
-  const r = await receiveFromDevice(device, ctx.slug, emu, parsed.kind, parsed.slot, ctx.baseName, buf, byHash, req.header('x-save-exact') === '1');
+  const r = await receiveFromDevice(device, ctx.slug, emu, parsed.kind, parsed.slot, ctx.baseName, buf, byHash, req.header('x-save-exact') === '1', uploadMtime(device.id, filePath, req.header('x-mtime')));
   await prisma.device.update({ where: { id: device.id }, data: { lastSyncAt: new Date() } });
   // A new savestate: the client sends the emulator's screenshot of it next
   const thumb = parsed.kind === 'STATE' && r.versionId ? deviceThumbPath(filePath, emu, ctx.layout.savesLayout) : null;
