@@ -351,6 +351,7 @@ devicesRouter.get('/:id/inventory', async (req, res) => {
   const sysName = new Map(systems.map((x) => [x.slug, x.name]));
   const sysById = new Map(systems.map((x) => [x.id, x]));
   const pending = new Set((await prisma.devicePull.findMany({ where: { deviceId: d.id, status: { in: QUEUED_PULL } }, select: { path: true } })).map((p) => p.path));
+  const rejected = await rejectedPaths(d.id);
   const sizes = await catalogSizes(rows);
   const romsBase = path.posix.join(d.rootPath, layoutOf(d).romsRoot) + '/';
   // Hacks and other unidentified files already stored on the server, by their content
@@ -378,10 +379,12 @@ devicesRouter.get('/:id/inventory', async (req, res) => {
       serial: r.serial,
       onServer: !!((r.romId && ownedRoms.has(r.romId)) || (r.gameId && ownedGames.has(r.gameId)) || (!r.gameId && r.sha1 && stored.has(r.sha1))),
       pullPending: pending.has(r.path),
+      // The server could not take it the last time (why): not offered in the bulk send
+      rejected: pending.has(r.path) ? null : (rejected.get(r.path) ?? null),
     };
   });
   // What the console would add: games a database knows and the collection lacks
-  const helpful = items.filter((i) => i.gameId && !i.onServer);
+  const helpful = items.filter((i) => i.gameId && !i.onServer && !i.rejected);
   const newGames = new Set(helpful.map((i) => i.gameId!));
   const consoleSystems = [...new Set(items.flatMap((i) => (i.system ? [i.system] : [])))].map((slug) => systems.find((x) => x.slug === slug)?.id).filter((x): x is number => !!x);
   const catalogTotal = await prisma.game.count();
@@ -427,6 +430,13 @@ const pullBody = z.object({
 });
 
 /** The device's roms a copy request covers that the server lacks and has not queued yet, with their system */
+/** Files whose last copy to the server failed, with why: offered again only when asked for one by one */
+async function rejectedPaths(deviceId: number) {
+  const last = new Map<string, { status: string; result: string | null }>();
+  for (const p of await prisma.devicePull.findMany({ where: { deviceId }, orderBy: { id: 'asc' }, select: { path: true, status: true, result: true } })) last.set(p.path, p);
+  return new Map([...last].filter(([, p]) => p.status === 'failed').map(([path, p]) => [path, (p.result ?? '').trim().split('\n').pop() || 'failed']));
+}
+
 async function pullRows(d: Device, body: z.infer<typeof pullBody>) {
   const rows = await prisma.deviceRom.findMany({
     where: { deviceId: d.id, ...(body.paths ? { path: { in: body.paths } } : {}), ...(body.system ? { systemSlug: body.system } : {}), ...(body.identified ? { gameId: { not: null } } : {}) },
@@ -449,8 +459,9 @@ async function pullRows(d: Device, body: z.infer<typeof pullBody>) {
   const ownedRoms = await ownedRomIds({ romIds: [...new Set(chosen.flatMap((r) => (r.romId ? [r.romId] : [])))], include: 'any' });
   const ownedGames = await ownedGameIds();
   const pending = new Set((await prisma.devicePull.findMany({ where: { deviceId: d.id, status: { in: QUEUED_PULL } }, select: { path: true } })).map((p) => p.path));
+  const rejected = body.paths ? new Map<string, string>() : await rejectedPaths(d.id);
   // Explicit paths are fetched even if the game is owned (another version); bulk requests only bring what is missing
-  return chosen.filter((r) => !pending.has(r.path) && (body.paths || !((r.romId && ownedRoms.has(r.romId)) || (r.gameId && ownedGames.has(r.gameId)) || (r.sha1 && stored.has(r.sha1)))));
+  return chosen.filter((r) => !pending.has(r.path) && !rejected.has(r.path) && (body.paths || !((r.romId && ownedRoms.has(r.romId)) || (r.gameId && ownedGames.has(r.gameId)) || (r.sha1 && stored.has(r.sha1)))));
 }
 
 // Bring roms the server lacks from the device: given paths, a whole system, chosen systems or everything missing

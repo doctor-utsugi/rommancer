@@ -1962,6 +1962,7 @@ interface Game {
   gameTitle: string | null
   onServer: boolean
   pullPending: boolean
+  rejected?: string | null
 }
 
 /** What the card holds (as of its last sync): titles, systems and whether the server has each game */
@@ -2028,6 +2029,15 @@ function Games({ deviceId, refreshKey, onSend }: { deviceId: number; refreshKey:
               </span>
             ) : i.pullPending ? (
               <span className="muted small">{t('sending')}</span>
+            ) : i.rejected ? (
+              <span className="row">
+                <span className="warn small" title={i.rejected}>
+                  {t('rejected', { why: i.rejected })}
+                </span>
+                <button className="small-btn" onClick={() => void send(i.path)}>
+                  {t('retry')}
+                </button>
+              </span>
             ) : (
               <button className="small-btn" onClick={() => void send(i.path)}>
                 {t('sendOne')}

@@ -44,6 +44,8 @@ const en = {
   showUnidentified: 'Unidentified',
   showOnServer: 'Already on the server',
   sendOne: 'Send',
+  rejected: 'The server did not take it: {why}',
+  retry: 'Try again',
   sending: 'Waiting to be sent',
   moreGames: 'and {n} more: narrow the search',
   noMatches: 'Nothing matches.',

@@ -1368,7 +1368,7 @@ agentRouter.post('/pull/:id', async (req, res) => {
           const base = inv?.baseGameId ? await prisma.game.findFirst({ where: { id: inv.baseGameId, systemId: system.id } }) : null;
           const lang = /\[T[+-]([A-Za-z]{2,3})/.exec(name)?.[1] ?? /\((english|spanish|french|german|italian|portuguese) v[\d.]+\)/i.exec(name)?.[1];
           const fan = base ? { gameId: base.id, kind: /\[T[+-]|\((english|spanish|french|german|italian|portuguese) v[\d.]+\)/i.test(name) ? 'translation' : 'hack', ...(lang ? { hackLanguage: lang.slice(0, 32) } : {}) } : null;
-          if (!romOfSystem(system.extensions, name)) throw badRequest(`Not a ${system.slug} game file`);
+          if (!romOfSystem(system.extensions, name)) throw badRequest(`Not a ${system.name} game: ${path.extname(name) || name}`);
           try {
             fileId = (await ingestUnverified(tmp, name, owner, { systemId: system.id, ...(fan ?? (game ? { gameId: game.id } : { newGameTitle: title })) })).file?.id;
             result = 'stored as unverified';

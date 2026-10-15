@@ -178,11 +178,14 @@ export async function ingestUnverified(tmp: string, originalName: string, u: Ing
 
   const ds = await userDatSource(system.id);
   const parsed = parseRomName(baseName);
+  // Another file of the same name (a .zip and a .smd of one game): told apart by its hash
+  let romName = `${baseName} [${u.username}]`.slice(0, 255);
+  if (await prisma.rom.findFirst({ where: { datSourceId: ds.id, name: romName }, select: { id: true } })) romName = `${baseName} (${h.sha1.slice(0, 8)}) [${u.username}]`.slice(0, 255);
   const rom = await prisma.rom.create({
     data: {
       gameId,
       datSourceId: ds.id,
-      name: `${baseName} [${u.username}]`.slice(0, 255),
+      name: romName,
       regions: body.regions ? csv(body.regions) : parsed.regions,
       languages: body.languages ? csv(body.languages) : parsed.languages,
       revision: body.revision ?? parsed.revision,
