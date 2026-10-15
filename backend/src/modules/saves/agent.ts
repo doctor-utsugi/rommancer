@@ -654,13 +654,20 @@ async function storeInventory(device: AgentDevice, scanned: { path: string; hash
     if (!p?.serial || !p.platform || Number(p.size) !== r.size) return null;
     return { serial: p.serial, hit: await serialMatch(p.platform, p.serial, r.path, r.hashes.length > 0) };
   };
+  // A name only says the game for a file that can be one: not a savestate or a manual named after it
+  const extsOf = new Map((await prisma.system.findMany({ select: { slug: true, extensions: true } })).map((x) => [x.slug, x.extensions]));
+  const romFile = (r: (typeof roms)[number], folder: string) => {
+    const sys = systemsOf.get(r.path) ?? byFolder.get(folder);
+    return !sys || romOfSystem(extsOf.get(sys), r.path);
+  };
   const rows = [];
   const probe: string[] = [];
   for (const r of roms) {
     const folder = r.path.startsWith(base) ? r.path.slice(base.length).split('/')[0] : '';
-    const exact = r.hashes.map((h) => known.get(h)).find(Boolean) ?? nameHit(r, folder);
+    const named = romFile(r, folder);
+    const exact = r.hashes.map((h) => known.get(h)).find(Boolean) ?? (named ? nameHit(r, folder) : undefined);
     const header = exact ? null : await headerHit(r);
-    const hit = exact ?? (header?.hit && !header.hit.fan ? header.hit : undefined) ?? (header?.hit?.fan ? undefined : titleHit(r, folder));
+    const hit = exact ?? (header?.hit && !header.hit.fan ? header.hit : undefined) ?? (header?.hit?.fan || !named ? undefined : titleHit(r, folder));
     const ph = pathHashOf(r.path);
     if (!hit && !header && wantsProbe(r, probed, ph)) probe.push(r.path);
     rows.push({
