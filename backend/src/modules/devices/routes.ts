@@ -354,8 +354,8 @@ devicesRouter.get('/:id/inventory', async (req, res) => {
   const rejected = await rejectedPaths(d.id);
   const sizes = await catalogSizes(rows);
   const romsBase = path.posix.join(d.rootPath, layoutOf(d).romsRoot) + '/';
-  // Hacks and other unidentified files already stored on the server, by their content
-  const loose = rows.flatMap((r) => (!r.gameId && r.sha1 ? [r.sha1] : []));
+  // Files already stored on the server by their content (hacks, unidentified files, a dump named as a known game)
+  const loose = rows.flatMap((r) => (r.sha1 ? [r.sha1] : []));
   const stored = new Set(loose.length ? (await prisma.romFile.findMany({ where: { sha1: { in: loose } }, select: { sha1: true } })).map((f) => f.sha1) : []);
   const items = rows.map((r) => {
     const game = r.gameId ? gameById.get(r.gameId) : undefined;
@@ -377,7 +377,7 @@ devicesRouter.get('/:id/inventory', async (req, res) => {
       baseGameId: r.baseGameId,
       baseTitle: r.baseGameId ? (gameById.get(r.baseGameId)?.title ?? null) : null,
       serial: r.serial,
-      onServer: !!((r.romId && ownedRoms.has(r.romId)) || (r.gameId && ownedGames.has(r.gameId)) || (!r.gameId && r.sha1 && stored.has(r.sha1))),
+      onServer: !!((r.romId && ownedRoms.has(r.romId)) || (r.gameId && ownedGames.has(r.gameId)) || (r.sha1 && stored.has(r.sha1))),
       pullPending: pending.has(r.path),
       // The server could not take it the last time (why): not offered in the bulk send
       rejected: pending.has(r.path) ? null : (rejected.get(r.path) ?? null),
