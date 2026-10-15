@@ -189,6 +189,12 @@ export async function decide(save: (Save & { emulator: Emulator }) | null, devic
   const deviceChanged = !base || deviceFile.sha1 !== base.deviceSha1;
   const serverChanged = !base || current !== base.versionId;
   if (!deviceChanged && !serverChanged) return { action: 'none' };
+  // A file back at a version the server already moved past is a stale copy (a console off since, an emulator
+  // writing the save it had in memory), not new progress: it must not take every other device back with it
+  if (deviceChanged && !serverChanged && base && save.emulator.saveFormat === emu.saveFormat) {
+    const old = await prisma.saveVersion.findFirst({ where: { saveId: save.id, sha1: deviceFile.sha1, id: { not: current } }, select: { id: true } });
+    if (old) return { action: 'conflict' };
+  }
   if (deviceChanged && !serverChanged) return { action: 'upload' };
   if (!deviceChanged && serverChanged) return { action: 'download', versionId: current };
   // Both sides "changed": if the content already matches, only the base is recorded

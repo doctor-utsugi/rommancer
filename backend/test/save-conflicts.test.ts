@@ -87,4 +87,13 @@ test('saves: empty and padded copies are no conflict; a conflict settles once th
   const { sha1 } = await import('../src/modules/saves/core.js');
   assert.equal((await decide(real, b, emu, { sha1: sha1(data) })).action, 'adopt');
   assert.equal(await open(), 0);
+
+  // A device back at a version the server moved past is a conflict, never the current version for everyone
+  await receiveFromDevice(a, null, emu, 'SAVE', 0, `${name} Stale`, data);
+  await receiveFromDevice(a, null, emu, 'SAVE', 0, `${name} Stale`, other);
+  const r = await receiveFromDevice(a, null, emu, 'SAVE', 0, `${name} Stale`, data);
+  assert.equal(r.action, 'conflict');
+  const stale = await prisma.save.findFirstOrThrow({ where: { userId: a.userId, baseName: `${name} Stale` } });
+  const kept = await prisma.saveVersion.findUniqueOrThrow({ where: { id: stale.currentVersionId! } });
+  assert.equal(kept.sha1, sha1(other), 'the server keeps the newer save');
 });
