@@ -88,7 +88,11 @@ export async function storeVersion(
   if (opts.label && opts.label !== save.label) await prisma.save.update({ where: { id: save.id }, data: { label: opts.label.slice(0, 128) } });
   const existing = save.versions.find((v) => v.sha1 === sha1);
   if (existing && !opts.force) {
-    if (opts.makeCurrent !== false && save.currentVersionId !== existing.id) await prisma.save.update({ where: { id: save.id }, data: { currentVersionId: existing.id } });
+    // An earlier version again (a save loaded back and written): the other devices fetch it like a new one
+    if (opts.makeCurrent !== false && save.currentVersionId !== existing.id) {
+      await prisma.save.update({ where: { id: save.id }, data: { currentVersionId: existing.id } });
+      await nudgeDevices(key.userId, opts.sourceDeviceId);
+    }
     return { save, version: existing, created: false };
   }
   const dir = path.join(env.savesDir, String(key.userId), String(save.id));
