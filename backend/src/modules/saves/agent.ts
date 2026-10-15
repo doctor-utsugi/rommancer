@@ -506,7 +506,9 @@ async function hashIndex(hashes: string[]) {
 function gameByHashIn(index: Awaited<ReturnType<typeof hashIndex>>, hashes: string[], systemId: number | undefined) {
   const first = (hits: HashHit[]) => hits.reduce<HashHit | null>((a, b) => (!a || b.id < a.id ? b : a), null);
   const list = hashes.filter((h) => SHA1.test(h));
-  const part = first(list.flatMap((h) => index.parts.get(h) ?? []).filter((p) => !systemId || p.systemId === systemId));
+  const parts = list.flatMap((h) => index.parts.get(h) ?? []);
+  // The folder's system first; the same content is that game in any folder (a Game Boy rom named .gbc in "GB GBC")
+  const part = first(parts.filter((p) => !systemId || p.systemId === systemId)) ?? first(parts);
   if (part) return { gameId: part.gameId, romId: part.romId };
   const hack = first(list.flatMap((h) => index.hacks.get(h) ?? []));
   return hack ? { gameId: hack.gameId, romId: null } : null;
