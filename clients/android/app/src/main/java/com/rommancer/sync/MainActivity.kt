@@ -168,17 +168,20 @@ private fun App(resumes: Int) {
     val scroll = rememberScrollState()
     // Two columns like the handheld setup app: content on the left, the spinning save point on the right. Narrow
     // screens (a phone upright) give all the width to the text
-    BoxWithConstraints(Modifier.fillMaxSize().padding(horizontal = 20.dp, vertical = 12.dp)) {
+    // The browse screens take the whole screen: their lists need the room more than the title and the save point
+    val browsing = ownScroll && linked && canRead
+    BoxWithConstraints(Modifier.fillMaxSize().padding(horizontal = if (browsing) 12.dp else 20.dp, vertical = if (browsing) 8.dp else 12.dp)) {
         val sprite = when {
+            browsing -> 0f
             maxWidth < 560.dp -> 0f
             maxWidth < 840.dp -> 0.3f
             else -> 0.4f
         }
         Row(Modifier.fillMaxSize()) {
-            val scrolls = !(ownScroll && linked && canRead)
+            val scrolls = !browsing
             Column(Modifier.weight(1f - sprite).fillMaxHeight().then(if (scrolls) Modifier.verticalScroll(scroll) else Modifier), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 val version = remember { runCatching { context.packageManager.getPackageInfo(context.packageName, 0).versionName }.getOrNull().orEmpty() }
-                Row(verticalAlignment = Alignment.Bottom) {
+                if (!browsing) Row(verticalAlignment = Alignment.Bottom) {
                     Text(stringResource(R.string.app_title), fontSize = 26.sp, fontWeight = FontWeight.SemiBold, color = Accent)
                     Text("  $version", fontSize = 14.sp, color = Dim, modifier = Modifier.padding(bottom = 4.dp))
                 }
@@ -944,7 +947,7 @@ private fun Linked(store: Store, ownScroll: Boolean, setOwnScroll: (Boolean) -> 
         }
         // Drawn once the root stopped scrolling (the frame before, it still does)
         Screen.Browse -> if (ownScroll) BrowseSystems(
-            browseSystems, browseFailure, browseDenied, browsePick, browseAt, browseShowAll, { browseShowAll = !browseShowAll },
+            browseSystems, browseFailure, browseDenied, browsePick, browseAt, browseShowAll, { browseShowAll = !browseShowAll }, { leaveBrowse() },
             onOpen = { system, at -> browseText = ""; browseAt = at; screen = Screen.BrowseGames(system, search = false) },
             onSearch = { browseText = ""; browseAt = 0; screen = Screen.BrowseGames(null, search = true) },
             onTick = { browsePick = browsePick.toggle(it) },
@@ -952,6 +955,7 @@ private fun Linked(store: Store, ownScroll: Boolean, setOwnScroll: (Boolean) -> 
         )
         is Screen.BrowseGames -> if (ownScroll) BrowseGames(
             store, s.system, s.search, browseSystems.orEmpty(), browseText, { browseText = it }, browsePick, browseShowAll, { browseShowAll = !browseShowAll },
+            { screen = Screen.Browse },
             onToggle = { browsePick = browsePick.toggle(it) },
             onReview = { browseReview(s) },
             onDenied = { browseDenied = true; screen = Screen.Browse },

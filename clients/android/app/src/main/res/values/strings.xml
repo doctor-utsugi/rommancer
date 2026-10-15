@@ -68,7 +68,30 @@
     <string name="list_drop_go">Remove and delete %1$d games</string>
 
     <!-- Browsing the server's games -->
-    <string name="browse_search_all">Search the server’s games…</string>
+    <string name="browse_search_all">Search every system…</string>
+    <string name="browse_search_in">Search %1$s…</string>
+    <string name="browse_search_close">Close the search</string>
+    <string name="browse_hide_owned">Hide owned</string>
+    <string name="browse_review_button">Review download · START</string>
+    <string name="browse_system_new">%1$d to download · %2$s</string>
+    <string name="browse_keys_systems">X tick all</string>
+    <string name="browse_keys_games">L1/R1 page</string>
+    <plurals name="browse_section_systems">
+        <item quantity="one">Systems · 1 with games to download</item>
+        <item quantity="other">Systems · %1$d with games to download</item>
+    </plurals>
+    <plurals name="browse_section_systems_all">
+        <item quantity="one">Systems · 1</item>
+        <item quantity="other">Systems · %1$d</item>
+    </plurals>
+    <plurals name="browse_section_games">
+        <item quantity="one">Games · 1</item>
+        <item quantity="other">Games · %1$d</item>
+    </plurals>
+    <plurals name="browse_section_results">
+        <item quantity="one">Results · 1 game</item>
+        <item quantity="other">Results · %1$d games</item>
+    </plurals>
     <string name="browse_search">Search the server</string>
     <string name="browse_all_systems">All systems</string>
     <string name="browse_searching">Searching the server…</string>
@@ -95,9 +118,9 @@
         <item quantity="one">1 game to download</item>
         <item quantity="other">%1$d games to download</item>
     </plurals>
-    <string name="browse_selected">Review: %1$s selected · %2$s</string>
-    <string name="browse_hint_systems">A open · X tick all · Y search · START download · B back</string>
-    <string name="browse_hint_games">A tick · L1/R1 page · Y search · START download · B back</string>
+    <string name="browse_selected">%1$s selected · %2$s</string>
+    <string name="browse_hint_systems">A open · X tick a whole system · Y search · B back</string>
+    <string name="browse_hint_games">A tick · L1/R1 page · Y search · B back</string>
     <string name="browse_review_title">Download games</string>
     <string name="browse_review_ask">Download %1$s (%2$s)?</string>
     <string name="browse_usable">Usable space: %1$s (%2$s free, %3$s kept free)</string>

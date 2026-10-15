@@ -13,8 +13,8 @@ android {
         minSdk = 26
         targetSdk = 35
         // Bumped on every release: the app offers to update itself when the server has a higher one
-        versionCode = 52
-        versionName = "0.17.2"
+        versionCode = 53
+        versionName = "0.18.0"
     }
 
     buildTypes {
@@ -38,6 +38,7 @@ dependencies {
     val composeBom = platform("androidx.compose:compose-bom:2024.10.01")
     implementation(composeBom)
     implementation("androidx.compose.material3:material3")
+    implementation("androidx.compose.material:material-icons-core")
     implementation("androidx.compose.ui:ui")
     implementation("androidx.activity:activity-compose:1.9.3")
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.8.7")
