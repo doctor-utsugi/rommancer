@@ -313,6 +313,8 @@ class Journeys(private val context: Context, private val store: Store) {
             val f = line.split('\t'); if (f.size < 5 || f[0] != "journey") continue
             val j = item(s, f[1]); if (!j.optBoolean("rename")) j.put("name", decode(f[3]))
             j.put("head", f[2].toInt()).put("syncedAt", f[4])
+            // The server's slot number, the same on every console and the web (older servers send none)
+            f.getOrNull(5)?.toIntOrNull()?.takeIf { it > 0 }?.let { j.put("slot", it) }
             if (j.optBoolean("dirty") || j.has("conflict")) continue
             val manifest = call("manifest/${f[1]}/${f[2]}")
             try {

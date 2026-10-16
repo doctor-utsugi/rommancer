@@ -6,13 +6,15 @@ import { get, post, patch, authUrl } from '@/lib/api'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
+import { Checkbox } from '@/components/ui/checkbox'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog'
 import { Empty, errMsg, formatBytes, formatDate } from '@/components/common'
 
 type Entry = { key: string; sha1: string; size: number }
 type Command = { id: string; journeyId: string; status: string; error: string | null }
 type Binding = { id: string; journeyId: string; generation: number; updatedAt: string; device: { name: string; lastSeenAt: string | null }; commands: Command[] }
-type Journey = { id: string; name: string; head: number; metadata: number; archived: boolean; updatedAt: string; identityId: string; identity: { title: string; platform: string; digest: string }; entries: Entry[]; devices: Binding[] }
+type Journey = { id: string; slot: number; name: string; head: number; metadata: number; archived: boolean; updatedAt: string; identityId: string; identity: { title: string; platform: string; digest: string }; entries: Entry[]; devices: Binding[] }
+const ACTIVE = ['pending', 'waiting', 'error', 'downloading']
 type Revision = { id: string; number: number; base: number; conflict: boolean; createdAt: string; manifest: Entry[]; sourceDevice?: { name: string } | null }
 
 export function Journeys({ gameId }: { gameId?: number } = {}) {
@@ -21,7 +23,7 @@ export function Journeys({ gameId }: { gameId?: number } = {}) {
   const { data = [], isPending, error } = useQuery({ queryKey: ['journeys', gameId], queryFn: () => get<Journey[]>(`/journeys${gameId ? `?gameId=${gameId}` : ''}`), refetchInterval: 15000 })
   const [q, setQ] = useState('')
   const [archived, setArchived] = useState(false)
-  const [edit, setEdit] = useState<{ source: Journey; action: 'new' | 'duplicate' | 'rename' | 'all'; name: string } | null>(null)
+  const [edit, setEdit] = useState<{ source: Journey; action: 'new' | 'duplicate' | 'rename' | 'all'; name: string; consoles?: string[] } | null>(null)
   const [history, setHistory] = useState<Journey | null>(null)
   const [busy, setBusy] = useState(false)
   const perform = async (action: () => Promise<unknown>) => {
@@ -34,7 +36,7 @@ export function Journeys({ gameId }: { gameId?: number } = {}) {
     if (!edit) return
     const { source, action, name } = edit
     return perform(() => action === 'all'
-      ? post(`/journeys/${source.id}/switch-requests`, { bindings: source.devices.map((d) => ({ id: d.id, generation: d.generation })) })
+      ? post(`/journeys/${source.id}/switch-requests`, { bindings: source.devices.filter((d) => edit.consoles?.includes(d.id)).map((d) => ({ id: d.id, generation: d.generation })) })
       : action === 'rename'
         ? patch(`/journeys/${source.id}`, { name, metadata: source.metadata })
         : post('/journeys', { id: crypto.randomUUID(), identityId: source.identityId, name, ...(action === 'duplicate' ? { sourceId: source.id, sourceRevision: source.head } : {}) }))
@@ -42,6 +44,8 @@ export function Journeys({ gameId }: { gameId?: number } = {}) {
   const filtered = data.filter((j) => j.archived === archived && `${j.name} ${j.identity.title} ${j.identity.platform}`.toLowerCase().includes(q.toLowerCase()))
   const groups = new Map<string, Journey[]>()
   for (const journey of filtered) groups.set(journey.identityId, [...(groups.get(journey.identityId) ?? []), journey])
+  // Slot order, as the consoles list them
+  for (const [id, list] of groups) groups.set(id, [...list].sort((a, b) => a.slot - b.slot))
   return <div className="space-y-5">
     <p className="max-w-2xl text-sm text-muted-foreground">{t('journeys.explain')}</p>
     <Input className="max-w-sm" aria-label={t('common.search')} placeholder={t('journeys.search')} value={q} onChange={(e) => setQ(e.target.value)} />
@@ -54,7 +58,7 @@ export function Journeys({ gameId }: { gameId?: number } = {}) {
       <div className="divide-y rounded-lg border">
         {journeys.map((j) => <div key={j.id} className="space-y-3 p-4">
           <div className="flex flex-wrap items-start justify-between gap-3">
-            <div><h3 className="font-medium">{j.name}</h3><p className="text-sm text-muted-foreground">{j.entries.length} {t('journeys.files')} · {formatBytes(j.entries.reduce((sum, e) => sum + e.size, 0))} · {formatDate(j.updatedAt)}</p></div>
+            <div><h3 className="font-medium">{j.slot > 0 && <span className="mr-2 tabular-nums text-muted-foreground">{String(j.slot).padStart(2, '0')}</span>}{j.name}</h3><p className="text-sm text-muted-foreground">{j.entries.length} {t('journeys.files')} · {formatBytes(j.entries.reduce((sum, e) => sum + e.size, 0))} · {formatDate(j.updatedAt)}</p></div>
             <div className="flex flex-wrap gap-2">
               <Button size="sm" variant="outline" onClick={() => setHistory(j)}>{t('journeys.content')}</Button>
               <Button size="sm" variant="outline" onClick={() => setEdit({ source: j, action: 'duplicate', name: `${j.name} — ${t('journeys.copy')}`.slice(0, 80) })}>{t('journeys.duplicate')}</Button>
@@ -64,15 +68,16 @@ export function Journeys({ gameId }: { gameId?: number } = {}) {
           <div className="flex flex-wrap items-center gap-2 text-sm">
             <span className="text-muted-foreground">{t('journeys.selectedOn')}</span>
             {j.devices.filter((d) => d.journeyId === j.id).map((d) => <Badge key={d.id} variant="secondary">{d.device.name}</Badge>)}
-            {!j.devices.some((d) => d.journeyId === j.id) && <span>{t('common.none')}</span>}
+            {!j.devices.some((d) => d.journeyId === j.id) && <span>{t('journeys.noConsole')}</span>}
           </div>
-          {j.devices.flatMap((d) => d.commands.filter((c) => c.journeyId === j.id).slice(0, 1).map((c) => <div key={c.id} className="flex flex-wrap items-center gap-2 text-sm">
+          {/* Only requests still under way: a finished one is already told by where the console is */}
+          {j.devices.flatMap((d) => d.commands.filter((c) => c.journeyId === j.id).slice(0, 1).filter((c) => ACTIVE.includes(c.status)).map((c) => <div key={c.id} className="flex flex-wrap items-center gap-2 text-sm">
             <span>{d.device.name}: {t(`journeys.status.${c.status}`)}</span>
             {c.error && <span role="alert">{c.error}</span>}
-            {['pending', 'waiting', 'error', 'downloading'].includes(c.status) && <Button size="sm" variant="ghost" disabled={busy} onClick={() => perform(() => post(`/journeys/commands/${c.id}/cancel`, {}))}>{t('common.cancel')}</Button>}
+            <Button size="sm" variant="ghost" disabled={busy} onClick={() => perform(() => post(`/journeys/commands/${c.id}/cancel`, {}))}>{t('common.cancel')}</Button>
           </div>))}
           <div className="flex flex-wrap gap-2">
-            <Button size="sm" variant="outline" disabled={j.archived || !j.devices.length} onClick={() => setEdit({ source: j, action: 'all', name: '' })}>{t('journeys.useAll')}</Button>
+            <Button size="sm" variant="outline" disabled={j.archived || !j.devices.length} onClick={() => setEdit({ source: j, action: 'all', name: '', consoles: j.devices.filter((d) => d.journeyId !== j.id).map((d) => d.id) })}>{t('journeys.useAll')}</Button>
             <Button size="sm" variant="ghost" disabled={busy || (!j.archived && j.devices.some((d) => d.journeyId === j.id))} onClick={() => perform(() => patch(`/journeys/${j.id}`, { archived: !j.archived, metadata: j.metadata }))}>{t(j.archived ? 'journeys.unarchive' : 'journeys.archive')}</Button>
           </div>
         </div>)}
@@ -81,9 +86,9 @@ export function Journeys({ gameId }: { gameId?: number } = {}) {
     </section>)}
     {edit && <Dialog open onOpenChange={(open) => { if (!open && !busy) setEdit(null) }}><DialogContent>
       <DialogHeader><DialogTitle>{t(`journeys.action.${edit.action}`)}</DialogTitle></DialogHeader>
-      {edit.action === 'all' ? <div className="space-y-3"><p className="text-sm">{t('journeys.allExplain', { name: edit.source.name })}</p><ul className="space-y-2 text-sm">{edit.source.devices.map((d) => <li key={d.id}>{d.device.name} · {t('journeys.lastSeen')} {d.device.lastSeenAt ? formatDate(d.device.lastSeenAt) : t('common.none')}</li>)}</ul></div>
+      {edit.action === 'all' ? <div className="space-y-3"><p className="text-sm">{t('journeys.allExplain', { name: edit.source.name })}</p><ul className="space-y-2 text-sm">{edit.source.devices.map((d) => <li key={d.id}><label className="flex items-center gap-2"><Checkbox checked={!!edit.consoles?.includes(d.id)} onCheckedChange={(c) => setEdit({ ...edit, consoles: c ? [...(edit.consoles ?? []), d.id] : (edit.consoles ?? []).filter((x) => x !== d.id) })} /><span>{d.device.name} · {d.journeyId === edit.source.id ? t('journeys.alreadyHere') : `${t('journeys.lastSeen')} ${d.device.lastSeenAt ? formatDate(d.device.lastSeenAt) : t('journeys.never')}`}</span></label></li>)}</ul></div>
         : <><Input maxLength={80} aria-label={t('common.name')} value={edit.name} onChange={(e) => setEdit({ ...edit, name: e.target.value })} />{edit.action === 'duplicate' && <p className="text-sm text-muted-foreground">{t('journeys.duplicateExplain')}</p>}</>}
-      <DialogFooter cancel={false}><Button variant="outline" disabled={busy} onClick={() => setEdit(null)}>{t('common.cancel')}</Button><Button disabled={busy || (edit.action !== 'all' && !edit.name.trim())} onClick={submit}>{busy ? t('common.loading') : t(`journeys.action.${edit.action}`)}</Button></DialogFooter>
+      <DialogFooter cancel={false}><Button variant="outline" disabled={busy} onClick={() => setEdit(null)}>{t('common.cancel')}</Button><Button disabled={busy || (edit.action === 'all' ? !edit.consoles?.length : !edit.name.trim())} onClick={submit}>{busy ? t('common.loading') : t(`journeys.action.${edit.action}`)}</Button></DialogFooter>
     </DialogContent></Dialog>}
     {history && <JourneyHistory journey={history} onClose={() => setHistory(null)} />}
   </div>

@@ -11,21 +11,37 @@
     "duplicate": "Duplicate",
     "rename": "Rename",
     "selectedOn": "Last reported selection on:",
-    "useAll": "Use on all consoles…",
+    "useAll": "Use on consoles…",
     "archive": "Archive",
     "unarchive": "Restore archived journey",
     "showArchived": "Archived journeys",
     "new": "New journey",
     "lastSeen": "Last seen",
-    "allExplain": "Request “{{name}}” on the consoles below. Offline consoles wait to reconnect. Running games must close first. This is a one-time request, not a global selection.",
+    "allExplain": "Request “{{name}}” on the consoles you tick. Offline consoles wait to reconnect. Running games must close first. This is a one-time request, not a global selection.",
     "duplicateExplain": "Copy the last server checkpoint, keeping the original intact. Consoles keep their existing selections. Unsynced progress is not included.",
     "noFiles": "This journey has no checkpoints yet.",
     "conflict": "Conflicting progress (preserved)",
     "restore": "Use this checkpoint",
     "restoreExplain": "Make this checkpoint the journey's latest progress. Current progress stays in history. Consoles receive it when they can safely apply it.",
     "restoreConflict": "Progress changed during restoration. Both checkpoints were preserved; refresh and try again.",
-    "action": { "new": "Create journey", "duplicate": "Duplicate journey", "rename": "Rename journey", "all": "Request on all consoles" },
-    "status": { "pending": "Waiting for console", "waiting": "Waiting for game to close / local confirmation", "downloading": "Downloading", "applied": "Applied", "error": "Needs attention", "superseded": "Superseded", "cancelled": "Cancelled" }
+    "action": {
+      "new": "Create journey",
+      "duplicate": "Duplicate journey",
+      "rename": "Rename journey",
+      "all": "Request on consoles"
+    },
+    "status": {
+      "pending": "Waiting for console",
+      "waiting": "Waiting for game to close / local confirmation",
+      "downloading": "Downloading",
+      "applied": "Applied",
+      "error": "Needs attention",
+      "superseded": "Superseded",
+      "cancelled": "Cancelled"
+    },
+    "noConsole": "No console",
+    "alreadyHere": "already using it",
+    "never": "never"
   },
   "app": {
     "name": "Rommancer"

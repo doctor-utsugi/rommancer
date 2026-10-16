@@ -11,21 +11,37 @@
     "duplicate": "Duplicar",
     "rename": "Renombrar",
     "selectedOn": "Última selección comunicada en:",
-    "useAll": "Usar en todas las consolas…",
+    "useAll": "Usar en consolas…",
     "archive": "Archivar",
     "unarchive": "Recuperar Journey archivado",
     "showArchived": "Journeys archivados",
     "new": "Nuevo Journey",
     "lastSeen": "Último contacto",
-    "allExplain": "Solicitar «{{name}}» en las consolas indicadas. Las desconectadas esperan a reconectarse. Los juegos abiertos deben cerrarse primero. Es una solicitud puntual, no una selección global.",
+    "allExplain": "Solicitar «{{name}}» en las consolas que marques. Las desconectadas esperan a reconectarse. Los juegos abiertos deben cerrarse primero. Es una solicitud puntual, no una selección global.",
     "duplicateExplain": "Copiar el último bloque del servidor conservando el original. Las consolas mantienen su selección. No incluye progreso sin sincronizar.",
     "noFiles": "Este Journey todavía no tiene bloques guardados.",
     "conflict": "Progreso en conflicto (conservado)",
     "restore": "Usar este bloque",
     "restoreExplain": "Usar este bloque como progreso más reciente del Journey. El actual se conserva en el historial. Las consolas lo recibirán cuando puedan aplicarlo con seguridad.",
     "restoreConflict": "El progreso cambió durante la restauración. Se conservaron ambos bloques; actualiza y vuelve a intentarlo.",
-    "action": { "new": "Crear Journey", "duplicate": "Duplicar Journey", "rename": "Renombrar Journey", "all": "Solicitar en todas las consolas" },
-    "status": { "pending": "Esperando a la consola", "waiting": "Esperando al cierre del juego / confirmación local", "downloading": "Descargando", "applied": "Aplicado", "error": "Necesita atención", "superseded": "Sustituido", "cancelled": "Cancelado" }
+    "action": {
+      "new": "Crear Journey",
+      "duplicate": "Duplicar Journey",
+      "rename": "Renombrar Journey",
+      "all": "Solicitar en consolas"
+    },
+    "status": {
+      "pending": "Esperando a la consola",
+      "waiting": "Esperando al cierre del juego / confirmación local",
+      "downloading": "Descargando",
+      "applied": "Aplicado",
+      "error": "Necesita atención",
+      "superseded": "Sustituido",
+      "cancelled": "Cancelado"
+    },
+    "noConsole": "Ninguna consola",
+    "alreadyHere": "ya lo usa",
+    "never": "nunca"
   },
   "app": {
     "name": "Rommancer"

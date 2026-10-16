@@ -52,7 +52,11 @@ Items:
    A successful change returns to the slot list with a one-line result above it, never a blocking screen.
    A game without slots on this console says what setting them up does (its current saves become a slot of their
    own, the other consoles' slots appear next to it) above one **Set up save slots** row.
-   Slot numbers are display labels on a console; synchronized identity is still the Journey UUID, not the number.
+   Slot numbers come from the server (creation order per ROM, archived slots included so no number ever moves), so
+   every console and the web show the same number for a slot; synchronized identity is still the Journey UUID. A
+   console only numbers a slot itself when the server sends none (older servers, offline).
+   The web's Journeys tab lists slots in that order, asks which consoles a request goes to (all but those already on
+   the slot ticked) and shows a request's state only while it is under way.
 5. **Browse server games**: the server's games by system or by search, ticked one by one or a whole system, then a
    review and the download (docs/browse.md). The games already on the console are left out unless the toggle on top
    (`Show games already on this console: no/yes`) says otherwise. Hidden when the account may not download games.

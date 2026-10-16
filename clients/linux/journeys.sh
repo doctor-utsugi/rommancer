@@ -278,10 +278,11 @@ j_run() (
       printf 'active\t%s\t%s\n' "$JA" "$JGEN"
       [ -f "$JD/slots" ] || printf '%s\t1\n' "$JA" > "$JD/slots"
       [ ! -f "$JD/pending" ] || printf 'pending\t%s\n' "$(cat "$JD/pending")"
-      while IFS="$TAB" read -r jtype jid jrevision jlabel jdate; do
+      while IFS="$TAB" read -r jtype jid jrevision jlabel jdate jslot; do
         [ ! -f "$JD/$jid/rename" ] || jlabel="$(cat "$JD/$jid/rename")"
         printf '%s\t%s\t%s\t%s\t%s\n' "$jtype" "$jid" "$jrevision" "$jlabel" "$jdate"
-        jnumber="$(awk -F '\t' -v id="$jid" '$1 == id { print $2 }' "$JD/slots")"
+        # The server's slot number is the same on every console and the web; older servers send none
+        case "$jslot" in ''|*[!0-9]*|0) jnumber="$(awk -F '\t' -v id="$jid" '$1 == id { print $2 }' "$JD/slots")" ;; *) jnumber="$jslot" ;; esac
         if [ -z "$jnumber" ]; then
           jnumber="$(awk -F '\t' '$2 > max { max=$2 } END { print max+1 }' "$JD/slots")"
           printf '%s\t%s\n' "$jid" "$jnumber" >> "$JD/slots"

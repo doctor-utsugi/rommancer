@@ -103,9 +103,22 @@ export async function isManaged(deviceId: number, romPath?: string, filePath?: s
 export async function listJourneys(userId: number, identityId?: string) {
   const journeys = await prisma.journey.findMany({ where: { userId, ...(identityId ? { identityId } : {}) }, include: { identity: true }, orderBy: { updatedAt: 'desc' } });
   const bindings = await prisma.journeyBinding.findMany({ where: { device: { userId } }, include: { device: { select: { id: true, name: true, lastSeenAt: true } }, commands: { orderBy: { createdAt: 'desc' }, take: 10 } } });
+  const slots = await slotNumbers(userId, [...new Set(journeys.map((j) => j.identityId))]);
   return Promise.all(journeys.map(async (j) => {
     const devices = bindings.filter((b) => b.identityId === j.identityId);
     const title = devices[0] ? path.posix.basename(devices[0].romPath) : `${j.identity.platform} ROM ${j.identity.digest.slice(0, 12)}`;
-    return { ...j, identity: { ...j.identity, title }, entries: (await revision(userId, j.id)).entries, devices };
+    return { ...j, slot: slots.get(j.id) ?? 0, identity: { ...j.identity, title }, entries: (await revision(userId, j.id)).entries, devices };
   }));
+}
+
+/** Slot numbers shared by every console and the web: creation order per ROM, archived ones included so none moves */
+async function slotNumbers(userId: number, identityIds: string[]) {
+  const all = await prisma.journey.findMany({ where: { userId, identityId: { in: identityIds } }, select: { id: true, identityId: true }, orderBy: [{ createdAt: 'asc' }, { id: 'asc' }] });
+  const next = new Map<string, number>();
+  const slots = new Map<string, number>();
+  for (const j of all) { const n = (next.get(j.identityId) ?? 0) + 1; next.set(j.identityId, n); slots.set(j.id, n); }
+  return slots;
+}
+export async function slotOf(userId: number, journey: { id: string; identityId: string }) {
+  return (await slotNumbers(userId, [journey.identityId])).get(journey.id) ?? 0;
 }

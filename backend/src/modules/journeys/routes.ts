@@ -6,7 +6,7 @@ import { prisma } from '../../lib/prisma.js';
 import { me, requirePerm } from '../auth/middleware.js';
 import { HttpError, badRequest } from '../../lib/http.js';
 import { deviceFromToken, journeyLayout } from '../saves/agent.js';
-import { blobPath, commit, createJourney, listJourneys, owned, putBlob, revision, select } from './service.js';
+import { blobPath, commit, createJourney, listJourneys, owned, slotOf, putBlob, revision, select } from './service.js';
 import { HASH, UUID, identityKey, manifestText, parseManifest } from './manifest.js';
 
 export const journeysRouter = Router();
@@ -166,14 +166,14 @@ journeysAgentRouter.get('/list/:identity', async (req, res) => {
   const d = await deviceFromToken(req);
   await validateAdapter(d, String(req.params.identity));
   const list = await listJourneys(d.userId, String(req.params.identity));
-  res.type('text/plain').send(list.filter((j) => !j.archived).map((j) => `journey\t${j.id}\t${j.head}\t${enc(j.name)}\t${j.updatedAt.toISOString()}\n`).join(''));
+  res.type('text/plain').send(list.filter((j) => !j.archived).map((j) => `journey\t${j.id}\t${j.head}\t${enc(j.name)}\t${j.updatedAt.toISOString()}\t${j.slot}\n`).join(''));
 });
 journeysAgentRouter.post('/create', async (req, res) => {
   const d = await deviceFromToken(req);
   const [id, identityId, name, sourceId, sourceRevision] = fields(req.body);
   if (!(await prisma.journeyBinding.count({ where: { deviceId: d.id, identityId } }))) throw badRequest('ROM not enrolled');
   const j = await createJourney(d.userId, { id, identityId, name: dec(name), ...(sourceId && sourceId !== '-' ? { sourceId, sourceRevision: Number(sourceRevision) } : {}) });
-  res.type('text/plain').send(`journey\t${j.id}\t${j.head}\t${enc(j.name)}\t${j.updatedAt.toISOString()}\n`);
+  res.type('text/plain').send(`journey\t${j.id}\t${j.head}\t${enc(j.name)}\t${j.updatedAt.toISOString()}\t${await slotOf(d.userId, j)}\n`);
 });
 journeysAgentRouter.post('/rename/:id', async (req, res) => {
   const d = await deviceFromToken(req);
