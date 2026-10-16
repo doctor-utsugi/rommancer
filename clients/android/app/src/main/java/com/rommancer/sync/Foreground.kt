@@ -21,6 +21,18 @@ object Foreground {
         val names = Privileged.processNames() ?: return JourneyState.UNKNOWN
         return if (names.any { name -> EMULATORS.any { name.contains(it, ignoreCase = true) } }) JourneyState.RUNNING else JourneyState.STOPPED
     }
+    /**
+     * The emulator still running, asked when the user is about to change slots: one root call is fine then (the
+     * periodic checks above stay quiet). STOPPED only when a full process list shows none
+     */
+    fun runningEmulator(context: Context): Pair<JourneyState, String?> {
+        emulator(context)?.let { return JourneyState.RUNNING to it }
+        if (!Privileged.ready) return JourneyState.UNKNOWN to null
+        val names = Privileged.processNames() ?: return JourneyState.UNKNOWN to null
+        val running = names.firstOrNull { name -> EMULATORS.any { name.contains(it, ignoreCase = true) } }
+        return if (running != null) JourneyState.RUNNING to running.substringBefore(':') else JourneyState.STOPPED to null
+    }
+
     fun allowed(context: Context): Boolean = runCatching {
         val ops = context.getSystemService(AppOpsManager::class.java)
         @Suppress("DEPRECATION")

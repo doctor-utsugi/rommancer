@@ -11,7 +11,7 @@ import java.util.Base64
 import java.util.UUID
 
 class Journeys(private val context: Context, private val store: Store) {
-    data class Game(val rom: String, val title: String, val identity: String? = null, val system: String = "unknown")
+    data class Game(val rom: String, val title: String, val identity: String? = null, val system: String = "unknown", val systemName: String = LocalLibrary.systemName(system))
     data class Item(val id: String, val name: String, val revision: Int, val cached: Boolean, val current: Boolean, val conflict: Boolean, val incompatible: Int, val slot: Int = 0, val files: Int = 0, val updatedAt: Long = 0, val pendingSync: Boolean = false)
     private val api = Api(store.server, store.token ?: error("Not linked"))
     private val root = File(context.filesDir, "journeys/" + digest((store.server + "\n" + store.token).toByteArray())).apply { mkdirs() }
@@ -32,9 +32,11 @@ class Journeys(private val context: Context, private val store: Store) {
         runCatching { atomic(file, call("games")) }
         val known = file.takeIf { it.exists() }?.readLines().orEmpty().mapNotNull { line ->
             val f = line.split('\t')
-            if (f.size >= 4 && f[0] == "game") Game(decode(f[1]), decode(f[2]), system = f[3]) else null
+            if (f.size >= 4 && f[0] == "game") Game(decode(f[1]), decode(f[2]), system = f[3], systemName = f.getOrNull(4)?.let(::decode) ?: LocalLibrary.systemName(f[3])) else null
         }
-        val enrolled = roots().map { val s = state(it); Game(s.getString("rom"), File(s.getString("rom")).name, it.name, s.getJSONObject("layout").optString("platform", "unknown")) }
+        val names = known.associate { it.system to it.systemName }
+        val enrolled = roots().map { val s = state(it); val system = s.getJSONObject("layout").optString("platform", "unknown")
+            Game(s.getString("rom"), File(s.getString("rom")).name, it.name, system, names[system] ?: LocalLibrary.systemName(system)) }
         enrolled + known.filter { g -> enrolled.none { it.rom == g.rom } }
     }
 
@@ -159,6 +161,9 @@ class Journeys(private val context: Context, private val store: Store) {
         val file = File(root, "notice")
         if (!file.exists()) null else file.readText().also { file.delete() }
     }
+
+    /** A slot change waits for the game to close */
+    fun pending(identity: String): Boolean = SyncEngine.journeyLocked { state(dir(identity)).optString("pending").isNotBlank() }
 
     fun applyPending(identity: String): String = SyncEngine.journeyLocked {
         val d = dir(identity); val s = state(d)

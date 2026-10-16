@@ -42,6 +42,15 @@ validation; live write-destination overrides, cache eviction/pinning UI and auto
 
 ## Console flow
 
+Android 0.23.0 (61) and Linux 1.83.0 rebuilt the console screens after testing them with the pad on the Thor
+(2026-10-16). The previous paged cards fitted one slot or two consoles per page on a 1080p screen, D-pad up
+dropped into the search field and opened a full-screen keyboard that kept the pad's keys, the Android warning was
+a dialog whose first A press was lost, and changing slots took four presses with a warning that never checked
+anything (the switch went ahead with RetroArch running). Now the lists are Browse-style rows, the first list shows
+the games with slots, A uses a slot at once, X opens its options, an empty slot starts a dated new game, and the
+emulator check uses root or Shizuku when available. The server sends console names with the game list.
+See docs/clients-ux.md.
+
 Deployed client revision: Android 0.22.0 (60) and Linux 1.82.0 make the active slot visibly green and show
 the last local/server update time. A completed switch returns to the slot list without a success dialog;
 pending synchronization is displayed on the slot. This revision was published as `powerquest-20261015-60`,

@@ -84,15 +84,15 @@ class SearchUiTests(unittest.TestCase):
         self.app.menu = lambda *args, **kwargs: self.fail("A known stopped emulator should not need a warning")
         self.assertTrue(self.app.journey_close_notice())
 
-    def test_linux_unknown_state_shows_plain_ok_warning(self):
+    def test_linux_unknown_state_asks_whether_the_game_is_closed(self):
         self.app.client = lambda *args, **kwargs: [["runtime", "unknown"]]
         notices = []
         self.app.menu = lambda title, buttons, **kwargs: notices.append((title, buttons, kwargs)) or 0
         self.assertTrue(self.app.journey_close_notice())
-        self.assertEqual(notices[0][1], ["OK", "Cancel"])
-        self.assertIn("If the emulator is open", notices[0][2]["info"][0])
+        self.assertEqual(notices[0][1], ["Yes, continue", "Cancel"])
+        self.assertIn("would write its old save", notices[0][2]["info"][0])
 
-    def test_switch_returns_to_slots_without_success_confirmation(self):
+    def test_a_uses_a_slot_at_once_and_returns_to_the_slots(self):
         current = ["first"]
         menus = []
         commands = []
@@ -113,8 +113,9 @@ class SearchUiTests(unittest.TestCase):
                     return 1
                 self.assertEqual(kwargs["start"], 1)
                 self.assertEqual(kwargs["slots"][1][2], "IN USE")
-                self.assertIn("Updated:", kwargs["slots"][1][3])
-                self.assertIn("Pending sync", kwargs["slots"][1][1])
+                self.assertIn("2026", kwargs["slots"][1][1])
+                self.assertIn("waiting to sync", kwargs["slots"][1][1])
+                self.assertIn("Now using Challenge", kwargs["info"][-1][1])
                 return None
             return 0
         self.app.client = client
@@ -123,7 +124,24 @@ class SearchUiTests(unittest.TestCase):
         self.app.message = lambda *args, **kwargs: self.fail("Success must not open a blocking message")
         self.app.journey_slots("identity", "Power Quest", lambda value: base64.b64decode(value).decode())
         self.assertEqual(commands[-1], ("journeys", "list", "identity", "cached"))
-        self.assertEqual(len(menus), 3)
+        self.assertEqual(len(menus), 2)
+
+    def test_x_opens_a_slots_options(self):
+        encode = lambda value: base64.b64encode(value.encode()).decode()
+        self.app.client = lambda *args, **kwargs: [["active", "first", "1"], ["journey", "first", "1", encode("Main"), ""],
+                                                   ["journey", "second", "1", encode("Challenge"), ""], ["cached", "first"], ["cached", "second"]]
+        titles = []
+        def menu(title, labels, **kwargs):
+            titles.append((title, labels))
+            if "slots" in kwargs:
+                if len(titles) > 1:
+                    return None
+                self.app.menu_key = "x"
+                return 1
+            return None
+        self.app.menu = menu
+        self.app.journey_slots("identity", "Power Quest", lambda value: base64.b64decode(value).decode())
+        self.assertEqual(titles[1], ("Slot 02 · Challenge", ["Use this slot", "Rename"]))
 
 
 if __name__ == "__main__":

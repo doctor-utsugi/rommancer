@@ -117,10 +117,12 @@ journeysAgentRouter.get('/games', async (req, res) => {
   const d = await deviceFromToken(req);
   const games = await prisma.deviceRom.findMany({ where: { deviceId: d.id }, orderBy: { path: 'asc' } });
   const rows: string[] = [];
+  // The consoles' names, so clients need not keep their own list of every system slug
+  const names = new Map((await prisma.system.findMany({ select: { slug: true, name: true } })).map((s) => [s.slug, s.name]));
   for (const g of games) {
     try {
       const layout = await journeyLayout(d, g.path);
-      rows.push(`game\t${enc(g.path)}\t${enc(g.path.split('/').pop() ?? '')}\t${layout.platform}`);
+      rows.push(`game\t${enc(g.path)}\t${enc(g.path.split('/').pop() ?? '')}\t${layout.platform}\t${enc(names.get(layout.platform) ?? layout.platform)}`);
     } catch { /* Unsupported adapters are excluded from enrollment. */ }
   }
   res.type('text/plain').send(rows.join('\n') + '\n');

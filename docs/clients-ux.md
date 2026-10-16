@@ -38,17 +38,20 @@ Items:
    entry is there right after it. With a single conflict, Android opens its screen directly.
 3. **Watch game download** / **Watch games being sent**: only while one runs.
 4. **Game lists**: tick lists; leaving after a change syncs. The screen also has **Download the lists' games now**.
-   **Journeys** sits next to game-related actions on Android and pygame: console → game → save slots.
-   The console picker searches console names and all local games; inside a console, search stays scoped to its
-   games. Typing edits a draft only; **Accept** on the keyboard, the keyboard's Done action or START applies it.
-   Local results are computed once per accepted query and cached, not filtered/sorted per frame.
-   The server catalog also waits for explicit acceptance. Back preserves the applied search and page.
-   Slots have a persistent local number, name, save count and an **IN USE** marker for this console.
-   The active slot keeps a green background, border and high-contrast badge even when another row has focus.
-   Show its last update date; use the local checkpoint time while dirty, otherwise the last server update.
-   A successful switch returns directly to the slot list and focuses the active slot. Pending synchronization
-   is a non-blocking status on the slot, never an acknowledgement screen. Errors may interrupt the flow.
-   **Empty slot** starts fresh. Copy, rename and conflict actions belong inside a slot's details.
+   **Journeys** sits next to game-related actions on Android and pygame. Its first list shows the games that already
+   have slots on this console, then the consoles (with the server's console names, not folder slugs); a console
+   opens its games, a game opens its save slots. The lists look and move like Browse server games: one-line
+   rows, the D-pad walks the whole list, L/R page, Y opens the search. The search field never takes the focus by
+   itself: D-pad up reaches the search button, and only A or Y on it opens the keyboard. Typing edits a draft;
+   Accept, the keyboard's Done or START applies it, and results are computed once per accepted query.
+   The slot list fits on one screen: number, name, what it holds and its last update on one line, **IN USE**
+   (green fill, border and badge) on the one this console uses. **A on a slot uses it at once**; A on the slot in
+   use, or **X** on any, opens its options (use, copy into a new slot, rename, keep both versions). The last row,
+   **Empty slot**, starts a new game straight away named after the date ("New game · 16 Oct 14:01"); renaming is
+   in the options. A queued change shows as an extra row only while one waits.
+   A successful change returns to the slot list with a one-line result above it, never a blocking screen.
+   A game without slots on this console says what setting them up does (its current saves become a slot of their
+   own, the other consoles' slots appear next to it) above one **Set up save slots** row.
    Slot numbers are display labels on a console; synchronized identity is still the Journey UUID, not the number.
 5. **Browse server games**: the server's games by system or by search, ticked one by one or a whole system, then a
    review and the download (docs/browse.md). The games already on the console are left out unless the toggle on top
@@ -61,17 +64,19 @@ Items:
 
 - Android and pygame list screens accept **L/R** (L1/R1) and Page Up/Page Down. At the ends, stay on the
   first/last page. A selects and B returns one level. Search has a Y shortcut where available.
-- Journey screens use the full viewport with a fixed paging footer, not the decorative save-point column.
-- Pygame's shared menus and browse lists page by their visible row count. Android Journey pages adapt to the
-  available height; generic menu lists move focus by a viewport, while catalog lists use their lazy-list pager.
+- Journey screens use the full viewport without the decorative save-point column. Android Journey lists share
+  Browse's lazy list and pager; pygame's slot list pages by its visible row count.
 - Desktop standard-gamepad shoulders generate page keys: the focused list handles them first, otherwise its
   scroll container pages and moves focus. Existing typing controls retain normal text input.
 - Onion uses the firmware's native prompt binary; its button behavior is not changed by pygame/Android code.
 
-Slot actions use direct names: **Create slot**, **Use Slot N**, **Copy slot**. Android shows a separate
-**Before continuing** notice: close the emulator if it is open, with **OK** and **Cancel**. Linux checks the
-running emulator processes and skips the notice when the game is known to be stopped; unknown/running states
-get the same notice. Entering from ES-DE alone is not evidence that another emulator has closed.
+Before anything replaces save files (using, copying or creating a slot, setting a game up), the client checks
+whether an emulator runs. Android asks once through root or Shizuku when it has them: none running goes ahead
+without asking; a running one (RetroArch keeps running after Close Content) shows **"RetroArch is open"** with
+**Cancel** focused first and **The game is closed**; without a way to tell it asks **Is the game closed?** with
+**Yes, continue** first. These are rows of the screen, not a dialog window, so the pad's A and B work on them
+like anywhere else. Linux checks the processes and only asks when it cannot tell. Entering from ES-DE alone is
+not evidence that another emulator has closed.
 
 ## Settings (submenu)
 

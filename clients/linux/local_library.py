@@ -34,16 +34,30 @@ def matches(query, *values):
     return all(word in haystack for word in normalize(query).split())
 
 
-def library_rows(games, system=None, query=""):
+def game_system_name(game):
+    """GAME rows carry the server's console name fifth; older servers sent only the slug"""
+    return game[4] if len(game) > 4 and game[4] else system_name(game[3])
+
+
+def plural(n, word):
+    return f"{n} {word}" + ("" if n == 1 else "s")
+
+
+def library_rows(games, system=None, query="", enrolled=()):
+    """Without a query the top level lists the games with slots (ENROLLED rom ids) first, then the consoles"""
     result = []
+    names = {g[3]: game_system_name(g) for g in games}
+    ordered = sorted(games, key=lambda row: (row[1] not in enrolled, row[2].lower()))
+    if system is None and not query.strip():
+        result.extend(("game", g[1], g[2].rsplit(".", 1)[0], names[g[3]] + " · Slots ready") for g in ordered if g[1] in enrolled)
     if system is None:
-        for slug in sorted({g[3] for g in games}, key=system_name):
-            if not query.strip() or matches(query, slug, system_name(slug)):
-                result.append(("system", slug, system_name(slug), f"{sum(g[3] == slug for g in games)} games"))
+        for slug in sorted(names, key=lambda s: names[s].lower()):
+            if not query.strip() or matches(query, slug, names[slug]):
+                result.append(("system", slug, names[slug], plural(sum(g[3] == slug for g in games), "game")))
     if system is not None or query.strip():
-        result.extend(("game", g[1], g[2].rsplit(".", 1)[0], system_name(g[3]))
-                      for g in sorted(games, key=lambda row: row[2].lower())
-                      if (system is None or system == g[3]) and matches(query, g[2], g[3], system_name(g[3])))
+        result.extend(("game", g[1], g[2].rsplit(".", 1)[0], ("Slots ready" if g[1] in enrolled else "") if system else names[g[3]] + (" · Slots ready" if g[1] in enrolled else ""))
+                      for g in ordered
+                      if (system is None or system == g[3]) and matches(query, g[2], g[3], names[g[3]]))
     return result
 
 
@@ -57,14 +71,14 @@ def page_bindings(mapping):
 
 
 class LocalSearch:
-    def __init__(self, games, system=None):
-        self.games, self.system = games, system
+    def __init__(self, games, system=None, enrolled=()):
+        self.games, self.system, self.enrolled = games, system, enrolled
         self.applied = ""
-        self.rows = library_rows(games, system)
+        self.rows = library_rows(games, system, enrolled=enrolled)
 
     def accept(self, draft):
         query = draft.strip()
         if query != self.applied:
-            self.rows = library_rows(self.games, self.system, query)
+            self.rows = library_rows(self.games, self.system, query, self.enrolled)
             self.applied = query
         return self.rows

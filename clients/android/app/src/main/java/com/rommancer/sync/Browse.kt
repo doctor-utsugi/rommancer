@@ -73,9 +73,9 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 /** Text on the accent fill, the bars' background, a game already here */
-private val Ink = Color(0xFF0B1220)
-private val Bar = Color(0x14FFFFFF)
-private val Done = Color(0xFF5DCAA5)
+internal val Ink = Color(0xFF0B1220)
+internal val Bar = Color(0x14FFFFFF)
+internal val Done = Color(0xFF5DCAA5)
 
 /** Above this a download is said to take a long time */
 private const val LONG_GAMES = 50
@@ -97,7 +97,7 @@ internal fun PadKeys(handler: (Int) -> Boolean) {
  * focus goes back to the cursor row
  */
 @Composable
-private fun RefocusOnKeys(rows: RowFocus, count: Int) {
+internal fun RefocusOnKeys(rows: RowFocus, count: Int) {
     val mode = LocalInputModeManager.current.inputMode
     // The first key may already have moved the focus (and the cursor) into the bar: the row from before it
     val last = remember { intArrayOf(rows.at) }
@@ -106,7 +106,7 @@ private fun RefocusOnKeys(rows: RowFocus, count: Int) {
 }
 
 /** Where the focus is in a browse list, and moving it to a row that may not be composed yet (paging) */
-private class RowFocus(val list: LazyListState) {
+internal class RowFocus(val list: LazyListState) {
     val requesters = HashMap<Int, FocusRequester>()
     var at by mutableIntStateOf(0)
 
@@ -132,7 +132,7 @@ private class RowFocus(val list: LazyListState) {
  * whether the pad or a finger put it there (touch mode shows no focus)
  */
 @Composable
-private fun BrowseRow(
+internal fun BrowseRow(
     index: Int, rows: RowFocus, text: String, sub: String? = null, tick: String? = null, tickColor: Color? = null, right: String? = null,
     dim: Boolean = false, onTick: (() -> Unit)? = null, onClick: () -> Unit,
 ) {
@@ -173,7 +173,7 @@ private fun tickOf(state: Int) = when (state) { 2 -> "☑"; 1 -> "⊟"; else -> 
  * on). CONTENT gets the color its text and icons take
  */
 @Composable
-private fun BarButton(
+internal fun BarButton(
     onClick: () -> Unit, modifier: Modifier = Modifier, selected: Boolean = false, onFocused: () -> Unit = {},
     content: @Composable RowScope.(Color) -> Unit,
 ) {
@@ -206,7 +206,7 @@ private fun OwnedChip(showAll: Boolean, rows: RowFocus, onShowAll: () -> Unit) {
  * owned filter, or the open search field)
  */
 @Composable
-private fun BrowseBar(title: String, rows: RowFocus, onBack: () -> Unit, actions: @Composable RowScope.() -> Unit) {
+internal fun BrowseBar(title: String, rows: RowFocus, onBack: () -> Unit, actions: @Composable RowScope.() -> Unit) {
     Row(
         Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(Bar).padding(horizontal = 6.dp, vertical = 5.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -224,7 +224,7 @@ private fun BrowseBar(title: String, rows: RowFocus, onBack: () -> Unit, actions
  * such as the Thor's no longer takes the pad's keys from the list
  */
 @Composable
-private fun RowScope.SearchField(
+internal fun RowScope.SearchField(
     text: String, hint: String, busy: Boolean, field: FocusRequester, rows: RowFocus,
     editing: Boolean, submission: SearchSubmission, onEdit: () -> Unit, onLeave: () -> Unit, onSubmit: (String) -> Unit, onClose: () -> Unit,
 ) {
@@ -273,13 +273,13 @@ private fun RowScope.SearchField(
 
 /** The search icon, closed */
 @Composable
-private fun SearchButton(rows: RowFocus, onClick: () -> Unit) {
+internal fun SearchButton(rows: RowFocus, onClick: () -> Unit) {
     BarButton(onClick, onFocused = { rows.at = -1 }) { c -> Icon(Icons.Default.Search, stringResource(R.string.browse_search), tint = c, modifier = Modifier.size(20.dp)) }
 }
 
 /** What the list below is and how many it holds, a spinner while the server is asked; HINT the keys that work in it */
 @Composable
-private fun BrowseSection(text: String, busy: Boolean = false, hint: String? = null) {
+internal fun BrowseSection(text: String, busy: Boolean = false, hint: String? = null) {
     Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 2.dp), verticalAlignment = Alignment.CenterVertically) {
         if (busy) CircularProgressIndicator(Modifier.size(14.dp), strokeWidth = 2.dp, color = Accent)
         Text(
@@ -325,7 +325,7 @@ private fun BrowseFailure(failure: Pair<String, String>) {
 
 /** A line under the section, centered on what the list cannot show */
 @Composable
-private fun BrowseNote(text: String, color: Color = Dim) {
+internal fun BrowseNote(text: String, color: Color = Dim) {
     Text(text, color = color, fontSize = 16.sp, modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp))
 }
 

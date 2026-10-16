@@ -25,7 +25,7 @@
 #                                   so any computer with this script can sync it. Without a command: sync.
 set -u
 # Raised with every change of this client (any change reaches devices: they update by content, not by this)
-CLIENT_VERSION=1.82.0
+CLIENT_VERSION=1.83.0
 # A clock before this date is surely wrong (no battery-backed clock); kept apart from the version, which may run ahead
 CLOCK_MIN=20261001
 # Onion keeps curl (with TLS) and friends outside the default PATH

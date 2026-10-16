@@ -21,6 +21,14 @@ class LocalLibraryTests(unittest.TestCase):
         self.assertTrue(any(r[0] == "system" for r in library_rows(self.games, query="advance")))
         self.assertTrue(matches("emerald poke", "Pokémon Emerald"))
 
+    def test_games_with_slots_first_and_server_console_names(self):
+        games = self.games + [("game", "lufia", "Lufia (Spain).sfc", "snes", "Super Nintendo"), ("game", "swan", "Judgement.wsc", "wswanc", "WonderSwan Color")]
+        rows = library_rows(games, enrolled={"lufia"})
+        self.assertEqual(rows[0][:3], ("game", "lufia", "Lufia (Spain)"))
+        self.assertIn("WonderSwan Color", [r[2] for r in rows if r[0] == "system"])
+        self.assertEqual(next(r[3] for r in rows if r[1] == "nes"), "1 game")
+        self.assertEqual(library_rows(games, "snes", enrolled={"lufia"})[0][3], "Slots ready")
+
     def test_paging_boundaries_and_empty_results(self):
         self.assertEqual(page_target(2, 1, 23, 5), 5)
         self.assertEqual(page_target(20, 1, 23, 5), 22)

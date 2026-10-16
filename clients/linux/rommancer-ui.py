@@ -6,7 +6,7 @@ status and sign out. Syncing itself is done by rommancer-sync.sh next to this fi
 """
 import functools
 import base64
-from local_library import LocalSearch, system_name, page_target, page_bindings, slot_updated
+from local_library import LocalSearch, system_name, game_system_name, plural, page_target, page_bindings, slot_updated
 import json
 import math
 import os
@@ -852,13 +852,14 @@ class App:
                 return None
             time.sleep(0.016)
 
-    def menu(self, title, items, info=(), start=0, notes=None, sub=None, wide=False, big_info=False, slots=None):
+    def menu(self, title, items, info=(), start=0, notes=None, sub=None, wide=False, big_info=False, slots=None, keys=(), footer=None):
         """ITEMS: labels, or a function giving them (called again every second, for what arrives later or changes:
         the conflicts, a download under way); the selection stays on its label. INFO: lines above them, texts or
         facts (icon, text, colour), or a function giving them. NOTES: per item, a line under the selected one saying
         what it does. SUB: the line under the title (text, colour), or a function giving it. START is the item
         selected at first; items that do not fit scroll with the selection. WIDE: the whole width, without the save
-        point (long labels); BIG_INFO: the info in the items' size (a summary)."""
+        point (long labels); BIG_INFO: the info in the items' size (a summary). KEYS: more buttons that pick the selection
+        (besides A and START); the one pressed is left in self.menu_key. FOOTER: the keys' hint instead of the usual one."""
         def get():
             return (items() if callable(items) else items, info() if callable(info) else info, sub() if callable(sub) else sub)
 
@@ -873,7 +874,7 @@ class App:
                 fetched = time.time()
                 sel = labels.index(was) if was in labels else min(sel, len(labels) - 1)
             s = self.screen
-            s.frame(title, T["menu_keys"] + "   L / R: Page", head)
+            s.frame(title, footer or T["menu_keys"] + "   L / R: Page", head)
             if not wide:
                 s.sprite()
             x, width = s.left(), s.column(wide)
@@ -882,7 +883,7 @@ class App:
             n = len(labels)
             step = int(s.font.get_linesize() * (1.4 if n <= 5 else 1.12 if n <= 7 else 1.0 if n <= 8 else 0.92))
             if slots:
-                step = s.font.get_linesize() + s.small.get_linesize() * 2 + 24
+                step = s.font.get_linesize() + s.small.get_linesize() * (2 if any(len(c) > 3 and c[3] for c in slots) else 1) + 24
             note = notes[sel] if notes and sel < len(notes) else ""
             note_h = s.small.get_linesize() if note else 0
             # As many as fit above the footer; the window follows the selection
@@ -902,7 +903,7 @@ class App:
                     rect = pygame.Rect(x, y, width, step - 8)
                     pygame.draw.rect(s.surf, SLOT_ACTIVE_BG if active else BAR, rect, border_radius=10)
                     pygame.draw.rect(s.surf, SLOT_GREEN if active else ACCENT if i == sel else DIM, rect, 3 if i == sel else 2 if active else 1, border_radius=10)
-                    s.text(str(number).zfill(2), (x + 14, y + 12), s.font, SLOT_GREEN if active else ACCENT)
+                    s.text(str(number).zfill(2) if isinstance(number, int) else number, (x + 14, y + 10), s.font, SLOT_GREEN if active else ACCENT)
                     left = x + s.font.size("00")[0] + 30
                     badge_width = s.small.size(badge)[0] + 16 if badge else 0
                     s.text(s.clip(labels[i], s.font, width - (left - x) - 28 - badge_width), (left, y + 8), s.font, FG)
@@ -939,7 +940,8 @@ class App:
                 sel = (sel + 1) % n
             elif a in ("pageup", "pagedown"):
                 sel = page_target(sel, -1 if a == "pageup" else 1, n, fit)
-            elif a in ("a", "start"):
+            elif a in ("a", "start") or a in keys:
+                self.menu_key = a
                 return sel
             elif a in ("b", "quit"):
                 return None
@@ -2166,23 +2168,24 @@ class App:
 
     def journeys(self):
         decode = lambda value: base64.b64decode(value).decode("utf-8")
-        rows = self.in_thread(lambda: self.client("journeys", "games", timeout=60), "Loading journeys")
+        rows = self.in_thread(lambda: self.client("journeys", "games", timeout=60), "Loading your games")
         if rows is None:
-            self.message("Could not load journeys. Check the server connection.", BAD)
+            self.message("Could not load your games. Check the server connection.", BAD)
             return
         enrolled = {p[2]: p[1] for p in rows if len(p) >= 3 and p[0] == "enrolled"}
-        games = [(p[0], p[1], decode(p[2]), p[3]) for p in rows if len(p) >= 4 and p[0] == "game"]
+        games = [(p[0], p[1], decode(p[2]), p[3]) + ((decode(p[4]),) if len(p) > 4 else ()) for p in rows if len(p) >= 4 and p[0] == "game"]
         if not games:
-            self.message("Sync your inventory first. Supported RetroArch games appear here.")
+            self.message("No games here can use save slots yet. Run Sync now so the server knows this console's games.")
             return
+        names = {g[3]: game_system_name(g) for g in games}
         system = None
         views, searches, local_searches = {}, {}, {}
         while True:
             key = system or "all"
             view = views.setdefault(key, {"sel": 0, "first": 0, "bar": None})
-            search = searches.setdefault(key, {"text": "", "hint": "Search consoles or all games" if system is None else "Search games on this console", "kb": False, "busy": False})
+            search = searches.setdefault(key, {"text": "", "hint": "Search consoles and games" if system is None else "Search this console's games", "kb": False, "busy": False})
             if key not in local_searches:
-                local_searches[key] = LocalSearch(games, system)
+                local_searches[key] = LocalSearch(games, system, set(enrolled))
             local = local_searches[key]
             def edit(value):
                 search["text"] = value
@@ -2190,11 +2193,16 @@ class App:
             def found():
                 return local.rows
             display = [(r[2], r[3], FG) for r in found()]
+            def section():
+                if local.applied:
+                    return (plural(len(found()), "result") + f" for “{local.applied}”", False)
+                if system is None:
+                    return (plural(len(enrolled), "game") + " with slots · " + plural(len(names), "console"), False)
+                return (plural(len(found()), "game"), False)
             action, at = self.browse_list(
-                "Journeys" if system is None else system_name(system),
-                lambda: display, view,
-                lambda: (f"{len(found())} results" if local.applied else "Choose a console" if system is None else "Choose a game", False),
-                "Local library", "A: Open   B: Back   Y: Search", search=search,
+                "Journeys" if system is None else "Journeys · " + names.get(system, system_name(system)),
+                lambda: display, view, section,
+                "Save slots", "A: Open   B: Back   Y: Search", search=search,
                 tail=lambda: "No matches. Try another name." if not found() else "")
             if action in ("b", "quit"):
                 if system is None or action == "quit":
@@ -2222,33 +2230,40 @@ class App:
             game = next(g for g in games if g[1] == chosen[1])
             identity = enrolled.get(game[1])
             if identity is None:
-                if self.menu(game[2], ["Set up Slot 1", "Cancel"], info=["Your existing saves become Slot 1. Nothing is overwritten."], wide=True) != 0:
+                if self.menu(game[2].rsplit(".", 1)[0], ["Set up save slots", "Back"], wide=True, info=[
+                        "This game has no save slots on this console yet.",
+                        "Setting them up keeps the saves and states it has now in a slot of their own.",
+                        "The slots you made on other consoles appear next to it, ready to use."]) != 0:
                     continue
                 if not self.journey_close_notice():
                     continue
-                result = self.in_thread(lambda: self.client("journeys", "enroll", game[1], timeout=180), "Keeping current saves safe")
+                result = self.in_thread(lambda: self.client("journeys", "enroll", game[1], timeout=180), "Keeping your saves in a slot")
                 identity = next((p[1] for p in (result or []) if len(p) >= 2 and p[0] == "enrolled"), None)
                 if not identity:
-                    self.message("Could not set up journeys. Current files are kept.", BAD)
+                    self.message("Could not set up save slots. Your saves are kept as they were.", BAD)
                     continue
                 enrolled[game[1]] = identity
+                local_searches.clear()
             self.journey_slots(identity, game[2].rsplit(".", 1)[0], decode)
 
     def journey_close_notice(self):
         state = self.in_thread(lambda: self.client("journeys", "runtime", timeout=10), "Checking game")
         if state and ["runtime", "stopped"] in state:
             return True
-        return self.menu("Before continuing", ["OK", "Cancel"], info=["If the emulator is open, close it before continuing.", "An open emulator can write over the slot you are about to use."], wide=True) == 0
+        return self.menu("Is the game closed?", ["Yes, continue", "Cancel"], wide=True, info=[
+            "An emulator with this game loaded would write its old save over the slot when it exits.",
+            "Close the game first (Quick Menu > Close Content), then continue."]) == 0
 
     def journey_slots(self, identity, title, decode):
         cursor = 0
         focus_active = True
         cached_only = False
+        note = None
         while True:
             rows = self.in_thread(lambda: self.client("journeys", "list", identity, *( ["cached"] if cached_only else [] ), timeout=180), "Loading save slots")
             cached_only = False
             if rows is None:
-                self.message("Journeys need attention. Check Status for details.", BAD)
+                self.message("Save slots need attention. Check Status for details.", BAD)
                 return
             active = next((p[1] for p in rows if p[0] == "active"), None)
             cached = {p[1] for p in rows if p[0] == "cached"}
@@ -2259,65 +2274,84 @@ class App:
             counts = {p[1]: int(p[2]) for p in rows if len(p) >= 3 and p[0] == "content"}
             updated = {p[1]: slot_updated(p[2]) for p in rows if len(p) >= 3 and p[0] == "modified"}
             pending_sync = {p[1] for p in rows if len(p) >= 2 and p[0] == "pending-sync"}
+            queued = any(p[0] == "pending" for p in rows)
             slots.sort(key=lambda p: numbers.get(p[1], 999999))
+            def content(p):
+                if p[1] in conflicts:
+                    return "Two versions of this progress · X to choose"
+                if p[1] not in cached:
+                    return "Needs a download · connect to use it"
+                n = counts.get(p[1], 0)
+                return ("No saves yet" if n == 0 else "1 save file" if n == 1 else f"{n} saves and states") + (" · waiting to sync" if p[1] in pending_sync else "")
+            empty_name = "New game · " + time.strftime("%d %b %H:%M")
             labels = [decode(p[3]) for p in slots] + ["Empty slot"]
-            cards = [(numbers.get(p[1], i + 1), "Two versions · Needs attention" if p[1] in conflicts else "Download required" if p[1] not in cached else f"{counts.get(p[1], 0)} saves and states" + (" · Pending sync" if p[1] in pending_sync else " · Available offline"), "IN USE" if p[1] == active else "OTHER CORE" if p[1] in incompatible else "", updated.get(p[1], slot_updated(p[4] if len(p) > 4 else ""))) for i, p in enumerate(slots)]
-            cards.append((max(numbers.values(), default=len(slots)) + 1, "Start fresh without changing your other slots", "NEW GAME", ""))
+            def when(p):
+                text = updated.get(p[1], slot_updated(p[4] if len(p) > 4 else ""))
+                return text.removeprefix("Updated: ") if text.startswith("Updated: ") else ""
+            cards = [(numbers.get(p[1], i + 1), " · ".join(x for x in (content(p), when(p)) if x),
+                      "IN USE" if p[1] == active else "TWO VERSIONS" if p[1] in conflicts else "OTHER CORE" if p[1] in incompatible else "", "") for i, p in enumerate(slots)]
+            cards.append(("+", f"Start a new game as “{empty_name}”. Your other slots keep their progress", "", ""))
+            if queued:
+                labels.append("Apply the queued change")
+                cards.append(("»", "Once the game is closed", "", ""))
             active_index = next((i for i, slot in enumerate(slots) if slot[1] == active), None)
             if focus_active and active_index is not None:
                 cursor = active_index
             focus_active = False
-            info = [(None, f"IN USE · Slot {numbers.get(active, active_index + 1)} · {decode(slots[active_index][3])}", SLOT_GREEN)] if active_index is not None else ["Choose a slot to continue."]
-            if any(p[0] == "pending" for p in rows):
-                info.append((None, "Slot change queued. Close the emulator to continue.", WARN))
-            at = self.menu(title + " · Save slots", labels, info=info, start=cursor, wide=True, slots=cards)
+            info = [(None, f"IN USE · Slot {numbers.get(active, active_index + 1)} · {decode(slots[active_index][3])}", SLOT_GREEN)] if active_index is not None else ["No slot in use on this console."]
+            if note:
+                info.append((None, note[0], note[1]))
+                note = None
+            at = self.menu(title, labels, info=info, start=cursor, wide=True, slots=cards, keys=("x",), footer="A use slot   X options   B back   L / R: Page")
             if at is None:
                 return
             cursor = at
-            if at < len(slots):
+            key = getattr(self, "menu_key", "a")
+            if at >= len(slots):
+                if at == len(slots):
+                    args, done = ("new", identity, empty_name, "1"), "Now using a new empty slot. Your other slots keep their progress."
+                else:
+                    args, done = ("sync", identity, "1"), "Queued change applied."
+            else:
                 target = slots[at]
+                name = decode(target[3])
                 current = target[1] == active
-                actions = [("sync", "Apply pending changes") if current else ("switch", f"Use Slot {numbers.get(target[1], at + 1)}")]
-                if current:
-                    actions.append(("duplicate", "Copy this slot to a new slot…"))
-                actions.append(("rename", "Rename slot"))
-                if current and active in conflicts:
-                    actions.append(("keep-both", "Keep both versions"))
-                actions.append(("back", "Back"))
-                choice = self.menu(f"Slot {numbers.get(target[1], at + 1)} · {decode(target[3])}", [a[1] for a in actions], info=["In use on this console" if current else "Only this console changes slots."], wide=True)
-                if choice is None or actions[choice][0] == "back":
-                    continue
-                selected = actions[choice][0]
+                if current or key == "x":
+                    actions = [] if current else [("switch", "Use this slot")]
+                    if current:
+                        actions.append(("duplicate", "Copy into a new slot"))
+                    actions.append(("rename", "Rename"))
+                    if current and active in conflicts:
+                        actions.append(("keep-both", "Keep both versions"))
+                    choice = self.menu(f"Slot {numbers.get(target[1], at + 1):02d} · {name}", [a[1] for a in actions], wide=True,
+                                       info=["In use on this console" if current else "Not in use on this console"])
+                    if choice is None:
+                        continue
+                    selected = actions[choice][0]
+                else:
+                    selected = "switch"
                 if selected == "rename":
-                    name = self.keyboard("Slot name", decode(target[3]))
-                    if name:
-                        self.in_thread(lambda: self.client("journeys", "rename", identity, target[1], name, timeout=30), "Saving slot name")
+                    new = self.keyboard("Slot name", name)
+                    if new:
+                        self.in_thread(lambda: self.client("journeys", "rename", identity, target[1], new, timeout=30), "Saving slot name")
                     continue
                 if target[1] not in cached:
-                    self.message("Download required. Connect and reopen this screen.")
+                    note = ("That slot needs a download. Connect and open it again.", WARN)
                     continue
                 if selected == "switch":
-                    args = ("switch", identity, target[1], "1")
-                elif selected == "sync":
-                    args = ("sync", identity, "1")
+                    args, done = ("switch", identity, target[1], "1"), f"Now using {name}. Start the game to play it."
+                elif selected == "duplicate":
+                    args, done = ("duplicate", identity, f"{name} copy"[:80], "1"), f"Now using the copy. {name} stays as it was."
                 else:
-                    name = self.keyboard("New slot name", "Recovered progress" if selected == "keep-both" else decode(target[3]) + " copy")
-                    if name is None:
-                        continue
-                    args = (selected, identity, name or "New slot", "1")
-            else:
-                if self.menu("Start in a new slot", ["Create slot", "Cancel"], info=["Start with no saves or states.", "Your other slots keep their progress."], wide=True) != 0:
-                    continue
-                name = self.keyboard("Slot name", "New game")
-                if name is None:
-                    continue
-                args = ("new", identity, name or "New game", "1")
+                    args, done = ("keep-both", identity, "Recovered progress", "1"), "Your progress is now in its own slot."
             if not self.journey_close_notice():
                 continue
-            result = self.in_thread(lambda: self.client("journeys", *args, timeout=180), "Preparing save slot")
+            result = self.in_thread(lambda: self.client("journeys", *args, timeout=180), "Changing slot")
             if result is None:
-                self.message("Could not complete the change. Saved copies are kept.", BAD)
+                note = ("Could not change slots. Your saves are kept.", BAD)
             else:
+                text = " ".join("\t".join(p) for p in result)
+                note = (text if "queued" in text.lower() else done, WARN if "queued" in text.lower() else SLOT_GREEN)
                 focus_active = True
                 cached_only = True
 

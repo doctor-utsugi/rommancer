@@ -729,7 +729,7 @@ private fun Linked(store: Store, ownScroll: Boolean, setOwnScroll: (Boolean) -> 
             if (pullLive != null) MenuItem(titleWatchPulls) { screen = Screen.Watch(titleWatchPulls, pulls = true) }
             MenuItem(stringResource(R.string.lists)) { lists = null; listsError = null; listAt = null; screen = Screen.Lists; loadLists() }
             val journeyState by produceState<String?>(null) { while (true) { value = withContext(Dispatchers.IO) { runCatching { Journeys(context, store).status() }.getOrNull() }; delay(5_000) } }
-            MenuItem("Journeys", sub = journeyState ?: "Choose independent progress for each game", alert = journeyState != null) { screen = Screen.Journeys }
+            MenuItem("Journeys", sub = journeyState ?: "Save slots for each game", alert = journeyState != null) { screen = Screen.Journeys }
             if (!browseDenied) MenuItem(stringResource(R.string.browse)) { openBrowse() }
             MenuItem(stringResource(R.string.settings)) { screen = Screen.Settings }
             MenuItem(stringResource(R.string.status)) { screen = Screen.Status }
