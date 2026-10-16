@@ -3275,6 +3275,9 @@ test('device prune: roms in no list leave the console once the server has them; 
   fs.writeFileSync(path.join(nesDir, homebrew), Buffer.concat([Buffer.from('NES\x1a'), crypto.randomBytes(20 * 1024)]));
   fs.writeFileSync(path.join(nesDir, track), crypto.randomBytes(4096));
   fs.writeFileSync(path.join(root, 'roms/ports', 'Some Port.zip'), crypto.randomBytes(2048));
+  // A download under way: neither a game to upload nor one to delete
+  const part = 'Download Under Way (USA).nes.part';
+  fs.writeFileSync(path.join(nesDir, part), crypto.randomBytes(4096));
   const claim = await api('POST', '/link/claim', { name: 'prune-console', firmware: 'knulli', root });
   const id = claim.json.deviceId as number;
   const state = path.join(dir, 'state');
@@ -3310,7 +3313,7 @@ test('device prune: roms in no list leave the console once the server has them; 
   const none = (await api('POST', `/devices/${id}/lists/preview`, { listIds: [] })).json;
   assert.ok(none.del >= 1 && none.sample.includes(smb3) && !none.sample.includes(other), JSON.stringify(none));
   assert.match((await run('prune', 'run')).stdout, /deleted: 1 roms/);
-  assert.ok(!there(other) && there(smb3) && there(track) && there(homebrew));
+  assert.ok(!there(other) && there(smb3) && there(track) && there(homebrew) && there(part));
   assert.ok(fs.existsSync(path.join(root, 'roms/ports', 'Some Port.zip')), 'files of no system are never touched');
   assert.match((await run('pulls')).stdout, /sent to server: 1 of 1/);
   await run('sync');

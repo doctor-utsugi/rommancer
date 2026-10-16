@@ -288,6 +288,11 @@ core<TAB>mGBA<TAB>0.10.3
 or state of the same name: its saves sync like any other rom's, but it is not stored in the device's inventory, so
 the deletion of roms in no list never touches it.
 
+A download under way (`*.part`) and the files a client keeps aside (`*.rommancer-tmp`, `*.rommancer-bak`) are never
+games: the clients leave them out of `rom` lines, the server drops such lines from older clients, and the deletion of
+roms in no list skips them. Otherwise a sync running while games download would upload the partial files or delete
+them mid-download.
+
 and answers what to move:
 
 ```

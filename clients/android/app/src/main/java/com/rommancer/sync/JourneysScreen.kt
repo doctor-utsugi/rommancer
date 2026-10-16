@@ -28,6 +28,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.text.SimpleDateFormat
@@ -63,6 +64,8 @@ internal fun JourneysScreen(store: Store, onBack: () -> Unit) {
     var system by remember { mutableStateOf<String?>(null) }
     var game by remember { mutableStateOf<Journeys.Game?>(null) }
     var slots by remember { mutableStateOf<List<Journeys.Item>?>(null) }
+    // The clock's minute, read by the empty slot's name so it moves on while the list is open
+    var minute by remember { mutableStateOf(System.currentTimeMillis() / 60_000) }
     var queued by remember { mutableStateOf(false) }
     var options by remember { mutableStateOf<Journeys.Item?>(null) }
     var renaming by remember { mutableStateOf<Journeys.Item?>(null) }
@@ -160,6 +163,12 @@ internal fun JourneysScreen(store: Store, onBack: () -> Unit) {
         // Progress saved on another console goes in by itself when nothing could write over it
         if (slots?.firstOrNull { it.current }?.incoming == true && withContext(Dispatchers.IO) { Foreground.runningEmulator(context).first } == Foreground.JourneyState.STOPPED)
             change("Loading newer progress…", { "Loaded the newer progress saved on another console." }, files = false) { engine.applyPending(id) }
+        // What a background sync sent or received shows without leaving the screen (and the empty slot's time moves on)
+        while (true) {
+            delay(20_000)
+            minute = System.currentTimeMillis() / 60_000
+            if (busy == null && confirm == null && options == null && renaming == null) loadSlots(id, refresh = false).join()
+        }
     }
 
     val g = game
@@ -298,7 +307,7 @@ internal fun JourneysScreen(store: Store, onBack: () -> Unit) {
                             else change("Changing slot…", { "Now using ${item.name}. Start the game to play it." }) { engine.switch(g!!.identity!!, item.id, true) }
                         }
                         i == slotList.size -> {
-                            val label = { "New game · " + SimpleDateFormat("d MMM HH:mm", Locale.ENGLISH).format(Date()) }
+                            val label = { "New game · " + SimpleDateFormat("d MMM HH:mm", Locale.ENGLISH).format(Date(maxOf(minute * 60_000, System.currentTimeMillis()))) }
                             SlotRow(i, rows, null, label()) {
                                 // Named when created, not when the list was drawn
                                 val name = label()

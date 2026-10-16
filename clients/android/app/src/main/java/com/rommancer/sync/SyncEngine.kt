@@ -986,6 +986,6 @@ class SyncEngine(private val context: Context, private val store: Store, private
             store.romsStopped = true
             STOP_ROMS.set(true)
         }
-        private val NOT_ROMS = listOf(".png", ".jpg", ".jpeg", ".mp4", ".xml", ".txt", ".json", ".cfg", ".db", ".ini", ".pdf", ".srm", ".sav", ".mcd", ".mcr", ".dsv", ".cht", ".log", ".sh", ".lpl")
+        private val NOT_ROMS = listOf(".png", ".jpg", ".jpeg", ".mp4", ".xml", ".txt", ".json", ".cfg", ".db", ".ini", ".pdf", ".srm", ".sav", ".mcd", ".mcr", ".dsv", ".cht", ".log", ".sh", ".lpl", ".part", ".rommancer-tmp", ".rommancer-bak")
     }
 }

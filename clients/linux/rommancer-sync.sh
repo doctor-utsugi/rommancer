@@ -25,7 +25,7 @@
 #                                   so any computer with this script can sync it. Without a command: sync.
 set -u
 # Raised with every change of this client (any change reaches devices: they update by content, not by this)
-CLIENT_VERSION=1.84.0
+CLIENT_VERSION=1.85.0
 # A clock before this date is surely wrong (no battery-backed clock); kept apart from the version, which may run ahead
 CLOCK_MIN=20261001
 # Onion keeps curl (with TLS) and friends outside the default PATH
@@ -392,6 +392,8 @@ known_lines() {
       }
       if (index(f, dir) == 1) next
       if (n ~ /\.(png|jpg|jpeg|mp4|xml|txt|json|cfg|db|ini|pdf|srm|sav|mcd|mcr|dsv|cht|log|sh|lpl|pem)$/ || n ~ /\.state/ || n ~ /\.ss[0-9]$/ || is_save(n)) next
+      # A download under way (.part) or a file the client keeps aside is not a game: neither sent nor deleted
+      if (n ~ /\.(part|rommancer-tmp|rommancer-bak)$/) next
       split($1, m, " "); size = m[1]
       if (size + 0 > max + 0) { print "rom", f, "", "", size; next }
       hs = 0
@@ -1459,6 +1461,7 @@ prune_run() {
     [ "$kind" = del ] || continue
     i=$((i + 1)); progress_file prune "$i" "$pn" "$p"
     case "$p" in "${ROMS%/}"/*/*) ;; *) continue ;; esac
+    case "$p" in *.part|*.rommancer-tmp|*.rommancer-bak) continue ;; esac
     [ -f "$p" ] || continue
     rm -f "$p" && { n=$((n + 1)); printf '%s\n' "$p" >> "$STATE/pruned"; roms_changed "$p"; }
   done < "$WORK/pruneplan"

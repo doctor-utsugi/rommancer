@@ -37,6 +37,8 @@ import { romOfSystem, systemForFolder, systemForPlatform, systemIndex } from '..
 import { FAN_WORK, FIRST_ASK, normTitle, probeRound, probesOf, serialMatch, wantsProbe } from './probe.js';
 import { isManaged } from '../journeys/service.js';
 
+const PARTIAL_FILE = /\.(part|rommancer-tmp|rommancer-bak)$/i;
+
 export const agentRouter = Router();
 
 /** Requests still to be sent: "sending" ones whose transfer died with the server are sent again */
@@ -857,6 +859,8 @@ agentRouter.post('/sync', express.text({ limit: '16mb', type: '*/*' }), async (r
   const frontendGames: string[][] = [];
   for (const line of String(req.body ?? '').split('\n')) {
     const [kind, p, h, h2, size, platform, setup] = line.replace(/\r$/, '').split('\t');
+    // A download under way or a file a client keeps aside is never a game (older clients listed them)
+    if (kind === 'rom' && p && PARTIAL_FILE.test(p)) continue;
     if (kind === 'rom' && p) roms.push({ path: p, hashes: [h ?? '', h2 ?? ''].filter(Boolean), size: Number(size) || 0 });
     if (kind === 'rom' && p && platform && setup) launched.push({ path: p, platform, setup });
     else if (kind === 'setup' && p) setups.push(line.replace(/\r$/, '').split('\t').slice(1));
