@@ -41,7 +41,15 @@
     },
     "noConsole": "Ninguna consola",
     "alreadyHere": "ya lo usa",
-    "never": "nunca"
+    "never": "nunca",
+    "count_one": "{{count}} journey",
+    "count_other": "{{count}} journeys",
+    "inUseOn": "en uso en {{devices}}",
+    "history": "Historial",
+    "file": {
+      "save": "Partida",
+      "state": "Savestate #{{n}}"
+    }
   },
   "app": {
     "name": "Rommancer"
@@ -1353,11 +1361,6 @@
         "STATE_other": "{{count}} savestates",
         "ENTRY_one": "{{count}} entrada de tarjeta",
         "ENTRY_other": "{{count}} entradas de tarjeta"
-      },
-      "group": {
-        "SAVE": "Partidas guardadas",
-        "STATE": "Savestates",
-        "ENTRY": "Entradas de tarjeta de memoria"
       }
     },
     "sync": {

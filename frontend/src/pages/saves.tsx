@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { Link } from 'react-router'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
-import { Ban, Check, ChevronRight, Clock, Download, History, ImageOff, LayoutList, Play, Rows3, Share2, Trash2, TriangleAlert } from 'lucide-react'
+import { Ban, Check, ChevronRight, Clock, Download, HardDrive, History, ImageOff, LayoutList, Play, Rows3, Share2, Trash2, TriangleAlert } from 'lucide-react'
 import { toast } from 'sonner'
 import { authUrl, del, get, patch, post, put, upload } from '@/lib/api'
 import { Badge } from '@/components/ui/badge'
@@ -170,7 +170,7 @@ const dateOf = (s: any) => new Date(currentOf(s)?.fileMtime ?? s.updatedAt).getT
 
 const KIND_ORDER = ['SAVE', 'STATE', 'ENTRY']
 
-/** Saves as a tree, latest played game first: game, then kind, then files by date */
+/** Saves by game, latest played first; a game opens into a grid of its save and savestates */
 function SavesByGame({ saves, onOpen }: { saves: any[] | undefined; onOpen(id: number): void }) {
   const { t } = useTranslation()
   const [expanded, setExpanded] = useState<Set<string>>(new Set())
@@ -220,18 +220,9 @@ function SavesByGame({ saves, onOpen }: { saves: any[] | undefined; onOpen(id: n
               )}
             </button>
             {open && (
-              <div className="space-y-3 pb-3 pl-[1.15rem] pr-3">
-                {kinds.map((g) => (
-                  <div key={g.kind} className="ml-[0.5px] border-l-2 border-border pl-0">
-                    <p className="relative pl-5 pt-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground before:absolute before:left-0 before:top-[0.85rem] before:w-3.5 before:border-t-2 before:border-border">
-                      {t(`more.saves.group.${g.kind}`)} <span className="font-normal normal-case">({g.items.length})</span>
-                    </p>
-                    <div className="mt-1 space-y-1 pl-5">
-                      {g.items.map((s) => (
-                        <SaveLeaf key={s.id} s={s} onOpen={onOpen} />
-                      ))}
-                    </div>
-                  </div>
+              <div className="grid gap-3 border-t p-3 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4">
+                {kinds.flatMap((g) => g.items).map((s) => (
+                  <SaveCard key={s.id} s={s} onOpen={onOpen} />
                 ))}
               </div>
             )}
@@ -242,39 +233,51 @@ function SavesByGame({ saves, onOpen }: { saves: any[] | undefined; onOpen(id: n
   )
 }
 
-function SaveLeaf({ s, onOpen }: { s: any; onOpen(id: number): void }) {
+function SaveCard({ s, onOpen }: { s: any; onOpen(id: number): void }) {
   const { t } = useTranslation()
   const cur = currentOf(s)
+  const thumb = cur?.thumbPath ? authUrl(`/saves/${s.id}/versions/${cur.id}/thumb`) : null
   return (
-    <div className="relative flex flex-wrap items-center gap-3 rounded-lg border bg-background p-2 before:absolute before:-left-5 before:top-1/2 before:w-5 before:border-t-2 before:border-border">
-      {cur?.thumbPath ? (
-        <Thumb src={authUrl(`/saves/${s.id}/versions/${cur.id}/thumb`)} className="h-12 w-16" />
-      ) : (
-        <div className="flex h-12 w-16 shrink-0 items-center justify-center rounded border bg-muted text-[10px] text-muted-foreground">{t(`saves.kind.${s.kind}`)}</div>
-      )}
-      <div className="min-w-0 flex-1 space-y-0.5 text-sm">
-        <div className="flex flex-wrap items-center gap-1">
-          {s.kind === 'STATE' && <Badge variant="secondary">{slotLabel(s.slot)}</Badge>}
-          {s.kind === 'ENTRY' && <span className="text-xs text-muted-foreground">{s.label ?? s.baseName}</span>}
-          <span className="font-medium">{formatDate(cur?.fileMtime)}</span>
-          <span className="text-xs text-muted-foreground">· {cur?.sourceDevice?.name ?? t('saves.web')}</span>
-          {s.versions.some((v: any) => v.sharedAt) && (
-            <Badge variant="outline">
-              <Share2 className="size-3" />
-              {t('more.saves.sharedBadge')}
-            </Badge>
-          )}
-        </div>
-        <p className="text-xs text-muted-foreground">
-          {s.emulator.name}
+    <div className="flex flex-col overflow-hidden rounded-lg border bg-background">
+      <div className="relative flex aspect-[4/3] items-center justify-center overflow-hidden bg-black">
+        {thumb ? (
+          <a href={thumb} target="_blank" rel="noreferrer" className="absolute inset-0">
+            <img src={thumb} loading="lazy" alt="" className="size-full object-contain [image-rendering:pixelated]" />
+          </a>
+        ) : (
+          <div className="flex flex-col items-center gap-2 text-muted-foreground">
+            <HardDrive className="size-8" />
+            <span className="text-xs">{t(`saves.kind.${s.kind}`)}</span>
+          </div>
+        )}
+        <Badge variant={s.kind === 'SAVE' ? 'default' : 'secondary'} className="absolute left-2 top-2">
+          {t(`saves.kind.${s.kind}`)}
+          {s.kind === 'STATE' && ` ${slotLabel(s.slot)}`}
+        </Badge>
+      </div>
+      <div className="flex-1 space-y-1 p-3 text-sm">
+        {s.kind === 'ENTRY' && <p className="truncate text-xs text-muted-foreground">{s.label ?? s.baseName}</p>}
+        <p className="font-medium">{formatDate(cur?.fileMtime)}</p>
+        <p className="truncate text-xs text-muted-foreground">
+          {cur?.sourceDevice?.name ?? t('saves.web')} · {s.emulator.name}
           {cur?.coreVersion && ` · ${t('more.saves.core', { version: cur.coreVersion })}`}
         </p>
+        {s.versions.some((v: any) => v.sharedAt) && (
+          <Badge variant="outline">
+            <Share2 className="size-3" />
+            {t('more.saves.sharedBadge')}
+          </Badge>
+        )}
         <SaveConsoles devices={s.devices} />
         <CoreWarning warnings={s.coreWarnings} version={cur?.coreVersion} />
       </div>
-      <div className="flex flex-wrap justify-end gap-2">
-        {cur && playable(s) && <PlayButton save={s} versionId={cur.id} />}
-        <Button variant="outline" size="sm" onClick={() => onOpen(s.id)}>
+      <div className="flex gap-2 border-t p-2">
+        {cur && playable(s) && (
+          <div className="flex-1 [&>button]:w-full">
+            <PlayButton save={s} versionId={cur.id} />
+          </div>
+        )}
+        <Button variant="outline" size="sm" className="flex-1" onClick={() => onOpen(s.id)}>
           <History className="size-4" />
           {t('saves.versions')} ({s.versions.length})
         </Button>

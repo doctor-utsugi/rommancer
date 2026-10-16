@@ -41,7 +41,15 @@
     },
     "noConsole": "No console",
     "alreadyHere": "already using it",
-    "never": "never"
+    "never": "never",
+    "count_one": "{{count}} journey",
+    "count_other": "{{count}} journeys",
+    "inUseOn": "in use on {{devices}}",
+    "history": "History",
+    "file": {
+      "save": "Save",
+      "state": "Savestate #{{n}}"
+    }
   },
   "app": {
     "name": "Rommancer"
@@ -1353,11 +1361,6 @@
         "STATE_other": "{{count}} savestates",
         "ENTRY_one": "{{count}} card entry",
         "ENTRY_other": "{{count}} card entries"
-      },
-      "group": {
-        "SAVE": "In-game saves",
-        "STATE": "Savestates",
-        "ENTRY": "Memory card entries"
       }
     },
     "sync": {
