@@ -293,9 +293,11 @@ internal fun JourneysScreen(store: Store, onBack: () -> Unit) {
                             else change("Changing slot…", { "Now using ${item.name}. Start the game to play it." }) { engine.switch(g!!.identity!!, item.id, true) }
                         }
                         i == slotList.size -> {
-                            val label = "New game · " + SimpleDateFormat("d MMM HH:mm", Locale.ENGLISH).format(Date())
-                            SlotRow(i, rows, null, label) {
-                                change("Creating slot…", { "Now using a new empty slot. ${active?.name ?: "Your other slots"} keep${if (active == null) "" else "s"} its progress." }) { engine.create(g!!.identity!!, label, false, true) }
+                            val label = { "New game · " + SimpleDateFormat("d MMM HH:mm", Locale.ENGLISH).format(Date()) }
+                            SlotRow(i, rows, null, label()) {
+                                // Named when created, not when the list was drawn
+                                val name = label()
+                                change("Creating slot…", { "Now using a new empty slot. ${active?.name ?: "Your other slots"} keep${if (active == null) "" else "s"} its progress." }) { engine.create(g!!.identity!!, name, false, true) }
                             }
                         }
                         else -> BrowseRow(i, rows, "Apply the queued change", sub = "Once the game is closed") {
