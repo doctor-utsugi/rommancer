@@ -1345,6 +1345,19 @@
         "pending": "la recibirá en su próxima sincronización",
         "conflict": "conflicto: elige qué versión conservar",
         "incompatible": "usa otro emulador: este savestate no le sirve"
+      },
+      "kindCount": {
+        "SAVE_one": "{{count}} partida",
+        "SAVE_other": "{{count}} partidas",
+        "STATE_one": "{{count}} savestate",
+        "STATE_other": "{{count}} savestates",
+        "ENTRY_one": "{{count}} entrada de tarjeta",
+        "ENTRY_other": "{{count}} entradas de tarjeta"
+      },
+      "group": {
+        "SAVE": "Partidas guardadas",
+        "STATE": "Savestates",
+        "ENTRY": "Entradas de tarjeta de memoria"
       }
     },
     "sync": {

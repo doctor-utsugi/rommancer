@@ -1345,6 +1345,19 @@
         "pending": "gets it at its next sync",
         "conflict": "conflict: choose which version to keep",
         "incompatible": "uses another emulator: this savestate is of no use there"
+      },
+      "kindCount": {
+        "SAVE_one": "{{count}} save",
+        "SAVE_other": "{{count}} saves",
+        "STATE_one": "{{count}} savestate",
+        "STATE_other": "{{count}} savestates",
+        "ENTRY_one": "{{count}} card entry",
+        "ENTRY_other": "{{count}} card entries"
+      },
+      "group": {
+        "SAVE": "In-game saves",
+        "STATE": "Savestates",
+        "ENTRY": "Memory card entries"
       }
     },
     "sync": {

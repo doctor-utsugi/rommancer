@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { Link } from 'react-router'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
-import { Ban, Check, ChevronDown, ChevronRight, Clock, Download, History, ImageOff, LayoutList, Play, Rows3, Share2, Trash2, TriangleAlert } from 'lucide-react'
+import { Ban, Check, ChevronRight, Clock, Download, History, ImageOff, LayoutList, Play, Rows3, Share2, Trash2, TriangleAlert } from 'lucide-react'
 import { toast } from 'sonner'
 import { authUrl, del, get, patch, post, put, upload } from '@/lib/api'
 import { Badge } from '@/components/ui/badge'
@@ -14,6 +14,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Empty, Field, NativeSelect, PageHeader, errMsg, formatBytes, formatDate } from '@/components/common'
 import { WEB_SYSTEMS, openPlayer } from '@/lib/play'
+import { cn } from '@/lib/utils'
 import { Journeys } from '@/components/journeys'
 
 const family = (f: string) => (f.startsWith('ps1') ? 'ps1' : f)
@@ -167,7 +168,9 @@ function SaveConsoles({ devices }: { devices?: { deviceId: number; name: string;
 const currentOf = (s: any) => s.versions.find((v: any) => v.id === s.currentVersionId)
 const dateOf = (s: any) => new Date(currentOf(s)?.fileMtime ?? s.updatedAt).getTime()
 
-/** The user's saves grouped by game, latest played first; each game opens into its saves and states by date */
+const KIND_ORDER = ['SAVE', 'STATE', 'ENTRY']
+
+/** Saves as a tree, latest played game first: game, then kind, then files by date */
 function SavesByGame({ saves, onOpen }: { saves: any[] | undefined; onOpen(id: number): void }) {
   const { t } = useTranslation()
   const [expanded, setExpanded] = useState<Set<string>>(new Set())
@@ -191,10 +194,11 @@ function SavesByGame({ saves, onOpen }: { saves: any[] | undefined; onOpen(id: n
         const first = items[0]
         const shot = items.find((s) => currentOf(s)?.thumbPath)
         const open = expanded.has(key)
+        const kinds = KIND_ORDER.map((k) => ({ kind: k, items: items.filter((s) => s.kind === k) })).filter((g) => g.items.length)
         return (
-          <div key={key} className="rounded-xl border">
-            <button type="button" className="flex w-full items-center gap-3 p-3 text-left hover:bg-muted/50" onClick={() => toggle(key)}>
-              {open ? <ChevronDown className="size-4 shrink-0" /> : <ChevronRight className="size-4 shrink-0" />}
+          <div key={key} className={cn('rounded-xl border transition-colors', open && 'border-primary/40 bg-muted/20')}>
+            <button type="button" aria-expanded={open} className="flex w-full items-center gap-3 rounded-xl p-3 text-left hover:bg-muted/50" onClick={() => toggle(key)}>
+              <ChevronRight className={cn('size-4 shrink-0 transition-transform', open && 'rotate-90')} />
               {shot ? (
                 <img src={authUrl(`/saves/${shot.id}/versions/${shot.currentVersionId}/thumb`)} loading="lazy" alt="" className="h-12 w-16 shrink-0 rounded border bg-black object-contain [image-rendering:pixelated]" />
               ) : (
@@ -205,7 +209,8 @@ function SavesByGame({ saves, onOpen }: { saves: any[] | undefined; onOpen(id: n
               <div className="min-w-0 flex-1">
                 <p className="truncate font-medium">{first.game?.title ?? first.baseName}</p>
                 <p className="truncate text-xs text-muted-foreground">
-                  {first.game?.system.name ?? t('saves.unidentified')} · {t('more.saves.saveCount', { count: items.length })} · {t('more.saves.lastPlayed', { date: formatDate(currentOf(first)?.fileMtime) })}
+                  {first.game?.system.name ?? t('saves.unidentified')} · {kinds.map((g) => t(`more.saves.kindCount.${g.kind}`, { count: g.items.length })).join(' · ')} ·{' '}
+                  {t('more.saves.lastPlayed', { date: formatDate(currentOf(first)?.fileMtime) })}
                 </p>
               </div>
               {first.game && (
@@ -215,52 +220,65 @@ function SavesByGame({ saves, onOpen }: { saves: any[] | undefined; onOpen(id: n
               )}
             </button>
             {open && (
-              <div className="divide-y border-t">
-                {items.map((s) => {
-                  const cur = currentOf(s)
-                  return (
-                    <div key={s.id} className="flex flex-wrap items-center gap-3 p-3">
-                      {cur?.thumbPath ? (
-                        <Thumb src={authUrl(`/saves/${s.id}/versions/${cur.id}/thumb`)} className="h-20 w-28" />
-                      ) : (
-                        <div className="flex h-20 w-28 shrink-0 items-center justify-center rounded border bg-muted text-xs text-muted-foreground">{t(`saves.kind.${s.kind}`)}</div>
-                      )}
-                      <div className="min-w-0 flex-1 space-y-1 text-sm">
-                        <div className="flex flex-wrap items-center gap-1">
-                          <Badge variant={s.kind === 'SAVE' ? 'default' : 'secondary'}>{t(`saves.kind.${s.kind}`)}</Badge>
-                          {s.kind === 'STATE' && <span className="text-xs text-muted-foreground">{slotLabel(s.slot)}</span>}
-                          {s.kind === 'ENTRY' && <span className="text-xs text-muted-foreground">{s.label ?? s.baseName}</span>}
-                          <span className="font-medium">{formatDate(cur?.fileMtime)}</span>
-                          <span className="text-xs text-muted-foreground">· {cur?.sourceDevice?.name ?? t('saves.web')}</span>
-                          {s.versions.some((v: any) => v.sharedAt) && (
-                            <Badge variant="outline">
-                              <Share2 className="size-3" />
-                              {t('more.saves.sharedBadge')}
-                            </Badge>
-                          )}
-                        </div>
-                        <p className="text-xs text-muted-foreground">
-                          {s.emulator.name}
-                          {cur?.coreVersion && ` · ${t('more.saves.core', { version: cur.coreVersion })}`}
-                        </p>
-                        <SaveConsoles devices={s.devices} />
-                        <CoreWarning warnings={s.coreWarnings} version={cur?.coreVersion} />
-                      </div>
-                      <div className="flex flex-wrap justify-end gap-2">
-                        {cur && playable(s) && <PlayButton save={s} versionId={cur.id} />}
-                        <Button variant="outline" size="sm" onClick={() => onOpen(s.id)}>
-                          <History className="size-4" />
-                          {t('saves.versions')} ({s.versions.length})
-                        </Button>
-                      </div>
+              <div className="space-y-3 pb-3 pl-[1.15rem] pr-3">
+                {kinds.map((g) => (
+                  <div key={g.kind} className="ml-[0.5px] border-l-2 border-border pl-0">
+                    <p className="relative pl-5 pt-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground before:absolute before:left-0 before:top-[0.85rem] before:w-3.5 before:border-t-2 before:border-border">
+                      {t(`more.saves.group.${g.kind}`)} <span className="font-normal normal-case">({g.items.length})</span>
+                    </p>
+                    <div className="mt-1 space-y-1 pl-5">
+                      {g.items.map((s) => (
+                        <SaveLeaf key={s.id} s={s} onOpen={onOpen} />
+                      ))}
                     </div>
-                  )
-                })}
+                  </div>
+                ))}
               </div>
             )}
           </div>
         )
       })}
+    </div>
+  )
+}
+
+function SaveLeaf({ s, onOpen }: { s: any; onOpen(id: number): void }) {
+  const { t } = useTranslation()
+  const cur = currentOf(s)
+  return (
+    <div className="relative flex flex-wrap items-center gap-3 rounded-lg border bg-background p-2 before:absolute before:-left-5 before:top-1/2 before:w-5 before:border-t-2 before:border-border">
+      {cur?.thumbPath ? (
+        <Thumb src={authUrl(`/saves/${s.id}/versions/${cur.id}/thumb`)} className="h-12 w-16" />
+      ) : (
+        <div className="flex h-12 w-16 shrink-0 items-center justify-center rounded border bg-muted text-[10px] text-muted-foreground">{t(`saves.kind.${s.kind}`)}</div>
+      )}
+      <div className="min-w-0 flex-1 space-y-0.5 text-sm">
+        <div className="flex flex-wrap items-center gap-1">
+          {s.kind === 'STATE' && <Badge variant="secondary">{slotLabel(s.slot)}</Badge>}
+          {s.kind === 'ENTRY' && <span className="text-xs text-muted-foreground">{s.label ?? s.baseName}</span>}
+          <span className="font-medium">{formatDate(cur?.fileMtime)}</span>
+          <span className="text-xs text-muted-foreground">· {cur?.sourceDevice?.name ?? t('saves.web')}</span>
+          {s.versions.some((v: any) => v.sharedAt) && (
+            <Badge variant="outline">
+              <Share2 className="size-3" />
+              {t('more.saves.sharedBadge')}
+            </Badge>
+          )}
+        </div>
+        <p className="text-xs text-muted-foreground">
+          {s.emulator.name}
+          {cur?.coreVersion && ` · ${t('more.saves.core', { version: cur.coreVersion })}`}
+        </p>
+        <SaveConsoles devices={s.devices} />
+        <CoreWarning warnings={s.coreWarnings} version={cur?.coreVersion} />
+      </div>
+      <div className="flex flex-wrap justify-end gap-2">
+        {cur && playable(s) && <PlayButton save={s} versionId={cur.id} />}
+        <Button variant="outline" size="sm" onClick={() => onOpen(s.id)}>
+          <History className="size-4" />
+          {t('saves.versions')} ({s.versions.length})
+        </Button>
+      </div>
     </div>
   )
 }
