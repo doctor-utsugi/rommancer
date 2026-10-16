@@ -1,6 +1,6 @@
 /**
  * Browsing the server's games from a console (docs/browse.md): the systems and games it can send, a fuzzy search,
- * and adding a selection to the device's picks once it fits in the device's free space. Plain text like the other
+ * and adding a selection to the device's picks once it fits in the device's free space, or saving it as a list. Plain text like the other
  * agent endpoints; outcomes the console shows (no permission, no space) are lines, never HTTP errors (the shell
  * client's curl -f drops error bodies).
  */
@@ -10,6 +10,9 @@ import { prisma } from '../../lib/prisma.js';
 import { hasPermission } from '../../lib/permissions.js';
 import { deviceFromToken, storeSpace } from '../saves/agent.js';
 import { deviceUser } from '../devices/lists.js';
+import type { AuthUser } from '../auth/middleware.js';
+import { favoritesList, loadList } from '../lists/service.js';
+import { addItems, refreshChildren } from '../lists/routes.js';
 import { addPicks } from '../devices/picks.js';
 import { devicePlan, keptBytes } from '../devices/plan.js';
 import { copiesSystem, layoutOf, systemFilterOf, type SystemFilter } from '../devices/sink.js';
@@ -143,7 +146,7 @@ async function check(device: AgentDevice, sel: Selection) {
     plan.free != null && kept != null ? `space\t${plan.budget}\t${plan.free}\t${kept}` : 'space\t-',
     `fits\t${fits ? 1 : 0}`,
   ];
-  return { fresh, need, fits, filter: changed ? filter : null, lines };
+  return { picked, fresh, need, fits, filter: changed ? filter : null, lines };
 }
 
 const textBody = express.text({ limit: '1mb', type: '*/*' });
@@ -152,7 +155,9 @@ browseRouter.post('/check', textBody, async (req, res) => {
   const device = await allowed(req);
   if (!device) return res.type('text/plain').send('denied\n');
   const r = await check(await storeSpace(device, req), selectionOf(req.body));
-  res.type('text/plain').send(r.lines.join('\n') + '\n');
+  const u = await deviceUser(device);
+  const name = hasPermission(u, 'lists') && r.picked.length ? await suggestedName(u, r.picked) : null;
+  res.type('text/plain').send([...r.lines, ...(name ? [`listname\t${field(name)}`] : [])].join('\n') + '\n');
 });
 
 // The selection goes to the device's picks when it fits ("added<TAB>games<TAB>bytes"); otherwise nothing changes
@@ -164,4 +169,79 @@ browseRouter.post('/add', textBody, async (req, res) => {
   if (r.filter) await prisma.device.update({ where: { id: device.id }, data: { systemFilter: r.filter as never } });
   const { added } = r.fresh.length ? await addPicks(device, r.fresh.map((g) => (g.romId ? { romId: g.romId } : { hackId: g.hackId! }))) : { added: 0 };
   res.type('text/plain').send([...r.lines, `added\t${added}\t${r.need}`].join('\n') + '\n');
+});
+
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+/** "Super Nintendo · 16 Oct" (games of one system) or "My games · 16 Oct", numbered when the user has that name already */
+async function suggestedName(u: AuthUser, picked: CatalogGame[]) {
+  const cat = await catalog();
+  const systems = new Set(picked.map((g) => g.system));
+  const one = systems.size === 1 ? [...systems][0] : null;
+  const now = new Date();
+  const base = `${one ? (cat.systems.get(one) ?? one) : 'My games'} · ${now.getDate()} ${MONTHS[now.getMonth()]}`;
+  const taken = new Set((await prisma.list.findMany({ where: { ownerId: u.id }, select: { name: true } })).map((l) => l.name.toLowerCase()));
+  let name = base;
+  for (let n = 2; taken.has(name.toLowerCase()); n++) name = `${base} (${n})`;
+  return name;
+}
+
+/** Lists the owner may add games to from a console: their favourites first, then their own and those shared with them
+ * to edit, the latest changed first. Sublists (worked out from their parent) and the device's picks are left out */
+async function writableLists(u: AuthUser) {
+  await favoritesList(u.id);
+  const lists = await prisma.list.findMany({
+    where: {
+      parentListId: null,
+      AND: [{ OR: [{ kind: null }, { kind: { not: 'device' } }] }, { OR: [{ ownerId: u.id }, { shares: { some: { userId: u.id, canEdit: true } } }] }],
+    },
+    orderBy: { updatedAt: 'desc' },
+    select: { id: true, name: true, kind: true, ownerId: true, _count: { select: { items: true } } },
+  });
+  return lists.sort((a, b) => Number(b.kind === 'favorites') - Number(a.kind === 'favorites'));
+}
+
+// "list<TAB>id<TAB>items<TAB>name" per list a selection can go into; "nolists" when the account may not make lists
+browseRouter.get('/lists', async (req, res) => {
+  const device = await allowed(req);
+  if (!device) return res.type('text/plain').send('denied\n');
+  const u = await deviceUser(device);
+  if (!hasPermission(u, 'lists')) return res.type('text/plain').send('nolists\n');
+  const rows = (await writableLists(u)).map((l) => ['list', l.id, l._count.items, field(l.name)].join('\t'));
+  res.type('text/plain').send(rows.join('\n') + (rows.length ? '\n' : ''));
+});
+
+/** Saves the selection as a new list ("name<TAB>text") or into one ("list<TAB>id"); "assign<TAB>1" gives it to the device.
+ * Answers the check's lines, then "list<TAB>id<TAB>added<TAB>games<TAB>ondevice<TAB>name" or nospace/nolist/nolists/empty */
+browseRouter.post('/list', textBody, async (req, res) => {
+  const device = await allowed(req);
+  const send = (lines: string[]) => res.type('text/plain').send(lines.join('\n') + '\n');
+  if (!device) return send(['denied']);
+  const u = await deviceUser(device);
+  if (!hasPermission(u, 'lists')) return send(['nolists']);
+  const body = String(req.body ?? '');
+  const opt = (key: string) => body.split('\n').find((l) => l.startsWith(`${key}\t`))?.slice(key.length + 1).trim() ?? '';
+  const r = await check(await storeSpace(device, req), selectionOf(body));
+  if (!r.picked.length) return send([...r.lines, 'empty']);
+
+  let list;
+  if (/^\d+$/.test(opt('list'))) {
+    list = await loadList(Number(opt('list')), u, true).catch(() => null);
+    if (!list || list.parentListId || list.kind === 'device') return send([...r.lines, 'nolist']);
+  }
+  const onDevice = opt('assign') === '1' || (!!list && !!(await prisma.deviceList.findUnique({ where: { deviceId_listId: { deviceId: device.id, listId: list.id } } })));
+  if (onDevice && !r.fits) return send([...r.lines, 'nospace']);
+  list ??= await prisma.list.create({ data: { ownerId: u.id, name: field(opt('name')).slice(0, 191) || (await suggestedName(u, r.picked)) } });
+
+  const items = r.picked.map((g) => (g.romId ? { romId: g.romId } : { hackId: g.hackId! }));
+  // Favourites are starred roms: what goes in is starred too, as the web's own adds do
+  const romIds = items.flatMap((i) => ('romId' in i && i.romId ? [i.romId] : []));
+  if (list.kind === 'favorites' && romIds.length) await prisma.romFavorite.createMany({ data: romIds.map((romId) => ({ userId: list.ownerId, romId })), skipDuplicates: true });
+  const added = await addItems(list.id, items, hasPermission(u, 'scrape.bulk') ? u : undefined);
+  if (added) void refreshChildren(list.id);
+  if (onDevice) {
+    if (r.filter) await prisma.device.update({ where: { id: device.id }, data: { systemFilter: r.filter as never } });
+    await prisma.deviceList.upsert({ where: { deviceId_listId: { deviceId: device.id, listId: list.id } }, create: { deviceId: device.id, listId: list.id }, update: {} });
+  }
+  send([...r.lines, `list\t${list.id}\t${added}\t${r.picked.length}\t${onDevice ? 1 : 0}\t${field(list.name)}`]);
 });

@@ -97,11 +97,20 @@ class SyncEngine(private val context: Context, private val store: Store, private
     /**
      * The server's check of a pick: NEED what it adds, HAVE picked games already here or queued, PENDING what the
      * lists still download first, USABLE (null: space unknown) = FREE - KEPT; NOSPACE when an add was refused, ADDED
-     * the games an add put in the device's picks
+     * the games an add put in the device's picks; LIST_NAME the name a new list of it gets (null: no lists here)
      */
     data class BrowseCheck(
         val needBytes: Long, val needGames: Int, val have: Int, val pending: Long, val usable: Long?, val free: Long, val kept: Long,
-        val fits: Boolean, val nospace: Boolean = false, val added: Int? = null,
+        val fits: Boolean, val nospace: Boolean = false, val added: Int? = null, val listName: String? = null,
+    )
+
+    /** A list a selection can go into, ITEMS the games in it */
+    data class BrowseList(val id: Int, val items: Int, val name: String)
+
+    /** A selection saved as a list: ADDED new of GAMES, ON_DEVICE when the device has it; REFUSED says why nothing was saved */
+    data class BrowseSaved(
+        val check: BrowseCheck, val id: Int = 0, val added: Int = 0, val games: Int = 0, val onDevice: Boolean = false, val name: String = "",
+        val refused: String? = null,
     )
 
     /** The account lacks the right to download games */
@@ -784,18 +793,18 @@ class SyncEngine(private val context: Context, private val store: Store, private
         return check
     }
 
-    private fun checkOf(rows: List<List<String>>): BrowseCheck {
-        fun row(key: String) = rows.firstOrNull { it[0] == key }
-        fun num(r: List<String>?, i: Int) = r?.getOrNull(i)?.toLongOrNull() ?: 0L
-        val need = row("need")
-        val space = row("space")
-        val usable = space?.getOrNull(1)?.toLongOrNull()
-        val added = row("added")
-        return BrowseCheck(
-            needBytes = num(need, 1), needGames = num(need, 2).toInt(), have = num(row("have"), 1).toInt(), pending = num(row("pending"), 1),
-            usable = usable, free = num(space, 2), kept = num(space, 3), fits = row("fits")?.getOrNull(1) == "1" && usable != null,
-            nospace = row("nospace") != null, added = added?.getOrNull(1)?.toIntOrNull(),
-        )
+    /** The lists the selection can go into, favourites first; empty when the account may not make lists */
+    fun browseLists(): List<BrowseList> = browseListsOf(browse("/agent/browse/lists"))
+
+    /** The pick saved as a new list NAME or into LIST; ASSIGN also gives it to the device, refused when space is unknown */
+    fun browseList(pick: BrowsePick, name: String? = null, list: Int? = null, assign: Boolean = false): BrowseSaved {
+        val space = space()
+        if (assign && space == null) return BrowseSaved(browseCheck(pick).copy(usable = null, fits = false, nospace = true), refused = "nospace")
+        val body = pick.body() + listOfNotNull(name?.let { "name\t${it.replace('\t', ' ').replace('\n', ' ')}" }, list?.let { "list\t$it" }, "assign\t1".takeIf { assign })
+            .joinToString("") { "$it\n" }
+        val saved = savedOf(browse("/agent/browse/list", "POST", body, space))
+        if (saved.refused == null) store.addLog("browse: ${saved.games} games saved to list ${saved.name}")
+        return saved
     }
 
     /** A browse download: the picks, then an inventory pass so they count as here and their collection is right */
@@ -940,6 +949,37 @@ class SyncEngine(private val context: Context, private val store: Store, private
     }
 
     companion object {
+        internal fun checkOf(rows: List<List<String>>): BrowseCheck {
+            fun row(key: String) = rows.firstOrNull { it[0] == key }
+            fun num(r: List<String>?, i: Int) = r?.getOrNull(i)?.toLongOrNull() ?: 0L
+            val need = row("need")
+            val space = row("space")
+            val usable = space?.getOrNull(1)?.toLongOrNull()
+            val added = row("added")
+            return BrowseCheck(
+                needBytes = num(need, 1), needGames = num(need, 2).toInt(), have = num(row("have"), 1).toInt(), pending = num(row("pending"), 1),
+                usable = usable, free = num(space, 2), kept = num(space, 3), fits = row("fits")?.getOrNull(1) == "1" && usable != null,
+                nospace = row("nospace") != null, added = added?.getOrNull(1)?.toIntOrNull(), listName = row("listname")?.getOrNull(1)?.ifBlank { null },
+            )
+        }
+
+        internal fun browseListsOf(rows: List<List<String>>): List<BrowseList> =
+            rows.filter { it.size >= 4 && it[0] == "list" }.mapNotNull { r -> r[1].toIntOrNull()?.let { BrowseList(it, r[2].toIntOrNull() ?: 0, r[3]) } }
+
+        /** The answer to browse/list: the check's lines, then the list row or why nothing was saved */
+        internal fun savedOf(rows: List<List<String>>): BrowseSaved {
+            val check = checkOf(rows)
+            val list = rows.firstOrNull { it.size >= 6 && it[0] == "list" }
+            if (list == null) {
+                val why = rows.lastOrNull()?.firstOrNull()?.trim()?.takeIf { it in setOf("nospace", "nolist", "nolists", "empty") } ?: "nolist"
+                return BrowseSaved(check.copy(nospace = why == "nospace"), refused = why)
+            }
+            return BrowseSaved(
+                check, id = list[1].toIntOrNull() ?: 0, added = list[2].toIntOrNull() ?: 0, games = list[3].toIntOrNull() ?: 0,
+                onDevice = list[4] == "1", name = list.drop(5).joinToString("\t"),
+            )
+        }
+
         fun <T> journeyLocked(block: () -> T): T = synchronized(LOCK, block)
         private val WAKE = Any()
         private var wakeHolders = 0

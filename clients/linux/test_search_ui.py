@@ -143,6 +143,101 @@ class SearchUiTests(unittest.TestCase):
         self.app.journey_slots("identity", "Power Quest", lambda value: base64.b64decode(value).decode())
         self.assertEqual(titles[1], ("Slot 02 · Challenge", ["Use this slot", "Rename"]))
 
+    def review_app(self, check, actions, saved=None, lists=()):
+        """The app set up for browse_review: CHECK the check's extra lines, ACTIONS the pad's, SAVED the browse-list
+        answer; the shell commands and the download recorded"""
+        os.makedirs(ui.work_dir(), exist_ok=True)
+        calls = []
+
+        def client(*args, **kwargs):
+            body = Path(args[1]).read_text(encoding="utf-8") if len(args) > 1 else ""
+            calls.append((args[0], body))
+            if args[0] == "browse-check":
+                return [["have", "0"], ["pending", "0"], ["space", "900000000", "1000000000", "100000000"]] + check
+            if args[0] == "browse-lists":
+                return [["list", l[0], str(l[1]), l[2]] for l in lists]
+            if args[0] == "browse-list":
+                return [["fits", "1"], saved]
+            return None
+
+        steps = iter(actions)
+        self.app.client = client
+        self.app.next_action = lambda *args, **kwargs: next(steps, "quit")
+        self.app.run_with_progress = lambda *args: calls.append(("progress", args[0]))
+        picks = ui.Picks()
+        picks.toggle("g1", 10, "snes")
+        picks.toggle("g2", 20, "snes")
+        return picks, calls
+
+    def test_review_offers_the_list_actions_when_the_server_names_one(self):
+        cases = [
+            ([["need", "30", "2"], ["fits", "1"], ["listname", "Super Nintendo · 16 Oct"]], ["Download", "Save as a new list", "Add to a list…", "Cancel"], "Download 2 games"),
+            ([["need", "0", "0"], ["fits", "1"], ["listname", "Super Nintendo · 16 Oct"]], ["Save as a new list", "Add to a list…", "Cancel"], "All these games are on this console already"),
+            ([["need", "30", "2"], ["fits", "0"], ["listname", "Super Nintendo · 16 Oct"]], ["Save as a new list", "Add to a list…", "Cancel"], "Not enough space"),
+            ([["need", "30", "2"], ["fits", "1"]], ["Download", "Cancel"], "Download 2 games"),
+        ]
+        for check, labels, first in cases:
+            picks, _ = self.review_app(check, [])
+            menus = []
+            self.app.menu = lambda title, items, **kwargs: menus.append((items, kwargs["info"])) and None
+            self.assertIsNone(self.app.browse_review(picks, {}))
+            self.assertEqual(menus[0][0], labels)
+            line = menus[0][1][0]
+            self.assertIn(first, line if isinstance(line, str) else line[1])
+
+    def test_save_as_a_new_list_opens_the_keyboard_with_the_name_typed(self):
+        check = [["need", "30", "2"], ["fits", "1"], ["listname", "Super Nintendo · 16 Oct"]]
+        saved = ["list", "L9", "2", "2", "0", "Super Nintendo · 16 Oct"]
+        # Save as a new list, accept the typed name at once, then Done
+        picks, calls = self.review_app(check, ["down", "a", "start", "down", "a"], saved)
+        self.assertIsNone(self.app.browse_review(picks, {}))
+        self.assertEqual([c[0] for c in calls], ["browse-check", "browse-list"])
+        self.assertIn("name\tSuper Nintendo · 16 Oct\n", calls[1][1])
+        self.assertIn("game\tg1\n", calls[1][1])
+        self.assertFalse(picks, "A saved selection is cleared")
+
+    def test_an_emptied_name_falls_back_to_the_suggestion(self):
+        check = [["need", "0", "0"], ["fits", "1"], ["listname", "My games · 16 Oct"]]
+        saved = ["list", "L9", "2", "2", "0", "My games · 16 Oct"]
+        picks, calls = self.review_app(check, ["a"] + ["b"] * 30 + ["start", "a"], saved)
+        self.assertIsNone(self.app.browse_review(picks, {}))
+        self.assertIn("name\tMy games · 16 Oct\n", calls[1][1])
+
+    def test_a_typed_name_is_kept(self):
+        check = [["need", "0", "0"], ["fits", "1"], ["listname", "My games · 16 Oct"]]
+        saved = ["list", "L9", "2", "2", "0", "My games · 16 Oct!"]
+        picks, calls = self.review_app(check, ["a", ("char", "!"), "start", "a"], saved)
+        self.app.browse_review(picks, {})
+        self.assertIn("name\tMy games · 16 Oct!\n", calls[1][1])
+
+    def test_add_to_a_list_on_the_console_downloads_at_once(self):
+        check = [["need", "30", "2"], ["fits", "1"], ["listname", "Super Nintendo · 16 Oct"]]
+        saved = ["list", "L2", "1", "2", "1", "RPGs"]
+        lists = [("FAV", 40, "Favourites"), ("L2", 12, "RPGs")]
+        messages = []
+        # Add to a list…, the second list
+        picks, calls = self.review_app(check, ["down", "down", "a", "down", "a"], saved, lists)
+        self.app.message = lambda text, *args, **kwargs: messages.append(text)
+        self.assertEqual(self.app.browse_review(picks, {}), "done")
+        self.assertEqual([c[0] for c in calls], ["browse-check", "browse-lists", "browse-list", "progress"])
+        self.assertIn("list\tL2\n", calls[2][1])
+        self.assertNotIn("assign", calls[2][1])
+        self.assertIn("Saved to “RPGs” · 2 games · 1 new", messages)
+        self.assertFalse(picks)
+
+    def test_a_saved_list_can_then_go_to_this_console(self):
+        check = [["need", "30", "2"], ["fits", "1"], ["listname", "Super Nintendo · 16 Oct"]]
+        saved = ["list", "L9", "2", "2", "0", "Super Nintendo · 16 Oct"]
+        menus = []
+        picks, calls = self.review_app(check, ["down", "a", "start", "a"], saved)
+        real = self.app.menu
+        self.app.menu = lambda title, items, **kwargs: menus.append(items) or real(title, items, **kwargs)
+        self.assertEqual(self.app.browse_review(picks, {}), "done")
+        self.assertEqual(menus[-1], ["Download them to this console", "Done"])
+        self.assertEqual([c[0] for c in calls], ["browse-check", "browse-list", "browse-list", "progress"])
+        self.assertIn("list\tL9\nassign\t1\n", calls[2][1])
+        self.assertIn("game\tg2\n", calls[2][1])
+
 
 if __name__ == "__main__":
     unittest.main()

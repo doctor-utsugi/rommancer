@@ -3212,7 +3212,7 @@ dependencies = [
 
 [[package]]
 name = "rommancer-desktop"
-version = "0.9.5"
+version = "0.10.0"
 dependencies = [
  "anyhow",
  "base64 0.22.1",

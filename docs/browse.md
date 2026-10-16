@@ -59,6 +59,45 @@ budget use the same numbers.
 `devicePlan`'s budget keeps the same `kept` (max(reserve, 50 MB)), so a download the check accepted is not cut by the
 clients' per-file 50 MB margin.
 
+5. `GET /agent/browse/lists` → `list<TAB>id<TAB>items<TAB>name` per list the selection can go into: the owner's
+   favourites first, then their own lists and those shared with them to edit, the latest changed first (sublists and
+   the device's picks left out); `nolists` when the account may not make lists.
+6. `POST /agent/browse/list` same body plus `name<TAB>text` (a new list) or `list<TAB>id` (an existing one), and
+   optionally `assign<TAB>1` (give the list to the device). Every game of the selection goes in, those on the console
+   too. A list the device gets or already has downloads what is added, so it runs the space check first and answers
+   `nospace` with nothing changed when it does not fit. Answer: the check's lines, then
+   `list<TAB>id<TAB>added<TAB>games<TAB>ondevice<TAB>name`, or `empty`, `nolist` (not a list the account may change),
+   `nolists`. Adding to favourites stars the roms, as the web does.
+
+`/check` also answers `listname<TAB>name` when the account may make lists: the name a new list of the selection gets
+(`Super Nintendo · 16 Oct` for one system, `My games · 16 Oct` otherwise, ` (2)`… when the user has it already).
+Clients show the list actions only when that line came (older servers, accounts without lists: the review as before).
+
+## Saving a selection as a list (all clients)
+
+Building lists with a gamepad is slow mostly because of typing and ticking; the selection browse already makes (ticks
+from several searches, whole systems) is the list, and the name comes ready.
+
+Review screen, after the check: the same message as before (the download facts, or `All these games are on this
+console already`, or the no-space lines), then the actions, the first that applies focused:
+1. **Download** — only when there are games to download and they fit (unchanged).
+2. **Save as a new list** — opens the on-screen keyboard **with the suggested name already typed** (`listname`), the
+   cursor at its end: accepting at once keeps it, B deletes from the end, an emptied field falls back to the
+   suggestion. Then `browse/list` with `name`.
+3. **Add to a list…** — the lists (`browse/lists`) as one-line rows, `Name  12 games`, favourites first; A picks one.
+   Then `browse/list` with `list`.
+4. **Cancel**.
+
+After a save the selection is cleared and a result screen says `Saved to "Super Nintendo · 16 Oct" · 12 games`
+(`3 new` when added to an existing list and some were in it already). Then:
+- `ondevice` 1 with games to download: they download right away with the usual progress (`browse-get`), then the
+  usual result.
+- otherwise, with games to download: **Download them to this console** (`browse/list` again with `list` and
+  `assign<TAB>1`: adds nothing new, gives the list to the device; `nospace` shows the no-space lines) and **Done**.
+- nothing to download: **Done** only.
+
+Shell commands: `browse-lists`, `browse-list FILE` (FILE: the selection lines plus `name`/`list`/`assign` lines).
+
 ## Fuzzy search
 
 `modules/browse/index.ts` keeps the sendable games in memory: `{gameId, romId|hackId, systemSlug, title, bytes,
@@ -147,6 +186,21 @@ console` for a system with nothing left (shown only with the toggle on).
 - `ROMMANCER_SEARCH_DEBOUNCE` (default 2.0) and a `wait:SECONDS` token in `ROMMANCER_UI_TEST` for tests (with `up`,
   `down`, `left`, `right`, `a`, `b`, `x`, `y`, `start`, `select`, `pageup`, `pagedown` and `type:TEXT`).
 - Network calls run in threads; the shell's `browse-games` uses `http_once` and a short timeout.
+- Saving a selection as a list (`browse_review`): with `listname` in the check, the review's menu holds only the
+  actions that apply (`Download` when there are games and they fit, `Save as a new list`, `Add to a list…`, `Cancel`),
+  so the first is focused; the facts above are the download's, `All these games are on this console already` or the
+  no-space lines. Without `listname` the review is as before (a message when nothing to download or no room).
+- `Save as a new list` opens `keyboard()` titled `List name` with the suggestion typed (the cursor at its end): START
+  or Accept keeps it, B deletes from the end, an emptied field saves under the suggestion, SELECT goes back to the
+  review. `Add to a list…` (`browse_pick_list`) is a `browse_list` with `tools=False` (no magnifier, chip or search):
+  `Name  12 games` rows as served, `LISTS · N` on the section line, A picks, B back to the review.
+- After `browse-list` (`browse_save`): the selection is cleared; `ondevice` 1 with games to download runs
+  `browse-get` at once; other saves with games to download show `Saved to "NAME" · N games` (`· 3 new` for an existing
+  list) with `Download them to this console` (`browse-list` with `list` and `assign 1`; `nospace` shows the no-space
+  lines and returns to the result) and `Done`; nothing to download: `Done` only. `empty`, `nolist`, `nolists`,
+  `nospace` and failures return to the review with the selection kept.
+- Tests: `clients/linux/test_search_ui.py` (the review's actions with and without `listname`, the prefilled name,
+  an emptied name, adding to a list on the console, giving a saved list to the console).
 
 ### Onion (shell + `prompt`/`kbinput`)
 - No X/Y on `prompt`: explicit rows. Systems menu: the toggle row, `Search the server...`, `Download selected (3 · 48
@@ -156,6 +210,11 @@ console` for a system with nothing left (shown only with the toggle on).
   `$WORK/browse-systems.shown`. The selection lives in `$WORK/browse-sel`. The cursor stays on the toggled row (`-s`).
 - Search: `kbinput` (no live typing on Onion: it runs when the keyboard closes), then the results as a games menu; a
   `Searching the server...` panel shows while the request runs.
+- Review (`browse_review`): the message, then `Download` (when the games fit), `Save as a new list`, `Add to a list...`,
+  `Cancel`; the list rows only when the check sent `listname`. Save as a new list opens `kbinput -i NAME` (Onion's own
+  ROM rename prefills it the same way); cancelling it goes back to the review. Add to a list: a menu of `Name  12 games`
+  rows and `Back`. The result is a menu with the `Saved to …` line and `Download them to this console` / `Done` (only
+  `Done` with nothing to download); with `ondevice` 1 a panel shows it and the download starts.
 
 ### Shell commands (both Linux UIs)
 `browse-systems`, `browse-games SLUG|- OFFSET QUERY [LIMIT [new|all]]` (`new`, the default, sends `show=new`),
@@ -186,11 +245,23 @@ walking up to an existing parent.
 - Space: `SyncEngine.space()` (roms folder from `/agent/roots`, nearest existing parent, StatFs); sent on check, add
   and `/agent/roms`. Without a measurement the add is refused client-side.
 - Download: `roms()` then `sync()`, the existing progress screen, then Result with the `games-show` line.
+- Saving as a list (`SyncEngine.browseLists()` / `browseList(pick, name, list, assign)`, X-Space sent like check/add;
+  `assign` without a space measurement is refused client-side as `nospace`): the review's rows are **Yes, download**
+  (when it fits), **Save as a new list** and **Add to a list…** (only when `/check` sent `listname`, also with nothing
+  to download or no space) and **Cancel**, the first focused. Rows of the screen, no dialogs.
+- Save as a new list: a field with the suggested name typed, cursor at its end, focused with the keyboard open; the
+  IME's Done, START or **Save the list** saves, an emptied field saves the suggestion; Back returns to the review.
+- Add to a list…: a browse-style screen (bar, `LISTS · N`, one-line rows `Name  12 games`, L1/R1 page), favourites
+  first as the server sends them; A saves into the list.
+- After a save the selection is cleared. `ondevice` 1 with games to download: the usual download (`browseGet`) with
+  the `Saved to "…" · N games` line as its title. Otherwise a result screen with that line, then **Download them to
+  this console** (`N games · size`; posts again with `list` + `assign 1`, `nospace` shows the no-space screen) when
+  there are games to download, and **Done** (back to the systems). `nolist`, `nolists`, `empty` show a message.
 
 ### Desktop app (`clients/desktop`)
 - Tab **Browse server games** after Lists, on this PC and on every linked card (`src/Browse.tsx`). Each device browses
-  as itself (its token); the Rust commands are `browse_systems`, `browse_games` (`all`: no `show=new`), `browse_check`
-  and `browse_add` (`src-tauri/src/browse.rs`).
+  as itself (its token); the Rust commands are `browse_systems`, `browse_games` (`all`: no `show=new`), `browse_check`,
+  `browse_add`, `browse_lists` and `browse_list` (`src-tauri/src/browse.rs`).
 - Top bar on one line: back, the breadcrumb (`Server games › system`), a magnifier that turns into the search field
   (it takes the place of the `Hide owned` / `Show owned` chip; owned games hidden by default), with `Searching the
   server…` and a spinner inside it while the 2 s debounce runs or the request is out; Enter searches at once, Escape or
@@ -203,3 +274,17 @@ walking up to an existing parent.
   measured on `check`, `add` and `/agent/roms`; without a measurement the add is refused here.
 - Download: a `games` sync (the list games, then the inventory pass), queued after a sync already running; on this
   PC the frontends' collections are written and ES-DE/Pegasus are named to restart, as after a full sync.
+- Saving as a list (0.10.0): the review dialog's actions are a column, the first that applies focused, **Download**
+  (games to download that fit), **Save as a new list** and **Add to a list…** (only when the check sent `listname`,
+  also with nothing to download or no space) and **Cancel**. The arrows (a gamepad's D-pad) move the focus through the
+  dialog, Enter presses, Escape steps back (a sub-step to the review, the review closes it); PageUp/PageDown (the
+  shoulders) page the list picker.
+- Save as a new list: a field with the suggested name, focused with the cursor at its end; Enter or **Save** saves,
+  emptied it saves the suggestion. Add to a list…: the lists as dense one-line rows (`Name  12 games`, favourites first
+  as the server sends them), Enter or a click picks one. `browse_list` takes `to` (`{ name }` or `{ id }`) and
+  `assign`; with `assign` and no space measurement it is refused here, as an add.
+- After a save the selection is cleared and the dialog shows `Saved to "NAME" · N games` (`N new`). A list on the
+  device with games to download starts the same `games` sync as an add (the Rust command starts it) and **Done** goes
+  Home to its progress; otherwise **Download them to this console** (`browse_list` with the list and `assign`; no space
+  shows the no-space line) and **Done**, or **Done** alone. A save refused because the list is on the device and its
+  games do not fit goes back to the review with `Nothing was saved`.

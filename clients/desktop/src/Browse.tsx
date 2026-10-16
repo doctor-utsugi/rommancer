@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent as KeyEvent } from 'react'
 import { invoke } from '@tauri-apps/api/core'
 import { bytes, t, tn } from './i18n'
 
@@ -32,6 +32,26 @@ interface BCheck {
   fits: boolean
   nospace: boolean
   added: number | null
+  /** The name a new list of the pick gets; null: no list actions (older server, account without lists) */
+  listname: string | null
+  saved: BSaved | null
+  /** Why a save did not happen: nolist, nolists, empty */
+  refused: string | null
+}
+
+/** The list a pick was saved to: added = new in it, games = the pick's, ondevice = the device has it */
+interface BSaved {
+  id: string
+  added: number
+  games: number
+  ondevice: boolean
+  name: string
+}
+
+interface BList {
+  id: string
+  items: number
+  name: string
 }
 
 /** The games ticked one by one, and whole systems with the games unticked inside them */
@@ -452,6 +472,7 @@ export function Browse({ syncKey, refreshKey, onDone, onExit }: { syncKey: strin
           pick={pick}
           known={known}
           onClose={() => setReview(false)}
+          onSaved={() => setPick(EMPTY)}
           onAdded={() => {
             setReview(false)
             setPick(EMPTY)
@@ -463,22 +484,64 @@ export function Browse({ syncKey, refreshKey, onDone, onExit }: { syncKey: strin
   )
 }
 
-/** The server's check of the pick before any download; Download adds it and starts the download */
-function Review({ syncKey, pick, known, onClose, onAdded }: { syncKey: string; pick: Pick; known: BSystem[]; onClose: () => void; onAdded: () => void }) {
+/** Arrows move the focus through the dialog (a gamepad's D-pad arrives as arrows); left and right stay in a text field */
+function arrows(e: KeyEvent<HTMLElement>) {
+  const dir = ({ ArrowDown: 1, ArrowRight: 1, ArrowUp: -1, ArrowLeft: -1 } as Record<string, number>)[e.key]
+  const el = document.activeElement as HTMLElement | null
+  if (!dir || (el?.tagName === 'INPUT' && (e.key === 'ArrowLeft' || e.key === 'ArrowRight'))) return
+  const all = [...e.currentTarget.querySelectorAll<HTMLElement>('button:not(:disabled), input')]
+  const next = all[el && all.includes(el) ? Math.max(0, Math.min(all.length - 1, all.indexOf(el) + dir)) : 0]
+  if (!next) return
+  e.preventDefault()
+  next.focus()
+  next.scrollIntoView({ block: 'nearest' })
+}
+
+type Step = 'review' | 'name' | 'lists' | 'saved'
+
+/** The server's check of the pick, then Download, Save as a new list or Add to a list… (docs/browse.md).
+ * ONSAVED: a list got the pick (the dialog stays for the result); ONADDED: a download started */
+function Review({ syncKey, pick, known, onClose, onSaved, onAdded }: { syncKey: string; pick: Pick; known: BSystem[]; onClose: () => void; onSaved: () => void; onAdded: () => void }) {
   const [check, setCheck] = useState<BCheck | null>(null)
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
-  const body = useMemo(() => ({ games: Object.keys(pick.games), systems: pick.systems }), [pick])
+  const [step, setStep] = useState<Step>('review')
+  const [name, setName] = useState('')
+  const [lists, setLists] = useState<BList[] | null>(null)
+  const [saved, setSaved] = useState<BCheck | null>(null)
+  // Kept from when the dialog opened: a save clears the selection, and Download them to this console resends it
+  const [body] = useState(() => ({ games: Object.keys(pick.games), systems: pick.systems }))
+  const [whole] = useState(() =>
+    Object.entries(pick.systems)
+      .map(([slug, skip]) => {
+        const s = known.find((x) => x.slug === slug)
+        return s ? t('browseWhole', { name: s.name, n: Math.max(0, fresh(s) - skip.length) }) : ''
+      })
+      .filter(Boolean),
+  )
+  const failed = (e: unknown) => setError(String(e) === 'denied' ? t('browseDenied') : `${t('browseFail')}: ${e}`)
   useEffect(() => {
-    void invoke<BCheck>('browse_check', { key: syncKey, pick: body }).then(setCheck, (e) => setError(String(e) === 'denied' ? t('browseDenied') : `${t('browseFail')}: ${e}`))
+    void invoke<BCheck>('browse_check', { key: syncKey, pick: body }).then(setCheck, failed)
   }, [syncKey, body])
-  const close = useRef(onClose)
-  close.current = onClose
+
+  const fetching = !!saved && saved.saved?.ondevice && saved.need_games > 0 && !saved.nospace
+  const leave = () => (fetching ? onAdded() : onClose())
+  const toReview = () => {
+    setError('')
+    setStep('review')
+  }
+  const escape = useRef(leave)
+  escape.current = step === 'name' || step === 'lists' ? toReview : leave
   useEffect(() => {
-    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && close.current()
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return
+      e.preventDefault()
+      escape.current()
+    }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
   }, [])
+
   const download = async () => {
     setBusy(true)
     setError('')
@@ -487,51 +550,191 @@ function Review({ syncKey, pick, known, onClose, onAdded }: { syncKey: string; p
       if (c.nospace || c.added === null) setCheck(c)
       else onAdded()
     } catch (e) {
-      setError(String(e) === 'denied' ? t('browseDenied') : `${t('browseFail')}: ${e}`)
+      failed(e)
     } finally {
       setBusy(false)
     }
   }
-  const whole = Object.entries(pick.systems)
-    .map(([slug, skip]) => {
-      const s = known.find((x) => x.slug === slug)
-      return s ? t('browseWhole', { name: s.name, n: Math.max(0, fresh(s) - skip.length) }) : ''
-    })
-    .filter(Boolean)
+
+  /** ASSIGN also gives the list to this device */
+  const save = async (to: { name: string } | { id: string }, assign: boolean) => {
+    setBusy(true)
+    setError('')
+    try {
+      const c = await invoke<BCheck>('browse_list', { key: syncKey, pick: body, to, assign })
+      if (c.saved) {
+        if (assign) return c.need_games > 0 ? onAdded() : onClose()
+        onSaved()
+        setSaved(c)
+        setStep('saved')
+      } else if (c.nospace && assign) {
+        setSaved({ ...saved!, nospace: true })
+        setError(c.usable === null ? t('browseNoMeasure') : t('browseNoSpace', { need: bytes(c.need_bytes), usable: bytes(c.usable) }))
+      } else if (c.nospace) {
+        // The device has the list, so the add had to fit: nothing was saved
+        setCheck({ ...c, listname: check?.listname ?? null })
+        setStep('review')
+        setError(t('browseListNoSpace'))
+      } else {
+        if (c.refused === 'nolist') setLists(null)
+        setError(t(c.refused === 'nolists' ? 'browseListsDenied' : c.refused === 'empty' ? 'browseListEmpty' : 'browseNoList'))
+      }
+    } catch (e) {
+      failed(e)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const openName = () => {
+    setError('')
+    setName(check?.listname ?? '')
+    setStep('name')
+  }
+  const openLists = () => {
+    setError('')
+    setStep('lists')
+    setLists(null)
+    void invoke<BList[]>('browse_lists', { key: syncKey }).then(setLists, (e) => (String(e) === 'nolists' ? setError(t('browseListsDenied')) : failed(e)))
+  }
+
   const ok = !!check && check.fits && !check.nospace && check.need_games > 0
-  const go = useRef<HTMLButtonElement>(null)
+  const actions = useRef<HTMLDivElement>(null)
+  const field = useRef<HTMLInputElement>(null)
   useEffect(() => {
-    if (ok) go.current?.focus()
-  }, [ok])
+    if (step === 'name') {
+      const el = field.current
+      if (!el) return
+      el.focus()
+      el.setSelectionRange(el.value.length, el.value.length)
+    } else actions.current?.querySelector<HTMLElement>('button:not(:disabled)')?.focus()
+  }, [step, check, lists, saved])
+
+  const savedLine = (c: BCheck) => {
+    const s = c.saved!
+    return s.added < s.games ? t('browseSavedNew', { name: s.name, n: s.added }) : tn('browseSaved', s.games, { name: s.name })
+  }
+
   return (
-    <div className="overlay" onClick={onClose}>
-      <div className="panel dialog breview" role="dialog" onClick={(e) => e.stopPropagation()}>
-        <h2>{t('browseReview')}</h2>
-        {!check && !error && (
-          <p className="muted row">
-            <span className="spinner" />
-            {t('browseChecking')}
-          </p>
+    <div className="overlay" onClick={leave}>
+      <div className="panel dialog breview" role="dialog" onClick={(e) => e.stopPropagation()} onKeyDown={arrows}>
+        {step === 'review' && (
+          <>
+            <h2>{t('browseReview')}</h2>
+            {!check && !error && (
+              <p className="muted row">
+                <span className="spinner" />
+                {t('browseChecking')}
+              </p>
+            )}
+            {check && check.need_games > 0 && <p>{tn('browseAsk', check.need_games, { size: bytes(check.need_bytes) })}</p>}
+            {check && check.need_games === 0 && <p>{t('browseNothingNew')}</p>}
+            {check && check.need_games > 0 && check.usable !== null && <p className="small">{t('browseUsable', { usable: bytes(check.usable), free: bytes(check.free), kept: bytes(check.kept) })}</p>}
+            {check && check.pending > 0 && <p className="small">{t('browsePending', { size: bytes(check.pending) })}</p>}
+            {check && check.have > 0 && check.need_games > 0 && <p className="muted small">{tn('browseHave', check.have)}</p>}
+            {check && check.need_games > 0 && whole.map((w) => <p key={w} className="muted small">{w}</p>)}
+            {check && check.need_games > 0 && (check.need_games > 50 || check.need_bytes > 2 * 1024 ** 3) && <p className="muted small">{t('browseLong')}</p>}
+            {check && check.need_games > 0 && !check.fits && (
+              <p className="error">{check.usable === null ? t('browseNoMeasure') : t('browseNoSpace', { need: bytes(check.need_bytes), usable: bytes(check.usable) })}</p>
+            )}
+            {error && <p className="error">{error}</p>}
+            <div className="bactions" ref={actions}>
+              {ok && (
+                <button className="primary" disabled={busy} onClick={() => void download()}>
+                  {t('browseDownload')}
+                </button>
+              )}
+              {check?.listname && (
+                <>
+                  <button disabled={busy} onClick={openName}>
+                    {t('browseSaveNew')}
+                  </button>
+                  <button disabled={busy} onClick={openLists}>
+                    {t('browseAddTo')}
+                  </button>
+                </>
+              )}
+              <button onClick={onClose}>{t('cancel')}</button>
+            </div>
+          </>
         )}
-        {check && check.need_games > 0 && <p>{tn('browseAsk', check.need_games, { size: bytes(check.need_bytes) })}</p>}
-        {check && check.need_games === 0 && <p>{t('browseNothingNew')}</p>}
-        {check && check.need_games > 0 && check.usable !== null && <p className="small">{t('browseUsable', { usable: bytes(check.usable), free: bytes(check.free), kept: bytes(check.kept) })}</p>}
-        {check && check.pending > 0 && <p className="small">{t('browsePending', { size: bytes(check.pending) })}</p>}
-        {check && check.have > 0 && check.need_games > 0 && <p className="muted small">{tn('browseHave', check.have)}</p>}
-        {check && check.need_games > 0 && whole.map((w) => <p key={w} className="muted small">{w}</p>)}
-        {check && check.need_games > 0 && (check.need_games > 50 || check.need_bytes > 2 * 1024 ** 3) && <p className="muted small">{t('browseLong')}</p>}
-        {check && check.need_games > 0 && !check.fits && (
-          <p className="error">{check.usable === null ? t('browseNoMeasure') : t('browseNoSpace', { need: bytes(check.need_bytes), usable: bytes(check.usable) })}</p>
+        {step === 'name' && (
+          <>
+            <h2>{t('browseSaveNew')}</h2>
+            <label className="block">
+              <span className="small muted">{t('browseListName')}</span>
+              <input
+                ref={field}
+                type="text"
+                value={name}
+                maxLength={191}
+                placeholder={check?.listname ?? ''}
+                onChange={(e) => setName(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key !== 'Enter' || busy) return
+                  e.preventDefault()
+                  void save({ name: name.trim() || (check?.listname ?? '') }, false)
+                }}
+              />
+            </label>
+            <p className="muted small">{t('browseListNameHelp')}</p>
+            {error && <p className="error">{error}</p>}
+            <div className="bactions" ref={actions}>
+              <button className="primary" disabled={busy} onClick={() => void save({ name: name.trim() || (check?.listname ?? '') }, false)}>
+                {busy ? t('browseSaving') : t('browseSave')}
+              </button>
+              <button disabled={busy} onClick={toReview}>
+                {t('back')}
+              </button>
+            </div>
+          </>
         )}
-        {error && <p className="error">{error}</p>}
-        <div className="row end">
-          <button autoFocus onClick={onClose}>
-            {t('cancel')}
-          </button>
-          <button ref={go} className="primary" disabled={!ok || busy} onClick={() => void download()}>
-            {t('browseDownload')}
-          </button>
-        </div>
+        {step === 'lists' && (
+          <>
+            <h2>{t('browseAddTo')}</h2>
+            {!lists && !error && (
+              <p className="muted row">
+                <span className="spinner" />
+                {t('browseListsLoading')}
+              </p>
+            )}
+            {lists && !lists.length && <p className="muted">{t('browseNoLists')}</p>}
+            {error && <p className="error">{error}</p>}
+            <div className="bactions" ref={actions}>
+              {lists && lists.length > 0 && (
+                <div className="blist bpick">
+                  {lists.map((l) => (
+                    <button key={l.id} className="brow" disabled={busy} onMouseMove={(e) => e.currentTarget.focus()} onClick={() => void save({ id: l.id }, false)}>
+                      <span className="grow btitle">{l.name}</span>
+                      <span className="bside">{tn('browseGamesN', l.items)}</span>
+                    </button>
+                  ))}
+                </div>
+              )}
+              <button disabled={busy} onClick={toReview}>
+                {t('back')}
+              </button>
+            </div>
+          </>
+        )}
+        {step === 'saved' && saved?.saved && (
+          <>
+            <h2>{savedLine(saved)}</h2>
+            {fetching && <p>{tn('browseSavedGet', saved.need_games, { size: bytes(saved.need_bytes) })}</p>}
+            {!fetching && saved.need_games > 0 && <p>{tn('browseSavedNotHere', saved.need_games, { size: bytes(saved.need_bytes) })}</p>}
+            {error && <p className="error">{error}</p>}
+            <div className="bactions" ref={actions}>
+              {!fetching && saved.need_games > 0 && !saved.nospace && (
+                <button className="primary" disabled={busy} onClick={() => void save({ id: saved.saved!.id }, true)}>
+                  {t('browseGetThem')}
+                </button>
+              )}
+              <button disabled={busy} onClick={leave}>
+                {t('browseDone')}
+              </button>
+            </div>
+          </>
+        )}
       </div>
     </div>
   )

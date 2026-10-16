@@ -189,6 +189,39 @@ test('browse: a whole system, a game unticked in it, and a system the device lea
   assert.ok(!plan.some((r) => r[1].endsWith(`${RUN} Pocket Two (World).gb`)));
 });
 
+test('browse: a selection saved as a new list, added to another, and given to the console', async () => {
+  const dev = await enrol(`${RUN}-lst`);
+  const { prisma } = await import('../src/lib/prisma.js');
+  const pick = `game\t${games[`${RUN} Quest VII`]}\ngame\t${games[`${RUN} Quest VI`]}\n`;
+  const named = line(await agent(dev, '/browse/check', { body: pick, space: [10 * GB, 32 * GB] }), 'listname');
+  assert.match(named?.[1] ?? '', /^Super Nintendo · \d{1,2} [A-Z][a-z]{2}$/);
+
+  // Not given to the console, so nothing downloads
+  const saved = await agent(dev, '/browse/list', { body: `${pick}name\t${RUN} road trip\n`, space: [10 * GB, 32 * GB] });
+  const row = line(saved, 'list')!;
+  assert.deepEqual(row.slice(2), ['2', '2', '0', `${RUN} road trip`]);
+  const listId = Number(row[1]);
+  assert.equal((await agent(dev, '/roms', { space: [10 * GB, 32 * GB] })).length, 0);
+  // The next name offered for the same games is numbered when taken
+  await prisma.list.update({ where: { id: listId }, data: { name: named![1] } });
+  assert.equal(line(await agent(dev, '/browse/check', { body: pick, space: [10 * GB, 32 * GB] }), 'listname')?.[1], `${named![1]} (2)`);
+
+  const lists = await agent(dev, '/browse/lists');
+  assert.equal(lists[0][0], 'list');
+  assert.ok(lists.some((r) => Number(r[1]) === listId));
+  const more = await agent(dev, '/browse/list', { body: `game\t${games[`${RUN} Mega Hero`]}\ngame\t${games[`${RUN} Quest VI`]}\nlist\t${listId}\nassign\t1\n`, space: [10 * GB, 32 * GB] });
+  assert.deepEqual(line(more, 'list')?.slice(2, 5), ['1', '2', '1']);
+  const plan = await agent(dev, '/roms', { space: [10 * GB, 32 * GB] });
+  assert.ok(plan.some((r) => r[1].endsWith(`/roms/snes/${RUN} Mega Hero (USA).sfc`)));
+  // The console has the list now, so an add needs room
+  const full = await agent(dev, '/browse/list', { body: `game\t${games[`${RUN} Pocket One`]}\nlist\t${listId}\n`, space: [50 * 1024 * 1024 + 10, 100 * 1024 * 1024] });
+  assert.ok(line(full, 'nospace'));
+  assert.equal(await prisma.listItem.count({ where: { listId } }), 3);
+  const other = await prisma.user.create({ data: { username: `${RUN}o`, email: `${RUN}o@test.invalid`, passwordHash: 'x', role: 'USER' } });
+  const theirs = await prisma.list.create({ data: { ownerId: other.id, name: 'theirs', visibility: 'PUBLIC' } });
+  assert.ok(line(await agent(dev, '/browse/list', { body: `${pick}list\t${theirs.id}\n`, space: [10 * GB, 32 * GB] }), 'nolist'));
+});
+
 test('browse: an account that may not download games is told so', async () => {
   const { prisma } = await import('../src/lib/prisma.js');
   const { signAccess } = await import('../src/modules/auth/middleware.js');
@@ -227,7 +260,38 @@ test('browse: the Linux client picks a game, downloads it and then counts it as 
   assert.doesNotMatch(await sh('browse-games', 'snes', '0', `${RUN} mega hero`), new RegExp(`^game\t${games[`${RUN} Mega Hero`]}\t`, 'm'));
 });
 
-test('browse: the desktop app picks a game, downloads it and then counts it as here', { skip: process.env.ROMMANCER_DESKTOP !== '1' && 'ROMMANCER_DESKTOP=1 runs it (cargo)' }, async () => {
+test('browse: the Linux client saves a selection as a new list, then adds to it and takes it', async () => {
+  const name = `${RUN}-shl`;
+  const root = path.join(DATA, name);
+  fs.mkdirSync(path.join(root, 'roms'), { recursive: true });
+  const dev = await enrol(name);
+  const state = path.join(DATA, `${name}-state`);
+  fs.mkdirSync(state, { recursive: true });
+  fs.writeFileSync(path.join(state, 'config'), `SERVER=${base}\nTOKEN=${dev}\n`);
+  const { execFile } = await import('node:child_process');
+  const { promisify } = await import('node:util');
+  const env = { ...process.env, ROMMANCER_STATE: state, ROMMANCER_ROOT: root, ROMMANCER_FIRMWARE: 'knulli', ROMMANCER_SYSROOT: path.join(DATA, `${name}-sys`), ROMMANCER_ES_API: 'http://127.0.0.1:9' };
+  const sh = async (...args: string[]) => (await promisify(execFile)('sh', [path.join(ROOT, 'clients/linux/rommancer-sync.sh'), ...args], { env })).stdout;
+  const sel = path.join(DATA, `${name}-sel`);
+  const pick = `game\t${games[`${RUN} Quest VII`]}\n`;
+  fs.writeFileSync(sel, pick);
+  assert.match(await sh('browse-check', sel), /^listname\tSuper Nintendo · /m);
+
+  fs.writeFileSync(sel, `${pick}name\t${RUN} sh trip\n`);
+  const saved = (await sh('browse-list', sel)).split('\n').find((l) => l.startsWith('list\t'))!.split('\t');
+  assert.deepEqual(saved.slice(2), ['1', '1', '0', `${RUN} sh trip`]);
+  const lists = await sh('browse-lists');
+  assert.match(lists, new RegExp(`^list\t${saved[1]}\t1\t${RUN} sh trip$`, 'm'));
+
+  // One of the two games is in the list already
+  fs.writeFileSync(sel, `${pick}game\t${games[`${RUN} Mega Hero`]}\nlist\t${saved[1]}\nassign\t1\n`);
+  const more = await sh('browse-list', sel);
+  assert.match(more, new RegExp(`^list\t${saved[1]}\t1\t2\t1\t${RUN} sh trip$`, 'm'));
+  const plan = await agent(dev, '/roms', { space: [10 * GB, 32 * GB] });
+  assert.ok(plan.some((r) => r[1].endsWith(`/roms/snes/${RUN} Mega Hero (USA).sfc`)));
+});
+
+test('browse: the desktop app saves a pick as a list, picks a game, downloads it and then counts it as here', { skip: process.env.ROMMANCER_DESKTOP !== '1' && 'ROMMANCER_DESKTOP=1 runs it (cargo)' }, async () => {
   const name = `${RUN}-desk`;
   const root = path.join(DATA, name);
   fs.mkdirSync(path.join(root, 'roms'), { recursive: true });
@@ -249,6 +313,10 @@ test('browse: the desktop app picks a game, downloads it and then counts it as h
   ).stdout;
   assert.match(out, new RegExp(`^GAME ${games[`${RUN} Mega Hero`]} 1000 new `, 'm'));
   assert.match(out, /^CHECK need=1000 games=1 fits=true$/m);
+  assert.match(out, /^LISTNAME Super Nintendo · /m);
+  assert.match(out, /^SAVED 1 1 false Super Nintendo · /m, 'saved as a new list under the suggested name');
+  assert.match(out, /^LISTED 1$/m);
+  assert.match(out, /^AGAIN 0 1 false$/m, 'added again: nothing new in it');
   assert.match(out, /^ADDED 1$/m);
   assert.match(out, /^OUT games_down=1 failed=0$/m);
   assert.match(out, /^STATE here$/m, 'the inventory pass after the download marks it as here');

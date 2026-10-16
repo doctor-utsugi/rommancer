@@ -879,3 +879,43 @@ p.bempty {
 .breview h2 {
   margin-top: 0;
 }
+
+.bactions {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 14px;
+}
+
+.blist.bpick {
+  flex: none;
+  max-height: 50vh;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 4px;
+}
+
+button.brow {
+  width: 100%;
+  text-align: left;
+  background: none;
+  border: none;
+  color: inherit;
+  font: inherit;
+}
+
+button.brow:focus,
+button.brow:focus-visible {
+  outline: none;
+  background: var(--accent);
+  color: var(--accent-fg);
+}
+
+button.brow:focus .bside {
+  color: var(--accent-fg);
+}
+
+.bactions > button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}

@@ -15,6 +15,10 @@ import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.Icon
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.ui.text.TextRange
+import androidx.compose.ui.text.input.KeyboardCapitalization
+import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.foundation.background
@@ -607,4 +611,59 @@ internal fun BrowseCheckLines(c: SyncEngine.BrowseCheck, pick: SyncEngine.Browse
     if (c.have > 0) Text(pluralStringResource(R.plurals.browse_have, c.have, c.have), color = Dim, fontSize = 15.sp)
     if (c.needGames > LONG_GAMES || c.needBytes > LONG_BYTES) Text(stringResource(R.string.browse_long), color = Warn, fontSize = 15.sp)
     return true
+}
+
+/** A new list's name, prefilled with the server's SUGGESTION; Done, START or SAVE keeps it, an empty field falls back to it */
+@Composable
+internal fun ListNameField(suggestion: String, onSave: (String) -> Unit) {
+    val keyboard = LocalSoftwareKeyboardController.current
+    val focus = remember { FocusRequester() }
+    var name by remember(suggestion) { mutableStateOf(TextFieldValue(suggestion, TextRange(suggestion.length))) }
+    val save = { keyboard?.hide(); onSave(name.text.trim().ifEmpty { suggestion }) }
+    PadKeys { key -> if (key == KeyEvent.KEYCODE_BUTTON_START) { save(); true } else false }
+    LaunchedEffect(suggestion) { withFrameNanos { }; runCatching { focus.requestFocus() }; keyboard?.show() }
+    DisposableEffect(Unit) { onDispose { MainActivity.typing = false } }
+    OutlinedTextField(
+        name, { name = it.copy(text = it.text.take(191)) }, Modifier.fillMaxWidth().focusRequester(focus).onFocusChanged { MainActivity.typing = it.isFocused },
+        singleLine = true, label = { Text(stringResource(R.string.browse_list_name)) }, placeholder = { Text(suggestion, color = Dim) },
+        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done, capitalization = KeyboardCapitalization.Sentences),
+        keyboardActions = KeyboardActions(onDone = { save() }),
+    )
+    MenuItem(stringResource(R.string.browse_list_save)) { save() }
+}
+
+/** The lists a selection can go into, one line each (`Name  12 games`), favourites first; A picks one */
+@Composable
+internal fun BrowseListPicker(lists: List<SyncEngine.BrowseList>?, failure: Pair<String, String>?, onBack: () -> Unit, onPick: (SyncEngine.BrowseList) -> Unit) {
+    val scope = rememberCoroutineScope()
+    val list = rememberLazyListState()
+    val rows = remember { RowFocus(list) }
+    val count = lists?.size ?: 0
+    PadKeys { key ->
+        when (key) {
+            KeyEvent.KEYCODE_BUTTON_L1, KeyEvent.KEYCODE_PAGE_UP -> scope.launch { rows.page(-1, count) }
+            KeyEvent.KEYCODE_BUTTON_R1, KeyEvent.KEYCODE_PAGE_DOWN -> scope.launch { rows.page(1, count) }
+            else -> return@PadKeys false
+        }
+        true
+    }
+    Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        BrowseBar(stringResource(R.string.browse_list_pick), rows, onBack) {}
+        when {
+            failure != null -> BrowseFailure(failure)
+            lists == null -> BrowseSection(stringResource(R.string.browse_contacting), busy = true)
+            lists.isEmpty() -> BrowseNote(stringResource(R.string.browse_list_none))
+            else -> BrowseSection(pluralStringResource(R.plurals.browse_section_lists, count, count), hint = stringResource(R.string.browse_keys_games))
+        }
+        if (!lists.isNullOrEmpty()) {
+            LazyColumn(Modifier.weight(1f).fillMaxWidth(), state = list) {
+                items(lists.size) { i ->
+                    val l = lists[i]
+                    BrowseRow(i, rows, l.name, right = pluralStringResource(R.plurals.browse_games_count, l.items, l.items)) { onPick(l) }
+                }
+            }
+            LaunchedEffect(Unit) { rows.at = 0; rows.focus(0) }
+            RefocusOnKeys(rows, count)
+        } else Spacer(Modifier.weight(1f))
+    }
 }

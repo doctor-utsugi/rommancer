@@ -11,6 +11,7 @@
 #   rommancer-sync.sh update        fetch a newer client from the server (the daemon does it by itself)
 #   rommancer-sync.sh roms          download the roms of the lists assigned to this device
 #   rommancer-sync.sh browse-systems | browse-games SLUG|- OFFSET QUERY [LIMIT [new|all]] | browse-check FILE | browse-add FILE | browse-get
+#                                   browse-lists | browse-list FILE (the selection saved as a list: docs/browse.md)
 #                                   browse the server's games and download the ones picked (docs/browse.md)
 #   rommancer-sync.sh conflicts | resolve ID device|server
 #   rommancer-sync.sh game-start ROM   fetch that rom's saves (called by firmware game events)
@@ -25,7 +26,7 @@
 #                                   so any computer with this script can sync it. Without a command: sync.
 set -u
 # Raised with every change of this client (any change reaches devices: they update by content, not by this)
-CLIENT_VERSION=1.87.0
+CLIENT_VERSION=1.88.0
 # A clock before this date is surely wrong (no battery-backed clock); kept apart from the version, which may run ahead
 CLOCK_MIN=20261001
 # Onion keeps curl (with TLS) and friends outside the default PATH
@@ -1906,12 +1907,16 @@ cmd_browse_games() {
   browse_http GET "$SERVER/api/v1/agent/browse/games$bq" - -
 }
 
-# check|add FILE (selection lines: game<TAB>id, system<TAB>slug, skip<TAB>id)
+# check|add|list FILE (selection lines: game<TAB>id, system<TAB>slug, skip<TAB>id; list also takes name<TAB>text or
+# list<TAB>id, and assign<TAB>1)
 cmd_browse_post() {
   need_link
   [ -f "${2:-}" ] || { echo "Usage: $0 browse-$1 FILE"; return 2; }
   HTTP_MAX="${HTTP_MAX:-30}" browse_http POST "$SERVER/api/v1/agent/browse/$1" "$2" - "Content-Type: text/plain" "X-Space: $(roms_space)"
 }
+
+# The lists a selection can go into: "list<TAB>id<TAB>items<TAB>name" each, or "nolists"
+cmd_browse_lists() { need_link; browse_http GET "$SERVER/api/v1/agent/browse/lists" - -; }
 
 # The games just added: downloaded, then an inventory pass (the "here" marks, the list's collection), with the summary
 # and, when games came, when they show (games-show)
@@ -2198,6 +2203,13 @@ t() {
       b_whole) echo "$2: all $3 games, one version each; games the server gets later are not included" ;;
       b_long) echo "This may take a long time: keep the console charged" ;;
       b_nospace) echo "Not enough space: needs $2, $3 usable" ;; b_nospaceunk) echo "Not enough space: the free space of this console could not be measured" ;;
+      b_savenew) echo "Save as a new list" ;; b_addto) echo "Add to a list..." ;; b_listname) echo "NAME OF THE NEW LIST" ;;
+      b_addtitle) echo "Add to a list" ;; b_listsinfo) echo "The selected games go into the list picked." ;;
+      b_items) if [ "$2" = 1 ]; then echo "1 game"; else echo "$2 games"; fi ;;
+      b_saved) if [ "${4:-}" = new ]; then echo "Saved to \"$2\" · $3 new"; elif [ "$3" = 1 ]; then echo "Saved to \"$2\" · 1 game"; else echo "Saved to \"$2\" · $3 games"; fi ;;
+      b_dlthem) echo "Download them to this console" ;; b_done) echo "Done" ;;
+      b_nolist) echo "That list cannot be changed from this account" ;; b_nolists) echo "Your account cannot make lists" ;;
+      b_empty) echo "Nothing to save: no games in the selection" ;;
       b_dlgo) echo "Download" ;; b_discard) if [ "$2" = 1 ]; then echo "Discard 1 selected game?"; else echo "Discard $2 selected games?"; fi ;; b_discardgo) echo "Discard" ;;
       st_games) echo "Games" ;;
       step) echo "Step $2 of $3 · $4" ;; of) echo "of" ;;
@@ -2667,15 +2679,15 @@ browse_check_vars() {
   case "$bc_pending" in ''|*[!0-9]*) bc_pending=0 ;; esac
   case "$bc_usable" in -[0-9]*) bc_usable=0 ;; esac
 }
-browse_nospace() {
-  case "$bc_usable" in ''|*[!0-9]*) m="$(t b_nospaceunk)" ;; *) m="$(t b_nospace "$(human "$bc_bytes")" "$(human "$bc_usable")")" ;; esac
-  [ "$bc_pending" -gt 0 ] && m="$m
-$(t b_pending "$(human "$bc_pending")")"
-  menu "$(t browse)" "$m" "OK"
+browse_nospace_msg() {
+  case "$bc_usable" in ''|*[!0-9]*) t b_nospaceunk ;; *) t b_nospace "$(human "$bc_bytes")" "$(human "$bc_usable")" ;; esac
+  [ "$bc_pending" -gt 0 ] && t b_pending "$(human "$bc_pending")"
+  return 0
 }
+browse_nospace() { menu "$(t browse)" "$(browse_nospace_msg)" "OK"; }
 
-# Before every download: what the server says the selection adds and the room for it. 0: nothing done, 1: games
-# downloaded, 2: browsing ends (no permission)
+# Before every download: the server's check, then Download, Save as a new list, Add to a list..., Cancel.
+# 0: nothing downloaded, 1: games downloaded, 2: browsing ends (no permission)
 browse_review() {
   [ -s "$B_SEL" ] || return 0
   cut -f1,2 "$B_SEL" > "$WORK/browse-body"
@@ -2685,22 +2697,49 @@ browse_review() {
   [ "$br_rc" = 0 ] || { browse_fail; return 0; }
   grep -qx denied "$WORK/browse-check" && { browse_denied; return 2; }
   browse_check_vars "$WORK/browse-check"
-  [ "$bc_games" -gt 0 ] || { panel "$(t browse)" "$(t b_have)" wait; return 0; }
-  [ "$bc_fits" = 1 ] || { browse_nospace; return 0; }
-  br_msg="$(t b_ask "$bc_games" "$(human "$bc_bytes")")
+  br_name="$(sed -n "s/^listname$TAB//p" "$WORK/browse-check" | head -n 1)"
+  br_dl=0
+  if [ "$bc_games" -gt 0 ] && [ "$bc_fits" = 1 ]; then
+    br_dl=1
+    br_msg="$(t b_ask "$bc_games" "$(human "$bc_bytes")")
 $(t b_usable "$(human "$bc_usable")" "$(human "$bc_free")" "$(human "$bc_kept")")"
-  [ "$bc_pending" -gt 0 ] && br_msg="$br_msg
+    [ "$bc_pending" -gt 0 ] && br_msg="$br_msg
 $(t b_pending "$(human "$bc_pending")")"
-  # Each whole system: its games not here yet, less the ones left out
-  br_whole="$(awk -F"$TAB" -v sel="$B_SEL" 'FILENAME == sel { if ($1 == "system") { n[$2] = $5; o[++k] = $2 } else if ($1 == "skip") n[$4]--; next }
-    { name[$2] = $6 } END { for (i = 1; i <= k; i++) print name[o[i]] "\t" n[o[i]] }' "$B_SEL" "$WORK/browse-systems.rows")"
-  if [ -n "$br_whole" ]; then
-    br_msg="$br_msg
+    # Each whole system: its games not here yet, less the ones left out
+    br_whole="$(awk -F"$TAB" -v sel="$B_SEL" 'FILENAME == sel { if ($1 == "system") { n[$2] = $5; o[++k] = $2 } else if ($1 == "skip") n[$4]--; next }
+      { name[$2] = $6 } END { for (i = 1; i <= k; i++) print name[o[i]] "\t" n[o[i]] }' "$B_SEL" "$WORK/browse-systems.rows")"
+    if [ -n "$br_whole" ]; then
+      br_msg="$br_msg
 $(printf '%s\n' "$br_whole" | while IFS="$TAB" read -r wn wc; do t b_whole "$wn" "$wc"; done)"
-  fi
-  [ "$bc_games" -gt 50 ] || [ "$bc_bytes" -gt 2147483648 ] && br_msg="$br_msg
+    fi
+    [ "$bc_games" -gt 50 ] || [ "$bc_bytes" -gt 2147483648 ] && br_msg="$br_msg
 $(t b_long)"
-  menu "$(t browse)" "$br_msg" "$(t b_dlgo)" "$(t cancel)"; [ $? = 0 ] || return 0
+  elif [ -z "$br_name" ]; then
+    # Older servers and accounts without lists get no list actions
+    if [ "$bc_games" -gt 0 ]; then browse_nospace; else panel "$(t browse)" "$(t b_have)" wait; fi
+    return 0
+  elif [ "$bc_games" -gt 0 ]; then br_msg="$(browse_nospace_msg)"
+  else br_msg="$(t b_have)"; fi
+  while :; do
+    # The rows are numbered as if Download were always first
+    if [ "$br_dl" = 1 ] && [ -z "$br_name" ]; then menu "$(t browse)" "$br_msg" "$(t b_dlgo)" "$(t cancel)"; br_pick=$?; [ "$br_pick" = 1 ] && br_pick=3
+    elif [ "$br_dl" = 1 ]; then menu "$(t browse)" "$br_msg" "$(t b_dlgo)" "$(t b_savenew)" "$(t b_addto)" "$(t cancel)"; br_pick=$?
+    else menu "$(t browse)" "$br_msg" "$(t b_savenew)" "$(t b_addto)" "$(t cancel)"; br_pick=$(($? + 1)); fi
+    case "$br_pick" in
+      0) break ;;
+      1)
+        br_in="$(ask "$(t b_listname)" "$br_name")" || continue
+        br_in="$(printf '%s' "$br_in" | tr '\t' ' ')"
+        [ -n "$(printf '%s' "$br_in" | tr -d ' ')" ] || br_in="$br_name"
+        browse_save "name$TAB$br_in"; return $? ;;
+      2)
+        browse_pick_list; br_rc=$?
+        [ "$br_rc" = 3 ] && continue
+        [ "$br_rc" = 0 ] || return "$br_rc"
+        browse_save "list$TAB$bl_id"; return $? ;;
+      *) return 0 ;;
+    esac
+  done
   panel "$(t browse)" "$(t checking)"
   HTTP_MAX=60 cmd_browse_post add "$WORK/browse-body" > "$WORK/browse-add" 2>/dev/null; br_rc=$?
   panel_close
@@ -2709,6 +2748,67 @@ $(t b_long)"
   if grep -qx nospace "$WORK/browse-add"; then browse_check_vars "$WORK/browse-add"; browse_nospace; return 0; fi
   grep -q "^added$TAB" "$WORK/browse-add" || { browse_fail; return 0; }
   : > "$B_SEL"
+  with_progress "$(t browse)" cmd_browse_get
+  return 1
+}
+
+# The lists the selection can go into, the one picked in bl_id. 0: picked, 2: no permission, 3: back to the review
+browse_pick_list() {
+  panel "$(t browse)" "$(t checking)"
+  HTTP_MAX=15 cmd_browse_lists > "$WORK/browse-lists" 2>/dev/null; bl_rc=$?
+  panel_close
+  [ "$bl_rc" = 0 ] || { browse_fail; return 3; }
+  grep -qx denied "$WORK/browse-lists" && { browse_denied; return 2; }
+  grep -qx nolists "$WORK/browse-lists" && { panel "$(t browse)" "$(t b_nolists)" wait; return 3; }
+  grep "^list$TAB" "$WORK/browse-lists" | head -n 95 > "$WORK/browse-lists.rows"
+  set --
+  awk -F"$TAB" -v one="$(t b_items 1)" -v many="$(t b_items N)" '
+    { n = $4; if (length(n) > 24) n = substr(n, 1, 22) ".."; c = ($3 == 1) ? one : many; sub(/N/, $3, c); print n "  " c }' "$WORK/browse-lists.rows" > "$WORK/browse-labels"
+  while IFS= read -r l; do set -- "$@" "$l"; done < "$WORK/browse-labels"
+  bl_n="$(grep -c . "$WORK/browse-lists.rows")"
+  menu "$(t b_addtitle)" "$(t b_listsinfo)" "$@" "$(t back)"; bl_pick=$?
+  [ "$bl_pick" -lt "$bl_n" ] || return 3
+  bl_id="$(sed -n "$((bl_pick + 1))p" "$WORK/browse-lists.rows" | cut -f2)"
+  return 0
+}
+
+# The selection saved into a list ($1: "name<TAB>text" or "list<TAB>id"); its games download at once when the console
+# has the list, else the result offers to. The same codes as browse_review
+browse_save() {
+  { cat "$WORK/browse-body"; printf '%s\n' "$1"; } > "$WORK/browse-list-body"
+  panel "$(t browse)" "$(t checking)"
+  HTTP_MAX=60 cmd_browse_post list "$WORK/browse-list-body" > "$WORK/browse-list" 2>/dev/null; bv_rc=$?
+  panel_close
+  [ "$bv_rc" = 0 ] || { browse_fail; return 0; }
+  grep -qx denied "$WORK/browse-list" && { browse_denied; return 2; }
+  grep -qx nolists "$WORK/browse-list" && { panel "$(t browse)" "$(t b_nolists)" wait; return 0; }
+  grep -qx nolist "$WORK/browse-list" && { panel "$(t browse)" "$(t b_nolist)" wait; return 0; }
+  grep -qx empty "$WORK/browse-list" && { panel "$(t browse)" "$(t b_empty)" wait; return 0; }
+  if grep -qx nospace "$WORK/browse-list"; then browse_check_vars "$WORK/browse-list"; browse_nospace; return 0; fi
+  bv_line="$(sed -n "s/^list$TAB//p" "$WORK/browse-list" | head -n 1)"
+  [ -n "$bv_line" ] || { browse_fail; return 0; }
+  IFS="$TAB" read -r bv_id bv_added bv_games bv_on bv_name <<EOR
+$bv_line
+EOR
+  : > "$B_SEL"
+  browse_check_vars "$WORK/browse-list"
+  if [ "${1%%"$TAB"*}" = list ] && [ "$bv_added" != "$bv_games" ]; then bv_msg="$(t b_saved "$bv_name" "$bv_added" new)"
+  else bv_msg="$(t b_saved "$bv_name" "$bv_games")"; fi
+  if [ "$bc_games" -gt 0 ] && [ "$bv_on" = 1 ]; then
+    panel "$(t browse)" "$bv_msg" wait
+    with_progress "$(t browse)" cmd_browse_get
+    return 1
+  fi
+  if [ "$bc_games" -le 0 ]; then menu "$(t browse)" "$bv_msg" "$(t b_done)"; return 0; fi
+  menu "$(t browse)" "$bv_msg" "$(t b_dlthem)" "$(t b_done)"; [ $? = 0 ] || return 0
+  printf 'list%s%s\nassign%s1\n' "$TAB" "$bv_id" "$TAB" | cat "$WORK/browse-body" - > "$WORK/browse-list-body"
+  panel "$(t browse)" "$(t checking)"
+  HTTP_MAX=60 cmd_browse_post list "$WORK/browse-list-body" > "$WORK/browse-list" 2>/dev/null; bv_rc=$?
+  panel_close
+  [ "$bv_rc" = 0 ] || { browse_fail; return 0; }
+  grep -qx denied "$WORK/browse-list" && { browse_denied; return 2; }
+  if grep -qx nospace "$WORK/browse-list"; then browse_check_vars "$WORK/browse-list"; browse_nospace; return 0; fi
+  grep -q "^list$TAB" "$WORK/browse-list" || { browse_fail; return 0; }
   with_progress "$(t browse)" cmd_browse_get
   return 1
 }
@@ -3003,6 +3103,8 @@ case "${1:-}" in
   browse-games) cmd_browse_games "${2:-}" "${3:-0}" "${4:-}" "${5:-50}" "${6:-new}" ;;
   browse-check) cmd_browse_post check "${2:-}" ;;
   browse-add) cmd_browse_post add "${2:-}" ;;
+  browse-lists) cmd_browse_lists ;;
+  browse-list) cmd_browse_post list "${2:-}" ;;
   browse-get) cmd_browse_get ;;
   # What the server runs over SSH and the daemon's full pass: everything but the lists' roms, which only download
   # when asked for on the console's screen

@@ -237,6 +237,23 @@ TEXTS = {
         "b_discard": "Discard {n} selected games?",
         "b_discard1": "Discard 1 selected game?",
         "b_discard_go": "Discard",
+        "b_allhere_sel": "All these games are on this console already",
+        "b_list_new": "Save as a new list",
+        "b_list_add": "Add to a list…",
+        "b_list_name": "List name",
+        "b_lists_where": "Add to a list",
+        "b_sec_lists": "Lists · {n}",
+        "b_lists_keys": "A pick  B back",
+        "b_lists_none": "No lists yet: save this selection as a new one",
+        "b_game_n": "1 game",
+        "b_saved": "Saved to “{name}” · {n} games",
+        "b_saved1": "Saved to “{name}” · 1 game",
+        "b_saved_new": "{n} new",
+        "b_list_dl": "Download them to this console",
+        "b_list_done": "Done",
+        "b_empty": "Nothing to save: the selection has no games",
+        "b_nolist": "That list cannot be changed from this account",
+        "b_nolists": "Your account cannot make lists",
     },
 }
 
@@ -971,9 +988,9 @@ class App:
         pygame.draw.rect(s.surf, ACCENT if focused or on else mix(BAR, DIM, 0.5), rect, 1, border_radius=radius)
         return BG if focused else ACCENT if on else FG
 
-    def browse_bar(self, lay, where, focus, search):
-        """The bar, one line: where this is, then the magnifier and the Hide owned chip, or the open search field in
-        their place. FOCUS: the bar item focused (0 magnifier or field, 1 chip), None"""
+    def browse_bar(self, lay, where, focus, search, tools=True):
+        """The bar, one line: where this is, then the magnifier and the Hide owned chip (unless not TOOLS), or the open
+        search field in their place. FOCUS: the bar item focused (0 magnifier or field, 1 chip), None"""
         s = self.screen
         bar = lay["bar"]
         pygame.draw.rect(s.surf, BAR, bar, border_radius=bar.h // 3)
@@ -981,6 +998,9 @@ class App:
         ih = bar.h - 2 * inset
         tx = bar.x + int(s.w * 0.02)
         ty = bar.y + (bar.h - s.font.get_height()) // 2
+        if not tools:
+            s.text(s.clip(where, s.font, bar.right - tx - inset * 2), (tx, ty), s.font, FG)
+            return
         if search is None:
             pad = int(ih * 0.45)
             tick = int(s.small.get_height() * 0.6) if not self.browse_all else 0
@@ -1060,7 +1080,7 @@ class App:
         s.text(label, (key.right + pad, ty), s.small, FG)
         s.text(s.clip(foot, s.small, kx - 2 * lay["x"]), (lay["x"], ty), s.small, ACCENT)
 
-    def browse_list(self, where, rows, view, section, hint, keys, foot=None, near_end=None, tail=None, search=None, poll=None, faded=None):
+    def browse_list(self, where, rows, view, section, hint, keys, foot=None, near_end=None, tail=None, search=None, poll=None, faded=None, tools=True):
         """The browse screens: the bar, the section line, one-line rows and a fixed footer, all with the pad.
         ROWS: a function giving (label, right text, colour) per row, read every frame (pages arrive meanwhile); a right
         text may be a tuple of choices, longest first (the first that leaves the label whole shows). VIEW: a dict
@@ -1070,6 +1090,7 @@ class App:
         the last row; TAIL(): a dim line after the rows, never selected. SEARCH: None (closed) or a dict with "text",
         "hint" (the field's placeholder), "kb" (the keyboard is open), "busy" (the spinner) and "edit" (called with each
         new text), or a function giving it. POLL(): called every frame; FADED(): whether the rows are a stale answer.
+        TOOLS: False leaves the magnifier and the chip out of the bar (a plain picker: no search, the bar not focusable).
         Returns (action, row index or None): a, x, start; "search" (Y, or A on the magnifier or field), "owned" (A on
         the chip), "submit" (START on the keyboard: the focus goes to the results), "close" (SELECT on the keyboard,
         or B with the field empty), b, quit"""
@@ -1090,7 +1111,7 @@ class App:
             if focus is not None:
                 focus = min(focus, bar_n - 1)
             s.surf.fill(BG)
-            self.browse_bar(lay, where, None if typing else focus, search)
+            self.browse_bar(lay, where, None if typing else focus, search, tools)
             text, busy = section()
             x, width = lay["x"], lay["w"]
             sx = x + int(s.w * 0.012)
@@ -1199,7 +1220,7 @@ class App:
             elif a == "up":
                 if sel > 0:
                     sel -= 1
-                else:
+                elif tools:
                     view["bar"] = 0
             elif a == "down":
                 sel = min(sel + 1, max(n - 1, 0))
@@ -1212,7 +1233,7 @@ class App:
                 return a, (sel if n else None)
             # Kept as asked while rows are still arriving (the first page), so the selection lands where it was meant
             view["sel"] = sel
-            if a == "y":
+            if a == "y" and tools:
                 return "search", None
             if a == "start":
                 return a, (sel if n else None)
@@ -1989,21 +2010,32 @@ class App:
                 if state == "new":
                     picks.toggle(gid, size, sys_slug)
 
-    def browse_nospace(self, c):
+    def nospace_info(self, c):
+        """The no-space lines of a check answer"""
         line = T["b_nospace"].format(need=human(c["bytes"]), usable=human(c["usable"])) if c["usable"] is not None else T["b_nospace_unknown"]
-        info = [(None, line, WARN)] + ([T["b_pending"].format(size=human(c["pending"]))] if c["pending"] else [])
-        self.menu(T["browse"], ["OK"], info=info)
+        return [(None, line, WARN)] + ([T["b_pending"].format(size=human(c["pending"]))] if c["pending"] else [])
 
-    def browse_review(self, picks, systems):
-        """Before every download: what the server says the selection adds and the room for it, then the download on
-        screen. "done" once games downloaded, "leave" when the account may not download, None otherwise"""
-        if not picks:
-            return None
+    def browse_nospace(self, c):
+        self.menu(T["browse"], ["OK"], info=self.nospace_info(c))
+
+    def browse_body(self, text):
+        """TEXT (selection lines and more) written where the shell commands read it; None when it could not be"""
         body = os.path.join(work_dir(), "browse-body")
         try:
             with open(body, "w", encoding="utf-8") as f:
-                f.write(picks.body())
+                f.write(text)
         except OSError:
+            return None
+        return body
+
+    def browse_review(self, picks, systems):
+        """Before every download: the server's check, then the download or, when it suggests a list name, saving as a list.
+        "done" once games downloaded, "leave" when the account may not download, None otherwise"""
+        if not picks:
+            return None
+        selection = picks.body()
+        body = self.browse_body(selection)
+        if body is None:
             return None
         out = self.in_thread(lambda: self.client("browse-check", body, timeout=35), T["checking"])
         if out is None:
@@ -2013,24 +2045,53 @@ class App:
             self.browse_denied()
             return "leave"
         c = check_lines(out)
+        listname = next((p[1] for p in out if p[0] == "listname" and len(p) > 1 and p[1]), None)
+        can_download = c["games"] and c["fits"]
+        if not listname:
+            # Older servers and accounts without lists get no list actions
+            if not c["games"]:
+                self.message(T["b_have"])
+                return None
+            if not c["fits"]:
+                self.browse_nospace(c)
+                return None
         if not c["games"]:
-            self.message(T["b_have"])
-            return None
-        if not c["fits"]:
-            self.browse_nospace(c)
-            return None
-        info = [(None, T["b_ask1" if c["games"] == 1 else "b_ask"].format(n=c["games"], size=human(c["bytes"])), FG),
-                T["b_usable"].format(usable=human(c["usable"] or 0), free=human(c["free"]), kept=human(c["kept"]))]
-        if c["pending"]:
-            info.append(T["b_pending"].format(size=human(c["pending"])))
-        for slug, skip in picks.systems.items():
-            s = systems.get(slug)
-            if s:
-                info.append(T["b_whole"].format(name=s["name"], n=max(s["games"] - s["here"] - len(skip), 0)))
-        if c["games"] > 50 or c["bytes"] > 2 * 1024 ** 3:
-            info.append((None, T["b_long"], WARN))
-        if self.menu(T["browse"], [T["b_dl_go"], T["cancel"]], info=info, wide=True) != 0:
-            return None
+            info = [T["b_allhere_sel"]]
+        elif not c["fits"]:
+            info = self.nospace_info(c)
+        else:
+            info = [(None, T["b_ask1" if c["games"] == 1 else "b_ask"].format(n=c["games"], size=human(c["bytes"])), FG),
+                    T["b_usable"].format(usable=human(c["usable"] or 0), free=human(c["free"]), kept=human(c["kept"]))]
+            if c["pending"]:
+                info.append(T["b_pending"].format(size=human(c["pending"])))
+            for slug, skip in picks.systems.items():
+                s = systems.get(slug)
+                if s:
+                    info.append(T["b_whole"].format(name=s["name"], n=max(s["games"] - s["here"] - len(skip), 0)))
+            if c["games"] > 50 or c["bytes"] > 2 * 1024 ** 3:
+                info.append((None, T["b_long"], WARN))
+        # Only the actions that apply, so the first one is focused
+        actions = (["download"] if can_download else []) + (["new", "add"] if listname else []) + ["cancel"]
+        labels = {"download": T["b_dl_go"], "new": T["b_list_new"], "add": T["b_list_add"], "cancel": T["cancel"]}
+        while True:
+            pick = self.menu(T["browse"], [labels[a] for a in actions], info=info, wide=True)
+            act = actions[pick] if pick is not None else "cancel"
+            if act == "cancel":
+                return None
+            if act == "download":
+                break
+            if act == "new":
+                name = self.keyboard(T["b_list_name"], listname)
+                if name is None:
+                    continue
+                r = self.browse_save(picks, selection, c, f"name\t{name.replace(chr(9), ' ').strip() or listname}\n")
+            else:
+                lid = self.browse_pick_list()
+                if lid is None:
+                    continue
+                r = self.browse_save(picks, selection, c, f"list\t{lid}\n", existing=True)
+            if r != "again":
+                return r
         out = self.in_thread(lambda: self.client("browse-add", body, timeout=65), T["checking"])
         if out is None:
             self.browse_fail()
@@ -2047,6 +2108,84 @@ class App:
         picks.clear()
         self.run_with_progress("browse-get", T["browse"])
         return "done"
+
+    def browse_pick_list(self):
+        """The lists the selection can go into, one-line rows like browse's (favourites first, as served); the list's
+        id A picks, None on B"""
+        out = self.in_thread(lambda: self.client("browse-lists", timeout=20), T["checking"])
+        if out is None:
+            self.browse_fail()
+            return None
+        if ["nolists"] in out or ["denied"] in out:
+            self.message(T["b_nolists"])
+            return None
+        lists = [(p[1], int(p[2]) if p[2].isdigit() else 0, p[3] or p[1]) for p in out if p[0] == "list" and len(p) >= 4]
+        view = {"sel": 0}
+        while True:
+            act, i = self.browse_list(T["b_lists_where"], lambda: [(name, T["b_game_n"] if n == 1 else T["b_games_n"].format(n=n), FG) for _, n, name in lists],
+                                      view, lambda: (T["b_sec_lists"].format(n=len(lists)), False), "", T["b_lists_keys"],
+                                      tail=lambda: "" if lists else T["b_lists_none"], tools=False)
+            if act in ("a", "start") and i is not None and lists:
+                return lists[i][0]
+            if act in ("b", "quit"):
+                return None
+
+    def browse_save(self, picks, selection, c, target, existing=False):
+        """The selection saved into a list (TARGET: its name or list line), then the result and, when games are to
+        download, the download. "again" when nothing was saved (back to the review), else as browse_review"""
+        body = self.browse_body(selection + target)
+        if body is None:
+            return "again"
+        out = self.in_thread(lambda: self.client("browse-list", body, timeout=65), T["checking"])
+        if out is None:
+            self.browse_fail()
+            return "again"
+        if ["denied"] in out:
+            self.browse_denied()
+            return "leave"
+        if ["nospace"] in out:
+            self.browse_nospace(check_lines(out))
+            return "again"
+        for key in ("empty", "nolist", "nolists"):
+            if [key] in out:
+                self.message(T[f"b_{key}"])
+                return "again"
+        row = next((p for p in out if p[0] == "list" and len(p) >= 6), None)
+        if row is None:
+            self.browse_fail()
+            return "again"
+        lid, added, games, ondevice, name = row[1], int(row[2] or 0), int(row[3] or 0), row[4] == "1", row[5]
+        picks.clear()
+        saved = T["b_saved1" if games == 1 else "b_saved"].format(name=name, n=games)
+        if existing and added < games:
+            saved += " · " + T["b_saved_new"].format(n=added)
+        if not c["games"]:
+            self.menu(T["browse"], [T["b_list_done"]], info=[(None, saved, FG)], wide=True)
+            return None
+        if ondevice:
+            self.message(saved, wait=False)
+            self.run_with_progress("browse-get", T["browse"])
+            return "done"
+        while True:
+            if self.menu(T["browse"], [T["b_list_dl"], T["b_list_done"]], info=[(None, saved, FG)], wide=True) != 0:
+                return None
+            # Adds nothing new to the list; the server runs the space check
+            body = self.browse_body(f"{selection}list\t{lid}\nassign\t1\n")
+            out = None if body is None else self.in_thread(lambda: self.client("browse-list", body, timeout=65), T["checking"])
+            if out is None:
+                self.browse_fail()
+                continue
+            if ["denied"] in out:
+                self.browse_denied()
+                return "leave"
+            if ["nospace"] in out:
+                self.browse_nospace(check_lines(out))
+                continue
+            if not any(p[0] == "list" for p in out):
+                self.browse_fail()
+                continue
+            self.run_with_progress("browse-get", T["browse"])
+            return "done"
 
     # ---------- settings ----------
 

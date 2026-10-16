@@ -181,7 +181,7 @@ const itemSchema = z
   })
   .refine((i) => i.gameId || i.romId || i.hackId || i.workId || i.unknownId, 'gameId, romId, hackId, workId or unknownId required');
 
-async function addItems(listId: number, given: z.infer<typeof itemSchema>[], user?: AuthUser) {
+export async function addItems(listId: number, given: z.infer<typeof itemSchema>[], user?: AuthUser) {
   const items = await toRomItems(given);
   const max = await prisma.listItem.aggregate({ where: { listId }, _max: { position: true } });
   let pos = (max._max.position ?? -1) + 1;

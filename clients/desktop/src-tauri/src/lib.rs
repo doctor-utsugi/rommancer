@@ -880,6 +880,30 @@ async fn browse_add(app: AppHandle, state: State<'_, AppState>, key: String, pic
     Ok(c)
 }
 
+/// The lists a device's pick can go into; "nolists" when its account may not make lists
+#[tauri::command]
+async fn browse_lists(state: State<'_, AppState>, key: String) -> Result<Vec<browse::ListRow>, String> {
+    let (api, _, _) = browse_target(&state, &key)?;
+    tauri::async_runtime::spawn_blocking(move || browse::lists(&api).map_err(|e| e.to_string())).await.map_err(|e| e.to_string())?
+}
+
+/// Saves a pick as a new list or into one (ASSIGN: also gives it to the device); when the device has the list,
+/// the new games download now (after any running sync)
+#[tauri::command]
+async fn browse_list(app: AppHandle, state: State<'_, AppState>, key: String, pick: browse::Pick, to: browse::ListTarget, assign: bool) -> Result<browse::Check, String> {
+    let (api, roms, root) = browse_target(&state, &key)?;
+    let c = tauri::async_runtime::spawn_blocking(move || browse::save_list(&api, &pick, &to, assign, browse::space(&api, roms.as_deref(), &root).as_deref()).map_err(|e| e.to_string()))
+        .await
+        .map_err(|e| e.to_string())??;
+    if let Some(s) = c.saved.as_ref() {
+        push_log(&app, &key, format!("browse: {} games saved to the list \"{}\"", s.games, s.name));
+        if s.ondevice && c.need_games > 0 && !c.nospace {
+            start_sync(&app, &state, key, Mode::Games, None)?;
+        }
+    }
+    Ok(c)
+}
+
 #[tauri::command]
 fn cancel_sync(state: State<AppState>, root: String) {
     if let Some(c) = state.running.lock().unwrap().get(&root) {
@@ -1401,7 +1425,9 @@ pub fn run() {
             browse_systems,
             browse_games,
             browse_check,
-            browse_add
+            browse_add,
+            browse_lists,
+            browse_list
         ])
         .run(tauri::generate_context!())
         .expect("error while running Rommancer");

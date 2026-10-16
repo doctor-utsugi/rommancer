@@ -141,6 +141,27 @@
     </plurals>
     <string name="browse_discard_go">Yes, discard</string>
     <string name="browse_discard_keep">No, keep browsing</string>
+    <string name="browse_save_new">Save as a new list</string>
+    <string name="browse_save_to">Add to a list…</string>
+    <string name="browse_list_name">List name</string>
+    <string name="browse_list_save">Save the list</string>
+    <string name="browse_list_pick">Add to a list</string>
+    <string name="browse_list_none">No lists to add to yet: save the selection as a new list instead</string>
+    <plurals name="browse_section_lists">
+        <item quantity="one">Lists · 1</item>
+        <item quantity="other">Lists · %1$d</item>
+    </plurals>
+    <string name="browse_saving">Saving the list</string>
+    <plurals name="browse_saved">
+        <item quantity="one">Saved to “%1$s” · %2$d game</item>
+        <item quantity="other">Saved to “%1$s” · %2$d games</item>
+    </plurals>
+    <string name="browse_saved_new">Saved to “%1$s” · %2$d new</string>
+    <string name="browse_saved_download">Download them to this console</string>
+    <string name="browse_saved_done">Done</string>
+    <string name="browse_saved_nolist">That list cannot be changed from this console</string>
+    <string name="browse_saved_nolists">Your account cannot make lists</string>
+    <string name="browse_saved_empty">None of the picked games can go to this console</string>
     <string name="restart_esde">Restart ES-DE</string>
 
     <!-- Settings -->

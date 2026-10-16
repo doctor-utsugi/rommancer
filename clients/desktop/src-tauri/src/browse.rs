@@ -60,9 +60,27 @@ impl Pick {
     }
 }
 
+/// A list a selection was saved to: ADDED new in it, GAMES of the selection, ONDEVICE the device has the list
+#[derive(Serialize, Default, Debug, PartialEq)]
+pub struct Saved {
+    pub id: String,
+    pub added: u64,
+    pub games: u64,
+    pub ondevice: bool,
+    pub name: String,
+}
+
+/// A list a selection can go into; the owner's favourites come first
+#[derive(Serialize)]
+pub struct ListRow {
+    pub id: String,
+    pub items: u64,
+    pub name: String,
+}
+
 /// The server's check of a pick: NEED what it adds, HAVE picked games already here or queued, PENDING what the lists
 /// still download first, USABLE (none: space unknown) = FREE - KEPT; NOSPACE when an add was refused, ADDED the games
-/// an add put in the device's picks
+/// an add put in the device's picks; LISTNAME a new list's suggested name (none: no lists), SAVED/REFUSED a save's outcome
 #[derive(Serialize, Default)]
 pub struct Check {
     pub need_bytes: u64,
@@ -75,6 +93,9 @@ pub struct Check {
     pub fits: bool,
     pub nospace: bool,
     pub added: Option<u64>,
+    pub listname: Option<String>,
+    pub saved: Option<Saved>,
+    pub refused: Option<String>,
 }
 
 /// The answer's rows; outcomes come as text lines, "denied" (no right to download games) among them
@@ -151,6 +172,15 @@ fn check_of(rows: &[Vec<String>]) -> Check {
         fits: row("fits").and_then(|r| r.get(1)).is_some_and(|v| v == "1") && usable.is_some(),
         nospace: row("nospace").is_some(),
         added: row("added").and_then(|r| r.get(1)).and_then(|v| v.parse().ok()),
+        listname: row("listname").and_then(|r| r.get(1)).map(|v| v.trim().to_string()).filter(|v| !v.is_empty()),
+        saved: rows.iter().find(|r| r[0] == "list" && r.len() >= 6).map(|r| Saved {
+            id: r[1].clone(),
+            added: r[2].parse().unwrap_or(0),
+            games: r[3].parse().unwrap_or(0),
+            ondevice: r[4] == "1",
+            name: r[5..].join("\t"),
+        }),
+        refused: ["nolist", "nolists", "empty"].into_iter().find(|k| row(k).is_some()).map(String::from),
     }
 }
 
@@ -168,6 +198,44 @@ pub fn add(api: &DeviceApi, pick: &Pick, space: Option<&str>) -> Result<Check> {
     Ok(check_of(&rows(&api.post_text("/agent/browse/add", pick.body().into_bytes(), &[("X-Space", space.to_string())])?)?))
 }
 
+/// The lists a pick can go into; "nolists" when the account may not make lists
+pub fn lists(api: &DeviceApi) -> Result<Vec<ListRow>> {
+    let rows = rows(&api.get_text("/agent/browse/lists")?)?;
+    if rows.iter().any(|r| r[0].trim() == "nolists") {
+        bail!("nolists");
+    }
+    Ok(rows
+        .into_iter()
+        .filter(|r| r.len() >= 4 && r[0] == "list")
+        .map(|r| ListRow { id: r[1].clone(), items: r[2].parse().unwrap_or(0), name: r[3..].join("\t") })
+        .collect())
+}
+
+/// Where a pick is saved: a new list named NAME (empty: the server's suggestion) or the list ID
+#[derive(Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ListTarget {
+    Name(String),
+    Id(String),
+}
+
+/// Saves the pick as a list or into one; ASSIGN also gives it to the device, refused when space is unknown
+pub fn save_list(api: &DeviceApi, pick: &Pick, to: &ListTarget, assign: bool, space: Option<&str>) -> Result<Check> {
+    if assign && space.is_none() {
+        return Ok(Check { usable: None, fits: false, nospace: true, ..check(api, pick, None)? });
+    }
+    let mut body = pick.body();
+    match to {
+        ListTarget::Name(n) => body.push_str(&format!("name\t{}\n", n.replace(['\t', '\n', '\r'], " ").trim())),
+        ListTarget::Id(id) => body.push_str(&format!("list\t{id}\n")),
+    }
+    if assign {
+        body.push_str("assign\t1\n");
+    }
+    let headers: Vec<(&str, String)> = space.map(|s| ("X-Space", s.to_string())).into_iter().collect();
+    Ok(check_of(&rows(&api.post_text("/agent/browse/list", body.into_bytes(), &headers)?)?))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -180,6 +248,11 @@ mod tests {
         let c = check_of(&pairs("need\t1\t1\nspace\t-\nfits\t0\nnospace\n"));
         assert_eq!((c.usable, c.fits, c.nospace, c.added), (None, false, true, None));
         assert!(rows("denied\n").is_err());
+        let c = check_of(&pairs("need\t1\t1\nfits\t1\nlistname\tSuper Nintendo · 16 Oct\n"));
+        assert_eq!((c.listname.as_deref(), c.saved, c.refused), (Some("Super Nintendo · 16 Oct"), None, None));
+        let c = check_of(&pairs("need\t0\t0\nfits\t1\nlist\t12\t3\t5\t1\tMy games · 16 Oct\n"));
+        assert_eq!(c.saved, Some(Saved { id: "12".into(), added: 3, games: 5, ondevice: true, name: "My games · 16 Oct".into() }));
+        assert_eq!(check_of(&pairs("need\t0\t0\nnolist\n")).refused.as_deref(), Some("nolist"));
     }
 
     #[test]
@@ -188,7 +261,7 @@ mod tests {
         assert_eq!(p.body(), "game\t7\nsystem\tgb\nskip\t9\n");
     }
 
-    /// Browse, add and download against a real server; backend/test/browse.test.ts runs it with ROMMANCER_DESKTOP=1
+    /// Browse, save as a list, add and download against a real server; backend/test/browse.test.ts runs it with ROMMANCER_DESKTOP=1
     #[test]
     #[ignore]
     fn browse_against_server() {
@@ -208,6 +281,13 @@ mod tests {
         assert!(space.is_some(), "space measured");
         let c = check(&api, &pick, space.as_deref()).unwrap();
         println!("CHECK need={} games={} fits={}", c.need_bytes, c.need_games, c.fits);
+        println!("LISTNAME {}", c.listname.as_deref().unwrap_or("-"));
+        let saved = save_list(&api, &pick, &ListTarget::Name(String::new()), false, space.as_deref()).unwrap().saved.expect("saved");
+        println!("SAVED {} {} {} {}", saved.added, saved.games, saved.ondevice, saved.name);
+        let listed = lists(&api).unwrap();
+        println!("LISTED {}", listed.iter().find(|l| l.id == saved.id).map(|l| l.items.to_string()).unwrap_or("-".into()));
+        let again = save_list(&api, &pick, &ListTarget::Id(saved.id.clone()), false, space.as_deref()).unwrap().saved.expect("saved again");
+        println!("AGAIN {} {} {}", again.added, again.games, again.ondevice);
         let a = add(&api, &pick, space.as_deref()).unwrap();
         println!("ADDED {}", a.added.unwrap_or(0));
         // The download the app starts after an add: the list games, then the inventory pass

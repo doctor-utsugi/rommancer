@@ -72,6 +72,7 @@ import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.ComposeView
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
@@ -182,6 +183,11 @@ private sealed interface Screen {
     data class BrowseNoSpace(val check: SyncEngine.BrowseCheck, val from: Screen) : Screen
     /** Leaving browse with games ticked */
     data object BrowseDiscard : Screen
+    /** The selection saved as a new list: its name, the server's SUGGESTION already typed; REVIEW is where Back leads */
+    data class BrowseListName(val suggestion: String, val review: BrowseReview) : Screen
+    data class BrowseListPick(val review: BrowseReview) : Screen
+    /** A selection saved as a list (TEXT says where), with the download it may still offer; PICK the selection saved */
+    data class BrowseSaved(val saved: SyncEngine.BrowseSaved, val pick: SyncEngine.BrowsePick, val text: String) : Screen
 }
 
 @Composable
@@ -656,10 +662,52 @@ private fun Linked(store: Store, ownScroll: Boolean, setOwnScroll: (Boolean) -> 
             }
         }
     }
+    var browseLists by remember { mutableStateOf<List<SyncEngine.BrowseList>?>(null) }
+    var browseListsFailure by remember { mutableStateOf<Pair<String, String>?>(null) }
+    val titleBrowseSave = stringResource(R.string.browse_saving)
+    fun browseListPick(review: Screen.BrowseReview) {
+        browseLists = null
+        browseListsFailure = null
+        screen = Screen.BrowseListPick(review)
+        scope.launch {
+            val r = withContext(Dispatchers.IO) { runCatching { SyncEngine(context, store).browseLists() } }
+            browseLists = r.getOrNull()
+            browseListsFailure = r.exceptionOrNull()?.let { browseFailed(it) }
+            if (browseDenied) screen = Screen.Browse
+        }
+    }
+    fun browseSave(from: Screen, name: String? = null, list: Int? = null, assign: Boolean = false, pick: SyncEngine.BrowsePick = browsePick) {
+        progress = SyncEngine.Progress("connecting")
+        screen = Screen.Working(titleBrowseSave)
+        scope.launch {
+            val r = withContext(Dispatchers.IO) { runCatching { SyncEngine(context, store).browseList(pick, name, list, assign) } }
+            val saved = r.getOrNull()
+            back = from
+            when {
+                saved == null -> {
+                    val failed = browseFailed(r.exceptionOrNull()!!)
+                    screen = failed?.let { (why, details) -> Screen.Message(why, details) } ?: Screen.Browse
+                }
+                saved.refused == "nospace" -> screen = Screen.BrowseNoSpace(saved.check, if (from is Screen.BrowseReview) from.from else from)
+                saved.refused != null -> screen = Screen.Message(context.getString(when (saved.refused) {
+                    "nolists" -> R.string.browse_saved_nolists
+                    "empty" -> R.string.browse_saved_empty
+                    else -> R.string.browse_saved_nolist
+                }))
+                else -> {
+                    browsePick = SyncEngine.BrowsePick()
+                    val text = if (saved.added < saved.games) context.getString(R.string.browse_saved_new, saved.name, saved.added)
+                    else context.resources.getQuantityString(R.plurals.browse_saved, saved.games, saved.name, saved.games)
+                    if (saved.onDevice && saved.check.needGames > 0) run(text) { it.browseGet() }
+                    else screen = Screen.BrowseSaved(saved, pick, text)
+                }
+            }
+        }
+    }
     fun leaveBrowse() {
         screen = if (browsePick.isEmpty) Screen.Menu else Screen.BrowseDiscard
     }
-    val browsing = screen == Screen.Browse || screen is Screen.BrowseGames || screen == Screen.Journeys
+    val browsing = screen == Screen.Browse || screen is Screen.BrowseGames || screen is Screen.BrowseListPick || screen == Screen.Journeys
     SideEffect { if (browsing != ownScroll) setOwnScroll(browsing) }
 
     fun unlink() {
@@ -689,6 +737,9 @@ private fun Linked(store: Store, ownScroll: Boolean, setOwnScroll: (Boolean) -> 
             is Screen.BrowseGames, Screen.BrowseDiscard -> screen = Screen.Browse
             is Screen.BrowseReview -> screen = s.from
             is Screen.BrowseNoSpace -> screen = s.from
+            is Screen.BrowseListName -> screen = s.review
+            is Screen.BrowseListPick -> screen = s.review
+            is Screen.BrowseSaved -> screen = Screen.Browse
             is Screen.Message, is Screen.Result -> screen = back
             is Screen.Prune -> when (s.kind) {
                 "intro", "ask" -> run(titlePrune) { it.pruneSet(false) }
@@ -1013,15 +1064,38 @@ private fun Linked(store: Store, ownScroll: Boolean, setOwnScroll: (Boolean) -> 
                 else -> BrowseCheckLines(c, browsePick, browseSystems.orEmpty())
             }
             Spacer(Modifier.height(4.dp))
+            // Offered whether the selection fits or not
+            val listName = c?.listName
             if (ok) MenuItem(stringResource(R.string.browse_download), firstItem) { browseGet(s.from) }
-            MenuItem(stringResource(R.string.press_back), if (ok) null else firstItem) { screen = s.from }
-            LaunchedEffect(ok) { runCatching { firstItem.requestFocus() } }
+            if (listName != null) {
+                MenuItem(stringResource(R.string.browse_save_new), if (ok) null else firstItem) { screen = Screen.BrowseListName(listName, s) }
+                MenuItem(stringResource(R.string.browse_save_to)) { browseListPick(s) }
+            }
+            MenuItem(stringResource(R.string.cancel), if (ok || listName != null) null else firstItem) { screen = s.from }
+            LaunchedEffect(ok, listName) { runCatching { firstItem.requestFocus() } }
         }
         is Screen.BrowseNoSpace -> {
             Text(stringResource(R.string.browse_review_title), fontSize = 22.sp)
             BrowseCheckLines(s.check, browsePick, browseSystems.orEmpty())
             Spacer(Modifier.height(4.dp))
             MenuItem(stringResource(R.string.press_back), firstItem) { screen = s.from }
+            LaunchedEffect(s) { runCatching { firstItem.requestFocus() } }
+        }
+        is Screen.BrowseListName -> {
+            Text(stringResource(R.string.browse_save_new), fontSize = 22.sp)
+            ListNameField(s.suggestion) { name -> browseSave(s.review, name = name) }
+            MenuItem(stringResource(R.string.cancel)) { screen = s.review }
+        }
+        is Screen.BrowseListPick -> if (ownScroll) BrowseListPicker(browseLists, browseListsFailure, { screen = s.review }) { l -> browseSave(s.review, list = l.id) }
+        is Screen.BrowseSaved -> {
+            val c = s.saved.check
+            Text(s.text, fontSize = 22.sp)
+            val download = c.needGames > 0
+            if (download) MenuItem(
+                stringResource(R.string.browse_saved_download), firstItem,
+                sub = "${pluralStringResource(R.plurals.browse_games_count, c.needGames, c.needGames)} · ${size(context, c.needBytes)}",
+            ) { browseSave(Screen.Browse, list = s.saved.id, assign = true, pick = s.pick) }
+            MenuItem(stringResource(R.string.browse_saved_done), if (download) null else firstItem) { screen = Screen.Browse }
             LaunchedEffect(s) { runCatching { firstItem.requestFocus() } }
         }
         Screen.BrowseDiscard -> {
