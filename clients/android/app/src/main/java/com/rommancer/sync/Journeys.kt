@@ -309,6 +309,13 @@ class Journeys(private val context: Context, private val store: Store) {
     }
     private fun refresh(d: File, s: JSONObject, closed: Boolean) {
         val list = call("list/${s.getString("identity")}")
+        // A slot the server no longer lists was archived elsewhere: kept only while something here still needs it
+        val listed = list.lines().map { it.split('\t') }.filter { it.size >= 5 && it[0] == "journey" }.map { it[1] }.toSet()
+        val items = s.getJSONObject("items")
+        items.keys().asSequence().toList().filter { it !in listed }.forEach { id ->
+            val j = items.getJSONObject(id)
+            if (id != s.getString("active") && id != s.optString("pending") && !j.optBoolean("create") && !j.optBoolean("dirty") && !j.has("conflict")) items.remove(id)
+        }
         for (line in list.lines()) {
             val f = line.split('\t'); if (f.size < 5 || f[0] != "journey") continue
             val j = item(s, f[1]); if (!j.optBoolean("rename")) j.put("name", decode(f[3]))

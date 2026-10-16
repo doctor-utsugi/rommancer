@@ -55,6 +55,8 @@ Items:
    Slot numbers come from the server (creation order per ROM, archived slots included so no number ever moves), so
    every console and the web show the same number for a slot; synchronized identity is still the Journey UUID. A
    console only numbers a slot itself when the server sends none (older servers, offline).
+   A slot archived on the web leaves every console's list at its next refresh, unless that console still needs it
+   (in use, made offline, progress not sent yet or in conflict).
    The web's Journeys tab lists slots in that order, asks which consoles a request goes to (all but those already on
    the slot ticked) and shows a request's state only while it is under way.
 5. **Browse server games**: the server's games by system or by search, ticked one by one or a whole system, then a

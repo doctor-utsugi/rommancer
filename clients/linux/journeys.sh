@@ -168,7 +168,14 @@ j_refresh() {
     return 1
   fi
   if [ -f "$JD/list" ]; then
-    awk -F '\t' 'NR == FNR { ids[$2]=1; next } !ids[$2] { print }' "$JD/list.new" "$JD/list" > "$JD/local-list"
+    # A slot the server no longer lists was archived elsewhere: kept only while something here still needs it
+    # (made offline, progress not sent yet, a conflict, or the slot in use)
+    awk -F '\t' 'NR == FNR { ids[$2]=1; next } !ids[$2] { print }' "$JD/list.new" "$JD/list" | while IFS="$TAB" read -r jt jj jrest; do
+      [ "$jt" = journey ] || continue
+      if printf '%s\n' "$jrest" | grep -q "${TAB}local\$" || [ -f "$JD/$jj/dirty" ] || [ -f "$JD/$jj/conflict" ] || [ "$jj" = "$JA" ]; then
+        printf '%s\t%s\t%s\n' "$jt" "$jj" "$jrest"
+      fi
+    done > "$JD/local-list"
     cat "$JD/local-list" >> "$JD/list.new"
   fi
   mv "$JD/list.new" "$JD/list"
