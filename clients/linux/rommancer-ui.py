@@ -2317,12 +2317,11 @@ class App:
                 name = decode(target[3])
                 current = target[1] == active
                 if current or key == "x":
-                    actions = [] if current else [("switch", "Use this slot")]
-                    if current:
+                    conflict = current and active in conflicts
+                    actions = [("keep-both", "Keep both versions")] if conflict else [] if current else [("switch", "Use this slot")]
+                    if current and not conflict:
                         actions.append(("duplicate", "Copy into a new slot"))
                     actions.append(("rename", "Rename"))
-                    if current and active in conflicts:
-                        actions.append(("keep-both", "Keep both versions"))
                     choice = self.menu(f"Slot {numbers.get(target[1], at + 1):02d} · {name}", [a[1] for a in actions], wide=True,
                                        info=["In use on this console" if current else "Not in use on this console"])
                     if choice is None:
@@ -2343,7 +2342,7 @@ class App:
                 elif selected == "duplicate":
                     args, done = ("duplicate", identity, f"{name} copy"[:80], "1"), f"Now using the copy. {name} stays as it was."
                 else:
-                    args, done = ("keep-both", identity, "Recovered progress", "1"), "Your progress is now in its own slot."
+                    args, done = ("keep-both", identity, f"{name[:60]} · kept " + time.strftime("%d %b %H:%M"), "1"), "Your progress is now in its own slot."
             if not self.journey_close_notice():
                 continue
             result = self.in_thread(lambda: self.client("journeys", *args, timeout=180), "Changing slot")

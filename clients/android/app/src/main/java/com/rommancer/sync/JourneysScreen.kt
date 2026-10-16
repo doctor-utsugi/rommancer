@@ -130,10 +130,12 @@ internal fun JourneysScreen(store: Store, onBack: () -> Unit) {
         scope.launch {
             val (state, pkg) = withContext(Dispatchers.IO) { Foreground.runningEmulator(context) }
             val name = pkg?.let(::emulatorName)
+            cursors[level] = rows.at
             when (state) {
                 Foreground.JourneyState.STOPPED -> start()
                 Foreground.JourneyState.RUNNING -> confirm = Confirm(
-                    "$name is open", "Close the game in $name first (Quick Menu → Close Content). If it is still loaded it writes its old save over this slot when it exits.",
+                    "$name is open", (if (name == "RetroArch") "Close the game in RetroArch first (Quick Menu → Close Content)." else "Quit $name first.") +
+                        " If this game is still loaded it writes its old save over the slot when it exits. Another game being open does no harm.",
                     "The game is closed", safeFirst = true, run = start,
                 )
                 Foreground.JourneyState.UNKNOWN -> confirm = Confirm(
@@ -155,6 +157,9 @@ internal fun JourneysScreen(store: Store, onBack: () -> Unit) {
         loadSlots(id, refresh = false).join()
         refocus++
         loadSlots(id).join()
+        // Progress saved on another console goes in by itself when nothing could write over it
+        if (slots?.firstOrNull { it.current }?.incoming == true && withContext(Dispatchers.IO) { Foreground.runningEmulator(context).first } == Foreground.JourneyState.STOPPED)
+            change("Loading newer progress…", { "Loaded the newer progress saved on another console." }, files = false) { engine.applyPending(id) }
     }
 
     val g = game
@@ -182,14 +187,14 @@ internal fun JourneysScreen(store: Store, onBack: () -> Unit) {
             title = "Slot ${o.slot.toString().padStart(2, '0')} · ${o.name}"
             section = if (o.current) "In use on this console" else "Not in use on this console"
             hint = "A Choose · B Back"
+            if (o.current && o.conflict) lines += JourneyLine("Keep both versions", "The other console's progress stays in this slot; yours goes on in a new one") {
+                change("Keeping both versions…", { "Your progress is now in its own slot." }) { engine.keepBoth(g!!.identity!!, true) }
+            }
             if (!o.current) lines += JourneyLine("Use this slot", "Load its saves and states on this console") { change("Changing slot…", { "Now using ${o.name}. Start the game to play it." }) { engine.switch(g!!.identity!!, o.id, true) } }
-            if (o.current) lines += JourneyLine("Copy into a new slot", "Keep this one as it is and go on playing in the copy") {
+            if (o.current && !o.conflict) lines += JourneyLine("Copy into a new slot", "Keep this one as it is and go on playing in the copy") {
                 change("Copying slot…", { "Now using the copy. ${o.name} stays as it was." }) { engine.create(g!!.identity!!, "${o.name} copy".take(80), true, true) }
             }
             lines += JourneyLine("Rename", o.name) { go { renaming = o } }
-            if (o.current && o.conflict) lines += JourneyLine("Keep both versions", "The server's progress stays here; yours goes on in a new slot") {
-                change("Keeping both versions…", { "Your progress is now in its own slot." }) { engine.keepBoth(g!!.identity!!, true) }
-            }
         }
         g != null && g.identity == null -> {
             title = g.title.substringBeforeLast('.')
@@ -278,7 +283,7 @@ internal fun JourneysScreen(store: Store, onBack: () -> Unit) {
         }
         BrowseSection(busy ?: section, busy = busy != null || games == null, hint = hint)
         body?.let { Text(it, fontSize = 16.sp, modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp)) }
-        note?.let { (text, bad) -> Text(text, color = if (bad) MaterialTheme.colorScheme.error else SlotGreen, fontSize = 15.sp, maxLines = 2, modifier = Modifier.padding(horizontal = 12.dp)) }
+        if (confirm == null) note?.let { (text, bad) -> Text(text, color = if (bad) MaterialTheme.colorScheme.error else SlotGreen, fontSize = 15.sp, maxLines = 2, modifier = Modifier.padding(horizontal = 12.dp)) }
         if (renaming != null) {
             RenameField(renaming!!, naming) { name -> val o = renaming!!; if (name.isNotBlank()) change("Renaming…", { "Renamed to $name" }, files = false) { engine.rename(g!!.identity!!, o.id, name) } else go { renaming = null } }
             Spacer(Modifier.weight(1f))
@@ -300,8 +305,11 @@ internal fun JourneysScreen(store: Store, onBack: () -> Unit) {
                                 change("Creating slot…", { "Now using a new empty slot. ${active?.name ?: "Your other slots"} keep${if (active == null) "" else "s"} its progress." }) { engine.create(g!!.identity!!, name, false, true) }
                             }
                         }
-                        else -> BrowseRow(i, rows, "Apply the queued change", sub = "Once the game is closed") {
-                            change("Applying…", { it }) { engine.applyPending(g!!.identity!!) }
+                        else -> {
+                            val newer = active?.incoming == true
+                            BrowseRow(i, rows, if (newer) "Load the newer progress" else "Apply the queued slot change", sub = if (newer) "Saved on another console · close the game first" else "Once the game is closed") {
+                                change("Applying…", { if (newer) "Newer progress loaded. Start the game to play it." else it }) { engine.applyPending(g!!.identity!!) }
+                            }
                         }
                     }
                 }
@@ -363,6 +371,7 @@ private fun emulatorName(pkg: String): String {
 private fun slotDetail(item: Journeys.Item): String {
     val content = when {
         item.conflict -> "Two versions of this progress · X to choose"
+        item.incoming -> "Newer progress from another console waiting"
         !item.cached -> "Needs a download · connect to use it"
         item.files == 0 -> "No saves yet"
         item.files == 1 -> "1 save file"

@@ -51,6 +51,21 @@ the games with slots, A uses a slot at once, X opens its options, an empty slot 
 emulator check uses root or Shizuku when available. The server sends console names with the game list.
 See docs/clients-ux.md.
 
+Android 0.24.0 (62) and Linux 1.84.0 came out of a sync test between the Thor and the RG40XX-V on one shared slot
+(2026-10-16). Android never applied progress saved on another console: it waited for proof that no emulator ran,
+and without Shizuku that proof never came, while the screen offered no way to load it. Now, when progress waits,
+the client asks root once (backing off five minutes after finding RetroArch open), opening the game's slots loads
+it when RetroArch is closed, and a **Load the newer progress** row covers the rest. Only RetroArch counts as running:
+Journeys hold only its files, and an open Dolphin had blocked every change. A conflicted slot offers **Keep both
+versions** first and no copy; the kept slot is named "<slot> · kept <date>" instead of "This console".
+
+Verified on hardware with the same slot on both consoles: a save from either side reaches the other (Android on the
+next sync, Linux at the game-start hook); savestates of another core version stay in the slot without being
+installed and survive the other console's commits; a console on another slot is untouched; an offline commit on
+either side becomes a preserved conflict resolved with Keep both; a switch request from the server (the web's
+command) is applied by Android at its next sync and by Linux at game start. Files were byte-identical to backups
+after returning each console to its slot.
+
 Deployed client revision: Android 0.22.0 (60) and Linux 1.82.0 make the active slot visibly green and show
 the last local/server update time. A completed switch returns to the slot list without a success dialog;
 pending synchronization is displayed on the slot. This revision was published as `powerquest-20261015-60`,

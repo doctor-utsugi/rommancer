@@ -16,20 +16,21 @@ object Foreground {
     enum class JourneyState { RUNNING, STOPPED, UNKNOWN }
 
     fun journeyState(context: Context): JourneyState {
-        if (emulator(context) != null) return JourneyState.RUNNING
+        if (emulator(context)?.contains(JOURNEY_EMULATOR) == true) return JourneyState.RUNNING
         if (!Privileged.ready || !Privileged.quiet) return JourneyState.UNKNOWN
         val names = Privileged.processNames() ?: return JourneyState.UNKNOWN
-        return if (names.any { name -> EMULATORS.any { name.contains(it, ignoreCase = true) } }) JourneyState.RUNNING else JourneyState.STOPPED
+        return if (names.any { it.contains(JOURNEY_EMULATOR, ignoreCase = true) }) JourneyState.RUNNING else JourneyState.STOPPED
     }
     /**
      * The emulator still running, asked when the user is about to change slots: one root call is fine then (the
      * periodic checks above stay quiet). STOPPED only when a full process list shows none
      */
     fun runningEmulator(context: Context): Pair<JourneyState, String?> {
-        emulator(context)?.let { return JourneyState.RUNNING to it }
+        // Journeys only hold RetroArch's files so far: another emulator open (Dolphin, PPSSPP...) cannot write over them
+        emulator(context)?.takeIf { JOURNEY_EMULATOR in it.lowercase() }?.let { return JourneyState.RUNNING to it }
         if (!Privileged.ready) return JourneyState.UNKNOWN to null
         val names = Privileged.processNames() ?: return JourneyState.UNKNOWN to null
-        val running = names.firstOrNull { name -> EMULATORS.any { name.contains(it, ignoreCase = true) } }
+        val running = names.firstOrNull { name -> name.contains(JOURNEY_EMULATOR, ignoreCase = true) }
         return if (running != null) JourneyState.RUNNING to running.substringBefore(':') else JourneyState.STOPPED to null
     }
 
@@ -71,6 +72,8 @@ object Foreground {
         val launchers = context.packageManager.queryIntentActivities(home, 0).map { it.activityInfo.packageName }
         return (launchers + context.packageName + FRONTENDS).toSet()
     }
+
+    private const val JOURNEY_EMULATOR = "retroarch"
 
     // Words in emulators' package names
     private val EMULATORS = listOf(

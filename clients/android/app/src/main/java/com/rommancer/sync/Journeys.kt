@@ -12,7 +12,7 @@ import java.util.UUID
 
 class Journeys(private val context: Context, private val store: Store) {
     data class Game(val rom: String, val title: String, val identity: String? = null, val system: String = "unknown", val systemName: String = LocalLibrary.systemName(system))
-    data class Item(val id: String, val name: String, val revision: Int, val cached: Boolean, val current: Boolean, val conflict: Boolean, val incompatible: Int, val slot: Int = 0, val files: Int = 0, val updatedAt: Long = 0, val pendingSync: Boolean = false)
+    data class Item(val id: String, val name: String, val revision: Int, val cached: Boolean, val current: Boolean, val conflict: Boolean, val incompatible: Int, val slot: Int = 0, val files: Int = 0, val updatedAt: Long = 0, val pendingSync: Boolean = false, val incoming: Boolean = false)
     private val api = Api(store.server, store.token ?: error("Not linked"))
     private val root = File(context.filesDir, "journeys/" + digest((store.server + "\n" + store.token).toByteArray())).apply { mkdirs() }
     private val blobs = File(root, "blobs").apply { mkdirs() }
@@ -79,7 +79,7 @@ class Journeys(private val context: Context, private val store: Store) {
             val j = items.getJSONObject(id)
             val remoteTime = runCatching { java.time.Instant.parse(j.optString("syncedAt")).toEpochMilli() }.getOrDefault(0L)
             val updated = if (j.optBoolean("dirty")) j.optLong("localUpdatedAt", remoteTime) else remoteTime
-            Item(id, j.optString("name", "Journey"), j.optInt("head"), complete(j), id == s.getString("active"), j.has("conflict"), entries(j.optString("manifest")).count { path(s.getJSONObject("layout"), it.first) == null }, j.getInt("slot"), entries(j.optString("manifest")).count { !it.first.contains("/thumb/") }, updated, j.optBoolean("dirty") || j.optBoolean("create") || (id == s.getString("active") && s.has("selection")))
+            Item(id, j.optString("name", "Journey"), j.optInt("head"), complete(j), id == s.getString("active"), j.has("conflict"), entries(j.optString("manifest")).count { path(s.getJSONObject("layout"), it.first) == null }, j.getInt("slot"), entries(j.optString("manifest")).count { !it.first.contains("/thumb/") }, updated, j.optBoolean("dirty") || j.optBoolean("create") || (id == s.getString("active") && s.has("selection")), id == s.getString("active") && j.has("incoming"))
         }.sortedBy { it.slot }
     }
 
@@ -137,7 +137,7 @@ class Journeys(private val context: Context, private val store: Store) {
         roots().forEach { d ->
             try {
                 recover(d); val s = state(d); capture(d, s); save(d, s); synchronize(d, s)
-                if (Foreground.journeyState(context) == Foreground.JourneyState.STOPPED) {
+                if (stopped(s)) {
                     if (s.has("pending")) switch(d.name, s.getString("pending"), true) else refresh(d, s, true)
                 }
             }
@@ -150,7 +150,8 @@ class Journeys(private val context: Context, private val store: Store) {
         for (d in roots()) {
             val s = state(d)
             if (File(d, "journal").exists()) return@journeyLocked "Needs attention · Journey recovery pending"
-            if (s.has("pending")) return@journeyLocked "Journey change pending · Close the game and confirm"
+            if (s.has("pending")) return@journeyLocked "Slot change waiting · Close the game and open Journeys"
+            if (item(s, s.getString("active")).has("incoming")) return@journeyLocked "Newer progress waiting · Close the game and open Journeys"
             val items = s.getJSONObject("items")
             if (items.keys().asSequence().any { items.getJSONObject(it).has("conflict") }) return@journeyLocked "Needs attention · Conflicting journey progress"
         }
@@ -162,8 +163,23 @@ class Journeys(private val context: Context, private val store: Store) {
         if (!file.exists()) null else file.readText().also { file.delete() }
     }
 
-    /** A slot change waits for the game to close */
-    fun pending(identity: String): Boolean = SyncEngine.journeyLocked { state(dir(identity)).optString("pending").isNotBlank() }
+    /** A slot change, or newer progress for the slot in use, waits for the game to close */
+    fun pending(identity: String): Boolean = SyncEngine.journeyLocked {
+        val s = state(dir(identity))
+        s.optString("pending").isNotBlank() || item(s, s.getString("active")).has("incoming")
+    }
+
+    /**
+     * No emulator runs, so waiting files can go in. Without Shizuku the quiet check cannot tell: root is asked then,
+     * only when something waits, and after finding RetroArch open not again for a few minutes (each su call shows a toast)
+     */
+    private fun stopped(s: JSONObject): Boolean {
+        if (!s.has("pending") && !item(s, s.getString("active")).has("incoming")) return false
+        if (System.currentTimeMillis() - busyAt < 5 * 60_000L) return false
+        val stopped = Foreground.runningEmulator(context).first == Foreground.JourneyState.STOPPED
+        if (!stopped) busyAt = System.currentTimeMillis()
+        return stopped
+    }
 
     fun applyPending(identity: String): String = SyncEngine.journeyLocked {
         val d = dir(identity); val s = state(d)
@@ -180,7 +196,9 @@ class Journeys(private val context: Context, private val store: Store) {
         source.remove("conflict")
         capture(d, s)
         val id = uuid()
-        item(s, id).put("name", (source.optString("name", "Journey") + " — This console").take(80))
+        // Named so it reads right on every console: whose it was is in the date it split off
+        val stamp = java.text.SimpleDateFormat("d MMM HH:mm", java.util.Locale.ENGLISH).format(java.util.Date())
+        item(s, id).put("name", (source.optString("name", "Journey").take(60) + " · kept $stamp"))
             .put("manifest", source.getString("manifest")).put("base", 0).put("dirty", true).put("create", true).put("localUpdatedAt", System.currentTimeMillis())
         source.put("dirty", false); source.remove("outbox"); source.remove("operation")
         save(d, s)
@@ -364,6 +382,7 @@ class Journeys(private val context: Context, private val store: Store) {
         File(d, "journal-done").delete(); syncDirectory(d)
     }
     companion object {
+        @Volatile private var busyAt = 0L
         private fun decode(value: String) = String(Base64.getDecoder().decode(value))
         private fun digest(bytes: ByteArray) = MessageDigest.getInstance("SHA-1").digest(bytes).joinToString("") { "%02x".format(it) }
         private fun digest(file: File): String {
