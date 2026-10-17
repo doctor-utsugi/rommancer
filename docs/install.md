@@ -33,8 +33,8 @@ sh rommancer/deploy/podman/rommancer.sh install
 ```
 
 It builds Rommancer (a few minutes the first time), asks you [three things](#what-the-installer-asks) and ends with
-Rommancer running at http://127.0.0.1:8096. At the end it offers to start Rommancer when the computer starts, which
-runs `sudo loginctl enable-linger $USER` once.
+Rommancer running at http://127.0.0.1:8096. Last, it asks whether to install Rommancer as a
+[service](#running-it-as-a-service) that starts with the computer.
 
 The same, step by step:
 
@@ -72,8 +72,8 @@ sh rommancer/deploy/podman/rommancer.sh install
 ```
 
 The first time, the script creates Podman's virtual machine (4 GB of memory) and starts it. Then it carries on as on
-Linux, with plain questions instead of dialog boxes, and Rommancer ends up at http://127.0.0.1:8096. It also adds a
-login item (`~/Library/LaunchAgents/com.rommancer.start.plist`), so Rommancer starts every time you log in.
+Linux, with plain questions instead of dialog boxes, and Rommancer ends up at http://127.0.0.1:8096. Installed as a
+service, it starts every time you log in to the Mac.
 
 Two things differ from Linux:
 
@@ -107,8 +107,8 @@ powershell -ExecutionPolicy Bypass -File rommancer\deploy\podman\rommancer.ps1 i
 
 `-ExecutionPolicy Bypass` lets this one script run without changing Windows' policy for any other. The script
 creates and starts Podman's virtual machine the first time, asks for your roms folder (you can drag the folder onto
-the window), builds Rommancer and runs the same installer as on Linux. Rommancer ends up at http://127.0.0.1:8096, and
-a shortcut in your Startup folder starts it every time you log in to Windows.
+the window), builds Rommancer and runs the same installer as on Linux. Rommancer ends up at http://127.0.0.1:8096.
+Installed as a service, it starts every time you log in to Windows.
 
 The step-by-step commands are the same as on Linux with `powershell -ExecutionPolicy Bypass -File
 rommancer\deploy\podman\rommancer.ps1` in place of `sh deploy/podman/rommancer.sh`, and
@@ -142,11 +142,26 @@ Rommancer keeps running in the background; you can close the terminal. Use the s
 | Command | Does |
 |---|---|
 | `rommancer.sh status` | says whether the three containers are running |
-| `rommancer.sh down` | stops Rommancer |
-| `rommancer.sh up` | starts it again (also after an update) |
+| `rommancer.sh stop` | stops Rommancer |
+| `rommancer.sh start` | starts it again |
 | `rommancer.sh logs [api\|web\|mysql]` | follows what one of them is doing |
+| `rommancer.sh service on` / `off` | installs or removes Rommancer as a service |
+| `rommancer.sh up` | makes the containers anew, after an update or a change of roms folder |
+| `rommancer.sh down` | removes the containers (your data stays) |
 | `rommancer.sh setup` | the installer in the console, if you closed it halfway |
-| `rommancer.sh start` | starts the containers `up` made; it is what runs at login on macOS and Windows |
+
+### Running it as a service
+
+Without a service, Rommancer stays off after a reboot until you run `rommancer.sh start`. As a service it starts by
+itself: on Linux with the computer, even with nobody logged in; on macOS and Windows when you log in.
+
+- **Linux:** a systemd user unit, `~/.config/systemd/user/rommancer.service` (`systemctl --user status rommancer`).
+  To start before anyone logs in, your user needs lingering, so the first time it runs
+  `sudo loginctl enable-linger $USER`, which asks for your password.
+- **macOS:** a login item, `~/Library/LaunchAgents/com.rommancer.start.plist`.
+- **Windows:** a shortcut in your Startup folder, `rommancer.cmd`.
+
+`install --service yes` (or `no`) answers the question beforehand.
 
 To reach Rommancer from other devices, put a reverse proxy (nginx, Caddy) in front of `127.0.0.1:8096`, or change
 `ROMMANCER_WEB_PORT`.

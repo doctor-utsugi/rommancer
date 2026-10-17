@@ -1,6 +1,7 @@
 ﻿# Rommancer on Windows: rommancer.sh's commands for Podman for Windows (or Podman Desktop), whose containers run in a
 # WSL machine. Data stays in volumes inside it; the installer is deploy/install.sh, run in a container.
-#   rommancer.ps1 install [--roms PATH] [installer options] | build | up | start | setup | down | logs [api|web|mysql] | status
+#   rommancer.ps1 install [--roms PATH] [--service yes|no] [installer options] | build | up | start | stop | service [on|off]
+#                 | setup | down | logs [api|web|mysql] | status
 # Run it with: powershell -ExecutionPolicy Bypass -File rommancer\deploy\podman\rommancer.ps1 install
 $ErrorActionPreference = 'Continue'
 $Src = [IO.Path]::GetFullPath([IO.Path]::Combine($PSScriptRoot, '..', '..'))
@@ -83,36 +84,59 @@ function Invoke-Up {
   Start-Machine
   if (-not (Test-Podman network exists $Net)) { Invoke-Podman network create $Net | Out-Null }
   & podman rm -f rommancer-web rommancer-api rommancer-mysql *> $null
-  Invoke-Podman run -d --name rommancer-mysql --network $Net --network-alias mysql --restart=always `
+  Invoke-Podman run -d --name rommancer-mysql --network $Net --network-alias mysql --restart=on-failure `
     -v rommancer-mysql:/var/lib/mysql -v rommancer-secrets:/secrets localhost/rommancer-mysql:latest | Out-Null
   while (-not (Test-Podman exec rommancer-mysql mysqladmin ping '-h127.0.0.1' --silent)) { Start-Sleep 2 }
   $opt = @()
   if (Test-Path $EnvFile) { $opt += '--env-file', $EnvFile }
-  Invoke-Podman run -d --name rommancer-api --network $Net --network-alias api --restart=always @opt `
+  Invoke-Podman run -d --name rommancer-api --network $Net --network-alias api --restart=on-failure @opt `
     --security-opt label=disable -v rommancer-data:/data -v rommancer-secrets:/data/secrets `
     -v "$(In-Src seed):/seed" -v "${Roms}:/roms" -v "$(In-Src clients):/app/clients:ro" `
     -e DATA_DIR=/data -e SEED_DIR=/seed -e ROMMANCER_BUNDLED_DB=mysql:3306 -e "TZ=$(Get-HostTz)" localhost/rommancer-api:latest | Out-Null
-  Invoke-Podman run -d --name rommancer-web --network $Net --restart=always -p "127.0.0.1:${WebPort}:80" localhost/rommancer-web:latest | Out-Null
-  if ($env:OS -eq 'Windows_NT') {
-    # At login: the machine, then the containers (start)
-    $cmd = Join-Path ([Environment]::GetFolderPath('Startup')) 'rommancer.cmd'
-    Set-Content $cmd "@start `"`" /min powershell -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$PSCommandPath`" start"
-  }
+  Invoke-Podman run -d --name rommancer-web --network $Net --restart=on-failure -p "127.0.0.1:${WebPort}:80" localhost/rommancer-web:latest | Out-Null
   Write-Host "Web on http://127.0.0.1:$WebPort"
 }
 
-# After install: how Rommancer runs and how to handle it
-function Show-Running {
-  $cmd = "powershell -ExecutionPolicy Bypass -File `"$PSCommandPath`""
-  if ($Es) {
-    Write-Host "`nRommancer se queda funcionando en segundo plano: puedes cerrar esta ventana.`nÁbrelo en http://127.0.0.1:$WebPort`n"
-    Write-Host "  $cmd status   ver si está en marcha`n  $cmd down     pararlo`n  $cmd up       volver a arrancarlo`n  $cmd logs     ver qué está haciendo`n"
-    Write-Host 'Arrancará solo cada vez que inicies sesión en Windows.'
+$Cmd = "powershell -ExecutionPolicy Bypass -File `"$PSCommandPath`""
+# Rommancer as a service: a shortcut in the Startup folder starts it at every login
+$StartupCmd = if ($env:OS -eq 'Windows_NT') { Join-Path ([Environment]::GetFolderPath('Startup')) 'rommancer.cmd' } else { '' }
+
+function Set-RommancerService($on) {
+  if ($on) {
+    Set-Content $StartupCmd "@start `"`" /min powershell -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$PSCommandPath`" start"
+    if ($Es) { Write-Host "Rommancer está instalado como servicio y arrancará cada vez que inicies sesión. Para quitarlo: $Cmd service off" }
+    else { Write-Host "Rommancer is installed as a service and starts every time you log in. To remove it: $Cmd service off" }
   } else {
-    Write-Host "`nRommancer keeps running in the background: you can close this window.`nOpen it at http://127.0.0.1:$WebPort`n"
-    Write-Host "  $cmd status   is it running?`n  $cmd down     stop it`n  $cmd up       start it again`n  $cmd logs     see what it is doing`n"
-    Write-Host 'It will start by itself every time you log in to Windows.'
+    if ($StartupCmd) { Remove-Item -Force -ErrorAction SilentlyContinue $StartupCmd }
+    if ($Es) { Write-Host "Rommancer no está instalado como servicio, así que no arrancará solo después de reiniciar.`n`n  Arrancarlo:  $Cmd start`n  Pararlo:     $Cmd stop`n`nPara instalarlo como servicio más adelante: $Cmd service on" }
+    else { Write-Host "Rommancer is not installed as a service, so it won't start by itself after a reboot.`n`n  Start it:  $Cmd start`n  Stop it:   $Cmd stop`n`nTo install it as a service later: $Cmd service on" }
   }
+}
+
+# After install: how Rommancer runs and how to handle it, then whether to install it as a service (yes, no or '' to ask)
+function Show-Running($want) {
+  if ($Es) {
+    Write-Host "`nRommancer está funcionando en segundo plano: puedes cerrar esta ventana.`nÁbrelo en http://127.0.0.1:$WebPort`n"
+    Write-Host "  $Cmd status        ver si está en marcha`n  $Cmd stop          pararlo`n  $Cmd start         arrancarlo`n  $Cmd logs          ver qué está haciendo`n  $Cmd service on    instalarlo como servicio (off para quitarlo)`n"
+  } else {
+    Write-Host "`nRommancer is running in the background: you can close this window.`nOpen it at http://127.0.0.1:$WebPort`n"
+    Write-Host "  $Cmd status        is it running?`n  $Cmd stop          stop it`n  $Cmd start         start it`n  $Cmd logs          see what it is doing`n  $Cmd service on    install it as a service (off removes it)`n"
+  }
+  if (-not $StartupCmd) { return }
+  if (Test-Path $StartupCmd) {
+    if ($Es) { Write-Host "Rommancer ya está instalado como servicio. Para quitarlo: $Cmd service off" }
+    else { Write-Host "Rommancer is already installed as a service. To remove it: $Cmd service off" }
+    return
+  }
+  if (-not $want) {
+    if ([Console]::IsInputRedirected) { $want = 'no' }
+    else {
+      if ($Es) { $a = Read-Host "¿Instalar Rommancer como servicio?`n`nAsí arranca solo cada vez que inicias sesión en Windows. Si no, tendrás que arrancarlo tú con «$Cmd start».`n[s/N]" }
+      else { $a = Read-Host "Install Rommancer as a service?`n`nThen it starts by itself every time you log in to Windows. Otherwise you start it with `"$Cmd start`".`n[y/N]" }
+      $want = if ($a -match '^[sSyY]') { 'yes' } else { 'no' }
+    }
+  }
+  Set-RommancerService ($want -eq 'yes')
 }
 
 # deploy/install.sh in a container on the machine's own network, where the web answers at the address it shows you
@@ -130,16 +154,26 @@ switch ($args[0]) {
   'build' { Invoke-Build }
   'up' { Invoke-Up }
   'start' { Start-Machine; Invoke-Podman start rommancer-mysql rommancer-api rommancer-web }
+  'stop' { & podman stop rommancer-web rommancer-api rommancer-mysql }
+  'service' {
+    if (-not $StartupCmd) { Write-Error 'rommancer.ps1 service is for Windows; elsewhere use rommancer.sh service'; exit 2 }
+    $v = if ($rest.Count) { $rest[0] } else { 'on' }
+    if ($v -ne 'on' -and $v -ne 'off') { Write-Host 'Usage: rommancer.ps1 service on|off'; exit 2 }
+    Set-RommancerService ($v -eq 'on')
+  }
   'setup' { Invoke-Setup $rest; exit $SetupCode }
   'install' {
     # --roms is this script's; everything else goes to the installer
-    $chosen = '' ; $opts = @()
+    $chosen = '' ; $svc = '' ; $opts = @()
     for ($i = 0; $i -lt $rest.Count; $i++) {
       $a = [string]$rest[$i]
       if ($a -eq '--roms') { $i++; $chosen = [string]$rest[$i] }
       elseif ($a.StartsWith('--roms=')) { $chosen = $a.Substring(7) }
+      elseif ($a -eq '--service') { $i++; $svc = [string]$rest[$i] }
+      elseif ($a.StartsWith('--service=')) { $svc = $a.Substring(10) }
       elseif ($a -eq '-h' -or $a -eq '--help') {
-        Write-Host "Usage: rommancer.ps1 install [--roms PATH] [installer options]: builds, starts and installs Rommancer; the installer's options:"
+        Write-Host "Usage: rommancer.ps1 install [--roms PATH] [--service yes|no] [installer options]: builds, starts and installs Rommancer"
+        Write-Host "  --service yes|no   install it as a service, started at every login (asked when not given); the installer's options:"
         # install.sh's own --help text
         $sh = [IO.File]::ReadAllText((In-Src deploy install.sh))
         Write-Host ([regex]::Match($sh, "(?s)cat <<'EOF'\n(.*?)\nEOF").Groups[1].Value)
@@ -154,10 +188,10 @@ switch ($args[0]) {
     Invoke-Up
     Invoke-Setup $opts
     if ($SetupCode -ne 0) { exit $SetupCode }
-    Show-Running
+    Show-Running $svc
   }
   'down' { Start-Machine; & podman rm -f rommancer-web rommancer-api rommancer-mysql }
   'logs' { $c = if ($rest.Count) { $rest[0] } else { 'api' }; & podman logs --tail 100 -f "rommancer-$c" }
   'status' { & podman ps -a --filter name=rommancer --format '{{.Names}}\t{{.Status}}' }
-  default { Write-Host 'Usage: rommancer.ps1 install|build|up|start|setup|down|logs [api|web|mysql]|status'; exit 2 }
+  default { Write-Host 'Usage: rommancer.ps1 install|build|up|start|stop|service [on|off]|setup|down|logs [api|web|mysql]|status'; exit 2 }
 }

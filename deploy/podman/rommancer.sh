@@ -1,7 +1,7 @@
 #!/bin/sh
 # Rootless Podman deployment for Linux (no Quadlet needed: Debian 12 ships 4.3) and macOS (Podman's machine).
-# Containers use --restart=always and come back at boot through podman-restart.service, on a Mac through a LaunchAgent.
-#   rommancer.sh install | build | up | start | setup | down | logs [api|web|mysql] | status
+# Started with the computer only as a service (rommancer.sh service on): a systemd user unit, on a Mac a LaunchAgent.
+#   rommancer.sh install | build | up | start | stop | service [on|off] | setup | down | logs [api|web|mysql] | status
 # install = build, up, then the installer in the console (setup); the web app runs the same installer.
 # install and setup pass their options to deploy/install.sh (--help lists them: unattended installs);
 # install also asks for the folder with your roms, or takes it as --roms PATH, and remembers it for up
@@ -49,40 +49,146 @@ Rommancer won't move, rename or delete anything inside it. No roms yet? Keep the
   fi
 }
 
-# After install: how Rommancer runs and how to handle it, then whether it should start with the computer (Linux:
-# rootless containers come back after a reboot only for a user with lingering, which takes sudo once)
-after_install() {
-  cmd="sh $SRC/deploy/podman/rommancer.sh"
-  case "$1" in
-    es*) printf '\nRommancer se queda funcionando en segundo plano: puedes cerrar esta terminal.\nÁbrelo en http://127.0.0.1:%s\n\n  %s status   ver si está en marcha\n  %s down     pararlo\n  %s up       volver a arrancarlo\n  %s logs     ver qué está haciendo\n\n' "$WEB_PORT" "$cmd" "$cmd" "$cmd" "$cmd"
-      mac="Arrancará solo cada vez que inicies sesión en el Mac."
-      q="¿Quieres que Rommancer arranque solo al encender el ordenador?
+# Texts of install's last part and of service, in the installer's language
+say() {
+  case "$LANG_UI" in
+    es*) case "$1" in
+      running) printf '\nRommancer está funcionando en segundo plano: puedes cerrar esta terminal.\nÁbrelo en http://127.0.0.1:%s\n\n  %s status        ver si está en marcha\n  %s stop          pararlo\n  %s start         arrancarlo\n  %s logs          ver qué está haciendo\n  %s service on    instalarlo como servicio (off para quitarlo)\n\n' "$WEB_PORT" "$CMD" "$CMD" "$CMD" "$CMD" "$CMD" ;;
+      ask) echo "¿Instalar Rommancer como servicio?
 
-Si no, después de reiniciar no vuelve hasta que inicies sesión. Para que arranque siempre hay que ejecutar una vez «sudo loginctl enable-linger $USER», que te pedirá tu contraseña."
-      yes=Sí no=No yn=s/N later="Cuando quieras que arranque con el ordenador: sudo loginctl enable-linger $USER" ;;
-    *) printf '\nRommancer keeps running in the background: you can close this terminal.\nOpen it at http://127.0.0.1:%s\n\n  %s status   is it running?\n  %s down     stop it\n  %s up       start it again\n  %s logs     see what it is doing\n\n' "$WEB_PORT" "$cmd" "$cmd" "$cmd" "$cmd"
-      mac="It will start by itself every time you log in to the Mac."
-      q="Should Rommancer start by itself when the computer starts?
+Así arranca solo cada vez que se enciende el equipo, aunque nadie inicie sesión. Si no, después de cada reinicio tendrás que arrancarlo tú con «$CMD start».${2:+
 
-Otherwise, after a reboot it stays off until you log in. Starting it always takes running \"sudo loginctl enable-linger $USER\" once, which asks for your password."
-      yes=Yes no=No yn=y/N later="To start it with the computer later: sudo loginctl enable-linger $USER" ;;
+Hace falta tu contraseña de sudo una vez, para «$2».}" ;;
+      askMac) echo "¿Instalar Rommancer como servicio?
+
+Así arranca solo cada vez que inicias sesión en el Mac. Si no, tendrás que arrancarlo tú con «$CMD start»." ;;
+      yes) echo Sí ;;
+      no) echo No ;;
+      yn) echo s/N ;;
+      on) echo "Rommancer está instalado como servicio y arrancará solo con el equipo. Para quitarlo: $CMD service off" ;;
+      onMac) echo "Rommancer está instalado como servicio y arrancará cada vez que inicies sesión. Para quitarlo: $CMD service off" ;;
+      off) echo "Rommancer no está instalado como servicio, así que no arrancará solo después de reiniciar.
+
+  Arrancarlo:  $CMD start
+  Pararlo:     $CMD stop
+
+Para instalarlo como servicio más adelante: $CMD service on" ;;
+      already) echo "Rommancer ya está instalado como servicio. Para quitarlo: $CMD service off" ;;
+      noLinger) echo "Sin «sudo loginctl enable-linger $USER», Rommancer arrancará al iniciar sesión, no al encender el equipo." ;;
+    esac ;;
+    *) case "$1" in
+      running) printf '\nRommancer is running in the background: you can close this terminal.\nOpen it at http://127.0.0.1:%s\n\n  %s status        is it running?\n  %s stop          stop it\n  %s start         start it\n  %s logs          see what it is doing\n  %s service on    install it as a service (off removes it)\n\n' "$WEB_PORT" "$CMD" "$CMD" "$CMD" "$CMD" "$CMD" ;;
+      ask) echo "Install Rommancer as a service?
+
+Then it starts by itself every time the computer starts, even with nobody logged in. Otherwise you start it after every reboot with \"$CMD start\".${2:+
+
+It takes your sudo password once, for \"$2\".}" ;;
+      askMac) echo "Install Rommancer as a service?
+
+Then it starts by itself every time you log in to the Mac. Otherwise you start it with \"$CMD start\"." ;;
+      yes) echo Yes ;;
+      no) echo No ;;
+      yn) echo y/N ;;
+      on) echo "Rommancer is installed as a service and starts with the computer. To remove it: $CMD service off" ;;
+      onMac) echo "Rommancer is installed as a service and starts every time you log in. To remove it: $CMD service off" ;;
+      off) echo "Rommancer is not installed as a service, so it won't start by itself after a reboot.
+
+  Start it:  $CMD start
+  Stop it:   $CMD stop
+
+To install it as a service later: $CMD service on" ;;
+      already) echo "Rommancer is already installed as a service. To remove it: $CMD service off" ;;
+      noLinger) echo "Without \"sudo loginctl enable-linger $USER\", Rommancer starts when you log in, not when the computer starts." ;;
+    esac ;;
   esac
-  if [ "$OS" = Darwin ]; then echo "$mac"; return; fi
-  [ "$OS" = Linux ] && command -v loginctl >/dev/null 2>&1 || return 0
-  loginctl show-user "$USER" -p Linger 2>/dev/null | grep -q '=yes' && return 0
-  if [ ! -t 0 ]; then echo "$later"; return; fi
-  if [ -t 2 ] && command -v whiptail >/dev/null 2>&1; then
-    whiptail --title Rommancer --yes-button "$yes" --no-button "$no" --yesno "$q" 12 76 3>&1 1>&2 2>&3 && a=y || a=n
-  else
-    printf '%s [%s]: ' "$q" "$yn" >&2
-    IFS= read -r a || a=n
-    case "$a" in [sSyY]*) a=y ;; *) a=n ;; esac
+}
+LANG_UI=${LANG:-}
+CMD="sh $SRC/deploy/podman/rommancer.sh"
+UNIT="$HOME/.config/systemd/user/rommancer.service"
+AGENT="$HOME/Library/LaunchAgents/com.rommancer.start.plist"
+linger() { [ "$(loginctl show-user "$USER" -p Linger --value 2>/dev/null)" = yes ]; }
+
+# Whether Rommancer is a service already (Linux: its unit, started at boot thanks to lingering)
+service_on() {
+  if [ "$OS" = Darwin ]; then [ -f "$AGENT" ]; else [ -f "$UNIT" ] && linger; fi
+}
+
+# Rommancer as a service: started with the computer (Linux: a systemd user unit, plus lingering so the user's units
+# start at boot, which takes sudo once) or at login (Mac: a LaunchAgent)
+service() {
+  case "$1" in
+    on)
+      if [ "$OS" = Darwin ]; then
+        mkdir -p "$(dirname "$AGENT")"
+        cat > "$AGENT" <<EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+  <key>Label</key><string>com.rommancer.start</string>
+  <key>ProgramArguments</key><array><string>/bin/sh</string><string>$SRC/deploy/podman/rommancer.sh</string><string>start</string></array>
+  <key>EnvironmentVariables</key><dict><key>PATH</key><string>$(dirname "$(command -v podman)"):/usr/bin:/bin:/usr/sbin:/sbin</string></dict>
+  <key>RunAtLoad</key><true/>
+</dict></plist>
+EOF
+        say onMac
+        return
+      fi
+      mkdir -p "$(dirname "$UNIT")"
+      cat > "$UNIT" <<EOF
+[Unit]
+Description=Rommancer
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/bin/sh $SRC/deploy/podman/rommancer.sh start
+ExecStop=/bin/sh $SRC/deploy/podman/rommancer.sh stop
+
+[Install]
+WantedBy=default.target
+EOF
+      systemctl --user daemon-reload
+      systemctl --user enable rommancer.service >/dev/null 2>&1
+      if ! linger && ! sudo loginctl enable-linger "$USER"; then
+        say noLinger
+        return
+      fi
+      say on ;;
+    off)
+      if [ "$OS" = Darwin ]; then
+        rm -f "$AGENT"
+      else
+        systemctl --user disable rommancer.service >/dev/null 2>&1 || true
+        rm -f "$UNIT"
+        systemctl --user daemon-reload
+      fi
+      say off ;;
+    *) echo "Usage: $0 service on|off" >&2; exit 2 ;;
+  esac
+}
+
+# After install: how Rommancer runs and how to handle it, then whether to install it as a service (WANT: yes, no, or
+# empty to ask)
+after_install() {
+  say running
+  if service_on; then say already; return; fi
+  want=$1
+  if [ -z "$want" ]; then
+    if [ ! -t 0 ]; then say off; return; fi
+    sudo_for=
+    [ "$OS" = Linux ] && ! linger && sudo_for="sudo loginctl enable-linger $USER"
+    if [ "$OS" = Darwin ]; then q=$(say askMac); else q=$(say ask "$sudo_for"); fi
+    if [ -t 2 ] && command -v whiptail >/dev/null 2>&1; then
+      whiptail --title Rommancer --yes-button "$(say yes)" --no-button "$(say no)" --yesno "$q" 14 76 3>&1 1>&2 2>&3 && want=yes || want=no
+    else
+      printf '%s [%s]: ' "$q" "$(say yn)" >&2
+      IFS= read -r a || a=
+      case "$a" in [sSyY]*) want=yes ;; *) want=no ;; esac
+    fi
   fi
-  if [ "$a" = y ] && sudo loginctl enable-linger "$USER"; then
-    case "$1" in es*) echo "Hecho: Rommancer arrancará con el ordenador." ;; *) echo "Done: Rommancer will start with the computer." ;; esac
-  else
-    echo "$later"
-  fi
+  if [ "$want" = yes ]; then service on; else say off; fi
 }
 
 # On a Mac the containers run in Podman's Linux machine: made the first time (seeing your home and /Volumes), started
@@ -140,7 +246,7 @@ case "${1:-}" in
     else
       set -- "$@" -v rommancer-mysql:/var/lib/mysql -v rommancer-secrets:/secrets
     fi
-    podman run -d --name rommancer-mysql --network "$NET" --network-alias mysql --restart=always "$@" localhost/rommancer-mysql:latest
+    podman run -d --name rommancer-mysql --network "$NET" --network-alias mysql --restart=on-failure "$@" localhost/rommancer-mysql:latest
     until podman exec rommancer-mysql mysqladmin ping -h127.0.0.1 --silent 2>/dev/null; do sleep 2; done
     set --
     [ -f "$ENV_FILE" ] && set -- "$@" --env-file "$ENV_FILE"
@@ -153,37 +259,22 @@ case "${1:-}" in
       set -- "$@" --security-opt label=disable -v rommancer-data:/data -v rommancer-secrets:/data/secrets \
         -v "$SRC/seed:/seed" -v "$ROMS:/roms" -v "$SRC/clients:/app/clients:ro"
     fi
-    podman run -d --name rommancer-api --network "$NET" --network-alias api --restart=always "$@" \
+    podman run -d --name rommancer-api --network "$NET" --network-alias api --restart=on-failure "$@" \
       -e DATA_DIR=/data -e SEED_DIR=/seed -e ROMMANCER_BUNDLED_DB=mysql:3306 -e TZ="${TZ:-$(host_tz)}" localhost/rommancer-api:latest
-    podman run -d --name rommancer-web --network "$NET" --restart=always -p "127.0.0.1:$WEB_PORT:80" localhost/rommancer-web:latest
-    if [ "$OS" = Darwin ]; then
-      # At login: the machine, then the containers (start)
-      agent="$HOME/Library/LaunchAgents/com.rommancer.start.plist"
-      mkdir -p "$(dirname "$agent")"
-      cat > "$agent" <<EOF
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0"><dict>
-  <key>Label</key><string>com.rommancer.start</string>
-  <key>ProgramArguments</key><array><string>/bin/sh</string><string>$SRC/deploy/podman/rommancer.sh</string><string>start</string></array>
-  <key>EnvironmentVariables</key><dict><key>PATH</key><string>$(dirname "$(command -v podman)"):/usr/bin:/bin:/usr/sbin:/sbin</string></dict>
-  <key>RunAtLoad</key><true/>
-</dict></plist>
-EOF
-    else
-      systemctl --user enable --now podman-restart.service >/dev/null 2>&1 || true
-    fi
+    podman run -d --name rommancer-web --network "$NET" --restart=on-failure -p "127.0.0.1:$WEB_PORT:80" localhost/rommancer-web:latest
     echo "Web on http://127.0.0.1:$WEB_PORT" ;;
   start)
     machine
     podman start rommancer-mysql rommancer-api rommancer-web ;;
+  stop) podman stop rommancer-web rommancer-api rommancer-mysql ;;
+  service) service "${2:-on}" ;;
   setup)
     shift
     exec sh "$SRC/deploy/install.sh" "http://127.0.0.1:$WEB_PORT" "$@" ;;
   install)
     shift
     # --roms is this script's; everything else goes to the installer
-    roms='' plain='' lang=${LANG:-}
+    roms='' plain='' svc=''
     n=$#
     while [ "$n" -gt 0 ]; do
       a=$1
@@ -193,10 +284,13 @@ EOF
         --roms) roms=${1:-}; [ "$n" -gt 0 ] && { shift; n=$((n - 1)); } ;;
         --roms=*) roms=${a#*=} ;;
         -h | --help)
-          echo "Usage: $0 install [--roms PATH] [installer options]: builds, starts and installs Rommancer; the installer's options:"
+          echo "Usage: $0 install [--roms PATH] [--service yes|no] [installer options]: builds, starts and installs Rommancer"
+          echo "  --service yes|no   install it as a service, started with the computer (asked when not given); the installer's options:"
           exec sh "$SRC/deploy/install.sh" --help ;;
-        --lang) lang=${1:-}; set -- "$@" "$a" ;;
-        --lang=*) lang=${a#*=}; set -- "$@" "$a" ;;
+        --service) svc=${1:-}; [ "$n" -gt 0 ] && { shift; n=$((n - 1)); } ;;
+        --service=*) svc=${a#*=} ;;
+        --lang) LANG_UI=${1:-}; set -- "$@" "$a" ;;
+        --lang=*) LANG_UI=${a#*=}; set -- "$@" "$a" ;;
         *) [ "$a" = --plain ] && plain=1; set -- "$@" "$a" ;;
       esac
     done
@@ -209,9 +303,9 @@ EOF
     sh "$0" build
     sh "$0" up
     sh "$SRC/deploy/install.sh" "http://127.0.0.1:$WEB_PORT" "$@"
-    after_install "$lang" ;;
+    after_install "$svc" ;;
   down) machine; podman rm -f rommancer-web rommancer-api rommancer-mysql ;;
   logs) podman logs --tail 100 -f "rommancer-${2:-api}" ;;
   status) podman ps -a --filter name=rommancer --format '{{.Names}}\t{{.Status}}' ;;
-  *) echo "Usage: $0 install|build|up|start|setup|down|logs [api|web|mysql]|status"; exit 2 ;;
+  *) echo "Usage: $0 install|build|up|start|stop|service [on|off]|setup|down|logs [api|web|mysql]|status"; exit 2 ;;
 esac
