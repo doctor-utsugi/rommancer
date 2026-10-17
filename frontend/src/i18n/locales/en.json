@@ -1441,8 +1441,8 @@
     "dbName": "Database",
     "dbUser": "User",
     "dbConnecting": "Connecting and preparing the database. The first time takes up to a minute…",
-    "adminTitle": "Administrator and server",
-    "adminHint": "The first account manages everything else: users, rom folders and devices. The server settings can be changed later in Administration > Server.",
+    "adminTitle": "Your administrator account",
+    "adminHint": "The first account manages everything else: users, rom folders and devices. The server's settings (public address, updates, data seed) start with their defaults; change them in Administration > Server.",
     "username": "Username",
     "confirm": "Repeat the password",
     "passwordMin": "At least 10 characters",
@@ -1454,7 +1454,6 @@
     "invalidEmail": "That email address is not valid",
     "tooShort": "The password needs at least 10 characters",
     "badPort": "The port is a number from 1 to 65535",
-    "loopbackUrl": "This address only works on this machine. Consoles and phones need one they can reach: the server's address on your network or its domain.",
     "creating": "Creating the administrator…",
     "details": "Details",
     "errors": {

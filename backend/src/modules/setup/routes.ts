@@ -1,6 +1,6 @@
 /**
- * The installer's second step, once the database is there: the first account (an administrator) and the server's
- * settings. Open only while no user exists; the account starts logged in.
+ * The installer's second step, once the database is there: the first account, an administrator (the server's
+ * settings keep their defaults until Administration > Server). Open only while no user exists; it starts logged in.
  */
 import { Router } from 'express';
 import bcrypt from 'bcryptjs';
@@ -10,7 +10,6 @@ import { HttpError } from '../../lib/http.js';
 import { PERMISSIONS } from '../../lib/permissions.js';
 import { localeSchema, setDefaultLocale } from '../../lib/locales.js';
 import { bundledDatabase } from '../../config/bootstrap.js';
-import { setServerSettings } from '../../lib/settings.js';
 import { issueTokens } from '../auth/routes.js';
 
 export const setupRouter = Router();
@@ -29,9 +28,6 @@ export const adminBody = z.object({
   email: z.email(),
   password: z.string().min(10).max(512),
   locale: localeSchema.catch('en').default('en'),
-  publicUrl: z.string().max(255).optional(),
-  externalSyncCron: z.string().max(64).optional(),
-  seedOnStart: z.boolean().optional(),
 });
 
 // Two submissions at once must not make two administrators
@@ -51,11 +47,6 @@ setupRouter.post('/admin', async (req, res) => {
 async function createAdmin(body: z.infer<typeof adminBody>) {
   const locale = body.locale;
   await setDefaultLocale(locale);
-  await setServerSettings({
-    publicUrl: body.publicUrl?.trim().replace(/\/+$/, ''),
-    externalSyncCron: body.externalSyncCron?.trim(),
-    seedOnStart: body.seedOnStart === undefined ? undefined : String(body.seedOnStart),
-  });
   const user = await prisma.user.create({
     data: {
       username: body.username,

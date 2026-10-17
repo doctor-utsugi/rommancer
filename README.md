@@ -29,6 +29,17 @@ sh deploy/install.sh http://localhost:8080
 `deploy/install.sh` uses boxes when it runs in a terminal with `whiptail`, plain questions otherwise (`--plain`
 forces them). Run again on an installed server, it only says so.
 
+Unattended (scripts, provisioning): every answer can be given as an option, and nothing is asked. `--help` lists them.
+
+```bash
+ROMMANCER_ADMIN_PASSWORD='a long password' sh rommancer/deploy/podman/rommancer.sh install \
+  --lang en --db bundled --admin admin --email me@example.com
+```
+
+The installer asks only for the database and your account; the server's settings (public address, updates, data
+seed) start with their defaults and are in Administration > Server. Your roms are added afterwards from the web
+app: see [Storage](docs/storage.md).
+
 ## Rommancer Sync
 
 Journeys provide independent save/savestate blocks per exact ROM, selected separately on each console.

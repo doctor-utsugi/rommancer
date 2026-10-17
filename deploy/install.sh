@@ -1,17 +1,52 @@
 #!/bin/sh
 # Rommancer's installer in the console: the same steps, fields, choices and defaults as the web installer
 # (frontend/src/pages/setup.tsx), through the same API. Keep both in step: backend/test/installer-parity.test.ts.
-#   install.sh [URL] [--plain]    URL defaults to http://127.0.0.1:8096 (deploy/podman/rommancer.sh)
 set -eu
+
+usage() {
+  cat <<'EOF'
+Usage: install.sh [URL] [options]
+  URL                    Rommancer's web address (default http://127.0.0.1:8096, as deploy/podman/rommancer.sh serves it)
+  --plain                plain questions instead of boxes
+  --lang en|es           the installer's language and the server's default one
+  --db bundled|external  Rommancer's own database, or a MySQL server of your own:
+    --db-host HOST  --db-port PORT  --db-name NAME  --db-user USER  --db-password PASSWORD
+  --admin USER  --email EMAIL  --password PASSWORD     the administrator
+Every option given skips its question; with all of them nothing is asked (unattended installs).
+The passwords can come from ROMMANCER_DB_PASSWORD and ROMMANCER_ADMIN_PASSWORD instead, out of sight of ps.
+EOF
+}
 
 URL="http://127.0.0.1:8096"
 PLAIN=
-for a in "$@"; do
-  case "$a" in
-    --plain) PLAIN=1 ;;
-    -h|--help) sed -n '2,4p' "$0"; exit 0 ;;
-    *) URL="${a%/}" ;;
+O_LANG='' O_DB='' O_DB_HOST='' O_DB_PORT='' O_DB_NAME='' O_DB_USER='' O_ADMIN='' O_EMAIL=''
+O_DB_PASSWORD=${ROMMANCER_DB_PASSWORD:-} O_PASSWORD=${ROMMANCER_ADMIN_PASSWORD:-}
+# Which answers came with the command (an empty database password is an answer too)
+G_DB_PASSWORD=${ROMMANCER_DB_PASSWORD+1} G_PASSWORD=${ROMMANCER_ADMIN_PASSWORD+1}
+while [ $# -gt 0 ]; do
+  opt=$1 val=
+  case "$opt" in
+    --*=*) val=${opt#*=}; opt=${opt%%=*} ;;
+    --plain | -h | --help) ;;
+    --*) [ $# -ge 2 ] || { usage >&2; exit 2; }; val=$2; shift ;;
   esac
+  case "$opt" in
+    --plain) PLAIN=1 ;;
+    -h | --help) usage; exit 0 ;;
+    --lang) O_LANG=$val ;;
+    --db) O_DB=$val ;;
+    --db-host) O_DB_HOST=$val ;;
+    --db-port) O_DB_PORT=$val ;;
+    --db-name) O_DB_NAME=$val ;;
+    --db-user) O_DB_USER=$val ;;
+    --db-password) O_DB_PASSWORD=$val G_DB_PASSWORD=1 ;;
+    --admin) O_ADMIN=$val ;;
+    --email) O_EMAIL=$val ;;
+    --password) O_PASSWORD=$val G_PASSWORD=1 ;;
+    --*) usage >&2; exit 2 ;;
+    *) URL="${opt%/}" ;;
+  esac
+  shift
 done
 API="$URL/api/v1"
 # Boxes when a person is at a terminal and whiptail is there; plain questions otherwise (pipes, scripts)
@@ -20,13 +55,12 @@ command -v curl >/dev/null 2>&1 || { echo "curl is needed" >&2; exit 1; }
 
 # Languages the panel speaks (backend/src/lib/locales.ts, frontend/src/i18n/locales.ts)
 LOCALES='en:English es:Español'
-# External sync schedules (SYNC_SCHEDULES in setup.tsx)
-schedule_weekly='0 4 * * 0'
-schedule_daily='0 4 * * *'
-schedule_never=''
 
 L=en
 case "${LANG:-}" in es*) L=es ;; esac
+if [ -n "$O_LANG" ]; then
+  case " $LOCALES" in *" $O_LANG:"*) L=$O_LANG ;; *) echo "--lang: one of $LOCALES" >&2; exit 2 ;; esac
+fi
 
 # The texts of setup.tsx (frontend/src/i18n/locales/*.json, "setup" and "server"), plus the console's own
 t() {
@@ -34,7 +68,6 @@ t() {
     case "$1" in
       title) echo "Instalador de Rommancer" ;;
       buttons) echo "Aceptar Cancelar Sí No" ;;
-      yesNo) echo "[S/n]" ;;
       language) echo "Idioma" ;;
       waiting) echo "Esperando a Rommancer en $URL" ;;
       unreachable) echo "Rommancer no responde en $URL. ¿Está arrancado? (deploy/podman/rommancer.sh up)" ;;
@@ -59,8 +92,8 @@ t() {
       db_denied) echo "El usuario no puede usar esa base de datos. Dale todos los privilegios en ella." ;;
       db_bundled) echo "La base de datos de Rommancer no ha respondido a tiempo. Mira su registro (rommancer.sh logs mysql) y vuelve a intentarlo." ;;
       db_failed) echo "No se ha podido preparar la base de datos." ;;
-      adminTitle) echo "Administrador y servidor" ;;
-      adminHint) echo "La primera cuenta gestiona todo lo demás: usuarios, carpetas de roms y dispositivos. Los ajustes del servidor se pueden cambiar luego en Administración > Servidor." ;;
+      adminTitle) echo "Tu cuenta de administrador" ;;
+      adminHint) echo "La primera cuenta gestiona todo lo demás: usuarios, carpetas de roms y dispositivos. Los ajustes del servidor (dirección pública, actualizaciones, semilla) empiezan con sus valores por defecto; se cambian en Administración > Servidor." ;;
       username) echo "Usuario" ;;
       usernameHint) echo "Al menos 3 caracteres: letras, números, punto, guion o guion bajo" ;;
       email) echo "Email" ;;
@@ -72,16 +105,7 @@ t() {
       tooShort) echo "La contraseña necesita al menos 10 caracteres" ;;
       mismatch) echo "Las contraseñas no coinciden" ;;
       badPort) echo "El puerto es un número entre 1 y 65535" ;;
-      publicUrl) echo "Dirección pública" ;;
-      publicUrlHint) echo "Cómo llegan a este servidor las consolas y los móviles al emparejarse (p. ej. http://192.168.1.10:8096). Vacía: la dirección por la que llegue cada petición." ;;
-      loopbackUrl) echo "Esta dirección solo funciona en esta máquina. Las consolas y los móviles necesitan una a la que puedan llegar: la del servidor en tu red o su dominio." ;;
-      externalSync) echo "Actualizar fuentes externas" ;;
-      externalSyncHint) echo "Los DATs, los hashes de RetroAchievements y demás fuentes se vuelven a descargar con esta frecuencia." ;;
-      weekly) echo "Cada domingo a las 4:00" ;;
-      daily) echo "Cada día a las 4:00" ;;
-      never) echo "Nunca (solo cuando se pida)" ;;
-      seedOnStart) echo "¿Aplicar la semilla al arrancar?" ;;
-      seedOnStartHint) echo "Rommancer trae bases de datos de juegos (DATs, hashes de RetroAchievements, imágenes) en su carpeta de semilla: esto las carga al arrancar el servidor, saltándose lo que ya está." ;;
+      badDb) echo "--db: bundled o external" ;;
       creating) echo "Creando el administrador…" ;;
       failed) echo "No ha funcionado" ;;
       finished) echo "Rommancer está instalado. Entra en $2 como «$3»." ;;
@@ -91,7 +115,6 @@ t() {
     case "$1" in
       title) echo "Rommancer installer" ;;
       buttons) echo "Ok Cancel Yes No" ;;
-      yesNo) echo "[Y/n]" ;;
       language) echo "Language" ;;
       waiting) echo "Waiting for Rommancer at $URL" ;;
       unreachable) echo "Rommancer does not answer at $URL. Is it running? (deploy/podman/rommancer.sh up)" ;;
@@ -116,8 +139,8 @@ t() {
       db_denied) echo "The user may not use that database. Grant it all privileges on it." ;;
       db_bundled) echo "Rommancer's own database did not answer in time. Look at its log (rommancer.sh logs mysql) and try again." ;;
       db_failed) echo "The database could not be prepared." ;;
-      adminTitle) echo "Administrator and server" ;;
-      adminHint) echo "The first account manages everything else: users, rom folders and devices. The server settings can be changed later in Administration > Server." ;;
+      adminTitle) echo "Your administrator account" ;;
+      adminHint) echo "The first account manages everything else: users, rom folders and devices. The server's settings (public address, updates, data seed) start with their defaults; change them in Administration > Server." ;;
       username) echo "Username" ;;
       usernameHint) echo "At least 3 characters: letters, digits, dot, dash or underscore" ;;
       email) echo "Email" ;;
@@ -129,16 +152,7 @@ t() {
       tooShort) echo "The password needs at least 10 characters" ;;
       mismatch) echo "The passwords do not match" ;;
       badPort) echo "The port is a number from 1 to 65535" ;;
-      publicUrl) echo "Public address" ;;
-      publicUrlHint) echo "How consoles and phones reach this server when pairing (e.g. http://192.168.1.10:8096). Empty: the address each request came in on." ;;
-      loopbackUrl) echo "This address only works on this machine. Consoles and phones need one they can reach: the server's address on your network or its domain." ;;
-      externalSync) echo "Update external sources" ;;
-      externalSyncHint) echo "DATs, RetroAchievements hashes and other sources are fetched again on this schedule." ;;
-      weekly) echo "Every Sunday at 4:00" ;;
-      daily) echo "Every day at 4:00" ;;
-      never) echo "Never (only when asked)" ;;
-      seedOnStart) echo "Apply the data seed on start?" ;;
-      seedOnStartHint) echo "Rommancer comes with game databases (DATs, RetroAchievements hashes, artwork) in its seed folder: this loads them when the server starts, skipping what is already there." ;;
+      badDb) echo "--db: bundled or external" ;;
       creating) echo "Creating the administrator…" ;;
       failed) echo "That did not work" ;;
       finished) echo "Rommancer is installed. Log in at $2 as \"$3\"." ;;
@@ -154,6 +168,13 @@ cancel() {
   [ $UI = box ] && clear >&2
   { echo; t cancelled; } >&2
   exit 1
+}
+
+# An answer given with the command that cannot work: asking again would ask nobody
+die() {
+  [ $UI = box ] && clear >&2
+  printf '%s\n' "$1" >&2
+  exit 2
 }
 
 # Boxes as wide as the terminal allows (76 at most) and as tall as their text
@@ -238,27 +259,11 @@ choose() {
   done
 }
 
-# confirm LABEL [HINT]: yes (the default) or no, as true/false; Esc cancels like everywhere else
-confirm() {
-  if [ $UI = box ]; then
-    x=$(text "$1" "${2:-}")
-    rc=0
-    box --yesno "$x" $(($(rows "$x") + 6)) $W || rc=$?
-    case $rc in 0) echo true ;; 1) echo false ;; *) cancel ;; esac
-    return
-  fi
-  [ -n "${2:-}" ] && printf '%s\n' "$2" >&2
-  printf '%s %s: ' "$1" "$(t yesNo)" >&2
-  IFS= read -r v || cancel
-  case "$v" in [nN]*) echo false ;; *) echo true ;; esac
-}
-
 # --- The API ---
 
 jesc() { printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g; s/	/\\t/g'; }
 jstr() { printf '"%s":"%s"' "$1" "$(jesc "$2")"; }
 jnum() { printf '"%s":%s' "$1" "$2"; }
-jbool() { printf '"%s":%s' "$1" "$2"; }
 # A string field of the last answer, JSON escapes undone
 jget() { printf '%s' "$OUT" | sed -n "s/.*\"$1\":\"\\(\\([^\"\\\\]\\|\\\\.\\)*\\)\".*/\\1/p" | sed 's/\\"/"/g; s/\\\\/\\/g'; }
 
@@ -326,7 +331,8 @@ wait_setup() {
   done
 }
 
-is_loopback() { case "$1" in *://localhost* | *://127.* | *://\[::1\]*) return 0 ;; esac; return 1; }
+valid_port() { case "$1" in '' | *[!0-9]*) return 1 ;; esac; [ "$1" -ge 1 ] && [ "$1" -le 65535 ]; }
+valid_user() { case "$1" in *[!a-zA-Z0-9_.-]*) return 1 ;; esac; [ ${#1} -ge 3 ] && [ ${#1} -le 64 ]; }
 
 # --- Steps ---
 
@@ -340,11 +346,17 @@ db_body() {
 }
 
 database_step() {
-  DB_HOST='' DB_PORT=3306 DB_NAME=rommancer DB_USER=rommancer DB_PASSWORD=''
-  bundled=false mode=bundled
+  DB_HOST=$O_DB_HOST DB_PORT=${O_DB_PORT:-3306} DB_NAME=${O_DB_NAME:-rommancer} DB_USER=${O_DB_USER:-rommancer} DB_PASSWORD=$O_DB_PASSWORD
+  bundled=false mode=${O_DB:-bundled}
   case "$SETUP" in *'"bundledDatabase":true'*) bundled=true ;; esac
+  [ "$O_DB" != bundled ] || [ $bundled = true ] || die "$(t dbBundledMissing)"
+  # Everything this step needs came with the command: a refusal ends the run instead of asking again
+  given=
+  [ "$O_DB" = bundled ] && given=1
+  [ "$O_DB" = external ] && [ -n "$O_DB_HOST" ] && [ -n "${G_DB_PASSWORD:-}" ] && given=1
   while :; do
-    if [ $bundled = true ]; then
+    if [ -n "$O_DB" ]; then mode=$O_DB
+    elif [ $bundled = true ]; then
       mode=$(choose "$(t step 1) · $(t dbTitle)
 
 $(t dbBundled): $(t dbBundledHint)
@@ -359,18 +371,21 @@ $(t dbExternal): $(t dbExternalHint)"
       mode=external
     fi
     if [ "$mode" = external ]; then
-      DB_HOST=$(need "$(t dbHost)" "$DB_HOST")
-      while :; do
-        DB_PORT=$(ask "$(t dbPort)" "$DB_PORT")
-        case "$DB_PORT" in '' | *[!0-9]*) ;; *) [ "$DB_PORT" -ge 1 ] && [ "$DB_PORT" -le 65535 ] && break ;; esac
-        note "$(t badPort)"
-      done
-      DB_NAME=$(need "$(t dbName)" "$DB_NAME")
-      DB_USER=$(need "$(t dbUser)" "$DB_USER")
-      DB_PASSWORD=$(secret "$(t password)")
+      [ -n "$O_DB_HOST" ] || DB_HOST=$(need "$(t dbHost)" "$DB_HOST")
+      if [ -z "$O_DB_PORT" ]; then
+        while :; do
+          DB_PORT=$(ask "$(t dbPort)" "$DB_PORT")
+          valid_port "$DB_PORT" && break
+          note "$(t badPort)"
+        done
+      fi
+      [ -n "$O_DB_NAME" ] || DB_NAME=$(need "$(t dbName)" "$DB_NAME")
+      [ -n "$O_DB_USER" ] || DB_USER=$(need "$(t dbUser)" "$DB_USER")
+      [ -n "${G_DB_PASSWORD:-}" ] || DB_PASSWORD=$(secret "$(t password)")
     fi
     call_waiting "$(t dbConnecting)" POST /setup/database "$(db_body "$mode")"
     [ "$CODE" = 200 ] && break
+    [ -n "$given" ] && die "$(why)"
     note "$(why)"
   done
   # The installer steps aside for the real server, which answers once it has started
@@ -378,65 +393,66 @@ $(t dbExternal): $(t dbExternalHint)"
 }
 
 admin_body() {
-  printf '{%s,%s,%s,%s,%s,%s,%s}' "$(jstr username "$A_USER")" "$(jstr email "$A_EMAIL")" "$(jstr password "$A_PASSWORD")" \
-    "$(jstr locale "$L")" "$(jstr publicUrl "$A_URL")" "$(jstr externalSyncCron "$A_CRON")" "$(jbool seedOnStart "$A_SEED")"
+  printf '{%s,%s,%s,%s}' "$(jstr username "$A_USER")" "$(jstr email "$A_EMAIL")" "$(jstr password "$A_PASSWORD")" "$(jstr locale "$L")"
 }
 
 # The same checks as the web form, in the same order: username, password length, the repeated password
 admin_step() {
-  A_USER=admin A_EMAIL='' A_URL=$URL A_CRON=$schedule_weekly A_SEED=true
-  note "$(t step 2) · $(t adminTitle)
+  A_USER=${O_ADMIN:-admin} A_EMAIL=$O_EMAIL A_PASSWORD=$O_PASSWORD
+  given=
+  [ -n "$O_ADMIN" ] && [ -n "$O_EMAIL" ] && [ -n "${G_PASSWORD:-}" ] && given=1
+  [ -n "$given" ] || note "$(t step 2) · $(t adminTitle)
 
 $(t adminHint)"
   while :; do
-    while :; do
-      A_USER=$(need "$(t username)" "$A_USER" "$(t usernameHint)")
-      case "$A_USER" in *[!a-zA-Z0-9_.-]*) ;; *) [ ${#A_USER} -ge 3 ] && [ ${#A_USER} -le 64 ] && break ;; esac
-      note "$(t invalidUsername)"
-    done
-    A_EMAIL=$(need "$(t email)" "$A_EMAIL")
-    while :; do
-      A_PASSWORD=$(secret "$(t password)" "$(t passwordMin)")
-      if [ ${#A_PASSWORD} -lt 10 ]; then note "$(t tooShort)"; continue; fi
-      again=$(secret "$(t confirm)")
-      [ "$A_PASSWORD" = "$again" ] && break
-      note "$(t mismatch)"
-    done
-    hint=$(t publicUrlHint)
-    is_loopback "$A_URL" && hint=$(t loopbackUrl)
-    A_URL=$(ask "$(t publicUrl)" "$A_URL" "$hint")
-    is_loopback "$A_URL" && note "$(t loopbackUrl)"
-    def=weekly
-    [ "$A_CRON" = "$schedule_daily" ] && def=daily
-    [ "$A_CRON" = "$schedule_never" ] && def=never
-    when=$(choose "$(text "$(t externalSync)" "$(t externalSyncHint)")" "$def" weekly "$(t weekly)" daily "$(t daily)" never "$(t never)")
-    case $when in
-      weekly) A_CRON=$schedule_weekly ;;
-      daily) A_CRON=$schedule_daily ;;
-      never) A_CRON=$schedule_never ;;
-    esac
-    A_SEED=$(confirm "$(t seedOnStart)" "$(t seedOnStartHint)")
+    if [ -z "$O_ADMIN" ]; then
+      while :; do
+        A_USER=$(need "$(t username)" "$A_USER" "$(t usernameHint)")
+        valid_user "$A_USER" && break
+        note "$(t invalidUsername)"
+      done
+    fi
+    [ -n "$O_EMAIL" ] || A_EMAIL=$(need "$(t email)" "$A_EMAIL")
+    if [ -z "${G_PASSWORD:-}" ]; then
+      while :; do
+        A_PASSWORD=$(secret "$(t password)" "$(t passwordMin)")
+        if [ ${#A_PASSWORD} -lt 10 ]; then note "$(t tooShort)"; continue; fi
+        again=$(secret "$(t confirm)")
+        [ "$A_PASSWORD" = "$again" ] && break
+        note "$(t mismatch)"
+      done
+    fi
     call_waiting "$(t creating)" POST /setup/admin "$(admin_body)"
     [ "$CODE" = 201 ] && break
+    [ -n "$given" ] && die "$(why)"
     note "$(why)"
     # Someone finished the installation meanwhile (the web installer, another console)
     [ "$CODE" = 409 ] && exit 1
   done
-  note "$(t finished "${A_URL:-$URL}" "$A_USER")"
-  if [ $UI = box ]; then clear; t finished "${A_URL:-$URL}" "$A_USER"; fi
+  if [ -n "$given" ]; then [ $UI = box ] && clear; t finished "$URL" "$A_USER"; return; fi
+  note "$(t finished "$URL" "$A_USER")"
+  if [ $UI = box ]; then clear; t finished "$URL" "$A_USER"; fi
 }
 
 # --- Run ---
+
+# Answers given with the command are checked before anything is done with them
+case "$O_DB" in '' | bundled | external) ;; *) die "$(t badDb)" ;; esac
+if [ -n "$O_DB_PORT" ] && ! valid_port "$O_DB_PORT"; then die "--db-port: $(t badPort)"; fi
+if [ -n "$O_ADMIN" ] && ! valid_user "$O_ADMIN"; then die "--admin: $(t invalidUsername)"; fi
+if [ -n "${G_PASSWORD:-}" ] && [ ${#O_PASSWORD} -lt 10 ]; then die "--password: $(t tooShort)"; fi
 
 status "$(t waiting)…"
 wait_setup
 SETUP=$OUT
 case "$SETUP" in *'"needsAdmin":false'*) note "$(t installed)"; exit 0 ;; esac
 
-args=
-for l in $LOCALES; do args="$args ${l%%:*} ${l#*:}"; done
-# shellcheck disable=SC2086
-L=$(choose "$(t language)" "$L" $args)
+if [ -z "$O_LANG" ]; then
+  args=
+  for l in $LOCALES; do args="$args ${l%%:*} ${l#*:}"; done
+  # shellcheck disable=SC2086
+  L=$(choose "$(t language)" "$L" $args)
+fi
 
 case "$SETUP" in *'"needsDatabase":true'*) database_step ;; esac
 # A database chosen anew may already hold an installation

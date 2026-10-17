@@ -49,13 +49,7 @@ test('both installers send every field the setup API takes, and nothing else', a
   for (const k of adminKeys) assert.match(webComponent('AdminStep'), new RegExp(`\\b${k}\\b`), `setup.tsx AdminStep sends ${k}`);
 });
 
-test('the same sync schedules, languages and setup states', async () => {
-  const webSchedules = Object.fromEntries([...web.matchAll(/\{ value: '([^']*)', key: '(\w+)' \}/g)].map((m) => [m[2], m[1]]));
-  const cliSchedules = Object.fromEntries([...cli.matchAll(/^schedule_(\w+)='([^']*)'$/gm)].map((m) => [m[1], m[2]]));
-  assert.ok(Object.keys(webSchedules).length >= 2, 'SYNC_SCHEDULES found in setup.tsx');
-  assert.deepEqual(cliSchedules, webSchedules, 'install.sh schedule_* against SYNC_SCHEDULES');
-  for (const k of Object.keys(cliSchedules)) assert.match(shellFunction('admin_step'), new RegExp(`\\b${k}\\) A_CRON=\\$schedule_${k}`), `install.sh offers ${k}`);
-
+test('the same languages and setup states', async () => {
   const { LOCALE_CODES } = await import('../src/lib/locales.js');
   const webLocales = [...read('frontend/src/i18n/locales.ts').matchAll(/code: '(\w+)'/g)].map((m) => m[1]);
   const cliLocales = cli.match(/^LOCALES='([^']*)'$/m)![1].split(' ').map((l) => l.split(':')[0]);
@@ -79,9 +73,7 @@ const SHARED_TEXTS: Record<string, string> = {
   dbUser: 'setup.dbUser', dbConnecting: 'setup.dbConnecting', details: 'setup.details', adminTitle: 'setup.adminTitle', adminHint: 'setup.adminHint',
   username: 'setup.username', usernameHint: 'setup.usernameHint', passwordMin: 'setup.passwordMin', confirm: 'setup.confirm',
   invalidUsername: 'setup.invalidUsername', invalidEmail: 'setup.invalidEmail', tooShort: 'setup.tooShort', mismatch: 'setup.mismatch',
-  badPort: 'setup.badPort', loopbackUrl: 'setup.loopbackUrl', creating: 'setup.creating', password: 'common.password', email: 'common.email',
-  publicUrl: 'server.publicUrl', publicUrlHint: 'server.publicUrlHint', externalSync: 'server.externalSync', externalSyncHint: 'server.externalSyncHint',
-  weekly: 'server.sync.weekly', daily: 'server.sync.daily', never: 'server.sync.never', seedOnStartHint: 'server.seedOnStartHint',
+  badPort: 'setup.badPort', creating: 'setup.creating', password: 'common.password', email: 'common.email',
 };
 
 /** install.sh t() as { language: { key: text } }; its blocks follow LOCALES' order reversed (es first, then the else) */
@@ -105,6 +97,27 @@ test('the console says what the web says, in every language, and translates ever
     for (const lang of ['en', 'es']) {
       assert.ok(texts[lang][code], `install.sh translates ${code} in ${lang}`);
       assert.equal(texts[lang][code], webText(lang, `setup.errors.${code}`), `${lang}: ${code}`);
+    }
+  }
+});
+
+// Every field of the setup API can also come with the command (unattended installs), by these options
+const CLI_OPTIONS: Record<string, string> = {
+  mode: '--db', host: '--db-host', port: '--db-port', database: '--db-name', user: '--db-user', password: '--db-password',
+  username: '--admin', email: '--email', locale: '--lang',
+};
+
+test('the console takes every field as an option too', async () => {
+  const { databaseBody } = await import('../src/installer.js');
+  const { adminBody } = await import('../src/modules/setup/routes.js');
+  const usage = shellFunction('usage');
+  const fields = [...databaseBody.options.flatMap((o) => Object.keys(o.shape)), ...Object.keys(adminBody.shape)];
+  for (const f of new Set(fields)) {
+    const opt = f === 'password' ? ['--db-password', '--password'] : [CLI_OPTIONS[f]];
+    for (const o of opt) {
+      assert.ok(o, `install.sh has an option for ${f} (CLI_OPTIONS)`);
+      assert.match(usage, new RegExp(`${o}\\b`), `install.sh --help lists ${o}`);
+      assert.match(cli, new RegExp(`^ {4}${o}\\)`, 'm'), `install.sh reads ${o}`);
     }
   }
 });

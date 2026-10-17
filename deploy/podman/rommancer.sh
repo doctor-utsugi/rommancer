@@ -2,7 +2,8 @@
 # Rootless Podman deployment for a host whose Podman lacks Quadlet (Debian 12 ships 4.3).
 # Containers use --restart=always and come back at boot through podman-restart.service.
 #   rommancer.sh install | build | up | setup | down | logs [api|web|mysql] | status
-# install = build, up, then the installer in the console (setup); the web app runs the same installer
+# install = build, up, then the installer in the console (setup); the web app runs the same installer.
+# install and setup pass their options to deploy/install.sh (--help lists them: unattended installs)
 set -eu
 SRC="$(cd "$(dirname "$0")/../.." && pwd)"
 ENV_FILE="${ROMMANCER_ENV:-$HOME/.config/rommancer/rommancer.env}"
@@ -43,11 +44,14 @@ case "${1:-}" in
     podman run -d --name rommancer-web --network "$NET" --restart=always -p "127.0.0.1:$WEB_PORT:80" localhost/rommancer-web:latest
     systemctl --user enable --now podman-restart.service >/dev/null 2>&1 || true
     echo "Web on http://127.0.0.1:$WEB_PORT" ;;
-  setup) exec sh "$SRC/deploy/install.sh" "http://127.0.0.1:$WEB_PORT" ;;
+  setup)
+    shift
+    exec sh "$SRC/deploy/install.sh" "http://127.0.0.1:$WEB_PORT" "$@" ;;
   install)
+    shift
     sh "$0" build
     sh "$0" up
-    exec sh "$SRC/deploy/install.sh" "http://127.0.0.1:$WEB_PORT" ;;
+    exec sh "$SRC/deploy/install.sh" "http://127.0.0.1:$WEB_PORT" "$@" ;;
   down) podman rm -f rommancer-web rommancer-api rommancer-mysql ;;
   logs) podman logs --tail 100 -f "rommancer-${2:-api}" ;;
   status) podman ps -a --filter name=rommancer --format '{{.Names}}\t{{.Status}}' ;;

@@ -8,7 +8,13 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Switch } from '@/components/ui/switch'
 import { Field, NativeSelect, PageHeader, errMsg } from '@/components/common'
-import { SYNC_SCHEDULES } from '@/pages/setup'
+
+// Ready-made schedules for the external sync (deploy/install.sh does not ask: the installer keeps the default)
+export const SYNC_SCHEDULES = [
+  { value: '0 4 * * 0', key: 'weekly' },
+  { value: '0 4 * * *', key: 'daily' },
+  { value: '', key: 'never' },
+] as const
 
 export interface ServerSettings {
   publicUrl: string

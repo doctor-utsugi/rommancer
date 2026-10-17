@@ -6,8 +6,7 @@ import { ApiError, api, tokens } from '@/lib/api'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
-import { Checkbox } from '@/components/ui/checkbox'
-import { Field, NativeSelect, errMsg } from '@/components/common'
+import { Field, errMsg } from '@/components/common'
 import i18n, { setLanguage } from '@/i18n'
 import { LOCALES } from '@/i18n/locales'
 
@@ -20,22 +19,8 @@ export interface SetupState {
   needsAdmin: boolean
 }
 
-export const SYNC_SCHEDULES = [
-  { value: '0 4 * * 0', key: 'weekly' },
-  { value: '0 4 * * *', key: 'daily' },
-  { value: '', key: 'never' },
-] as const
-
 // The console installer (deploy/install.sh) checks the same, in the same order
 const USERNAME = /^[a-zA-Z0-9_.-]{3,64}$/
-const isLoopback = (url: string) => {
-  try {
-    const host = new URL(url).hostname
-    return host === 'localhost' || host.startsWith('127.') || host === '[::1]'
-  } catch {
-    return false
-  }
-}
 
 /** What went wrong, kept as a translation key so it follows a change of language */
 interface Problem {
@@ -105,7 +90,7 @@ function Shell({ step, title, children }: { step: number; title: string; childre
   )
 }
 
-/** First run: where the database is, then the administrator and the server's settings */
+/** First run: where the database is, then the administrator (the server's settings keep their defaults) */
 export function SetupPage({ state }: { state: SetupState }) {
   return state.needsDatabase ? <DatabaseStep bundled={state.bundledDatabase} /> : <AdminStep />
 }
@@ -204,15 +189,7 @@ function AdminStep() {
   const { t } = useTranslation()
   const { reload } = useAuth()
   const qc = useQueryClient()
-  const [form, setForm] = useState({
-    username: 'admin',
-    email: '',
-    password: '',
-    confirm: '',
-    publicUrl: window.location.origin,
-    seedOnStart: true,
-    externalSyncCron: SYNC_SCHEDULES[0].value as string,
-  })
+  const [form, setForm] = useState({ username: 'admin', email: '', password: '', confirm: '' })
   const [problem, setProblem] = useState<Problem | null>(null)
   const [busy, setBusy] = useState(false)
   const submit = async (e: FormEvent) => {
@@ -237,7 +214,7 @@ function AdminStep() {
       setBusy(false)
     }
   }
-  const set = (k: 'username' | 'email' | 'password' | 'confirm' | 'publicUrl') => (e: React.ChangeEvent<HTMLInputElement>) => setForm({ ...form, [k]: e.target.value })
+  const set = (k: keyof typeof form) => (e: React.ChangeEvent<HTMLInputElement>) => setForm({ ...form, [k]: e.target.value })
   return (
     <Shell step={2} title={t('setup.adminTitle')}>
       <form onSubmit={submit} noValidate className="grid gap-4">
@@ -255,27 +232,6 @@ function AdminStep() {
           <Field label={t('setup.confirm')}>
             <Input type="password" value={form.confirm} onChange={set('confirm')} autoComplete="new-password" required />
           </Field>
-        </fieldset>
-        <fieldset className="grid gap-4" disabled={busy}>
-          <Field label={t('server.publicUrl')} hint={isLoopback(form.publicUrl) ? t('setup.loopbackUrl') : t('server.publicUrlHint')}>
-            <Input type="url" value={form.publicUrl} onChange={set('publicUrl')} />
-          </Field>
-          <Field label={t('server.externalSync')} hint={t('server.externalSyncHint')}>
-            <NativeSelect value={form.externalSyncCron} onChange={(e) => setForm({ ...form, externalSyncCron: e.target.value })}>
-              {SYNC_SCHEDULES.map((s) => (
-                <option key={s.key} value={s.value}>
-                  {t(`server.sync.${s.key}`)}
-                </option>
-              ))}
-            </NativeSelect>
-          </Field>
-          <label className="flex items-start gap-2 text-sm">
-            <Checkbox checked={form.seedOnStart} onCheckedChange={(v) => setForm({ ...form, seedOnStart: !!v })} className="mt-0.5" />
-            <span>
-              {t('server.seedOnStart')}
-              <span className="block text-muted-foreground">{t('server.seedOnStartHint')}</span>
-            </span>
-          </label>
         </fieldset>
         <ProblemNote problem={problem} />
         <Button type="submit" disabled={busy} className="h-auto min-h-9 whitespace-normal py-2">

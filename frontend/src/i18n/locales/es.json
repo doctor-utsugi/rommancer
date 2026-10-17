@@ -1441,8 +1441,8 @@
     "dbName": "Base de datos",
     "dbUser": "Usuario",
     "dbConnecting": "Conectando y preparando la base de datos. La primera vez tarda hasta un minuto…",
-    "adminTitle": "Administrador y servidor",
-    "adminHint": "La primera cuenta gestiona todo lo demás: usuarios, carpetas de roms y dispositivos. Los ajustes del servidor se pueden cambiar luego en Administración > Servidor.",
+    "adminTitle": "Tu cuenta de administrador",
+    "adminHint": "La primera cuenta gestiona todo lo demás: usuarios, carpetas de roms y dispositivos. Los ajustes del servidor (dirección pública, actualizaciones, semilla) empiezan con sus valores por defecto; se cambian en Administración > Servidor.",
     "username": "Usuario",
     "confirm": "Repite la contraseña",
     "passwordMin": "Al menos 10 caracteres",
@@ -1454,7 +1454,6 @@
     "invalidEmail": "Ese email no es válido",
     "tooShort": "La contraseña necesita al menos 10 caracteres",
     "badPort": "El puerto es un número entre 1 y 65535",
-    "loopbackUrl": "Esta dirección solo funciona en esta máquina. Las consolas y los móviles necesitan una a la que puedan llegar: la del servidor en tu red o su dominio.",
     "creating": "Creando el administrador…",
     "details": "Detalles",
     "errors": {
