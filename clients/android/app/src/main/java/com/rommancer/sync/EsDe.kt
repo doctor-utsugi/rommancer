@@ -74,13 +74,34 @@ object EsDe {
 
     private fun unesc(s: String) = s.replace("&lt;", "<").replace("&gt;", ">").replace("&quot;", "\"").replace("&apos;", "'").replace("&amp;", "&")
 
-    /** GAMELIST plus an entry for each of WANTED ("./x.sfc") it lacks; null when nothing is missing. Existing entries stay */
+    /** A file's name without folder and extension: what ES-DE names a game it has no data for */
+    private fun stem(path: String) = path.substringAfterLast('/').substringBeforeLast('.')
+
+    /**
+     * GAMELIST with an entry for each of WANTED ("./x.sfc") it lacks, and the server's name on entries named after their
+     * file (ES-DE's own for a game it has no data for); null when nothing changes. Other entries are never touched
+     */
     fun addEntries(gamelist: String?, wanted: List<Pair<String, Meta>>): Pair<String, Int>? {
-        val text = gamelist?.takeIf { it.isNotBlank() } ?: "<?xml version=\"1.0\"?>\n<gameList>\n</gameList>\n"
-        val end = text.lastIndexOf("</gameList>").takeIf { it >= 0 } ?: return null
-        val have = Regex("<path>([^<]*)</path>").findAll(text).map { unesc(it.groupValues[1].trim()) }.toHashSet()
-        val add = StringBuilder()
+        var text = gamelist?.takeIf { it.isNotBlank() } ?: "<?xml version=\"1.0\"?>\n<gameList>\n</gameList>\n"
+        if (text.lastIndexOf("</gameList>") < 0) return null
+        val byPath = wanted.associate { it.first to it.second }
+        val have = HashSet<String>()
         var n = 0
+        text = Regex("<game>(.*?)</game>", RegexOption.DOT_MATCHES_ALL).replace(text) { g ->
+            val block = g.groupValues[1]
+            val path = Regex("<path>([^<]*)</path>").find(block)?.groupValues?.get(1)?.trim()?.let(::unesc) ?: return@replace g.value
+            have += path
+            val m = byPath[path] ?: return@replace g.value
+            val name = Regex("<name>([^<]*)</name>").find(block) ?: return@replace g.value
+            if (unesc(name.groupValues[1].trim()) != stem(path) || m.name == stem(path)) return@replace g.value
+            val indent = Regex("""\n([ \t]*)<name>""").find(block)?.groupValues?.get(1) ?: "\t\t"
+            var extra = ""
+            if (m.sortName.isNotEmpty() && "<sortname>" !in block) extra += "\n$indent<sortname>${esc(m.sortName)}</sortname>"
+            if (m.desc.isNotEmpty() && "<desc>" !in block) extra += "\n$indent<desc>${esc(m.desc)}</desc>"
+            n++
+            "<game>" + block.replaceRange(name.range, "<name>${esc(m.name)}</name>$extra") + "</game>"
+        }
+        val add = StringBuilder()
         for ((path, m) in wanted) {
             if (!have.add(path)) continue
             add.append("\t<game>\n\t\t<path>${esc(path)}</path>\n\t\t<name>${esc(m.name)}</name>\n")
@@ -89,10 +110,12 @@ object EsDe {
             add.append("\t</game>\n")
             n++
         }
-        return if (n == 0) null else text.substring(0, end) + add + text.substring(end) to n
+        if (n == 0) return null
+        val end = text.lastIndexOf("</gameList>")
+        return text.substring(0, end) + add + text.substring(end) to n
     }
 
-    /** Gives the lists' games ES-DE has no entry for the server's name, so they are not listed by file name; returns how many */
+    /** Gives the lists' games ES-DE knows only by file name the server's name; returns how many it named */
     fun names(root: File, romsDir: String?, metas: List<Meta>): Int {
         val dir = File(root, "ES-DE")
         if (romsDir == null || !File(dir, "settings").isDirectory) return 0

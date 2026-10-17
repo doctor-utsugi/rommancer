@@ -36,4 +36,14 @@ class EsDeTest {
     fun leavesAnUnreadableListAlone() {
         assertNull(EsDe.addEntries("<gameList><game>", listOf("./x.sfc" to smz3)))
     }
+
+    @Test
+    fun namesAnEntryEsDeMadeFromTheFileName() {
+        val list = "<gameList>\n\t<game>\n\t\t<path>./SMZ3_popoie_fang.sfc</path>\n\t\t<name>SMZ3_popoie_fang</name>\n\t\t<playcount>1</playcount>\n\t</game>\n\t<game>\n\t\t<path>./b.sfc</path>\n\t\t<name>b</name>\n\t</game>\n</gameList>\n"
+        val (text, n) = EsDe.addEntries(list, listOf("./SMZ3_popoie_fang.sfc" to smz3))!!
+        assertEquals(1, n)
+        assertTrue(text, text.contains("<path>./SMZ3_popoie_fang.sfc</path>\n\t\t<name>SMZ3 popoie fang</name>\n\t\t<sortname>Super Metroid SMZ3 popoie fang</sortname>\n\t\t<playcount>1</playcount>"))
+        assertTrue(text.contains("<name>b</name>"))
+        assertNull(EsDe.addEntries(text, listOf("./SMZ3_popoie_fang.sfc" to smz3)))
+    }
 }

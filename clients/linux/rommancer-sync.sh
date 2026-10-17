@@ -26,7 +26,7 @@
 #                                   so any computer with this script can sync it. Without a command: sync.
 set -u
 # Raised with every change of this client (any change reaches devices: they update by content, not by this)
-CLIENT_VERSION=1.89.0
+CLIENT_VERSION=1.90.0
 # A clock before this date is surely wrong (no battery-backed clock); kept apart from the version, which may run ahead
 CLOCK_MIN=20261001
 # Onion keeps curl (with TLS) and friends outside the default PATH
@@ -1731,8 +1731,8 @@ EOR
   return 0
 }
 
-# Gives the lists' games EmulationStation has no gamelist entry for the server's name, sort name and description
-# (unnamed, it lists them by file name); existing entries are never touched
+# Gives the lists' games EmulationStation knows only by file name the server's name, sort name and description;
+# scraped or edited entries are never touched
 es_meta() {
   [ -n "${FW:-}" ] || detect
   case "$FW" in knulli|batocera|rocknix|arkos) ;; *) return 0 ;; esac
@@ -1752,8 +1752,28 @@ es_meta() {
     elif ! grep -q '</gameList>' "$list"; then continue; fi
     awk -F '\t' -v list="$list" '
       function esc(x) { gsub(/&/, "\\&amp;", x); gsub(/</, "\\&lt;", x); gsub(/>/, "\\&gt;", x); return x }
+      function stem(x) { sub(/.*\//, "", x); sub(/\.[^.]*$/, "", x); return x }
       FNR == NR { if ($1 == list && !(esc($2) in want)) { want[esc($2)] = $0; order[++n] = esc($2) }; next }
-      { line[++m] = $0; if (match($0, /<path>[^<]*<\/path>/)) have[substr($0, RSTART + 6, RLENGTH - 13)] = 1; if ($0 ~ /<\/gameList>/) close_at = m }
+      {
+        line[++m] = $0
+        if ($0 ~ /<game>/) { gpath = ""; gname = 0; gsort = 0; gdesc = 0 }
+        if (match($0, /<path>[^<]*<\/path>/)) { gpath = substr($0, RSTART + 6, RLENGTH - 13); have[gpath] = 1 }
+        if (match($0, /<name>[^<]*<\/name>/)) { gname = m; gtext = substr($0, RSTART + 6, RLENGTH - 13) }
+        if ($0 ~ /<sortname>/) gsort = 1
+        if ($0 ~ /<desc>/) gdesc = 1
+        # An entry EmulationStation named after its file (its own, for a game it has no data for) takes the name
+        if ($0 ~ /<\/game>/ && (gpath in want) && gname) {
+          split(want[gpath], f, "\t")
+          if (gtext == esc(stem(f[2])) && f[3] != stem(f[2])) {
+            ind = line[gname]; sub(/<name>.*/, "", ind)
+            line[gname] = ind "<name>" esc(f[3]) "</name>"
+            if (f[4] != "" && !gsort) line[gname] = line[gname] "\n" ind "<sortname>" esc(f[4]) "</sortname>"
+            if (f[5] != "" && !gdesc) line[gname] = line[gname] "\n" ind "<desc>" esc(f[5]) "</desc>"
+            added++
+          }
+        }
+        if ($0 ~ /<\/gameList>/) close_at = m
+      }
       END {
         for (i = 1; i <= m; i++) {
           if (i == close_at) for (k = 1; k <= n; k++) {

@@ -424,21 +424,58 @@ fn xml_unescape(s: &str) -> String {
     s.replace("&lt;", "<").replace("&gt;", ">").replace("&quot;", "\"").replace("&apos;", "'").replace("&amp;", "&")
 }
 
-/// GAMELIST plus an entry for each of WANTED ("./x.sfc"; name, sort name, description) it lacks; None when nothing is
-/// missing or the list cannot be read. Existing entries stay
+/// A file's name without folder and extension: what ES-DE names a game it has no data for
+fn stem(path: &str) -> &str {
+    let name = path.rsplit('/').next().unwrap_or(path);
+    name.rsplit_once('.').map(|(s, _)| s).unwrap_or(name)
+}
+
+fn tag_text<'a>(block: &'a str, tag: &str) -> Option<(usize, usize, &'a str)> {
+    let open = format!("<{tag}>");
+    let i = block.find(&open)? + open.len();
+    let j = i + block[i..].find(&format!("</{tag}>"))?;
+    Some((i - open.len(), j + tag.len() + 3, &block[i..j]))
+}
+
+/// GAMELIST with an entry for each of WANTED ("./x.sfc"; name, sort name, description) it lacks, and the server's name
+/// on entries named after their file (ES-DE's own); None when nothing changes or it cannot be read. Others stay
 pub fn add_entries(gamelist: Option<&str>, wanted: &[(String, [String; 3])]) -> Option<(String, usize)> {
     let text = gamelist.filter(|t| !t.trim().is_empty()).unwrap_or("<?xml version=\"1.0\"?>\n<gameList>\n</gameList>\n");
-    let end = text.rfind("</gameList>")?;
+    text.rfind("</gameList>")?;
+    let by_path: HashMap<&str, &[String; 3]> = wanted.iter().map(|(p, m)| (p.as_str(), m)).collect();
     let mut have: HashSet<String> = HashSet::new();
-    let mut rest = text;
-    while let Some(i) = rest.find("<path>") {
-        rest = &rest[i + 6..];
-        let Some(j) = rest.find("</path>") else { break };
-        have.insert(xml_unescape(rest[..j].trim()));
-        rest = &rest[j..];
-    }
-    let mut add = String::new();
+    let mut out = String::new();
     let mut n = 0;
+    let mut rest = text;
+    while let Some(i) = rest.find("<game>") {
+        let Some(len) = rest[i..].find("</game>") else { break };
+        out += &rest[..i + 6];
+        let mut block = rest[i + 6..i + len].to_string();
+        rest = &rest[i + len..];
+        let Some((_, _, path)) = tag_text(&block, "path") else {
+            out += &block;
+            continue;
+        };
+        let path = xml_unescape(path.trim());
+        have.insert(path.clone());
+        if let (Some([name, sort, desc]), Some((a, b, current))) = (by_path.get(path.as_str()).copied(), tag_text(&block, "name")) {
+            if xml_unescape(current.trim()) == stem(&path) && name != stem(&path) {
+                let indent = block[..a].rsplit('\n').next().unwrap_or("\t\t").to_string();
+                let mut new = format!("<name>{}</name>", xml_text(name));
+                if !sort.is_empty() && !block.contains("<sortname>") {
+                    new += &format!("\n{indent}<sortname>{}</sortname>", xml_text(sort));
+                }
+                if !desc.is_empty() && !block.contains("<desc>") {
+                    new += &format!("\n{indent}<desc>{}</desc>", xml_text(desc));
+                }
+                block.replace_range(a..b, &new);
+                n += 1;
+            }
+        }
+        out += &block;
+    }
+    out += rest;
+    let mut add = String::new();
     for (path, [name, sort, desc]) in wanted {
         if !have.insert(path.clone()) {
             continue;
@@ -453,10 +490,11 @@ pub fn add_entries(gamelist: Option<&str>, wanted: &[(String, [String; 3])]) -> 
         add += "\t</game>\n";
         n += 1;
     }
-    (n > 0).then(|| (format!("{}{}{}", &text[..end], add, &text[end..]), n))
+    let end = out.rfind("</gameList>")?;
+    (n > 0).then(|| (format!("{}{}{}", &out[..end], add, &out[end..]), n))
 }
 
-/// Gives the lists' games ES-DE has no entry for the server's name (META: the plan's "meta" lines); returns how many
+/// Gives the lists' games ES-DE knows only by file name the server's name (META: the plan's "meta" lines); returns how many
 pub fn names(dir: &Path, meta: &[Vec<String>]) -> usize {
     let roms = rom_dir(dir, &settings(dir));
     // The gamelist folder is the system's name, found by the system's rom folder
@@ -640,6 +678,13 @@ mod real {
         assert!(text.contains("\t\t<path>./SMZ3_popoie_fang.sfc</path>\n\t\t<name>SMZ3 popoie fang</name>\n\t\t<sortname>Super Metroid SMZ3 popoie fang</sortname>\n\t</game>\n</gameList>"));
         assert_eq!(names(&dir, &meta), 0);
         assert!(add_entries(Some("<gameList><game>"), &[("./x".into(), ["x".into(), String::new(), String::new()])]).is_none());
+        let own = "<gameList>\n\t<game>\n\t\t<path>./SMZ3_popoie_fang.sfc</path>\n\t\t<name>SMZ3_popoie_fang</name>\n\t\t<playcount>1</playcount>\n\t</game>\n\t<game>\n\t\t<path>./b.sfc</path>\n\t\t<name>b</name>\n\t</game>\n</gameList>\n";
+        let smz3 = [("./SMZ3_popoie_fang.sfc".to_string(), ["SMZ3 popoie fang".to_string(), "Super Metroid SMZ3 popoie fang".to_string(), String::new()])];
+        let (named, n) = add_entries(Some(own), &smz3).unwrap();
+        assert_eq!(n, 1);
+        assert!(named.contains("<name>SMZ3 popoie fang</name>\n\t\t<sortname>Super Metroid SMZ3 popoie fang</sortname>\n\t\t<playcount>1</playcount>"), "{named}");
+        assert!(named.contains("<name>b</name>"));
+        assert!(add_entries(Some(&named), &smz3).is_none());
         let _ = fs::remove_dir_all(&base);
     }
 }
