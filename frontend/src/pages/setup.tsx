@@ -30,7 +30,7 @@ interface Problem {
   detail?: string
 }
 
-const ADMIN_FIELD_ERRORS: Record<string, string> = { username: 'setup.invalidUsername', email: 'setup.invalidEmail', password: 'setup.tooShort' }
+const ADMIN_FIELD_ERRORS: Record<string, string> = { username: 'setup.invalidUsername' }
 
 /** A refusal from the setup API as a problem to show: database codes and validated fields are translated */
 function problemOf(err: unknown): Problem {
@@ -189,16 +189,15 @@ function AdminStep() {
   const { t } = useTranslation()
   const { reload } = useAuth()
   const qc = useQueryClient()
-  const [form, setForm] = useState({ username: 'admin', email: '', password: '', confirm: '' })
+  const [form, setForm] = useState({ username: 'admin', password: '', confirm: '' })
   const [problem, setProblem] = useState<Problem | null>(null)
   const [busy, setBusy] = useState(false)
   const submit = async (e: FormEvent) => {
     e.preventDefault()
-    const labels = { username: 'setup.username', email: 'common.email', password: 'common.password' } as const
-    const missing = (['username', 'email', 'password'] as const).find((k) => !form[k].trim())
+    const labels = { username: 'setup.username', password: 'common.password' } as const
+    const missing = (['username', 'password'] as const).find((k) => !form[k].trim())
     if (missing) return setProblem({ key: 'setup.required', params: { field: t(labels[missing]) } })
     if (!USERNAME.test(form.username)) return setProblem({ key: 'setup.invalidUsername' })
-    if (form.password.length < 10) return setProblem({ key: 'setup.tooShort' })
     if (form.password !== form.confirm) return setProblem({ key: 'setup.mismatch' })
     setBusy(true)
     setProblem(null)
@@ -220,13 +219,12 @@ function AdminStep() {
       <form onSubmit={submit} noValidate className="grid gap-4">
         <p className="text-sm text-muted-foreground">{t('setup.adminHint')}</p>
         <fieldset className="grid grid-cols-1 items-start gap-3 sm:grid-cols-2" disabled={busy}>
-          <Field label={t('setup.username')} hint={t('setup.usernameHint')}>
-            <Input value={form.username} onChange={set('username')} autoComplete="username" required autoFocus />
-          </Field>
-          <Field label={t('common.email')}>
-            <Input type="email" value={form.email} onChange={set('email')} autoComplete="email" required />
-          </Field>
-          <Field label={t('common.password')} hint={t('setup.passwordMin')}>
+          <div className="sm:col-span-2">
+            <Field label={t('setup.username')} hint={t('setup.usernameHint')}>
+              <Input value={form.username} onChange={set('username')} autoComplete="username" required autoFocus />
+            </Field>
+          </div>
+          <Field label={t('common.password')}>
             <Input type="password" value={form.password} onChange={set('password')} autoComplete="new-password" required />
           </Field>
           <Field label={t('setup.confirm')}>

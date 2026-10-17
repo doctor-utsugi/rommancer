@@ -11,7 +11,7 @@ Usage: install.sh [URL] [options]
   --lang en|es           the installer's language and the server's default one
   --db bundled|external  Rommancer's own database, or a MySQL server of your own:
     --db-host HOST  --db-port PORT  --db-name NAME  --db-user USER  --db-password PASSWORD
-  --admin USER  --email EMAIL  --password PASSWORD     the administrator
+  --admin USER  --password PASSWORD     your account
 Every option given skips its question; with all of them nothing is asked (unattended installs).
 The passwords can come from ROMMANCER_DB_PASSWORD and ROMMANCER_ADMIN_PASSWORD instead, out of sight of ps.
 EOF
@@ -19,7 +19,7 @@ EOF
 
 URL="http://127.0.0.1:8096"
 PLAIN=
-O_LANG='' O_DB='' O_DB_HOST='' O_DB_PORT='' O_DB_NAME='' O_DB_USER='' O_ADMIN='' O_EMAIL=''
+O_LANG='' O_DB='' O_DB_HOST='' O_DB_PORT='' O_DB_NAME='' O_DB_USER='' O_ADMIN=''
 O_DB_PASSWORD=${ROMMANCER_DB_PASSWORD:-} O_PASSWORD=${ROMMANCER_ADMIN_PASSWORD:-}
 # Which answers came with the command (an empty database password is an answer too)
 G_DB_PASSWORD=${ROMMANCER_DB_PASSWORD+1} G_PASSWORD=${ROMMANCER_ADMIN_PASSWORD+1}
@@ -41,7 +41,6 @@ while [ $# -gt 0 ]; do
     --db-user) O_DB_USER=$val ;;
     --db-password) O_DB_PASSWORD=$val G_DB_PASSWORD=1 ;;
     --admin) O_ADMIN=$val ;;
-    --email) O_EMAIL=$val ;;
     --password) O_PASSWORD=$val G_PASSWORD=1 ;;
     --*) usage >&2; exit 2 ;;
     *) URL="${opt%/}" ;;
@@ -69,46 +68,43 @@ t() {
       title) echo "Instalador de Rommancer" ;;
       buttons) echo "Aceptar Cancelar Sí No" ;;
       language) echo "Idioma" ;;
-      waiting) echo "Esperando a Rommancer en $URL" ;;
-      unreachable) echo "Rommancer no responde en $URL. ¿Está arrancado? (deploy/podman/rommancer.sh up)" ;;
-      installed) echo "Rommancer ya está instalado: entra en $URL" ;;
+      starting) echo "Base de datos lista. Arrancando Rommancer con ella…" ;;
+      waiting) echo "Esperando a que Rommancer responda en $URL" ;;
+      unreachable) echo "Rommancer no responde en $URL. Comprueba que está en marcha (rommancer.sh status)." ;;
+      installed) echo "Rommancer ya estaba instalado. Entra en $URL" ;;
       step) echo "Paso $2 de 2" ;;
-      dbTitle) echo "Dónde guarda Rommancer sus datos" ;;
-      dbBundled) echo "La base de datos de Rommancer (recomendado)" ;;
-      dbBundledHint) echo "El MySQL que viene con Rommancer. Sus contraseñas se generaron al arrancar por primera vez; no hay que rellenar nada." ;;
-      dbBundledMissing) echo "Esta instalación no incluye su propio MySQL." ;;
-      dbExternal) echo "Un servidor MySQL tuyo" ;;
-      dbExternalHint) echo "MySQL 8 o MariaDB que ya tengas. La base de datos tiene que existir y el usuario debe poder crear tablas en ella." ;;
-      dbHost) echo "Servidor" ;;
+      dbTitle) echo "Elige dónde guardar los datos" ;;
+      dbBundled) echo "La base de datos que trae Rommancer (recomendado)" ;;
+      dbBundledHint) echo "Ya está preparada y con sus contraseñas puestas. No tienes que rellenar nada." ;;
+      dbBundledMissing) echo "Esta instalación no trae base de datos propia, así que necesitas un MySQL tuyo." ;;
+      dbExternal) echo "Mi propio servidor MySQL" ;;
+      dbExternalHint) echo "Un MySQL 8 o MariaDB que ya tengas funcionando. Crea antes la base de datos y un usuario que pueda crear tablas en ella." ;;
+      dbHost) echo "Servidor (nombre o IP)" ;;
       dbPort) echo "Puerto" ;;
-      dbName) echo "Base de datos" ;;
-      dbUser) echo "Usuario" ;;
+      dbName) echo "Nombre de la base de datos" ;;
+      dbUser) echo "Usuario de MySQL" ;;
       password) echo "Contraseña" ;;
-      dbConnecting) echo "Conectando y preparando la base de datos. La primera vez tarda hasta un minuto…" ;;
+      dbConnecting) echo "Preparando la base de datos. La primera vez puede tardar un minuto…" ;;
       details) echo "Detalles" ;;
-      db_unreachable) echo "Nadie responde en ese servidor y puerto. Revisa la dirección, que MySQL esté en marcha y que acepte conexiones desde este servidor." ;;
-      db_auth) echo "MySQL rechaza el usuario o la contraseña. Revisa ambos." ;;
-      db_missing) echo "Esa base de datos no existe. Créala antes o usa otro nombre." ;;
-      db_denied) echo "El usuario no puede usar esa base de datos. Dale todos los privilegios en ella." ;;
-      db_bundled) echo "La base de datos de Rommancer no ha respondido a tiempo. Mira su registro (rommancer.sh logs mysql) y vuelve a intentarlo." ;;
+      db_unreachable) echo "No hay respuesta en ese servidor y puerto. Comprueba la dirección, que MySQL esté en marcha y que acepte conexiones desde esta máquina." ;;
+      db_auth) echo "MySQL no acepta ese usuario o esa contraseña." ;;
+      db_missing) echo "Esa base de datos no existe. Créala primero o escribe otro nombre." ;;
+      db_denied) echo "Ese usuario no tiene permiso para usar la base de datos. Dale todos los privilegios sobre ella." ;;
+      db_bundled) echo "La base de datos de Rommancer no ha arrancado a tiempo. Mira qué le pasa con «rommancer.sh logs mysql» y vuelve a intentarlo." ;;
       db_failed) echo "No se ha podido preparar la base de datos." ;;
-      adminTitle) echo "Tu cuenta de administrador" ;;
-      adminHint) echo "La primera cuenta gestiona todo lo demás: usuarios, carpetas de roms y dispositivos. Los ajustes del servidor (dirección pública, actualizaciones, semilla) empiezan con sus valores por defecto; se cambian en Administración > Servidor." ;;
-      username) echo "Usuario" ;;
-      usernameHint) echo "Al menos 3 caracteres: letras, números, punto, guion o guion bajo" ;;
-      email) echo "Email" ;;
-      passwordMin) echo "Al menos 10 caracteres" ;;
+      adminTitle) echo "Crea tu cuenta" ;;
+      adminHint) echo "Con esta cuenta administras Rommancer: añades usuarios, carpetas de roms y consolas. El resto de ajustes ya viene con valores que funcionan; si quieres cambiarlos, están en Administración > Servidor." ;;
+      username) echo "Nombre de usuario" ;;
+      usernameHint) echo "Letras, números, punto, guion o guion bajo; mínimo 3." ;;
       confirm) echo "Repite la contraseña" ;;
-      required) echo "Rellena: $2" ;;
-      invalidUsername) echo "El usuario lleva al menos 3 caracteres: letras, números, punto, guion o guion bajo" ;;
-      invalidEmail) echo "Ese email no es válido" ;;
-      tooShort) echo "La contraseña necesita al menos 10 caracteres" ;;
-      mismatch) echo "Las contraseñas no coinciden" ;;
-      badPort) echo "El puerto es un número entre 1 y 65535" ;;
+      required) echo "Falta rellenar: $2" ;;
+      invalidUsername) echo "Ese nombre de usuario no vale: usa al menos 3 caracteres entre letras, números, punto, guion o guion bajo." ;;
+      mismatch) echo "Las dos contraseñas no coinciden. Escríbelas otra vez." ;;
+      badPort) echo "El puerto tiene que ser un número entre 1 y 65535." ;;
       badDb) echo "--db: bundled o external" ;;
-      creating) echo "Creando el administrador…" ;;
-      failed) echo "No ha funcionado" ;;
-      finished) echo "Rommancer está instalado. Entra en $2 como «$3»." ;;
+      creating) echo "Creando tu cuenta…" ;;
+      failed) echo "Algo ha fallado" ;;
+      finished) echo "Listo. Entra en $2 con el usuario «$3»." ;;
       cancelled) echo "Instalación cancelada; vuelve a lanzarla cuando quieras." ;;
     esac
   else
@@ -116,46 +112,43 @@ t() {
       title) echo "Rommancer installer" ;;
       buttons) echo "Ok Cancel Yes No" ;;
       language) echo "Language" ;;
-      waiting) echo "Waiting for Rommancer at $URL" ;;
-      unreachable) echo "Rommancer does not answer at $URL. Is it running? (deploy/podman/rommancer.sh up)" ;;
-      installed) echo "Rommancer is already installed: log in at $URL" ;;
+      starting) echo "The database is ready. Starting Rommancer with it…" ;;
+      waiting) echo "Waiting for Rommancer to answer at $URL" ;;
+      unreachable) echo "Rommancer doesn't answer at $URL. Check that it is running (rommancer.sh status)." ;;
+      installed) echo "Rommancer was already installed. Log in at $URL" ;;
       step) echo "Step $2 of 2" ;;
-      dbTitle) echo "Where Rommancer keeps its data" ;;
-      dbBundled) echo "Rommancer's own database (recommended)" ;;
-      dbBundledHint) echo "The MySQL that comes with Rommancer. Its passwords were generated on the first start; nothing to fill in." ;;
-      dbBundledMissing) echo "This installation does not include its own MySQL." ;;
-      dbExternal) echo "A MySQL server of your own" ;;
-      dbExternalHint) echo "MySQL 8 or MariaDB you already run. The database must exist and the user must be able to create tables in it." ;;
-      dbHost) echo "Host" ;;
+      dbTitle) echo "Choose where to keep the data" ;;
+      dbBundled) echo "The database that comes with Rommancer (recommended)" ;;
+      dbBundledHint) echo "It is ready and its passwords are already set. Nothing to fill in." ;;
+      dbBundledMissing) echo "This installation has no database of its own, so you need a MySQL server of yours." ;;
+      dbExternal) echo "My own MySQL server" ;;
+      dbExternalHint) echo "A MySQL 8 or MariaDB you already run. Create the database first, and a user that can create tables in it." ;;
+      dbHost) echo "Server (name or IP)" ;;
       dbPort) echo "Port" ;;
-      dbName) echo "Database" ;;
-      dbUser) echo "User" ;;
+      dbName) echo "Database name" ;;
+      dbUser) echo "MySQL user" ;;
       password) echo "Password" ;;
-      dbConnecting) echo "Connecting and preparing the database. The first time takes up to a minute…" ;;
+      dbConnecting) echo "Preparing the database. The first time can take a minute…" ;;
       details) echo "Details" ;;
-      db_unreachable) echo "Nothing answers at that host and port. Check the address, that MySQL is running and that it accepts connections from this server." ;;
-      db_auth) echo "MySQL refused the user or the password. Check both." ;;
-      db_missing) echo "That database does not exist. Create it first or use another name." ;;
-      db_denied) echo "The user may not use that database. Grant it all privileges on it." ;;
-      db_bundled) echo "Rommancer's own database did not answer in time. Look at its log (rommancer.sh logs mysql) and try again." ;;
-      db_failed) echo "The database could not be prepared." ;;
-      adminTitle) echo "Your administrator account" ;;
-      adminHint) echo "The first account manages everything else: users, rom folders and devices. The server's settings (public address, updates, data seed) start with their defaults; change them in Administration > Server." ;;
+      db_unreachable) echo "Nothing answers at that server and port. Check the address, that MySQL is running and that it accepts connections from this machine." ;;
+      db_auth) echo "MySQL doesn't accept that user or that password." ;;
+      db_missing) echo "That database doesn't exist. Create it first or type another name." ;;
+      db_denied) echo "That user isn't allowed to use the database. Grant it all privileges on it." ;;
+      db_bundled) echo "Rommancer's database didn't start in time. See what happened with \"rommancer.sh logs mysql\" and try again." ;;
+      db_failed) echo "The database couldn't be prepared." ;;
+      adminTitle) echo "Create your account" ;;
+      adminHint) echo "This account runs Rommancer: it adds users, rom folders and consoles. Every other setting already has a value that works; to change them, go to Administration > Server." ;;
       username) echo "Username" ;;
-      usernameHint) echo "At least 3 characters: letters, digits, dot, dash or underscore" ;;
-      email) echo "Email" ;;
-      passwordMin) echo "At least 10 characters" ;;
+      usernameHint) echo "Letters, digits, dot, dash or underscore; 3 at least." ;;
       confirm) echo "Repeat the password" ;;
-      required) echo "Fill in: $2" ;;
-      invalidUsername) echo "The username takes at least 3 characters: letters, digits, dot, dash or underscore" ;;
-      invalidEmail) echo "That email address is not valid" ;;
-      tooShort) echo "The password needs at least 10 characters" ;;
-      mismatch) echo "The passwords do not match" ;;
-      badPort) echo "The port is a number from 1 to 65535" ;;
+      required) echo "Still empty: $2" ;;
+      invalidUsername) echo "That username won't work: use at least 3 letters, digits, dots, dashes or underscores." ;;
+      mismatch) echo "The two passwords don't match. Type them again." ;;
+      badPort) echo "The port has to be a number from 1 to 65535." ;;
       badDb) echo "--db: bundled or external" ;;
-      creating) echo "Creating the administrator…" ;;
-      failed) echo "That did not work" ;;
-      finished) echo "Rommancer is installed. Log in at $2 as \"$3\"." ;;
+      creating) echo "Creating your account…" ;;
+      failed) echo "Something went wrong" ;;
+      finished) echo "Done. Log in at $2 as \"$3\"." ;;
       cancelled) echo "Installation cancelled; run it again whenever you like." ;;
     esac
   fi
@@ -265,7 +258,7 @@ jesc() { printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g; s/	/\\t/g'; }
 jstr() { printf '"%s":"%s"' "$1" "$(jesc "$2")"; }
 jnum() { printf '"%s":%s' "$1" "$2"; }
 # A string field of the last answer, JSON escapes undone
-jget() { printf '%s' "$OUT" | sed -n "s/.*\"$1\":\"\\(\\([^\"\\\\]\\|\\\\.\\)*\\)\".*/\\1/p" | sed 's/\\"/"/g; s/\\\\/\\/g'; }
+jget() { printf '%s' "$OUT" | sed -nE "s/.*\"$1\":\"(([^\"\\\\]|\\\\.)*)\".*/\\1/p" | sed 's/\\"/"/g; s/\\\\/\\/g'; }
 
 # call METHOD PATH [BODY]: sets CODE and OUT
 call() {
@@ -310,15 +303,14 @@ why() {
   f=$(printf '%s' "$OUT" | sed -n 's/.*"path":\["\([^"]*\)".*/\1/p' | head -n 1)
   case "$f" in
     username) t invalidUsername ;;
-    email) t invalidEmail ;;
-    password) t tooShort ;;
     *) e=$(jget error); printf '%s: %s' "$(t failed)" "${e:-HTTP $CODE}" ;;
   esac
 }
 
-# Waits for GET /setup to answer, until WANT (a JSON fragment) is in it when one is given
+# Waits for GET /setup to answer, until WANT (a JSON fragment) is in it when one is given; MESSAGE says what for
 wait_setup() {
-  s=0
+  s=0 msg=${2:-$(t waiting)}
+  status "$msg"
   while :; do
     call GET /setup
     if [ "$CODE" = 200 ]; then
@@ -327,7 +319,7 @@ wait_setup() {
     [ $s -ge 180 ] && { note "$(t unreachable)"; exit 1; }
     sleep 2
     s=$((s + 2))
-    if [ $UI = box ]; then status "$(t waiting) ($s s)"; elif [ $((s % 10)) -eq 0 ]; then printf '.' >&2; fi
+    if [ $UI = box ]; then status "$msg ($s s)"; elif [ $((s % 10)) -eq 0 ]; then printf '.' >&2; fi
   done
 }
 
@@ -389,18 +381,18 @@ $(t dbExternal): $(t dbExternalHint)"
     note "$(why)"
   done
   # The installer steps aside for the real server, which answers once it has started
-  wait_setup '"needsDatabase":false'
+  wait_setup '"needsDatabase":false' "$(t starting)"
 }
 
 admin_body() {
-  printf '{%s,%s,%s,%s}' "$(jstr username "$A_USER")" "$(jstr email "$A_EMAIL")" "$(jstr password "$A_PASSWORD")" "$(jstr locale "$L")"
+  printf '{%s,%s,%s}' "$(jstr username "$A_USER")" "$(jstr password "$A_PASSWORD")" "$(jstr locale "$L")"
 }
 
-# The same checks as the web form, in the same order: username, password length, the repeated password
+# The same checks as the web form, in the same order: username, a password, the repeated password
 admin_step() {
-  A_USER=${O_ADMIN:-admin} A_EMAIL=$O_EMAIL A_PASSWORD=$O_PASSWORD
+  A_USER=${O_ADMIN:-admin} A_PASSWORD=$O_PASSWORD
   given=
-  [ -n "$O_ADMIN" ] && [ -n "$O_EMAIL" ] && [ -n "${G_PASSWORD:-}" ] && given=1
+  [ -n "$O_ADMIN" ] && [ -n "${G_PASSWORD:-}" ] && given=1
   [ -n "$given" ] || note "$(t step 2) · $(t adminTitle)
 
 $(t adminHint)"
@@ -412,11 +404,10 @@ $(t adminHint)"
         note "$(t invalidUsername)"
       done
     fi
-    [ -n "$O_EMAIL" ] || A_EMAIL=$(need "$(t email)" "$A_EMAIL")
     if [ -z "${G_PASSWORD:-}" ]; then
       while :; do
-        A_PASSWORD=$(secret "$(t password)" "$(t passwordMin)")
-        if [ ${#A_PASSWORD} -lt 10 ]; then note "$(t tooShort)"; continue; fi
+        A_PASSWORD=$(secret "$(t password)")
+        if [ -z "$A_PASSWORD" ]; then note "$(t required "$(t password)")"; continue; fi
         again=$(secret "$(t confirm)")
         [ "$A_PASSWORD" = "$again" ] && break
         note "$(t mismatch)"
@@ -440,9 +431,8 @@ $(t adminHint)"
 case "$O_DB" in '' | bundled | external) ;; *) die "$(t badDb)" ;; esac
 if [ -n "$O_DB_PORT" ] && ! valid_port "$O_DB_PORT"; then die "--db-port: $(t badPort)"; fi
 if [ -n "$O_ADMIN" ] && ! valid_user "$O_ADMIN"; then die "--admin: $(t invalidUsername)"; fi
-if [ -n "${G_PASSWORD:-}" ] && [ ${#O_PASSWORD} -lt 10 ]; then die "--password: $(t tooShort)"; fi
+if [ -n "${G_PASSWORD:-}" ] && [ -z "$O_PASSWORD" ]; then die "--password: $(t required "$(t password)")"; fi
 
-status "$(t waiting)…"
 wait_setup
 SETUP=$OUT
 case "$SETUP" in *'"needsAdmin":false'*) note "$(t installed)"; exit 0 ;; esac

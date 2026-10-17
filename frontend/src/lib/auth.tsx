@@ -6,7 +6,7 @@ import { api, get, post, tokens } from './api'
 export interface Me {
   id: number
   username: string
-  email: string
+  email: string | null
   role: 'ADMIN' | 'USER'
   locale: string
   hasScreenScraper: boolean

@@ -290,7 +290,9 @@ test('auth: admin login, invitation and user sign-up', async () => {
   assert.equal(first.json.user.mustChangePassword, true);
   adminToken = first.json.accessToken;
   assert.equal((await api('GET', '/systems')).status, 403);
-  assert.equal((await api('PATCH', '/users/me', { currentPassword: 'admin1234', newPassword: 'corta' })).status, 400);
+  // No length rule: only an empty password or the initial one is refused
+  assert.equal((await api('PATCH', '/users/me', { currentPassword: 'admin1234', newPassword: '' })).status, 400);
+  assert.equal((await api('PATCH', '/users/me', { currentPassword: 'admin1234', newPassword: 'admin1234' })).status, 400);
   const changed = await api('PATCH', '/users/me', { currentPassword: 'admin1234', newPassword: 'admin-segura-2026' });
   assert.equal(changed.status, 200);
   assert.equal(changed.json.user.mustChangePassword, false);

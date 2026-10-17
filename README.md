@@ -7,48 +7,24 @@ shareable lists, copying to consoles, romhack patches and synced saves between d
 
 ## Install
 
-Linux with rootless Podman:
+Rommancer installs with one command on Linux, macOS and Windows, using Podman. You don't need git, Node or MySQL.
+
+- [Linux](docs/install.md#linux)
+- [macOS](docs/install.md#macos)
+- [Windows](docs/install.md#windows)
+
+On Linux, with Podman installed (`sudo apt install podman curl` on Debian or Ubuntu):
 
 ```bash
 curl -fsSL https://github.com/doctor-utsugi/rommancer/releases/latest/download/rommancer.tar.gz | tar xz
 sh rommancer/deploy/podman/rommancer.sh install
 ```
 
-It asks for your roms folder, the database and your account. Then open http://127.0.0.1:8096.
+It asks for your roms folder, the database and your account, and leaves Rommancer running at http://127.0.0.1:8096.
+The [install guide](docs/install.md) has the step-by-step commands, how to start, stop and update it, and the
+unattended install.
 
-### Step by step
-
-```bash
-# 1. Download and extract (or get rommancer.zip from the releases page)
-curl -fsSLO https://github.com/doctor-utsugi/rommancer/releases/latest/download/rommancer.tar.gz
-tar xzf rommancer.tar.gz
-cd rommancer
-
-# 2. Build the images
-sh deploy/podman/rommancer.sh build
-
-# 3. Start Rommancer (your roms folder is mounted at /roms)
-ROMMANCER_ROMS=/path/to/your/roms sh deploy/podman/rommancer.sh up
-
-# 4. Install: in the console, or open http://127.0.0.1:8096 in a browser
-sh deploy/podman/rommancer.sh setup
-```
-
-Once logged in, **Storage setup** adds your roms (under `/roms`) to the collection. Nothing in them is moved or renamed.
-
-### Update
-
-Extract the new release over the old folder, then:
-
-```bash
-sh deploy/podman/rommancer.sh build
-sh deploy/podman/rommancer.sh up
-```
-
-Your data and settings live outside the folder.
-
-More: [other ways to install](docs/install.md) (compose, systemd, unattended) · [using Rommancer](docs/usage.md) ·
-[development](docs/development.md).
+More: [using Rommancer](docs/usage.md) · [development](docs/development.md).
 
 ## Docs
 

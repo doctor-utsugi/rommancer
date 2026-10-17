@@ -119,7 +119,7 @@ function SignupPage({ onBack }: { onBack(): void }) {
         <Field label={t('common.email')}>
           <Input type="email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} required />
         </Field>
-        <Field label={t('common.password')} hint={t('more.link.passwordMin')}>
+        <Field label={t('common.password')}>
           <Input type="password" value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} required minLength={10} autoComplete="new-password" />
         </Field>
         {error && <p className="text-sm text-destructive">{error}</p>}
@@ -159,7 +159,7 @@ export function RegisterPage() {
         <Field label={t('common.email')}>
           <Input type="email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} required />
         </Field>
-        <Field label={t('common.password')} hint={t('auth.passwordMin')}>
+        <Field label={t('common.password')}>
           <Input type="password" value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} required minLength={8} />
         </Field>
         {error && <p className="text-sm text-destructive">{error}</p>}

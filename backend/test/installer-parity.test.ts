@@ -71,9 +71,9 @@ const SHARED_TEXTS: Record<string, string> = {
   dbTitle: 'setup.dbTitle', dbBundled: 'setup.dbBundled', dbBundledHint: 'setup.dbBundledHint', dbBundledMissing: 'setup.dbBundledMissing',
   dbExternal: 'setup.dbExternal', dbExternalHint: 'setup.dbExternalHint', dbHost: 'setup.dbHost', dbPort: 'setup.dbPort', dbName: 'setup.dbName',
   dbUser: 'setup.dbUser', dbConnecting: 'setup.dbConnecting', details: 'setup.details', adminTitle: 'setup.adminTitle', adminHint: 'setup.adminHint',
-  username: 'setup.username', usernameHint: 'setup.usernameHint', passwordMin: 'setup.passwordMin', confirm: 'setup.confirm',
-  invalidUsername: 'setup.invalidUsername', invalidEmail: 'setup.invalidEmail', tooShort: 'setup.tooShort', mismatch: 'setup.mismatch',
-  badPort: 'setup.badPort', creating: 'setup.creating', password: 'common.password', email: 'common.email',
+  username: 'setup.username', usernameHint: 'setup.usernameHint', confirm: 'setup.confirm',
+  invalidUsername: 'setup.invalidUsername', mismatch: 'setup.mismatch',
+  badPort: 'setup.badPort', creating: 'setup.creating', password: 'common.password',
 };
 
 /** install.sh t() as { language: { key: text } }; its blocks follow LOCALES' order reversed (es first, then the else) */
@@ -104,7 +104,7 @@ test('the console says what the web says, in every language, and translates ever
 // Every field of the setup API can also come with the command (unattended installs), by these options
 const CLI_OPTIONS: Record<string, string> = {
   mode: '--db', host: '--db-host', port: '--db-port', database: '--db-name', user: '--db-user', password: '--db-password',
-  username: '--admin', email: '--email', locale: '--lang',
+  username: '--admin', locale: '--lang',
 };
 
 test('the console takes every field as an option too', async () => {

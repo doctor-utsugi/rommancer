@@ -94,7 +94,7 @@ export function ProfilePage() {
             </Field>
             <div className="flex gap-2">
               <Button
-                disabled={pw.newPassword.length < 10}
+                disabled={!pw.newPassword}
                 onClick={() =>
                   void save(pw).then((ok) => {
                     if (!ok) return

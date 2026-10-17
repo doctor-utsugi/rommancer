@@ -109,7 +109,7 @@ test('installer: the administrator only while no user exists; server settings wi
   const call = (method: string, route: string, body?: object) =>
     fetch(base + route, { method, headers: { Authorization: `Bearer ${signAccess(admin)}`, 'Content-Type': 'application/json' }, body: body && JSON.stringify(body) });
   try {
-    assert.equal((await fetch(`${base}/setup/admin`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username: 'intruder', email: 'i@x.invalid', password: 'long-enough-pw' }) })).status, 409);
+    assert.equal((await fetch(`${base}/setup/admin`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username: 'intruder', password: 'pw' }) })).status, 409);
     assert.equal((await prisma.user.count({ where: { username: 'intruder' } })), 0);
 
     const before = await (await call('GET', '/admin/settings/server')).json();
@@ -153,7 +153,7 @@ test('console installer: the same two steps as the web one, in Spanish, against 
       'es',
       u.hostname, u.port, shadow, decodeURIComponent(u.username), 'not-the-password',
       '', '', '', '', decodeURIComponent(u.password),
-      'boss', 'boss@test.invalid', 'short', 'short', 'long-enough-1', 'long-enough-2', 'long-enough-ok', 'long-enough-ok',
+      'boss', '', 'pw-1', 'pw-2', 'abc', 'abc',
     ];
     const cli = spawn('sh', [path.join(backend, '..', 'deploy', 'install.sh'), base, '--plain'], { env: cleanEnv({}), stdio: ['pipe', 'pipe', 'pipe'] });
     let out = '';
@@ -162,18 +162,20 @@ test('console installer: the same two steps as the web one, in Spanish, against 
     cli.stdin.end(answers.join('\n') + '\n');
     const code = await new Promise<number | null>((resolve) => cli.on('close', resolve));
     assert.equal(code, 0, out);
-    assert.match(out, /MySQL rechaza el usuario o la contraseña\. Revisa ambos\.\n\nDetalles: .*P1000/, 'the wrong MySQL password is explained, with prisma\'s words as the detail');
-    assert.match(out, /La contraseña necesita al menos 10 caracteres/);
-    assert.match(out, /Al menos 3 caracteres: letras/, 'the username rule is said before asking');
-    assert.match(out, /Las contraseñas no coinciden/);
-    assert.match(out, /Rommancer está instalado\. Entra en http:\/\/127\.0\.0\.1:\d+ como «boss»/);
-    assert.doesNotMatch(out, /long-enough-ok/, 'passwords are never shown');
+    assert.match(out, /MySQL no acepta ese usuario o esa contraseña\.\n\nDetalles: .*P1000/, 'the wrong MySQL password is explained, with prisma\'s words as the detail');
+    assert.match(out, /Falta rellenar: Contraseña/, 'an empty password is asked again');
+    assert.match(out, /Letras, números, punto, guion o guion bajo; mínimo 3/, 'the username rule is said before asking');
+    assert.match(out, /Las dos contraseñas no coinciden/);
+    assert.match(out, /Listo\. Entra en http:\/\/127\.0\.0\.1:\d+ con el usuario «boss»/);
+    assert.doesNotMatch(out, /pw-2|abc/, 'passwords are never shown');
 
-    const login = await fetch(`${base}/api/v1/auth/login`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username: 'boss', password: 'long-enough-ok' }) });
+    // Any password goes: no length rule beyond not being empty
+    const login = await fetch(`${base}/api/v1/auth/login`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username: 'boss', password: 'abc' }) });
     assert.equal(login.status, 200);
     const auth = { Authorization: `Bearer ${(await login.json()).accessToken}` };
     const me = await (await fetch(`${base}/api/v1/users/me`, { headers: auth })).json();
     assert.equal(me.role, 'ADMIN');
+    assert.equal(me.email, null, 'no email asked; it can be added later in the profile');
     assert.equal(me.locale, 'es');
     const settings = await (await fetch(`${base}/api/v1/admin/settings/server`, { headers: auth })).json();
     // The installer asks only for the account: the server's settings keep their defaults
@@ -218,16 +220,16 @@ test('console installer, unattended: every answer as an option, nothing asked', 
     const u = new URL(testDbUrl());
     const db = ['--db', 'external', '--db-host', u.hostname, `--db-port=${u.port}`, '--db-name', shadow, '--db-user', decodeURIComponent(u.username)];
     // A wrong answer given with the command ends the run: nobody is there to ask again
-    const bad = await run(['--lang', 'en', ...db, '--admin', 'ops', '--email', 'ops@test.invalid'], { ROMMANCER_DB_PASSWORD: 'not-the-password', ROMMANCER_ADMIN_PASSWORD: 'long-enough-ok' });
+    const bad = await run(['--lang', 'en', ...db, '--admin', 'ops'], { ROMMANCER_DB_PASSWORD: 'not-the-password', ROMMANCER_ADMIN_PASSWORD: 'long-enough-ok' });
     assert.equal(bad.code, 2, bad.out);
-    assert.match(bad.out, /MySQL refused the user or the password/);
+    assert.match(bad.out, /MySQL doesn't accept that user or that password/);
 
-    const ok = await run(['--lang', 'en', ...db, '--admin', 'ops', '--email', 'ops@test.invalid'], {
+    const ok = await run(['--lang', 'en', ...db, '--admin', 'ops'], {
       ROMMANCER_DB_PASSWORD: decodeURIComponent(u.password),
       ROMMANCER_ADMIN_PASSWORD: 'long-enough-ok',
     });
     assert.equal(ok.code, 0, ok.out);
-    assert.match(ok.out, /Rommancer is installed\. Log in at http:\/\/127\.0\.0\.1:\d+ as "ops"/);
+    assert.match(ok.out, /Done\. Log in at http:\/\/127\.0\.0\.1:\d+ as "ops"/);
     const login = await fetch(`${base}/api/v1/auth/login`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username: 'ops', password: 'long-enough-ok' }) });
     assert.equal(login.status, 200);
   } finally {

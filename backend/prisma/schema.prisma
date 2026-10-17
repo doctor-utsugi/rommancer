@@ -85,7 +85,7 @@ model User {
   journeyBlobs       JourneyBlob[]
   id                 Int       @id @default(autoincrement())
   username           String    @unique @db.VarChar(64)
-  email              String    @unique @db.VarChar(191)
+  email              String?   @unique @db.VarChar(191)
   passwordHash       String
   role               Role      @default(USER)
   locale             String    @default("en") @db.VarChar(8)

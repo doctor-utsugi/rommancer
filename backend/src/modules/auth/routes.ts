@@ -126,7 +126,7 @@ authRouter.post('/register', async (req, res) => {
       token: z.string(),
       username: z.string().min(3).max(64).regex(/^[a-zA-Z0-9_.-]+$/),
       email: z.email(),
-      password: z.string().min(8).max(512),
+      password: z.string().min(1).max(512),
       locale: localeSchema.optional(),
     })
     .parse(req.body);
@@ -167,7 +167,7 @@ authRouter.get('/config', async (_req, res) => {
 export const signupBody = z.object({
   username: z.string().min(3).max(64).regex(/^[a-zA-Z0-9_.-]+$/),
   email: z.email(),
-  password: z.string().min(10).max(512),
+  password: z.string().min(1).max(512),
   locale: localeSchema.optional(),
 });
 

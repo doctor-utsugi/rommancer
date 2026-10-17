@@ -29,9 +29,9 @@ const publicUser = {
 
 const permissionsSchema = z.array(z.enum(PERMISSIONS));
 
-// Strong password: 10+ characters and different from the initial one in .env
+// A new password can't be empty or the initial one from .env
 export function weakPassword(pw: string) {
-  return pw.length < 10 || (!!env.admin.password && pw === env.admin.password);
+  return !pw || (!!env.admin.password && pw === env.admin.password);
 }
 
 usersRouter.get('/me', async (req, res) => {
@@ -79,7 +79,7 @@ usersRouter.patch('/me', async (req, res) => {
       email: z.email().optional(),
       locale: localeSchema.optional(),
       currentPassword: z.string().optional(),
-      newPassword: z.string().min(8).max(512).optional(),
+      newPassword: z.string().min(1).max(512).optional(),
       ssUser: z.string().nullable().optional(),
       ssPassword: z.string().nullable().optional(),
       raUser: z.string().nullable().optional(),
@@ -147,7 +147,7 @@ usersRouter.post('/', requireAdmin, async (req, res) => {
     .object({
       username: z.string().min(3).max(64).regex(/^[a-zA-Z0-9_.-]+$/),
       email: z.email(),
-      password: z.string().min(8),
+      password: z.string().min(1),
       role: z.enum(['ADMIN', 'USER']).default('USER'),
       permissions: permissionsSchema.optional(),
     })
@@ -167,7 +167,7 @@ usersRouter.post('/', requireAdmin, async (req, res) => {
 
 usersRouter.patch('/:id', requireAdmin, async (req, res) => {
   const body = z
-    .object({ role: z.enum(['ADMIN', 'USER']).optional(), password: z.string().min(8).optional(), permissions: permissionsSchema.optional() })
+    .object({ role: z.enum(['ADMIN', 'USER']).optional(), password: z.string().min(1).optional(), permissions: permissionsSchema.optional() })
     .parse(req.body);
   const data: Record<string, unknown> = {};
   if (body.role) data.role = body.role;

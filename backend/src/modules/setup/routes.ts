@@ -25,8 +25,7 @@ setupRouter.post('/database', () => {
 // The console installer (deploy/install.sh) sends the same fields: test/installer-parity.test.ts
 export const adminBody = z.object({
   username: z.string().min(3).max(64).regex(/^[a-zA-Z0-9_.-]+$/),
-  email: z.email(),
-  password: z.string().min(10).max(512),
+  password: z.string().min(1).max(512),
   locale: localeSchema.catch('en').default('en'),
 });
 
@@ -50,7 +49,6 @@ async function createAdmin(body: z.infer<typeof adminBody>) {
   const user = await prisma.user.create({
     data: {
       username: body.username,
-      email: body.email,
       role: 'ADMIN',
       passwordHash: await bcrypt.hash(body.password, 10),
       permissions: [...PERMISSIONS],

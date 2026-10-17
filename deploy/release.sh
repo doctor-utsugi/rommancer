@@ -59,14 +59,14 @@ TOKEN_FILE="$HOME/.config/git-tokens/github-doctor-utsugi"
 git tag -a "v$VERSION" -m "Rommancer $VERSION"
 git push -q origin "v$VERSION"
 gh release create "v$VERSION" -R "$REPO" --title "Rommancer $VERSION" --notes "$(cat <<EOF
-Install on a Linux server with Podman, no git needed:
+Installs on Linux, macOS and Windows with Podman, no git needed. On Linux:
 
 \`\`\`bash
 curl -fsSL https://github.com/$REPO/releases/latest/download/rommancer.tar.gz | tar xz
 sh rommancer/deploy/podman/rommancer.sh install
 \`\`\`
 
-\`rommancer.zip\` holds the same. To update, extract the new release over the old folder and run
-\`rommancer.sh build\` and \`rommancer.sh up\`: your settings and data live outside it.
+\`rommancer.zip\` holds the same, for Windows. macOS, Windows and updating:
+https://github.com/$REPO/blob/v$VERSION/docs/install.md
 EOF
 )" "$OUT/rommancer.tar.gz" "$OUT/rommancer.zip"
