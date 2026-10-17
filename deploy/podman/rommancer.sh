@@ -50,6 +50,13 @@ case "${1:-}" in
     podman build -t rommancer-api -f "$SRC/backend/Containerfile" "$SRC"
     podman build -t rommancer-web -f "$SRC/frontend/Containerfile" "$SRC" ;;
   up)
+    # A rom folder given now (ROMMANCER_ROMS, or install's question) is the one every later up mounts
+    if [ -n "${ROMMANCER_ROMS:-}" ]; then
+      mkdir -p "$ROMS" "$(dirname "$CONF")"
+      ROMS=$(cd "$ROMS" && pwd)
+      { [ -f "$CONF" ] && grep -v '^ROMMANCER_ROMS=' "$CONF"; echo "ROMMANCER_ROMS=$ROMS"; } > "$CONF.new" || true
+      mv "$CONF.new" "$CONF"
+    fi
     mkdir -p "$DATA/app/secrets" "$DATA/mysql" "$ROMS"
     podman network exists "$NET" || podman network create "$NET"
     podman rm -f rommancer-web rommancer-api rommancer-mysql >/dev/null 2>&1 || true
@@ -96,9 +103,6 @@ case "${1:-}" in
     case "$roms" in "~"*) roms="$HOME${roms#"~"}" ;; esac
     mkdir -p "$roms"
     ROMS=$(cd "$roms" && pwd)
-    mkdir -p "$(dirname "$CONF")"
-    { [ -f "$CONF" ] && grep -v '^ROMMANCER_ROMS=' "$CONF"; echo "ROMMANCER_ROMS=$ROMS"; } > "$CONF.new" || true
-    mv "$CONF.new" "$CONF"
     export ROMMANCER_ROMS="$ROMS"
     sh "$0" build
     sh "$0" up
