@@ -648,7 +648,23 @@
       "help": "Patches, saves and cheats with the same name move with their rom. Multi-file games (cue/bin, gdi, m3u) are left alone. Every run is written down: a cut one is finished next time, and it can be undone.",
       "undo": "Undo the last one",
       "undone_one": "{{count}} file put back",
-      "undone_other": "{{count}} files put back"
+      "undone_other": "{{count}} files put back",
+      "moved": "{{moved}} of {{total}} moved",
+      "failed_one": "{{count}} file stayed where it was:",
+      "failed_other": "{{count}} files stayed where they were:",
+      "undoneSome": "{{count}} files put back; these could not go back:",
+      "companionOf": "goes with {{rom}}, which did move: they are now in different folders",
+      "readOnly": "Rommancer may not write in this folder. To sort it, allow writing in it first (Edit, untick read-only).",
+      "details": "Details",
+      "problems": {
+        "conflict": "Another rom would end up with the same name, so neither was touched.",
+        "exists": "There is already a file with that name where it would go. Neither was touched.",
+        "taken": "Another file is now in its original place, so it was left where it is.",
+        "permission": "Rommancer is not allowed to write there. Check the folder permissions on the server.",
+        "full": "The disk is full. Free some space and apply again.",
+        "missing": "The file is no longer where it was. Scan the folder again.",
+        "failed": "It could not be moved."
+      }
     },
     "gamesList": {
       "grid": "Grid",

@@ -648,7 +648,23 @@
       "help": "Los parches, partidas y trucos con el mismo nombre se mueven con su ROM. Los juegos de varios ficheros (cue/bin, gdi, m3u) no se tocan. Cada reorganización queda anotada: si se corta, se termina la próxima vez, y se puede deshacer.",
       "undo": "Deshacer la última",
       "undone_one": "{{count}} fichero devuelto a su sitio",
-      "undone_other": "{{count}} ficheros devueltos a su sitio"
+      "undone_other": "{{count}} ficheros devueltos a su sitio",
+      "moved": "{{moved}} de {{total}} movidas",
+      "failed_one": "{{count}} archivo se ha quedado donde estaba:",
+      "failed_other": "{{count}} archivos se han quedado donde estaban:",
+      "undoneSome": "{{count}} archivos devueltos a su sitio; estos no han podido volver:",
+      "companionOf": "va con {{rom}}, que sí se ha movido: ahora están en carpetas distintas",
+      "readOnly": "Rommancer no puede escribir en esta carpeta. Para ordenarla, dale permiso primero (Editar, quita «solo lectura»).",
+      "details": "Detalles",
+      "problems": {
+        "conflict": "Otra ROM acabaría con el mismo nombre, así que no se ha tocado ninguna de las dos.",
+        "exists": "Ya hay un archivo con ese nombre donde iría. No se ha tocado ninguno de los dos.",
+        "taken": "Ahora hay otro archivo en su sitio original, así que se ha dejado donde está.",
+        "permission": "Rommancer no tiene permiso para escribir ahí. Revisa los permisos de la carpeta en el servidor.",
+        "full": "El disco está lleno. Libera espacio y vuelve a aplicar.",
+        "missing": "El archivo ya no está donde estaba. Vuelve a escanear la carpeta.",
+        "failed": "No se ha podido mover."
+      }
     },
     "gamesList": {
       "grid": "Cuadrícula",

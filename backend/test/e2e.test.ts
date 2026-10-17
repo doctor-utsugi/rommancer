@@ -864,7 +864,7 @@ test('organization: renaming and sorting into folders (dry-run and apply)', asyn
   assert.ok(plan.find((x: any) => x.to === path.join('snes', 'Chrono Trigger (USA).sfc') || x.to === path.join('snes', 'Chrono Trigger (USA).smc')));
   assert.ok(fs.existsSync(path.join(dir, 'varios', 'smb3.nes')), 'dry-run moves nothing');
   const applied = (await api('POST', `/admin/paths/${p.json.id}/organize`, { scheme: 'knulli' })).json;
-  assert.equal(applied.errors.length, 0);
+  assert.equal(applied.failed.length, 0);
   assert.ok(fs.existsSync(path.join(dir, 'nes', `${SMB3}.nes`)));
   const rescan = await waitJob((await api('POST', `/admin/paths/${p.json.id}/scan`)).json.id);
   assert.equal(rescan.result.hashed, 0, 'the database stays in sync after moving');
@@ -2213,13 +2213,20 @@ test('organize: companions travel with their rom, multi-file games stay, a run c
   await waitJob((await api('POST', `/admin/paths/${p.id}/scan`)).json.id);
   const plan = (await api('GET', `/admin/paths/${p.id}/organize?scheme=system`)).json;
   assert.deepEqual(plan.find((x: any) => x.from === 'mario.nes').companions, ['mario.ips']);
+  // A folder it may not write in: the rom stays, says why, and its patch stays with it
+  fs.mkdirSync(path.join(dir, 'nes'));
+  fs.chmodSync(path.join(dir, 'nes'), 0o555);
+  const refused = (await api('POST', `/admin/paths/${p.id}/organize`, { scheme: 'system' })).json;
+  fs.chmodSync(path.join(dir, 'nes'), 0o755);
+  assert.deepEqual(refused.failed.map((f: any) => [f.file, f.problem]), [['mario.nes', 'permission']], JSON.stringify(refused));
+  assert.ok(fs.existsSync(path.join(dir, 'mario.nes')) && fs.existsSync(path.join(dir, 'mario.ips')), 'the patch did not leave its rom');
   const applied = (await api('POST', `/admin/paths/${p.id}/organize`, { scheme: 'system' })).json;
-  assert.equal(applied.errors.length, 0, JSON.stringify(applied));
+  assert.equal(applied.failed.length, 0, JSON.stringify(applied));
   assert.ok(fs.existsSync(path.join(dir, 'nes', `${SMB3}.nes`)));
   assert.ok(fs.existsSync(path.join(dir, 'nes', `${SMB3}.ips`)), 'the patch follows its rom');
   assert.ok(fs.existsSync(path.join(dir, '.rommancer-organize.json')));
   const undone = (await api('POST', `/admin/paths/${p.id}/organize/undo`)).json;
-  assert.equal(undone.errors.length, 0);
+  assert.equal(undone.failed.length, 0);
   assert.ok(fs.existsSync(path.join(dir, 'mario.nes')) && fs.existsSync(path.join(dir, 'mario.ips')));
   const rescan = await waitJob((await api('POST', `/admin/paths/${p.id}/scan`)).json.id);
   assert.equal(rescan.result.hashed, 0, 'the index followed the undo');

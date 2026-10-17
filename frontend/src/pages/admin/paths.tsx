@@ -290,17 +290,66 @@ function PathDialog({ path, onClose }: { path: any | null; onClose(): void }) {
   )
 }
 
+interface OrganizeFailure {
+  file: string
+  to: string
+  problem: string
+  detail?: string
+  companionOf?: string
+}
+interface OrganizeResult {
+  kind: 'apply' | 'undo'
+  moved: number
+  total: number
+  failed: OrganizeFailure[]
+}
+
+/** The files a run left where they were, each with why in the user's words and what to do */
+function OrganizeReport({ result }: { result: OrganizeResult }) {
+  const { t } = useTranslation()
+  const n = result.failed.length
+  return (
+    <div role={n ? 'alert' : 'status'} className="grid gap-2 rounded-md border p-3 text-sm">
+      <p className="font-medium">
+        {result.kind === 'apply' ? t('more.organize.moved', { moved: result.moved, total: result.total }) : t('more.organize.undone', { count: result.moved })}
+      </p>
+      {n > 0 && (
+        <>
+          <p className="text-destructive">{result.kind === 'apply' ? t('more.organize.failed', { count: n }) : t('more.organize.undoneSome', { count: result.moved })}</p>
+          <ul className="grid max-h-64 gap-2 overflow-y-auto">
+            {result.failed.map((f) => (
+              <li key={f.file + f.to}>
+                <span className="font-mono text-xs break-all">{f.file}</span>
+                {f.companionOf && <span className="text-xs text-muted-foreground"> · {t('more.organize.companionOf', { rom: f.companionOf })}</span>}
+                <span className="block">{t(`more.organize.problems.${f.problem}`)}</span>
+                {f.detail && f.problem !== 'conflict' && (
+                  <details className="text-xs text-muted-foreground">
+                    <summary className="cursor-pointer">{t('more.organize.details')}</summary>
+                    <span className="font-mono break-all">{f.detail}</span>
+                  </details>
+                )}
+              </li>
+            ))}
+          </ul>
+        </>
+      )}
+    </div>
+  )
+}
+
 function OrganizeDialog({ path, onClose }: { path: any; onClose(): void }) {
   const { t } = useTranslation()
   const qc = useQueryClient()
   const fws = useQuery({ queryKey: ['firmwares'], queryFn: () => get<any[]>('/devices/firmwares') })
   const [scheme, setScheme] = useState('rename')
   const plan = useQuery({ queryKey: ['organize', path.id, scheme], queryFn: () => get<any[]>(`/admin/paths/${path.id}/organize?scheme=${scheme}`) })
+  // What the last apply or undo did, kept on screen with every file that stayed
+  const [result, setResult] = useState<OrganizeResult | null>(null)
   const apply = async () => {
     try {
       const r = await post(`/admin/paths/${path.id}/organize`, { scheme })
-      if (r.errors.length) toast.error(r.errors.slice(0, 3).join('\n'))
-      toast.success(`${r.moved}/${r.total}`)
+      setResult({ kind: 'apply', moved: r.moved, total: r.total, failed: r.failed })
+      if (!r.failed.length) toast.success(t('more.organize.moved', { moved: r.moved, total: r.total }))
       void qc.invalidateQueries({ queryKey: ['paths'] })
       void plan.refetch()
     } catch (e) {
@@ -353,14 +402,17 @@ function OrganizeDialog({ path, onClose }: { path: any; onClose(): void }) {
           </Table>
         )}
         <p className="text-xs text-muted-foreground">{t('more.organize.help')}</p>
+        {path.readOnly && <p className="text-sm text-destructive">{t('more.organize.readOnly')}</p>}
+        {result && <OrganizeReport result={result} />}
         <DialogFooter>
           <Button
             variant="outline"
+            disabled={path.readOnly}
             onClick={async () => {
               try {
                 const r = await post(`/admin/paths/${path.id}/organize/undo`)
-                if (r.errors.length) toast.error(r.errors.slice(0, 3).join('\n'))
-                toast.success(t('more.organize.undone', { count: r.restored }))
+                setResult({ kind: 'undo', moved: r.restored, total: r.restored + r.failed.length, failed: r.failed })
+                if (!r.failed.length) toast.success(t('more.organize.undone', { count: r.restored }))
                 void plan.refetch()
               } catch (e) {
                 toast.error(errMsg(e))
@@ -369,7 +421,7 @@ function OrganizeDialog({ path, onClose }: { path: any; onClose(): void }) {
           >
             {t('more.organize.undo')}
           </Button>
-          <Button onClick={() => void apply()} disabled={!plan.data?.some((p) => !p.skipped)}>
+          <Button onClick={() => void apply()} disabled={path.readOnly || !plan.data?.some((p) => !p.skipped)}>
             {t('common.apply')}
           </Button>
         </DialogFooter>

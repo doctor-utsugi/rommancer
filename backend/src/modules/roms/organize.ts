@@ -28,6 +28,33 @@ interface JournalEntry {
   to: string;
   fileIds: number[];
   done: boolean;
+  /** A companion: the rom it travels with */
+  of?: string;
+}
+
+/** Why a file stayed where it was, for the panel to say in the user's language */
+export type OrganizeProblem = 'conflict' | 'exists' | 'taken' | 'permission' | 'full' | 'missing' | 'failed';
+
+export interface OrganizeFailure {
+  file: string;
+  to: string;
+  problem: OrganizeProblem;
+  /** The system's own words, for the details */
+  detail?: string;
+  /** A companion: its rom moved and it did not, so they are now in different folders */
+  companionOf?: string;
+}
+
+function failure(file: string, to: string, err: unknown, companionOf?: string): OrganizeFailure {
+  const code = (err as NodeJS.ErrnoException)?.code;
+  const problem: OrganizeProblem =
+    err instanceof Error && err.message === 'target exists' ? 'exists'
+    : err instanceof Error && err.message === 'original place is taken' ? 'taken'
+    : code === 'EACCES' || code === 'EPERM' || code === 'EROFS' ? 'permission'
+    : code === 'ENOSPC' || code === 'EDQUOT' ? 'full'
+    : code === 'ENOENT' ? 'missing'
+    : 'failed';
+  return { file, to, problem, detail: err instanceof Error ? err.message : String(err), ...(companionOf ? { companionOf } : {}) };
 }
 
 /** Companions of REL: files in its folder with the same name and a companion extension */
@@ -129,18 +156,20 @@ export async function applyOrganize(romPathId: number, scheme: string) {
   if (rp.readOnly) throw badRequest('Path is read-only');
   await reconcile(rp.path);
   const plans = (await planOrganize(romPathId, scheme)).filter((p) => !p.skipped);
-  const errors: string[] = [];
+  const failed: OrganizeFailure[] = plans.filter((x) => x.conflict).map((p) => ({ file: p.from, to: p.to, problem: 'conflict' }));
   // The whole run is written down before the first move, then each move is marked as it completes
   const entries: JournalEntry[] = plans
     .filter((p) => !p.conflict)
     .flatMap((p) => [
       { from: p.from, to: p.to, fileIds: p.fileIds, done: false },
-      ...p.companions.map((c) => ({ from: c, to: path.join(path.dirname(p.to), path.basename(p.to, path.extname(p.to)) + c.slice(c.lastIndexOf(path.basename(p.from, path.extname(p.from))) + path.basename(p.from, path.extname(p.from)).length)), fileIds: [], done: false })),
+      ...p.companions.map((c) => ({ from: c, to: path.join(path.dirname(p.to), path.basename(p.to, path.extname(p.to)) + c.slice(c.lastIndexOf(path.basename(p.from, path.extname(p.from))) + path.basename(p.from, path.extname(p.from)).length)), fileIds: [], done: false, of: p.from })),
     ]);
-  for (const p of plans.filter((x) => x.conflict)) errors.push(`Conflict: ${p.from} -> ${p.to}`);
   await writeJournal(rp.path, entries);
   let moved = 0;
+  // A rom that stays keeps its companions with it
+  const stayed = new Set<string>();
   for (const e of entries) {
+    if (e.of && stayed.has(e.of)) continue;
     try {
       const dest = path.join(rp.path, e.to);
       if (fs.existsSync(dest)) throw new Error('target exists');
@@ -153,10 +182,11 @@ export async function applyOrganize(romPathId: number, scheme: string) {
       e.done = true;
       await writeJournal(rp.path, entries);
     } catch (err) {
-      errors.push(`${e.from}: ${err instanceof Error ? err.message : err}`);
+      if (!e.of) stayed.add(e.from);
+      failed.push(failure(e.from, e.to, err, e.of));
     }
   }
-  return { moved, errors, total: plans.length, companions: entries.filter((e) => !e.fileIds.length && e.done).length };
+  return { moved, failed, total: plans.length, companions: entries.filter((e) => !e.fileIds.length && e.done).length };
 }
 
 /** Puts back what the last run moved, newest first */
@@ -167,7 +197,7 @@ export async function undoOrganize(romPathId: number) {
   const entries = await readJournal(rp.path);
   if (!entries) throw badRequest('Nothing to undo');
   let restored = 0;
-  const errors: string[] = [];
+  const failed: OrganizeFailure[] = [];
   for (const e of [...entries].reverse()) {
     if (!e.done) continue;
     try {
@@ -179,10 +209,10 @@ export async function undoOrganize(romPathId: number) {
       e.done = false;
       restored++;
     } catch (err) {
-      errors.push(`${e.to}: ${err instanceof Error ? err.message : err}`);
+      failed.push(failure(e.to, e.from, err, e.of));
     }
   }
-  if (!errors.length) await fs.promises.rm(journalPath(rp.path), { force: true });
+  if (!failed.length) await fs.promises.rm(journalPath(rp.path), { force: true });
   else await writeJournal(rp.path, entries);
-  return { restored, errors };
+  return { restored, failed };
 }
