@@ -23,7 +23,8 @@ setupRouter.post('/database', () => {
   throw new HttpError(409, 'The database is already set up');
 });
 
-const adminBody = z.object({
+// The console installer (deploy/install.sh) sends the same fields: test/installer-parity.test.ts
+export const adminBody = z.object({
   username: z.string().min(3).max(64).regex(/^[a-zA-Z0-9_.-]+$/),
   email: z.email(),
   password: z.string().min(10).max(512),

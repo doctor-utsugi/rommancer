@@ -9,7 +9,8 @@ import type { Server } from 'node:http';
 import { z } from 'zod';
 import { applyBootstrap, bundledDatabase, bundledPassword, databaseUrl, writeDatabaseConfig, type DatabaseConfig } from './config/bootstrap.js';
 
-const body = z.discriminatedUnion('mode', [
+// The console installer (deploy/install.sh) sends the same fields: test/installer-parity.test.ts
+export const databaseBody = z.discriminatedUnion('mode', [
   z.object({ mode: z.literal('bundled') }),
   z.object({
     mode: z.literal('external'),
@@ -24,7 +25,7 @@ const body = z.discriminatedUnion('mode', [
 /** Brings the schema of the database at URL up to date; rejects with prisma's last words */
 export function migrate(url: string): Promise<void> {
   return new Promise((resolve, reject) => {
-    const p = spawn('npx', ['prisma', 'migrate', 'deploy'], { env: { ...process.env, DATABASE_URL: url }, stdio: ['ignore', 'pipe', 'pipe'] });
+    const p = spawn('npx', ['prisma', 'migrate', 'deploy'], { env: { ...process.env, DATABASE_URL: url, NPM_CONFIG_UPDATE_NOTIFIER: 'false' }, stdio: ['ignore', 'pipe', 'pipe'] });
     let out = '';
     p.stdout.on('data', (d) => (out += d));
     p.stderr.on('data', (d) => (out += d));
@@ -32,7 +33,7 @@ export function migrate(url: string): Promise<void> {
     p.on('close', (code) => {
       if (code === 0) return resolve();
       // The URL (and its password) never goes back to the browser
-      const why = out.split('\n').map((l) => l.trim()).filter((l) => l && !l.includes('mysql://')).slice(-3).join(' ');
+      const why = out.split('\n').map((l) => l.trim()).filter((l) => l && !l.includes('mysql://') && !/^npm (notice|warn)/i.test(l)).slice(-3).join(' ');
       reject(new Error(why || `prisma exited with ${code}`));
     });
   });
@@ -68,7 +69,7 @@ export function runInstaller(port: number): Promise<void> {
     app.get('/api/v1/health', (_req, res) => res.json({ ok: true, installing: true }));
     app.get('/api/v1/setup', (_req, res) => res.json({ needsDatabase: true, bundledDatabase: !!bundledDatabase, needsAdmin: true }));
     app.post('/api/v1/setup/database', express.json(), async (req, res) => {
-      const parsed = body.safeParse(req.body);
+      const parsed = databaseBody.safeParse(req.body);
       if (!parsed.success) return res.status(400).json({ error: 'Invalid data' });
       if (busy) return res.status(409).json({ error: 'Already connecting' });
       const c: DatabaseConfig = parsed.data;

@@ -40,6 +40,8 @@ ROMS_DIR=/path/to/my/roms podman-compose --profile full up -d --build
 
 Open http://localhost:8080: the installer asks where to keep the data (Rommancer's own MySQL, recommended, or a MySQL server of yours) and creates the administrator. Nothing has to be written in a `.env`: the secrets and the MySQL passwords are generated on the first start into `data/secrets` (keep that folder with your backups: it holds the key the stored credentials are encrypted with). The roms are mounted at `/roms` inside the container: register paths in Administration as `/roms/...`. Migrations and the seed are applied on startup; the server's settings are in Administration > Server.
 
+The same installer runs in the console, for a server without a browser at hand: `sh deploy/install.sh http://localhost:8080` (boxes when there is a terminal and `whiptail`, plain questions otherwise or with `--plain`).
+
 For a server that should start it at boot, see [Linux server with Quadlet](#linux-server-with-quadlet). Node and `npm install` are only for development.
 
 ## Development requirements
@@ -122,11 +124,11 @@ systemctl --user daemon-reload
 systemctl --user start rommancer-web
 ```
 
-Then open the web app (port 8080) and follow the installer.
+Then open the web app (port 8080) and follow the installer, or run it in the console: `sh deploy/install.sh http://localhost:8080`.
 
 The roms are mounted from `~/roms` (edit `rommancer-api.container` to change it).
 
-Hosts whose Podman has no Quadlet (Debian 12 ships 4.3) can use `deploy/podman/rommancer.sh build` and `deploy/podman/rommancer.sh up`: it serves the web on `127.0.0.1:8096`. The roms are mounted from `~/rommancer-roms` and the data kept in `~/rommancer-data` (`ROMMANCER_ROMS`, `ROMMANCER_DATA` change them). `~/.config/rommancer/rommancer.env` is optional (overrides, as in `.env.example`); one from before the installer keeps working, and its MySQL passwords are moved to `data/secrets` on the next start.
+Hosts whose Podman has no Quadlet (Debian 12 ships 4.3) can use `deploy/podman/rommancer.sh install` (builds the images, starts them and runs the installer in the console; `build`, `up` and `setup` do each part): it serves the web on `127.0.0.1:8096`. The roms are mounted from `~/rommancer-roms` and the data kept in `~/rommancer-data` (`ROMMANCER_ROMS`, `ROMMANCER_DATA` change them). `~/.config/rommancer/rommancer.env` is optional (overrides, as in `.env.example`); one from before the installer keeps working, and its MySQL passwords are moved to `data/secrets` on the next start.
 
 ## Data seed
 

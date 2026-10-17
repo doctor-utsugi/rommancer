@@ -132,3 +132,61 @@ test('installer: the administrator only while no user exists; server settings wi
     await prisma.user.delete({ where: { id: admin.id } });
   }
 });
+
+test('console installer: the same two steps as the web one, in Spanish, against an empty database', async () => {
+  // MySQL's shadow database for prisma migrate dev (the development grants allow it): thrown away and made again
+  const shadow = 'rommancer_shadow';
+  const { prisma } = await import('../src/lib/prisma.js');
+  await prisma.$executeRawUnsafe(`DROP DATABASE IF EXISTS ${shadow}`);
+  await prisma.$executeRawUnsafe(`CREATE DATABASE ${shadow}`);
+  const port = await new Promise<number>((resolve) => {
+    const s = net.createServer().listen(0, () => {
+      const p = (s.address() as AddressInfo).port;
+      s.close(() => resolve(p));
+    });
+  });
+  const server = spawn('npx', ['tsx', 'src/main.ts'], { cwd: backend, env: cleanEnv({ DATA_DIR: tmp('console'), API_PORT: String(port), SEED_ON_START: 'false' }), stdio: 'ignore', detached: true });
+  const base = `http://127.0.0.1:${port}`;
+  try {
+    const u = new URL(testDbUrl());
+    const answers = [
+      'es',
+      u.hostname, u.port, shadow, decodeURIComponent(u.username), 'not-the-password',
+      '', '', '', '', decodeURIComponent(u.password),
+      'boss', 'boss@test.invalid', 'short', 'short', 'long-enough-1', 'long-enough-2', 'long-enough-ok', 'long-enough-ok',
+      'http://roms.lan:8096/', '2', 'n',
+    ];
+    const cli = spawn('sh', [path.join(backend, '..', 'deploy', 'install.sh'), base, '--plain'], { env: cleanEnv({}), stdio: ['pipe', 'pipe', 'pipe'] });
+    let out = '';
+    cli.stdout.on('data', (d) => (out += d));
+    cli.stderr.on('data', (d) => (out += d));
+    cli.stdin.end(answers.join('\n') + '\n');
+    const code = await new Promise<number | null>((resolve) => cli.on('close', resolve));
+    assert.equal(code, 0, out);
+    assert.match(out, /No ha funcionado: .+/, 'the wrong MySQL password is reported and asked again');
+    assert.match(out, /al menos 10 caracteres/);
+    assert.match(out, /Las contraseñas no coinciden/);
+    assert.match(out, /Rommancer está instalado\. Entra en http:\/\/127\.0\.0\.1:\d+ como «boss»/);
+    assert.doesNotMatch(out, /long-enough-ok/, 'passwords are never shown');
+
+    const login = await fetch(`${base}/api/v1/auth/login`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username: 'boss', password: 'long-enough-ok' }) });
+    assert.equal(login.status, 200);
+    const auth = { Authorization: `Bearer ${(await login.json()).accessToken}` };
+    const me = await (await fetch(`${base}/api/v1/users/me`, { headers: auth })).json();
+    assert.equal(me.role, 'ADMIN');
+    assert.equal(me.locale, 'es');
+    const settings = await (await fetch(`${base}/api/v1/admin/settings/server`, { headers: auth })).json();
+    assert.equal(settings.values.publicUrl, 'http://roms.lan:8096');
+    assert.equal(settings.values.externalSyncCron, '0 4 * * *');
+    // Run again, it only says so
+    const again = spawn('sh', [path.join(backend, '..', 'deploy', 'install.sh'), base, '--plain'], { env: cleanEnv({}), stdio: ['ignore', 'pipe', 'pipe'] });
+    let said = '';
+    again.stdout.on('data', (d) => (said += d));
+    assert.equal(await new Promise((resolve) => again.on('close', resolve)), 0);
+    assert.match(said, /already installed/);
+  } finally {
+    process.kill(-server.pid!, 'SIGKILL');
+    await prisma.$executeRawUnsafe(`DROP DATABASE IF EXISTS ${shadow}`);
+    await prisma.$executeRawUnsafe(`CREATE DATABASE ${shadow}`);
+  }
+});
