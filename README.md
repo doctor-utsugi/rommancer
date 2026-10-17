@@ -8,21 +8,27 @@ Stack: Node 22 + Express + Prisma + MySQL 8.4 · React + TypeScript + Vite + sha
 
 ## TL;DR: install
 
-One command on a Linux server with Podman (rootless). It asks for the folder with your roms, builds the images,
-starts them and asks the installer's questions in the console (database and your account):
+On a Linux server with Podman (rootless); no git needed. Download the latest release and run its installer: it asks
+for the folder with your roms, builds the images, starts them and asks the installer's questions in the console
+(database and your account):
 
 ```bash
-git clone https://github.com/doctor-utsugi/rommancer.git && sh rommancer/deploy/podman/rommancer.sh install
+curl -fsSL https://github.com/doctor-utsugi/rommancer/releases/latest/download/rommancer.tar.gz | tar xz
+sh rommancer/deploy/podman/rommancer.sh install
 ```
+
+No curl? Download `rommancer.tar.gz` or `rommancer.zip` from the [releases page](https://github.com/doctor-utsugi/rommancer/releases)
+and extract it. A release also carries the Android and desktop apps the server offers to devices, which a git clone
+lacks (`git clone` works too, for development).
 
 The web is then on `http://127.0.0.1:8096`. The rom folder (default `~/rommancer-roms`) is mounted at `/roms` and
 remembered in `~/.config/rommancer/deploy.conf`; what is already in it is read as it is, never moved or renamed. Prefer a browser? Run
 `rommancer.sh build` and `rommancer.sh up` instead and open that address: the same installer is there.
 
-With podman-compose (web on port 8080):
+With podman-compose (web on port 8080), from the extracted folder:
 
 ```bash
-git clone https://github.com/doctor-utsugi/rommancer.git && cd rommancer
+cd rommancer
 ROMS_DIR=/path/to/my/roms podman-compose --profile full up -d --build
 sh deploy/install.sh http://localhost:8080
 ```
@@ -40,6 +46,9 @@ ROMMANCER_ADMIN_PASSWORD='a long password' sh rommancer/deploy/podman/rommancer.
 The installer asks only for the database and your account; the server's settings (public address, updates, data
 seed) start with their defaults and are in Administration > Server. Once logged in, the web app offers Storage
 setup: add the folders under `/roms` that hold your roms and choose where new ones go (see [Storage](docs/storage.md)).
+
+To update, extract the new release over the old folder, then `rommancer.sh build` and `rommancer.sh up`: your
+settings, data and rom folder live outside it. Releases are made with `deploy/release.sh [VERSION] --publish`.
 
 ## Rommancer Sync
 

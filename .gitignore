@@ -17,3 +17,4 @@ clients/desktop/release/
 clients/android/release/
 __pycache__/
 *.pyc
+dist-release
