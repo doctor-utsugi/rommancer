@@ -3,12 +3,17 @@
 # Containers use --restart=always and come back at boot through podman-restart.service.
 #   rommancer.sh install | build | up | setup | down | logs [api|web|mysql] | status
 # install = build, up, then the installer in the console (setup); the web app runs the same installer.
-# install and setup pass their options to deploy/install.sh (--help lists them: unattended installs)
+# install and setup pass their options to deploy/install.sh (--help lists them: unattended installs);
+# install also asks for the folder with your roms, or takes it as --roms PATH, and remembers it for up
 set -eu
 SRC="$(cd "$(dirname "$0")/../.." && pwd)"
 ENV_FILE="${ROMMANCER_ENV:-$HOME/.config/rommancer/rommancer.env}"
 DATA="${ROMMANCER_DATA:-$HOME/rommancer-data}"
-ROMS="${ROMMANCER_ROMS:-$HOME/rommancer-roms}"
+# Deployment choices made by install (the rom folder), kept for the next up
+CONF="${ROMMANCER_CONF:-$HOME/.config/rommancer/deploy.conf}"
+confval() { [ -f "$CONF" ] && sed -n "s/^$1=//p" "$CONF" | head -n 1; }
+ROMS="${ROMMANCER_ROMS:-$(confval ROMMANCER_ROMS || true)}"
+ROMS="${ROMS:-$HOME/rommancer-roms}"
 WEB_PORT="${ROMMANCER_WEB_PORT:-8096}"
 NET=rommancer
 
@@ -17,6 +22,27 @@ NET=rommancer
 envval() { [ -f "$ENV_FILE" ] && sed -n "s/^$1=//p" "$ENV_FILE" | head -n 1; }
 MYSQL_ROOT_PASSWORD="$(envval MYSQL_ROOT_PASSWORD || true)"
 MYSQL_PASSWORD="$(envval MYSQL_PASSWORD || true)"
+
+# The folder with your roms, asked by install: whiptail when there is one, a plain question otherwise
+ask_roms() {
+  case "${LANG:-}" in
+    es*) q="Carpeta con tus roms
+
+Rommancer lee lo que ya hay tal cual: nunca lo mueve ni lo renombra, y solo escribe en ella si luego la eliges como destino de las roms nuevas. ¿Varios discos? Indica una carpeta que los contenga. Se monta en /roms; en la web, «Configurar almacenamiento» la añade a tu colección."
+      ok=Aceptar no=Cancelar bye="Instalación cancelada; vuelve a lanzarla cuando quieras." ;;
+    *) q="Folder with your roms
+
+Rommancer reads what is already there as it is: it never moves or renames it, and only writes there if you later choose it as the destination of new roms. Several disks? Give a folder that holds them all. It is mounted at /roms; in the web app, Storage setup adds it to your collection."
+      ok=Ok no=Cancel bye="Installation cancelled; run it again whenever you like." ;;
+  esac
+  if [ -z "$2" ] && [ -t 2 ] && command -v whiptail >/dev/null 2>&1; then
+    whiptail --title Rommancer --ok-button "$ok" --cancel-button "$no" --inputbox "$q" 14 76 "$1" 3>&1 1>&2 2>&3 || { echo "$bye" >&2; exit 1; }
+  else
+    printf '%s\n[%s]: ' "$q" "$1" >&2
+    IFS= read -r v || exit 1
+    printf '%s' "${v:-$1}"
+  fi
+}
 
 case "${1:-}" in
   build)
@@ -49,6 +75,31 @@ case "${1:-}" in
     exec sh "$SRC/deploy/install.sh" "http://127.0.0.1:$WEB_PORT" "$@" ;;
   install)
     shift
+    # --roms is this script's; everything else goes to the installer
+    roms='' plain=''
+    n=$#
+    while [ "$n" -gt 0 ]; do
+      a=$1
+      shift
+      n=$((n - 1))
+      case "$a" in
+        --roms) roms=${1:-}; [ "$n" -gt 0 ] && { shift; n=$((n - 1)); } ;;
+        --roms=*) roms=${a#*=} ;;
+        -h | --help)
+          echo "Usage: $0 install [--roms PATH] [installer options]: builds, starts and installs Rommancer; the installer's options:"
+          exec sh "$SRC/deploy/install.sh" --help ;;
+        *) [ "$a" = --plain ] && plain=1; set -- "$@" "$a" ;;
+      esac
+    done
+    [ -z "$roms" ] && [ -t 0 ] && roms=$(ask_roms "$ROMS" "$plain")
+    roms=${roms:-$ROMS}
+    case "$roms" in "~"*) roms="$HOME${roms#"~"}" ;; esac
+    mkdir -p "$roms"
+    ROMS=$(cd "$roms" && pwd)
+    mkdir -p "$(dirname "$CONF")"
+    { [ -f "$CONF" ] && grep -v '^ROMMANCER_ROMS=' "$CONF"; echo "ROMMANCER_ROMS=$ROMS"; } > "$CONF.new" || true
+    mv "$CONF.new" "$CONF"
+    export ROMMANCER_ROMS="$ROMS"
     sh "$0" build
     sh "$0" up
     exec sh "$SRC/deploy/install.sh" "http://127.0.0.1:$WEB_PORT" "$@" ;;

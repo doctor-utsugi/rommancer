@@ -8,14 +8,15 @@ Stack: Node 22 + Express + Prisma + MySQL 8.4 · React + TypeScript + Vite + sha
 
 ## TL;DR: install
 
-One command on a Linux server with Podman (rootless). It builds the images, starts them and asks the installer's
-questions in the console (database, administrator, server settings):
+One command on a Linux server with Podman (rootless). It asks for the folder with your roms, builds the images,
+starts them and asks the installer's questions in the console (database and your account):
 
 ```bash
 git clone https://github.com/doctor-utsugi/rommancer.git && sh rommancer/deploy/podman/rommancer.sh install
 ```
 
-The web is then on `http://127.0.0.1:8096`, with the roms read from `~/rommancer-roms`. Prefer a browser? Run
+The web is then on `http://127.0.0.1:8096`. The rom folder (default `~/rommancer-roms`) is mounted at `/roms` and
+remembered in `~/.config/rommancer/deploy.conf`; what is already in it is read as it is, never moved or renamed. Prefer a browser? Run
 `rommancer.sh build` and `rommancer.sh up` instead and open that address: the same installer is there.
 
 With podman-compose (web on port 8080):
@@ -33,12 +34,12 @@ Unattended (scripts, provisioning): every answer can be given as an option, and 
 
 ```bash
 ROMMANCER_ADMIN_PASSWORD='a long password' sh rommancer/deploy/podman/rommancer.sh install \
-  --lang en --db bundled --admin admin --email me@example.com
+  --roms /srv/roms --lang en --db bundled --admin admin --email me@example.com
 ```
 
 The installer asks only for the database and your account; the server's settings (public address, updates, data
-seed) start with their defaults and are in Administration > Server. Your roms are added afterwards from the web
-app: see [Storage](docs/storage.md).
+seed) start with their defaults and are in Administration > Server. Once logged in, the web app offers Storage
+setup: add the folders under `/roms` that hold your roms and choose where new ones go (see [Storage](docs/storage.md)).
 
 ## Rommancer Sync
 
@@ -162,7 +163,7 @@ Then open the web app (port 8080) and follow the installer, or run it in the con
 
 The roms are mounted from `~/roms` (edit `rommancer-api.container` to change it).
 
-Hosts whose Podman has no Quadlet (Debian 12 ships 4.3) can use `deploy/podman/rommancer.sh install` (builds the images, starts them and runs the installer in the console; `build`, `up` and `setup` do each part): it serves the web on `127.0.0.1:8096`. The roms are mounted from `~/rommancer-roms` and the data kept in `~/rommancer-data` (`ROMMANCER_ROMS`, `ROMMANCER_DATA` change them). `~/.config/rommancer/rommancer.env` is optional (overrides, as in `.env.example`); one from before the installer keeps working, and its MySQL passwords are moved to `data/secrets` on the next start.
+Hosts whose Podman has no Quadlet (Debian 12 ships 4.3) can use `deploy/podman/rommancer.sh install` (builds the images, starts them and runs the installer in the console; `build`, `up` and `setup` do each part): it serves the web on `127.0.0.1:8096`. The roms are mounted from the folder `install` asked for (`~/rommancer-roms` by default, kept in `~/.config/rommancer/deploy.conf`) and the data in `~/rommancer-data` (`ROMMANCER_ROMS`, `ROMMANCER_DATA` change them). `~/.config/rommancer/rommancer.env` is optional (overrides, as in `.env.example`); one from before the installer keeps working, and its MySQL passwords are moved to `data/secrets` on the next start.
 
 ## Data seed
 
