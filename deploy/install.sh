@@ -48,6 +48,8 @@ while [ $# -gt 0 ]; do
   shift
 done
 API="$URL/api/v1"
+# The address people use, when the installer reaches Rommancer by another one (rommancer.ps1 runs it in a container)
+SHOWN=${ROMMANCER_SHOW_URL:-$URL}
 # Boxes when a person is at a terminal and whiptail is there; plain questions otherwise (pipes, scripts)
 if [ -z "$PLAIN" ] && [ -t 0 ] && [ -t 1 ] && command -v whiptail >/dev/null 2>&1; then UI=box; else UI=plain; fi
 command -v curl >/dev/null 2>&1 || { echo "curl is needed" >&2; exit 1; }
@@ -69,9 +71,9 @@ t() {
       buttons) echo "Aceptar Cancelar Sí No" ;;
       language) echo "Idioma" ;;
       starting) echo "Base de datos lista. Arrancando Rommancer con ella…" ;;
-      waiting) echo "Esperando a que Rommancer responda en $URL" ;;
-      unreachable) echo "Rommancer no responde en $URL. Comprueba que está en marcha (rommancer.sh status)." ;;
-      installed) echo "Rommancer ya estaba instalado. Entra en $URL" ;;
+      waiting) echo "Esperando a que Rommancer responda en $SHOWN" ;;
+      unreachable) echo "Rommancer no responde en $SHOWN. Comprueba que está en marcha (rommancer.sh status)." ;;
+      installed) echo "Rommancer ya estaba instalado. Entra en $SHOWN" ;;
       step) echo "Paso $2 de 2" ;;
       dbTitle) echo "Elige dónde guardar los datos" ;;
       dbBundled) echo "La base de datos que trae Rommancer (recomendado)" ;;
@@ -113,9 +115,9 @@ t() {
       buttons) echo "Ok Cancel Yes No" ;;
       language) echo "Language" ;;
       starting) echo "The database is ready. Starting Rommancer with it…" ;;
-      waiting) echo "Waiting for Rommancer to answer at $URL" ;;
-      unreachable) echo "Rommancer doesn't answer at $URL. Check that it is running (rommancer.sh status)." ;;
-      installed) echo "Rommancer was already installed. Log in at $URL" ;;
+      waiting) echo "Waiting for Rommancer to answer at $SHOWN" ;;
+      unreachable) echo "Rommancer doesn't answer at $SHOWN. Check that it is running (rommancer.sh status)." ;;
+      installed) echo "Rommancer was already installed. Log in at $SHOWN" ;;
       step) echo "Step $2 of 2" ;;
       dbTitle) echo "Choose where to keep the data" ;;
       dbBundled) echo "The database that comes with Rommancer (recommended)" ;;
@@ -420,9 +422,9 @@ $(t adminHint)"
     # Someone finished the installation meanwhile (the web installer, another console)
     [ "$CODE" = 409 ] && exit 1
   done
-  if [ -n "$given" ]; then [ $UI = box ] && clear; t finished "$URL" "$A_USER"; return; fi
-  note "$(t finished "$URL" "$A_USER")"
-  if [ $UI = box ]; then clear; t finished "$URL" "$A_USER"; fi
+  if [ -n "$given" ]; then [ $UI = box ] && clear; t finished "$SHOWN" "$A_USER"; return; fi
+  note "$(t finished "$SHOWN" "$A_USER")"
+  if [ $UI = box ]; then clear; t finished "$SHOWN" "$A_USER"; fi
 }
 
 # --- Run ---

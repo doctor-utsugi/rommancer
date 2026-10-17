@@ -12,3 +12,6 @@ clients/desktop/release
 clients/android/app/build
 clients/android/.gradle
 clients/android/release
+.git
+dist-release
+others

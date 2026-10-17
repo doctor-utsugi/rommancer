@@ -1,5 +1,6 @@
 #!/bin/sh
-# Rootless Podman deployment for Linux (no Quadlet needed: Debian 12 ships 4.3) and macOS (Podman's machine).
+# Deployment with Podman (rootless, the default) or Docker, on Linux (no Quadlet needed: Debian 12 ships 4.3) and
+# macOS (Podman's machine, or Docker Desktop). install --engine podman|docker chooses; up remembers it.
 # Started with the computer only as a service (rommancer.sh service on): a systemd user unit, on a Mac a LaunchAgent.
 #   rommancer.sh install | build | up | start | stop | service [on|off] | setup | down | logs [api|web|mysql] | status
 # install = build, up, then the installer in the console (setup); the web app runs the same installer.
@@ -14,6 +15,8 @@ CONF="${ROMMANCER_CONF:-$HOME/.config/rommancer/deploy.conf}"
 confval() { [ -f "$CONF" ] && sed -n "s/^$1=//p" "$CONF" | head -n 1; }
 ROMS="${ROMMANCER_ROMS:-$(confval ROMMANCER_ROMS || true)}"
 ROMS="${ROMS:-$HOME/rommancer-roms}"
+ENGINE="${ROMMANCER_ENGINE:-$(confval ROMMANCER_ENGINE || true)}"
+ENGINE="${ENGINE:-podman}"
 WEB_PORT="${ROMMANCER_WEB_PORT:-8096}"
 NET=rommancer
 OS=$(uname -s)
@@ -64,10 +67,22 @@ Hace falta tu contraseña de sudo una vez, para «$2».}" ;;
 Así arranca solo cada vez que inicias sesión en el Mac. Si no, tendrás que arrancarlo tú con «$CMD start»." ;;
       intro) echo "Vas a instalar Rommancer.
 
-Rommancer funciona dentro de contenedores de Podman, una herramienta parecida a Docker. Todo lo que necesita (su servidor, su base de datos y sus herramientas) va dentro de ellos, así que no instala nada más en tu sistema ni lo cambia.
+Rommancer funciona dentro de contenedores, con Podman (recomendado) o con Docker. Todo lo que necesita (su servidor, su base de datos y sus herramientas) va dentro de ellos, así que no instala nada más en tu sistema ni lo cambia.
 
 Primero te pedirá la carpeta de tus roms. Luego preparará los contenedores, que la primera vez tarda unos minutos, y al final elegirás la base de datos y crearás tu cuenta." ;;
       ok) echo Aceptar ;;
+      cancel) echo Cancelar ;;
+      engine) echo "¿Con qué quieres ejecutar los contenedores?
+
+Tienes Podman y Docker. Podman funciona con tu usuario, sin un servicio con permisos de root; Docker usa su propio servicio." ;;
+      podman) echo "Podman (recomendado)" ;;
+      noEngine) echo "Rommancer necesita Podman (recomendado) o Docker, y no encuentro ninguno de los dos.
+
+  Debian o Ubuntu:  sudo apt install podman
+  Mac:              brew install podman, o Podman Desktop (https://podman-desktop.io)
+  Docker:           https://docs.docker.com/get-docker/" ;;
+      engineDown) echo "$2 está instalado, pero no responde: o su servicio no está en marcha o tu usuario no puede usarlo.
+Con Docker, añade tu usuario al grupo docker (sudo usermod -aG docker $USER) y vuelve a entrar en la sesión." ;;
       yes) echo Sí ;;
       no) echo No ;;
       yn) echo s/N ;;
@@ -94,10 +109,22 @@ It takes your sudo password once, for \"$2\".}" ;;
 Then it starts by itself every time you log in to the Mac. Otherwise you start it with \"$CMD start\"." ;;
       intro) echo "You are about to install Rommancer.
 
-Rommancer runs inside Podman containers; Podman is a tool much like Docker. Everything it needs (its server, its database and its tools) goes inside them, so nothing else is installed or changed on your system.
+Rommancer runs inside containers, with Podman (recommended) or Docker. Everything it needs (its server, its database and its tools) goes inside them, so nothing else is installed or changed on your system.
 
 First it asks for your roms folder. Then it prepares the containers, which takes a few minutes the first time, and last you choose the database and create your account." ;;
       ok) echo Ok ;;
+      cancel) echo Cancel ;;
+      engine) echo "Which one should run the containers?
+
+You have Podman and Docker. Podman runs as your user, with no service running as root; Docker uses its own service." ;;
+      podman) echo "Podman (recommended)" ;;
+      noEngine) echo "Rommancer needs Podman (recommended) or Docker, and neither is installed.
+
+  Debian or Ubuntu:  sudo apt install podman
+  Mac:               brew install podman, or Podman Desktop (https://podman-desktop.io)
+  Docker:            https://docs.docker.com/get-docker/" ;;
+      engineDown) echo "$2 is installed but does not answer: its service is not running or your user may not use it.
+With Docker, add your user to the docker group (sudo usermod -aG docker $USER) and log in again." ;;
       yes) echo Yes ;;
       no) echo No ;;
       yn) echo y/N ;;
@@ -138,7 +165,7 @@ service() {
 <plist version="1.0"><dict>
   <key>Label</key><string>com.rommancer.start</string>
   <key>ProgramArguments</key><array><string>/bin/sh</string><string>$SRC/deploy/podman/rommancer.sh</string><string>start</string></array>
-  <key>EnvironmentVariables</key><dict><key>PATH</key><string>$(dirname "$(command -v podman)"):/usr/bin:/bin:/usr/sbin:/sbin</string></dict>
+  <key>EnvironmentVariables</key><dict><key>PATH</key><string>$(dirname "$(command -v "$ENGINE")"):/usr/bin:/bin:/usr/sbin:/sbin</string></dict>
   <key>RunAtLoad</key><true/>
 </dict></plist>
 EOF
@@ -203,10 +230,37 @@ after_install() {
   if [ "$want" = yes ]; then service on; else say off; fi
 }
 
-# On a Mac the containers run in Podman's Linux machine: made the first time (seeing your home and /Volumes), started
-# when stopped. Its data stays in volumes inside it: MySQL is unreliable on folders shared from the Mac
+# install's choice of engine: the one given, the only one there is, or the person's pick (Podman first)
+choose_engine() {
+  if [ -n "$1" ]; then
+    case "$1" in podman | docker) ENGINE=$1 ;; *) echo "--engine: podman or docker" >&2; exit 2 ;; esac
+  else
+    p='' d=''
+    command -v podman >/dev/null 2>&1 && p=1
+    command -v docker >/dev/null 2>&1 && d=1
+    if [ -z "$p$d" ]; then say noEngine >&2; exit 1; fi
+    if [ -n "$p" ] && [ -n "$d" ] && [ -t 0 ]; then
+      if [ -z "$2" ] && [ -t 2 ] && command -v whiptail >/dev/null 2>&1; then
+        ENGINE=$(whiptail --title Rommancer --ok-button "$(say ok)" --cancel-button "$(say cancel)" --notags --menu "$(say engine)" 14 76 2 \
+          podman "$(say podman)" docker Docker 3>&1 1>&2 2>&3) || exit 1
+      else
+        printf '%s\n 1) %s\n 2) Docker\n[1]: ' "$(say engine)" "$(say podman)" >&2
+        IFS= read -r a || a=
+        case "$a" in 2 | docker | Docker) ENGINE=docker ;; *) ENGINE=podman ;; esac
+      fi
+    elif [ -n "$p" ]; then ENGINE=podman
+    else ENGINE=docker
+    fi
+  fi
+  if [ "$ENGINE" = docker ] || [ "$OS" != Darwin ]; then
+    "$ENGINE" info >/dev/null 2>&1 || { say engineDown "$ENGINE" >&2; exit 1; }
+  fi
+}
+
+# On a Mac Podman runs the containers in its Linux machine: made the first time (seeing your home and /Volumes),
+# started when stopped. Its data stays in volumes inside it: MySQL is unreliable on folders shared from the Mac
 machine() {
-  [ "$OS" = Darwin ] || return 0
+  [ "$OS" = Darwin ] && [ "$ENGINE" = podman ] || return 0
   podman info >/dev/null 2>&1 && return 0
   podman machine inspect >/dev/null 2>&1 || podman machine init --memory 4096 -v "$HOME:$HOME" -v /Volumes:/Volumes
   podman machine start
@@ -220,6 +274,12 @@ shared() {
   [ $? = 3 ]
 }
 
+remember() {
+  mkdir -p "$(dirname "$CONF")"
+  { [ -f "$CONF" ] && grep -v "^$1=" "$CONF"; echo "$1=$2"; } > "$CONF.new" || true
+  mv "$CONF.new" "$CONF"
+}
+
 host_tz() {
   timedatectl show -p Timezone --value 2>/dev/null && return
   z=$(readlink /etc/localtime 2>/dev/null) && case "$z" in *zoneinfo/*) echo "${z#*zoneinfo/}"; return ;; esac
@@ -229,26 +289,27 @@ host_tz() {
 case "${1:-}" in
   build)
     machine
-    podman build -t rommancer-mysql -f "$SRC/deploy/mysql/Containerfile" "$SRC"
-    podman build -t rommancer-api -f "$SRC/backend/Containerfile" "$SRC"
-    podman build -t rommancer-web -f "$SRC/frontend/Containerfile" "$SRC" ;;
+    $ENGINE build -t rommancer-mysql -f "$SRC/deploy/mysql/Containerfile" "$SRC"
+    $ENGINE build -t rommancer-api -f "$SRC/backend/Containerfile" "$SRC"
+    $ENGINE build -t rommancer-web -f "$SRC/frontend/Containerfile" "$SRC" ;;
   up)
-    # A rom folder given now (ROMMANCER_ROMS, or install's question) is the one every later up mounts
+    # A rom folder or engine given now (ROMMANCER_ROMS, ROMMANCER_ENGINE, or install's questions) is the one every
+    # later command uses
     if [ -n "${ROMMANCER_ROMS:-}" ]; then
-      mkdir -p "$ROMS" "$(dirname "$CONF")"
+      mkdir -p "$ROMS"
       ROMS=$(cd "$ROMS" && pwd)
-      { [ -f "$CONF" ] && grep -v '^ROMMANCER_ROMS=' "$CONF"; echo "ROMMANCER_ROMS=$ROMS"; } > "$CONF.new" || true
-      mv "$CONF.new" "$CONF"
+      remember ROMMANCER_ROMS "$ROMS"
     fi
+    [ -n "${ROMMANCER_ENGINE:-}" ] && remember ROMMANCER_ENGINE "$ENGINE"
     mkdir -p "$ROMS"
     machine
-    if [ "$OS" = Darwin ] && ! shared "$ROMS"; then
+    if [ "$OS" = Darwin ] && [ "$ENGINE" = podman ] && ! shared "$ROMS"; then
       echo "Podman's machine can't see $ROMS: move your roms into your home folder or onto a disk in /Volumes," >&2
       echo "or make the machine again (podman machine rm, then rommancer.sh up makes one that sees both)." >&2
       exit 1
     fi
-    podman network exists "$NET" || podman network create "$NET"
-    podman rm -f rommancer-web rommancer-api rommancer-mysql >/dev/null 2>&1 || true
+    $ENGINE network inspect "$NET" >/dev/null 2>&1 || $ENGINE network create "$NET" >/dev/null
+    $ENGINE rm -f rommancer-web rommancer-api rommancer-mysql >/dev/null 2>&1 || true
     set --
     [ -n "$MYSQL_ROOT_PASSWORD" ] && set -- "$@" -e MYSQL_ROOT_PASSWORD="$MYSQL_ROOT_PASSWORD"
     [ -n "$MYSQL_PASSWORD" ] && set -- "$@" -e MYSQL_PASSWORD="$MYSQL_PASSWORD"
@@ -258,8 +319,8 @@ case "${1:-}" in
     else
       set -- "$@" -v rommancer-mysql:/var/lib/mysql -v rommancer-secrets:/secrets
     fi
-    podman run -d --name rommancer-mysql --network "$NET" --network-alias mysql --restart=on-failure "$@" localhost/rommancer-mysql:latest
-    until podman exec rommancer-mysql mysqladmin ping -h127.0.0.1 --silent 2>/dev/null; do sleep 2; done
+    $ENGINE run -d --name rommancer-mysql --network "$NET" --network-alias mysql --restart=on-failure "$@" rommancer-mysql:latest
+    until $ENGINE exec rommancer-mysql mysqladmin ping -h127.0.0.1 --silent 2>/dev/null; do sleep 2; done
     set --
     [ -f "$ENV_FILE" ] && set -- "$@" --env-file "$ENV_FILE"
     # Chosen before the installer existed: the database the passwords above open
@@ -271,14 +332,14 @@ case "${1:-}" in
       set -- "$@" --security-opt label=disable -v rommancer-data:/data -v rommancer-secrets:/data/secrets \
         -v "$SRC/seed:/seed" -v "$ROMS:/roms" -v "$SRC/clients:/app/clients:ro"
     fi
-    podman run -d --name rommancer-api --network "$NET" --network-alias api --restart=on-failure "$@" \
-      -e DATA_DIR=/data -e SEED_DIR=/seed -e ROMMANCER_BUNDLED_DB=mysql:3306 -e TZ="${TZ:-$(host_tz)}" localhost/rommancer-api:latest
-    podman run -d --name rommancer-web --network "$NET" --restart=on-failure -p "127.0.0.1:$WEB_PORT:80" localhost/rommancer-web:latest
+    $ENGINE run -d --name rommancer-api --network "$NET" --network-alias api --restart=on-failure "$@" \
+      -e DATA_DIR=/data -e SEED_DIR=/seed -e ROMMANCER_BUNDLED_DB=mysql:3306 -e TZ="${TZ:-$(host_tz)}" rommancer-api:latest
+    $ENGINE run -d --name rommancer-web --network "$NET" --restart=on-failure -p "127.0.0.1:$WEB_PORT:80" rommancer-web:latest
     echo "Web on http://127.0.0.1:$WEB_PORT" ;;
   start)
     machine
-    podman start rommancer-mysql rommancer-api rommancer-web ;;
-  stop) podman stop rommancer-web rommancer-api rommancer-mysql ;;
+    $ENGINE start rommancer-mysql rommancer-api rommancer-web ;;
+  stop) $ENGINE stop rommancer-web rommancer-api rommancer-mysql ;;
   service) service "${2:-on}" ;;
   setup)
     shift
@@ -286,7 +347,7 @@ case "${1:-}" in
   install)
     shift
     # --roms is this script's; everything else goes to the installer
-    roms='' plain='' svc=''
+    roms='' plain='' svc='' engine=''
     n=$#
     while [ "$n" -gt 0 ]; do
       a=$1
@@ -296,9 +357,12 @@ case "${1:-}" in
         --roms) roms=${1:-}; [ "$n" -gt 0 ] && { shift; n=$((n - 1)); } ;;
         --roms=*) roms=${a#*=} ;;
         -h | --help)
-          echo "Usage: $0 install [--roms PATH] [--service yes|no] [installer options]: builds, starts and installs Rommancer"
+          echo "Usage: $0 install [--roms PATH] [--engine podman|docker] [--service yes|no] [installer options]: builds, starts and installs Rommancer"
+          echo "  --engine podman|docker   what runs the containers (Podman when both are there and it is not given)"
           echo "  --service yes|no   install it as a service, started with the computer (asked when not given); the installer's options:"
           exec sh "$SRC/deploy/install.sh" --help ;;
+        --engine) engine=${1:-}; [ "$n" -gt 0 ] && { shift; n=$((n - 1)); } ;;
+        --engine=*) engine=${a#*=} ;;
         --service) svc=${1:-}; [ "$n" -gt 0 ] && { shift; n=$((n - 1)); } ;;
         --service=*) svc=${a#*=} ;;
         --lang) LANG_UI=${1:-}; set -- "$@" "$a" ;;
@@ -313,6 +377,8 @@ case "${1:-}" in
         printf '%s\n\n' "$(say intro)" >&2
       fi
     fi
+    choose_engine "$engine" "$plain"
+    export ROMMANCER_ENGINE="$ENGINE"
     [ -z "$roms" ] && [ -t 0 ] && roms=$(ask_roms "$ROMS" "$plain")
     roms=${roms:-$ROMS}
     case "$roms" in "~"*) roms="$HOME${roms#"~"}" ;; esac
@@ -323,8 +389,8 @@ case "${1:-}" in
     sh "$0" up
     sh "$SRC/deploy/install.sh" "http://127.0.0.1:$WEB_PORT" "$@"
     after_install "$svc" ;;
-  down) machine; podman rm -f rommancer-web rommancer-api rommancer-mysql ;;
-  logs) podman logs --tail 100 -f "rommancer-${2:-api}" ;;
-  status) podman ps -a --filter name=rommancer --format '{{.Names}}\t{{.Status}}' ;;
+  down) machine; $ENGINE rm -f rommancer-web rommancer-api rommancer-mysql ;;
+  logs) $ENGINE logs --tail 100 -f "rommancer-${2:-api}" ;;
+  status) $ENGINE ps -a --filter name=rommancer --format '{{.Names}}\t{{.Status}}' ;;
   *) echo "Usage: $0 install|build|up|start|stop|service [on|off]|setup|down|logs [api|web|mysql]|status"; exit 2 ;;
 esac

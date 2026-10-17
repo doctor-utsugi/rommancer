@@ -7,7 +7,8 @@ shareable lists, copying to consoles, romhack patches and synced saves between d
 
 ## Install
 
-Rommancer installs with one command on Linux, macOS and Windows, using Podman. You don't need git, Node or MySQL.
+Rommancer installs with one command on Linux, macOS and Windows. It runs in containers, with Podman (recommended) or
+Docker, so you don't need git, Node or MySQL.
 
 - [Linux](docs/install.md#linux)
 - [macOS](docs/install.md#macos)

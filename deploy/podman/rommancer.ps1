@@ -1,6 +1,6 @@
-﻿# Rommancer on Windows: rommancer.sh's commands for Podman for Windows (or Podman Desktop), whose containers run in a
+﻿# Rommancer on Windows: rommancer.sh's commands for Podman (the default) or Docker Desktop, whose containers run in a
 # WSL machine. Data stays in volumes inside it; the installer is deploy/install.sh, run in a container.
-#   rommancer.ps1 install [--roms PATH] [--service yes|no] [installer options] | build | up | start | stop | service [on|off]
+#   rommancer.ps1 install [--roms PATH] [--engine podman|docker] [--service yes|no] [installer options] | build | up | start | stop | service [on|off]
 #                 | setup | down | logs [api|web|mysql] | status
 # Run it with: powershell -ExecutionPolicy Bypass -File rommancer\deploy\podman\rommancer.ps1 install
 $ErrorActionPreference = 'Continue'
@@ -23,22 +23,53 @@ function Get-ConfValue($file, $name) {
 }
 $Roms = if ($env:ROMMANCER_ROMS) { $env:ROMMANCER_ROMS } else { Get-ConfValue $Conf 'ROMMANCER_ROMS' }
 if (-not $Roms) { $Roms = Join-Path $HOME 'rommancer-roms' }
+$Engine = if ($env:ROMMANCER_ENGINE) { $env:ROMMANCER_ENGINE } else { Get-ConfValue $Conf 'ROMMANCER_ENGINE' }
+if (-not $Engine) { $Engine = 'podman' }
 
-function Invoke-Podman {
-  & podman @args
-  if ($LASTEXITCODE -ne 0) { Write-Error "podman $($args -join ' ') failed"; exit 1 }
+function Set-ConfValue($name, $value) {
+  New-Item -ItemType Directory -Force (Split-Path $Conf) | Out-Null
+  $kept = if (Test-Path $Conf) { @(Get-Content $Conf | Where-Object { -not $_.StartsWith("$name=") }) } else { @() }
+  Set-Content $Conf ($kept + "$name=$value")
 }
-function Test-Podman { & podman @args *> $null; $LASTEXITCODE -eq 0 }
 
-# Podman's machine: made the first time, started when stopped
-function Start-Machine {
-  if (-not (Get-Command podman -ErrorAction SilentlyContinue)) {
-    Write-Error 'Podman is not installed: winget install RedHat.Podman (or Podman Desktop), then open a new terminal'
+function Invoke-Engine {
+  & $Engine @args
+  if ($LASTEXITCODE -ne 0) { Write-Error "$Engine $($args -join ' ') failed"; exit 1 }
+}
+function Test-Engine { & $Engine @args *> $null; $LASTEXITCODE -eq 0 }
+$Has = @{ podman = [bool](Get-Command podman -ErrorAction SilentlyContinue); docker = [bool](Get-Command docker -ErrorAction SilentlyContinue) }
+
+# install's choice of engine: the one given, the only one there is, or the person's pick (Podman first)
+function Select-Engine($given) {
+  if ($given) {
+    if ($given -ne 'podman' -and $given -ne 'docker') { Write-Host '--engine: podman or docker'; exit 2 }
+    return $given
+  }
+  if (-not $Has.podman -and -not $Has.docker) {
+    if ($Es) { Write-Host "Rommancer necesita Podman (recomendado) o Docker, y no encuentro ninguno de los dos.`n`n  Podman:  winget install RedHat.Podman, o Podman Desktop (https://podman-desktop.io)`n  Docker:  Docker Desktop (https://docs.docker.com/get-docker/)`n`nInstala uno, abre una ventana nueva de PowerShell y vuelve a lanzar la instalación." }
+    else { Write-Host "Rommancer needs Podman (recommended) or Docker, and neither is installed.`n`n  Podman:  winget install RedHat.Podman, or Podman Desktop (https://podman-desktop.io)`n  Docker:  Docker Desktop (https://docs.docker.com/get-docker/)`n`nInstall one, open a new PowerShell window and run the installation again." }
     exit 1
   }
-  if (Test-Podman info) { return }
-  if (-not (Test-Podman machine inspect)) { Invoke-Podman machine init --memory 4096 }
-  Invoke-Podman machine start
+  if ($Has.podman -and $Has.docker -and -not [Console]::IsInputRedirected) {
+    if ($Es) { $a = Read-Host "¿Con qué quieres ejecutar los contenedores?`n`nTienes Podman y Docker. Podman funciona con tu usuario, sin un servicio con permisos de administrador; Docker usa su propio servicio.`n`n 1) Podman (recomendado)`n 2) Docker`n[1]" }
+    else { $a = Read-Host "Which one should run the containers?`n`nYou have Podman and Docker. Podman runs as your user, with no service running as administrator; Docker uses its own service.`n`n 1) Podman (recommended)`n 2) Docker`n[1]" }
+    if ($a -match '^(2|docker)$') { return 'docker' } else { return 'podman' }
+  }
+  if ($Has.podman) { 'podman' } else { 'docker' }
+}
+
+# Podman's machine: made the first time, started when stopped. Docker Desktop starts on its own: wait for it
+function Start-Machine {
+  if (-not $Has[$Engine]) { Write-Error "$Engine is not installed"; exit 1 }
+  if (Test-Engine info) { return }
+  if ($Engine -eq 'docker') {
+    for ($i = 0; $i -lt 60 -and -not (Test-Engine info); $i++) { Start-Sleep 2 }
+    if (Test-Engine info) { return }
+    if ($Es) { Write-Error 'Docker no responde: abre Docker Desktop y vuelve a intentarlo.' } else { Write-Error 'Docker does not answer: open Docker Desktop and try again.' }
+    exit 1
+  }
+  if (-not (Test-Engine machine inspect)) { Invoke-Engine machine init --memory 4096 }
+  Invoke-Engine machine start
 }
 
 # The folder with your roms, asked by install
@@ -67,33 +98,30 @@ function Get-HostTz {
 
 function Invoke-Build {
   Start-Machine
-  Invoke-Podman build -t rommancer-mysql -f (In-Src deploy mysql Containerfile) $Src
-  Invoke-Podman build -t rommancer-api -f (In-Src backend Containerfile) $Src
-  Invoke-Podman build -t rommancer-web -f (In-Src frontend Containerfile) $Src
+  Invoke-Engine build -t rommancer-mysql -f (In-Src deploy mysql Containerfile) $Src
+  Invoke-Engine build -t rommancer-api -f (In-Src backend Containerfile) $Src
+  Invoke-Engine build -t rommancer-web -f (In-Src frontend Containerfile) $Src
 }
 
 function Invoke-Up {
   # A rom folder given now (ROMMANCER_ROMS, or install's question) is the one every later up mounts
   New-Item -ItemType Directory -Force $Roms | Out-Null
   $script:Roms = (Resolve-Path $Roms).Path
-  if ($env:ROMMANCER_ROMS) {
-    New-Item -ItemType Directory -Force (Split-Path $Conf) | Out-Null
-    $kept = if (Test-Path $Conf) { @(Get-Content $Conf | Where-Object { -not $_.StartsWith('ROMMANCER_ROMS=') }) } else { @() }
-    Set-Content $Conf ($kept + "ROMMANCER_ROMS=$Roms")
-  }
+  if ($env:ROMMANCER_ROMS) { Set-ConfValue 'ROMMANCER_ROMS' $Roms }
+  if ($env:ROMMANCER_ENGINE) { Set-ConfValue 'ROMMANCER_ENGINE' $Engine }
   Start-Machine
-  if (-not (Test-Podman network exists $Net)) { Invoke-Podman network create $Net | Out-Null }
-  & podman rm -f rommancer-web rommancer-api rommancer-mysql *> $null
-  Invoke-Podman run -d --name rommancer-mysql --network $Net --network-alias mysql --restart=on-failure `
-    -v rommancer-mysql:/var/lib/mysql -v rommancer-secrets:/secrets localhost/rommancer-mysql:latest | Out-Null
-  while (-not (Test-Podman exec rommancer-mysql mysqladmin ping '-h127.0.0.1' --silent)) { Start-Sleep 2 }
+  if (-not (Test-Engine network inspect $Net)) { Invoke-Engine network create $Net | Out-Null }
+  & $Engine rm -f rommancer-web rommancer-api rommancer-mysql *> $null
+  Invoke-Engine run -d --name rommancer-mysql --network $Net --network-alias mysql --restart=on-failure `
+    -v rommancer-mysql:/var/lib/mysql -v rommancer-secrets:/secrets rommancer-mysql:latest | Out-Null
+  while (-not (Test-Engine exec rommancer-mysql mysqladmin ping '-h127.0.0.1' --silent)) { Start-Sleep 2 }
   $opt = @()
   if (Test-Path $EnvFile) { $opt += '--env-file', $EnvFile }
-  Invoke-Podman run -d --name rommancer-api --network $Net --network-alias api --restart=on-failure @opt `
+  Invoke-Engine run -d --name rommancer-api --network $Net --network-alias api --restart=on-failure @opt `
     --security-opt label=disable -v rommancer-data:/data -v rommancer-secrets:/data/secrets `
     -v "$(In-Src seed):/seed" -v "${Roms}:/roms" -v "$(In-Src clients):/app/clients:ro" `
-    -e DATA_DIR=/data -e SEED_DIR=/seed -e ROMMANCER_BUNDLED_DB=mysql:3306 -e "TZ=$(Get-HostTz)" localhost/rommancer-api:latest | Out-Null
-  Invoke-Podman run -d --name rommancer-web --network $Net --restart=on-failure -p "127.0.0.1:${WebPort}:80" localhost/rommancer-web:latest | Out-Null
+    -e DATA_DIR=/data -e SEED_DIR=/seed -e ROMMANCER_BUNDLED_DB=mysql:3306 -e "TZ=$(Get-HostTz)" rommancer-api:latest | Out-Null
+  Invoke-Engine run -d --name rommancer-web --network $Net --restart=on-failure -p "127.0.0.1:${WebPort}:80" rommancer-web:latest | Out-Null
   Write-Host "Web on http://127.0.0.1:$WebPort"
 }
 
@@ -139,13 +167,13 @@ function Show-Running($want) {
   Set-RommancerService ($want -eq 'yes')
 }
 
-# deploy/install.sh in a container on the machine's own network, where the web answers at the address it shows you
+# deploy/install.sh in a container on Rommancer's network; it shows you the address on this computer
 function Invoke-Setup($opts) {
   $tty = if ([Console]::IsInputRedirected) { '-i' } else { '-it' }
   $lang = if ($Es) { 'es_ES.UTF-8' } else { 'en_US.UTF-8' }
-  & podman run --rm $tty --network host -e "LANG=$lang" -e ROMMANCER_DB_PASSWORD -e ROMMANCER_ADMIN_PASSWORD `
-    -v "$(In-Src deploy install.sh):/install.sh:ro" --entrypoint sh localhost/rommancer-web:latest `
-    /install.sh "http://127.0.0.1:$WebPort" @opts
+  & $Engine run --rm $tty --network $Net -e "LANG=$lang" -e "ROMMANCER_SHOW_URL=http://127.0.0.1:$WebPort" -e ROMMANCER_DB_PASSWORD -e ROMMANCER_ADMIN_PASSWORD `
+    -v "$(In-Src deploy install.sh):/install.sh:ro" --entrypoint sh rommancer-web:latest `
+    /install.sh http://rommancer-web @opts
   $script:SetupCode = $LASTEXITCODE
 }
 
@@ -153,8 +181,8 @@ $rest = @($args | Select-Object -Skip 1)
 switch ($args[0]) {
   'build' { Invoke-Build }
   'up' { Invoke-Up }
-  'start' { Start-Machine; Invoke-Podman start rommancer-mysql rommancer-api rommancer-web }
-  'stop' { & podman stop rommancer-web rommancer-api rommancer-mysql }
+  'start' { Start-Machine; Invoke-Engine start rommancer-mysql rommancer-api rommancer-web }
+  'stop' { & $Engine stop rommancer-web rommancer-api rommancer-mysql }
   'service' {
     if (-not $StartupCmd) { Write-Error 'rommancer.ps1 service is for Windows; elsewhere use rommancer.sh service'; exit 2 }
     $v = if ($rest.Count) { $rest[0] } else { 'on' }
@@ -164,15 +192,18 @@ switch ($args[0]) {
   'setup' { Invoke-Setup $rest; exit $SetupCode }
   'install' {
     # --roms is this script's; everything else goes to the installer
-    $chosen = '' ; $svc = '' ; $opts = @()
+    $chosen = '' ; $svc = '' ; $eng = '' ; $opts = @()
     for ($i = 0; $i -lt $rest.Count; $i++) {
       $a = [string]$rest[$i]
       if ($a -eq '--roms') { $i++; $chosen = [string]$rest[$i] }
       elseif ($a.StartsWith('--roms=')) { $chosen = $a.Substring(7) }
+      elseif ($a -eq '--engine') { $i++; $eng = [string]$rest[$i] }
+      elseif ($a.StartsWith('--engine=')) { $eng = $a.Substring(9) }
       elseif ($a -eq '--service') { $i++; $svc = [string]$rest[$i] }
       elseif ($a.StartsWith('--service=')) { $svc = $a.Substring(10) }
       elseif ($a -eq '-h' -or $a -eq '--help') {
-        Write-Host "Usage: rommancer.ps1 install [--roms PATH] [--service yes|no] [installer options]: builds, starts and installs Rommancer"
+        Write-Host "Usage: rommancer.ps1 install [--roms PATH] [--engine podman|docker] [--service yes|no] [installer options]: builds, starts and installs Rommancer"
+        Write-Host "  --engine podman|docker   what runs the containers (Podman when both are there and it is not given)"
         Write-Host "  --service yes|no   install it as a service, started at every login (asked when not given); the installer's options:"
         # install.sh's own --help text
         $sh = [IO.File]::ReadAllText((In-Src deploy install.sh))
@@ -181,6 +212,8 @@ switch ($args[0]) {
       }
       else { $opts += $a }
     }
+    $script:Engine = Select-Engine $eng
+    $env:ROMMANCER_ENGINE = $Engine
     if (-not $chosen -and -not [Console]::IsInputRedirected) { $chosen = Read-Roms $Roms }
     if ($chosen) { $Roms = $chosen }
     $env:ROMMANCER_ROMS = $Roms
@@ -190,8 +223,8 @@ switch ($args[0]) {
     if ($SetupCode -ne 0) { exit $SetupCode }
     Show-Running $svc
   }
-  'down' { Start-Machine; & podman rm -f rommancer-web rommancer-api rommancer-mysql }
-  'logs' { $c = if ($rest.Count) { $rest[0] } else { 'api' }; & podman logs --tail 100 -f "rommancer-$c" }
-  'status' { & podman ps -a --filter name=rommancer --format '{{.Names}}\t{{.Status}}' }
+  'down' { Start-Machine; & $Engine rm -f rommancer-web rommancer-api rommancer-mysql }
+  'logs' { $c = if ($rest.Count) { $rest[0] } else { 'api' }; & $Engine logs --tail 100 -f "rommancer-$c" }
+  'status' { & $Engine ps -a --filter name=rommancer --format '{{.Names}}\t{{.Status}}' }
   default { Write-Host 'Usage: rommancer.ps1 install|build|up|start|stop|service [on|off]|setup|down|logs [api|web|mysql]|status'; exit 2 }
 }

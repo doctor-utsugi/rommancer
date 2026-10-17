@@ -1,8 +1,12 @@
 # Installing Rommancer
 
-Rommancer runs in three containers (the web, the server and its MySQL database) on [Podman](https://podman.io). On
-Linux they run directly; on macOS and Windows, Podman runs them inside a small Linux virtual machine that it sets up
-for you. You don't need git, Node or MySQL.
+Rommancer runs in three containers (the web, the server and its MySQL database) on [Podman](https://podman.io) or
+Docker. On Linux they run directly; on macOS and Windows, Podman or Docker Desktop runs them inside a small Linux
+virtual machine. Everything Rommancer needs goes inside the containers: you don't need git, Node or MySQL.
+
+Podman is the default and the recommended one: it runs as your user, with no service running as root. If you already
+use Docker, Rommancer works with it too. When both are installed, the installer asks which one to use (Podman comes
+first), and `install --engine podman|docker` answers it beforehand. Every later command uses the same one.
 
 - [Linux](#linux)
 - [macOS](#macos)
@@ -24,6 +28,10 @@ sudo apt install podman curl whiptail
 ```
 
 `whiptail` is optional: with it the installer shows dialog boxes, without it it asks plain questions.
+
+With Docker instead, your user has to be able to run it without sudo (`sudo usermod -aG docker $USER`, then log in
+again). The files Rommancer writes in `~/rommancer-data` then belong to root and MySQL's user, so deleting that folder
+by hand takes sudo.
 
 Install with one command:
 
@@ -58,7 +66,8 @@ Your data lives in `~/rommancer-data`, outside the extracted folder.
 
 ## macOS
 
-Install Podman, either [Podman Desktop](https://podman-desktop.io) or the command line alone:
+Install Podman, either [Podman Desktop](https://podman-desktop.io) or the command line alone (Docker Desktop works
+too):
 
 ```bash
 brew install podman
@@ -87,8 +96,8 @@ Two things differ from Linux:
 
 ## Windows
 
-Install Podman from PowerShell (or install [Podman Desktop](https://podman-desktop.io)), then open a new PowerShell
-window:
+Install Podman from PowerShell (or install [Podman Desktop](https://podman-desktop.io); Docker Desktop works too), then
+open a new PowerShell window:
 
 ```powershell
 winget install RedHat.Podman
