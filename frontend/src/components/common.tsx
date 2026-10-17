@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type ReactNode, type SelectHTMLAttributes } from 'react'
+import { cloneElement, isValidElement, useEffect, useId, useMemo, useState, type ReactNode, type SelectHTMLAttributes } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
@@ -139,13 +139,22 @@ export function errMsg(e: unknown) {
   return e instanceof Error ? e.message : String(e)
 }
 
+// The hint describes the control (aria-describedby) instead of becoming part of its name
 export function Field({ label, children, hint }: { label: ReactNode; children: ReactNode; hint?: ReactNode }) {
+  const id = useId()
+  const control = hint && isValidElement<{ 'aria-describedby'?: string }>(children) ? cloneElement(children, { 'aria-describedby': id }) : children
   return (
-    <label className="grid gap-1.5 text-sm">
-      <span className="font-medium">{label}</span>
-      {children}
-      {hint && <span className="text-xs text-muted-foreground">{hint}</span>}
-    </label>
+    <div className="grid gap-1.5 text-sm">
+      <label className="grid gap-1.5">
+        <span className="font-medium">{label}</span>
+        {control}
+      </label>
+      {hint && (
+        <span id={id} className="text-xs text-muted-foreground">
+          {hint}
+        </span>
+      )}
+    </div>
   )
 }
 

@@ -22,6 +22,27 @@ export const databaseBody = z.discriminatedUnion('mode', [
   }),
 ]);
 
+/** Why a database did not work, as a code both installers translate; prisma's own words go along as the detail */
+export const DB_ERROR_CODES = ['db_unreachable', 'db_auth', 'db_missing', 'db_denied', 'db_bundled', 'db_failed'] as const;
+
+function dbProblem(message: string, bundled: boolean) {
+  const code = /\bP1001\b|P1002\b|ECONNREFUSED|ENOTFOUND/.test(message)
+    ? bundled ? 'db_bundled' : 'db_unreachable'
+    : /\bP1000\b/.test(message) ? 'db_auth'
+    : /\bP1003\b/.test(message) ? 'db_missing'
+    : /\bP1010\b|access denied/i.test(message) ? 'db_denied'
+    : bundled ? 'db_bundled' : 'db_failed';
+  const error = {
+    db_unreachable: 'Nothing answers at that host and port',
+    db_auth: 'MySQL refused the user or the password',
+    db_missing: 'That database does not exist',
+    db_denied: 'The user may not use that database',
+    db_bundled: "Rommancer's own database did not answer in time",
+    db_failed: 'The database could not be prepared',
+  }[code];
+  return { code, error, detail: message };
+}
+
 /** Brings the schema of the database at URL up to date; rejects with prisma's last words */
 export function migrate(url: string): Promise<void> {
   return new Promise((resolve, reject) => {
@@ -84,7 +105,7 @@ export function runInstaller(port: number): Promise<void> {
         server.close();
         resolve();
       } catch (e) {
-        res.status(400).json({ error: e instanceof Error ? e.message : String(e) });
+        res.status(400).json(dbProblem(e instanceof Error ? e.message : String(e), c.mode === 'bundled'));
       } finally {
         busy = false;
       }

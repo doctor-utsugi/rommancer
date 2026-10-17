@@ -2,7 +2,7 @@ import { useState, type FormEvent, type ReactNode } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
 import { useAuth } from '@/lib/auth'
-import { api, tokens } from '@/lib/api'
+import { ApiError, api, tokens } from '@/lib/api'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
@@ -26,10 +26,68 @@ export const SYNC_SCHEDULES = [
   { value: '', key: 'never' },
 ] as const
 
+// The console installer (deploy/install.sh) checks the same, in the same order
+const USERNAME = /^[a-zA-Z0-9_.-]{3,64}$/
+const isLoopback = (url: string) => {
+  try {
+    const host = new URL(url).hostname
+    return host === 'localhost' || host.startsWith('127.') || host === '[::1]'
+  } catch {
+    return false
+  }
+}
+
+/** What went wrong, kept as a translation key so it follows a change of language */
+interface Problem {
+  key?: string
+  params?: Record<string, string>
+  text?: string
+  detail?: string
+}
+
+const ADMIN_FIELD_ERRORS: Record<string, string> = { username: 'setup.invalidUsername', email: 'setup.invalidEmail', password: 'setup.tooShort' }
+
+/** A refusal from the setup API as a problem to show: database codes and validated fields are translated */
+function problemOf(err: unknown): Problem {
+  if (!(err instanceof ApiError)) return { text: errMsg(err) }
+  const data = err.data as { code?: string; detail?: string; issues?: { path?: (string | number)[] }[] } | undefined
+  if (data?.code) return { key: `setup.errors.${data.code}`, detail: data.detail }
+  const field = data?.issues?.[0]?.path?.[0]
+  if (typeof field === 'string' && ADMIN_FIELD_ERRORS[field]) return { key: ADMIN_FIELD_ERRORS[field] }
+  return { text: err.message }
+}
+
+function ProblemNote({ problem }: { problem: Problem | null }) {
+  const { t } = useTranslation()
+  return (
+    <div role="alert" className="text-sm text-destructive empty:hidden">
+      {problem && (problem.key ? t(problem.key, problem.params) : problem.text)}
+      {problem?.detail && (
+        <details className="mt-1 text-xs text-muted-foreground">
+          <summary className="cursor-pointer">{t('setup.details')}</summary>
+          <p className="mt-1 break-words">{problem.detail}</p>
+        </details>
+      )}
+    </div>
+  )
+}
+
 function Shell({ step, title, children }: { step: number; title: string; children: ReactNode }) {
   const { t } = useTranslation()
   return (
-    <div className="flex min-h-screen items-center justify-center bg-muted/40 p-4">
+    <main className="flex min-h-screen flex-col items-center justify-center gap-4 bg-muted/40 p-4">
+      <div className="flex w-full max-w-lg justify-end">
+        <label className="flex items-center gap-2 text-sm text-muted-foreground">
+          {t('profile.language')}
+          <select value={i18n.language} onChange={(e) => void setLanguage(e.target.value)} className="h-8 rounded-md border bg-background px-2 text-sm text-foreground">
+            {LOCALES.map((l) => (
+              <option key={l.code} value={l.code}>
+                {l.name}
+              </option>
+            ))}
+          </select>
+        </label>
+      </div>
       <Card className="w-full max-w-lg">
         <CardHeader>
           <div className="mb-2 flex items-center gap-2 text-lg font-semibold">
@@ -37,23 +95,13 @@ function Shell({ step, title, children }: { step: number; title: string; childre
             {t('app.name')}
             <span className="ml-auto text-sm font-normal text-muted-foreground">{t('setup.step', { n: step, total: 2 })}</span>
           </div>
-          <CardTitle>{title}</CardTitle>
+          <CardTitle>
+            <h1>{title}</h1>
+          </CardTitle>
         </CardHeader>
         <CardContent>{children}</CardContent>
       </Card>
-      <select
-        value={i18n.language}
-        onChange={(e) => void setLanguage(e.target.value)}
-        aria-label={t('profile.language')}
-        className="fixed right-4 top-4 h-8 rounded-md border bg-background px-2 text-sm"
-      >
-        {LOCALES.map((l) => (
-          <option key={l.code} value={l.code}>
-            {l.name}
-          </option>
-        ))}
-      </select>
-    </div>
+    </main>
   )
 }
 
@@ -62,22 +110,43 @@ export function SetupPage({ state }: { state: SetupState }) {
   return state.needsDatabase ? <DatabaseStep bundled={state.bundledDatabase} /> : <AdminStep />
 }
 
+function DatabaseOption({ checked, disabled, onChange, title, hint }: { checked: boolean; disabled?: boolean; onChange: () => void; title: string; hint: string }) {
+  return (
+    <label
+      className={`flex gap-3 rounded-lg border p-3 has-[:checked]:border-primary has-[:checked]:bg-muted/60 has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-ring ${disabled ? '' : 'cursor-pointer'}`}
+    >
+      <input type="radio" name="mode" checked={checked} disabled={disabled} onChange={onChange} className="mt-1 self-start" />
+      <span>
+        <span className={`font-medium ${disabled ? 'text-muted-foreground' : ''}`}>{title}</span>
+        <span className="block text-sm text-muted-foreground">{hint}</span>
+      </span>
+    </label>
+  )
+}
+
 function DatabaseStep({ bundled }: { bundled: boolean }) {
   const { t } = useTranslation()
   const qc = useQueryClient()
   const [mode, setMode] = useState<'bundled' | 'external'>(bundled ? 'bundled' : 'external')
   const [db, setDb] = useState({ host: '', port: '3306', database: 'rommancer', user: 'rommancer', password: '' })
-  const [error, setError] = useState('')
+  const [problem, setProblem] = useState<Problem | null>(null)
   const [busy, setBusy] = useState(false)
   const submit = async (e: FormEvent) => {
     e.preventDefault()
+    if (mode === 'external') {
+      const labels = { host: 'setup.dbHost', database: 'setup.dbName', user: 'setup.dbUser' } as const
+      const missing = (['host', 'database', 'user'] as const).find((k) => !db[k].trim())
+      if (missing) return setProblem({ key: 'setup.required', params: { field: t(labels[missing]) } })
+      const port = Number(db.port)
+      if (!/^\d+$/.test(db.port) || port < 1 || port > 65535) return setProblem({ key: 'setup.badPort' })
+    }
     setBusy(true)
-    setError('')
+    setProblem(null)
     try {
       await api('POST', '/setup/database', mode === 'bundled' ? { mode } : { mode, ...db, port: Number(db.port) })
       await qc.invalidateQueries({ queryKey: ['setup'] })
     } catch (err) {
-      setError(errMsg(err))
+      setProblem(problemOf(err))
     } finally {
       setBusy(false)
     }
@@ -85,37 +154,34 @@ function DatabaseStep({ bundled }: { bundled: boolean }) {
   const set = (k: keyof typeof db) => (e: React.ChangeEvent<HTMLInputElement>) => setDb({ ...db, [k]: e.target.value })
   return (
     <Shell step={1} title={t('setup.dbTitle')}>
-      <form onSubmit={submit} className="grid gap-4">
-        <label className={`flex gap-3 rounded-lg border p-3 ${bundled ? 'cursor-pointer' : 'opacity-50'}`}>
-          <input type="radio" name="mode" checked={mode === 'bundled'} disabled={!bundled} onChange={() => setMode('bundled')} className="mt-1" />
-          <span>
-            <span className="font-medium">{t('setup.dbBundled')}</span>
-            <span className="block text-sm text-muted-foreground">{bundled ? t('setup.dbBundledHint') : t('setup.dbBundledMissing')}</span>
-          </span>
-        </label>
-        <label className="flex cursor-pointer gap-3 rounded-lg border p-3">
-          <input type="radio" name="mode" checked={mode === 'external'} onChange={() => setMode('external')} className="mt-1" />
-          <span>
-            <span className="font-medium">{t('setup.dbExternal')}</span>
-            <span className="block text-sm text-muted-foreground">{t('setup.dbExternalHint')}</span>
-          </span>
-        </label>
+      <form onSubmit={submit} noValidate className="grid gap-4">
+        <fieldset className="grid gap-3" disabled={busy}>
+          <legend className="sr-only">{t('setup.dbTitle')}</legend>
+          <DatabaseOption
+            checked={mode === 'bundled'}
+            disabled={!bundled}
+            onChange={() => setMode('bundled')}
+            title={t('setup.dbBundled')}
+            hint={bundled ? t('setup.dbBundledHint') : t('setup.dbBundledMissing')}
+          />
+          <DatabaseOption checked={mode === 'external'} onChange={() => setMode('external')} title={t('setup.dbExternal')} hint={t('setup.dbExternalHint')} />
+        </fieldset>
         {mode === 'external' && (
-          <div className="grid grid-cols-3 gap-3">
-            <div className="col-span-2">
+          <fieldset className="grid grid-cols-1 gap-3 sm:grid-cols-3" disabled={busy}>
+            <div className="sm:col-span-2">
               <Field label={t('setup.dbHost')}>
-                <Input value={db.host} onChange={set('host')} placeholder="192.168.1.10" required autoFocus />
+                <Input value={db.host} onChange={set('host')} placeholder="192.168.1.10" autoComplete="off" required autoFocus />
               </Field>
             </div>
             <Field label={t('setup.dbPort')}>
-              <Input value={db.port} onChange={set('port')} inputMode="numeric" required />
+              <Input value={db.port} onChange={set('port')} inputMode="numeric" pattern="[0-9]*" required />
             </Field>
-            <div className="col-span-3">
+            <div className="sm:col-span-3">
               <Field label={t('setup.dbName')}>
                 <Input value={db.database} onChange={set('database')} required />
               </Field>
             </div>
-            <div className="col-span-3 grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 gap-3 sm:col-span-3 sm:grid-cols-2">
               <Field label={t('setup.dbUser')}>
                 <Input value={db.user} onChange={set('user')} autoComplete="off" required />
               </Field>
@@ -123,10 +189,10 @@ function DatabaseStep({ bundled }: { bundled: boolean }) {
                 <Input type="password" value={db.password} onChange={set('password')} autoComplete="new-password" />
               </Field>
             </div>
-          </div>
+          </fieldset>
         )}
-        {error && <p className="text-sm text-destructive">{error}</p>}
-        <Button type="submit" disabled={busy}>
+        <ProblemNote problem={problem} />
+        <Button type="submit" disabled={busy} className="h-auto min-h-9 whitespace-normal py-2">
           {busy ? t('setup.dbConnecting') : t('setup.next')}
         </Button>
       </form>
@@ -147,13 +213,18 @@ function AdminStep() {
     seedOnStart: true,
     externalSyncCron: SYNC_SCHEDULES[0].value as string,
   })
-  const [error, setError] = useState('')
+  const [problem, setProblem] = useState<Problem | null>(null)
   const [busy, setBusy] = useState(false)
   const submit = async (e: FormEvent) => {
     e.preventDefault()
-    if (form.password !== form.confirm) return setError(t('setup.mismatch'))
+    const labels = { username: 'setup.username', email: 'common.email', password: 'common.password' } as const
+    const missing = (['username', 'email', 'password'] as const).find((k) => !form[k].trim())
+    if (missing) return setProblem({ key: 'setup.required', params: { field: t(labels[missing]) } })
+    if (!USERNAME.test(form.username)) return setProblem({ key: 'setup.invalidUsername' })
+    if (form.password.length < 10) return setProblem({ key: 'setup.tooShort' })
+    if (form.password !== form.confirm) return setProblem({ key: 'setup.mismatch' })
     setBusy(true)
-    setError('')
+    setProblem(null)
     try {
       const { confirm: _, ...body } = form
       const r = await api('POST', '/setup/admin', { ...body, locale: i18n.language })
@@ -161,7 +232,7 @@ function AdminStep() {
       await qc.invalidateQueries({ queryKey: ['setup'] })
       await reload()
     } catch (err) {
-      setError(errMsg(err))
+      setProblem(problemOf(err))
     } finally {
       setBusy(false)
     }
@@ -169,44 +240,46 @@ function AdminStep() {
   const set = (k: 'username' | 'email' | 'password' | 'confirm' | 'publicUrl') => (e: React.ChangeEvent<HTMLInputElement>) => setForm({ ...form, [k]: e.target.value })
   return (
     <Shell step={2} title={t('setup.adminTitle')}>
-      <form onSubmit={submit} className="grid gap-4">
+      <form onSubmit={submit} noValidate className="grid gap-4">
         <p className="text-sm text-muted-foreground">{t('setup.adminHint')}</p>
-        <div className="grid grid-cols-2 items-start gap-3">
-          <Field label={t('setup.username')}>
+        <fieldset className="grid grid-cols-1 items-start gap-3 sm:grid-cols-2" disabled={busy}>
+          <Field label={t('setup.username')} hint={t('setup.usernameHint')}>
             <Input value={form.username} onChange={set('username')} autoComplete="username" required autoFocus />
           </Field>
           <Field label={t('common.email')}>
             <Input type="email" value={form.email} onChange={set('email')} autoComplete="email" required />
           </Field>
           <Field label={t('common.password')} hint={t('setup.passwordMin')}>
-            <Input type="password" value={form.password} onChange={set('password')} autoComplete="new-password" minLength={10} required />
+            <Input type="password" value={form.password} onChange={set('password')} autoComplete="new-password" required />
           </Field>
           <Field label={t('setup.confirm')}>
             <Input type="password" value={form.confirm} onChange={set('confirm')} autoComplete="new-password" required />
           </Field>
-        </div>
-        <Field label={t('server.publicUrl')} hint={t('server.publicUrlHint')}>
-          <Input value={form.publicUrl} onChange={set('publicUrl')} />
-        </Field>
-        <Field label={t('server.externalSync')} hint={t('server.externalSyncHint')}>
-          <NativeSelect value={form.externalSyncCron} onChange={(e) => setForm({ ...form, externalSyncCron: e.target.value })}>
-            {SYNC_SCHEDULES.map((s) => (
-              <option key={s.key} value={s.value}>
-                {t(`server.sync.${s.key}`)}
-              </option>
-            ))}
-          </NativeSelect>
-        </Field>
-        <label className="flex items-start gap-2 text-sm">
-          <Checkbox checked={form.seedOnStart} onCheckedChange={(v) => setForm({ ...form, seedOnStart: !!v })} className="mt-0.5" />
-          <span>
-            {t('server.seedOnStart')}
-            <span className="block text-muted-foreground">{t('server.seedOnStartHint')}</span>
-          </span>
-        </label>
-        {error && <p className="text-sm text-destructive">{error}</p>}
-        <Button type="submit" disabled={busy}>
-          {t('setup.finish')}
+        </fieldset>
+        <fieldset className="grid gap-4" disabled={busy}>
+          <Field label={t('server.publicUrl')} hint={isLoopback(form.publicUrl) ? t('setup.loopbackUrl') : t('server.publicUrlHint')}>
+            <Input type="url" value={form.publicUrl} onChange={set('publicUrl')} />
+          </Field>
+          <Field label={t('server.externalSync')} hint={t('server.externalSyncHint')}>
+            <NativeSelect value={form.externalSyncCron} onChange={(e) => setForm({ ...form, externalSyncCron: e.target.value })}>
+              {SYNC_SCHEDULES.map((s) => (
+                <option key={s.key} value={s.value}>
+                  {t(`server.sync.${s.key}`)}
+                </option>
+              ))}
+            </NativeSelect>
+          </Field>
+          <label className="flex items-start gap-2 text-sm">
+            <Checkbox checked={form.seedOnStart} onCheckedChange={(v) => setForm({ ...form, seedOnStart: !!v })} className="mt-0.5" />
+            <span>
+              {t('server.seedOnStart')}
+              <span className="block text-muted-foreground">{t('server.seedOnStartHint')}</span>
+            </span>
+          </label>
+        </fieldset>
+        <ProblemNote problem={problem} />
+        <Button type="submit" disabled={busy} className="h-auto min-h-9 whitespace-normal py-2">
+          {busy ? t('setup.creating') : t('setup.finish')}
         </Button>
       </form>
     </Shell>

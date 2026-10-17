@@ -71,3 +71,40 @@ test('the same sync schedules, languages and setup states', async () => {
   assert.deepEqual(sorted(states), ['bundledDatabase', 'needsAdmin', 'needsDatabase']);
   for (const s of states) assert.match(cli, new RegExp(`"${s}":(true|false)`), `install.sh reads ${s}`);
 });
+
+// Console texts (t() in install.sh) that are the web's own words, by their key in the frontend's locale files
+const SHARED_TEXTS: Record<string, string> = {
+  dbTitle: 'setup.dbTitle', dbBundled: 'setup.dbBundled', dbBundledHint: 'setup.dbBundledHint', dbBundledMissing: 'setup.dbBundledMissing',
+  dbExternal: 'setup.dbExternal', dbExternalHint: 'setup.dbExternalHint', dbHost: 'setup.dbHost', dbPort: 'setup.dbPort', dbName: 'setup.dbName',
+  dbUser: 'setup.dbUser', dbConnecting: 'setup.dbConnecting', details: 'setup.details', adminTitle: 'setup.adminTitle', adminHint: 'setup.adminHint',
+  username: 'setup.username', usernameHint: 'setup.usernameHint', passwordMin: 'setup.passwordMin', confirm: 'setup.confirm',
+  invalidUsername: 'setup.invalidUsername', invalidEmail: 'setup.invalidEmail', tooShort: 'setup.tooShort', mismatch: 'setup.mismatch',
+  badPort: 'setup.badPort', loopbackUrl: 'setup.loopbackUrl', creating: 'setup.creating', password: 'common.password', email: 'common.email',
+  publicUrl: 'server.publicUrl', publicUrlHint: 'server.publicUrlHint', externalSync: 'server.externalSync', externalSyncHint: 'server.externalSyncHint',
+  weekly: 'server.sync.weekly', daily: 'server.sync.daily', never: 'server.sync.never', seedOnStartHint: 'server.seedOnStartHint',
+};
+
+/** install.sh t() as { language: { key: text } }; its blocks follow LOCALES' order reversed (es first, then the else) */
+function cliTexts() {
+  const [es, en] = cli.match(/^t\(\) \{\n([\s\S]*?)^\}/m)![1].split(/^ {2}else$/m);
+  const parse = (b: string) => Object.fromEntries([...b.matchAll(/^ {6}(\w+)\) echo "(.*)" ;;$/gm)].map((m) => [m[1], m[2].replace(/\\"/g, '"')]));
+  return { es: parse(es), en: parse(en) } as Record<string, Record<string, string>>;
+}
+const webText = (lang: string, key: string) => key.split('.').reduce((o: any, k) => o?.[k], JSON.parse(read(`frontend/src/i18n/locales/${lang}.json`)));
+
+test('the console says what the web says, in every language, and translates every database error', async () => {
+  const texts = cliTexts();
+  for (const lang of ['en', 'es']) {
+    for (const [cliKey, webKey] of Object.entries(SHARED_TEXTS)) {
+      assert.equal(texts[lang][cliKey], webText(lang, webKey), `${lang}: install.sh t ${cliKey} against ${webKey}`);
+    }
+    assert.equal(texts[lang].required.replace('$2', '{{field}}'), webText(lang, 'setup.required'), `${lang}: required`);
+  }
+  const { DB_ERROR_CODES } = await import('../src/installer.js');
+  for (const code of DB_ERROR_CODES) {
+    for (const lang of ['en', 'es']) {
+      assert.ok(texts[lang][code], `install.sh translates ${code} in ${lang}`);
+      assert.equal(texts[lang][code], webText(lang, `setup.errors.${code}`), `${lang}: ${code}`);
+    }
+  }
+});
