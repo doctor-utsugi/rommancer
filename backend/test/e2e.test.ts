@@ -1857,6 +1857,8 @@ test('sync client: roms of assigned lists, save before a game, conflicts resolve
   const smb3 = await prisma.game.findUniqueOrThrow({ where: { id: ctx.smb3GameId } });
   const metaText = await (await fetch(`${base}/api/v1/agent/roms?meta=1`, { headers: { 'X-Device-Token': fs.readFileSync(path.join(dir, 'roms-a-state', 'config'), 'utf8').match(/TOKEN=(.*)/)![1] } })).text();
   assert.match(metaText, new RegExp(`^meta\t[^\t]*/roms/nes/[^\t]+\t${smb3.title.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\t`, 'm'));
+  const namesText = await (await fetch(`${base}/api/v1/agent/names`, { headers: { 'X-Device-Token': fs.readFileSync(path.join(dir, 'roms-a-state', 'config'), 'utf8').match(/TOKEN=(.*)/)![1] } })).text();
+  assert.equal(namesText, metaText.split('\n').filter((l) => l.startsWith('meta\t')).join('\n') + '\n', 'the same names without a plan');
   // A forged reference to another server file is refused
   const forged = planText.split('\t')[3].trim().replace(/^[^.]+/, Buffer.from(JSON.stringify({ d: a.id, p: '/etc/passwd', e: null })).toString('base64url'));
   assert.equal((await fetch(`${base}/api/v1/agent/rom?f=${forged}`, { headers: { 'X-Device-Token': fs.readFileSync(path.join(dir, 'roms-a-state', 'config'), 'utf8').match(/TOKEN=(.*)/)![1] } })).status, 403);

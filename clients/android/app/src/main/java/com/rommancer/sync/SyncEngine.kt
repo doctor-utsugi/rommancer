@@ -396,7 +396,9 @@ class SyncEngine(private val context: Context, private val store: Store, private
             runCatching { probe(api, File(f[1]), f[2]) }
         }
         Notices.received(context, received.toList())
-        if (runCatching { EsDe.write(context, api, root) }.getOrDefault(false)) Notices.frontend(context, root, 0, true)
+        val collections = runCatching { EsDe.write(context, api, root) }.getOrDefault(false)
+        val named = if (!File(root, "ES-DE/settings").isDirectory) 0 else runCatching { api.text("/agent/names").lines() }.getOrNull()?.let { esNames(api, it) } ?: 0
+        if (collections || named > 0) Notices.frontend(context, root, 0, collections, named)
         store.lastSyncAt = System.currentTimeMillis()
         store.addLog("sync: ${sum.savesUp + sum.statesUp} up, ${sum.savesDown + sum.statesDown} down, ${sum.errors} errors")
         return sum.also { keep(it) }
@@ -618,6 +620,12 @@ class SyncEngine(private val context: Context, private val store: Store, private
         return sum.also { keep(it) }
     }
 
+    /** The server's names on the lists' games ES-DE knows only by file name (META: "meta" lines) */
+    private fun esNames(api: Api, meta: List<String>): Int = runCatching {
+        val romsDir = api.text("/agent/roots").lines().firstOrNull { it.startsWith("roms\t") }?.substringAfter('\t')
+        EsDe.names(root, romsDir, EsDe.parseMeta(meta)).also { if (it > 0) store.addLog("es-de: $it games named") }
+    }.onFailure { store.addLog("es-de: names: ${it.message}") }.getOrDefault(0)
+
     /** Roms of the lists assigned to this device that are not here yet; never deletes anything */
     fun roms(): Summary {
         STOP_ROMS.set(false)
@@ -679,9 +687,7 @@ class SyncEngine(private val context: Context, private val store: Store, private
                 watcher.interrupt()
             }
         }
-        val romsDir = runCatching { api.text("/agent/roots").lines().firstOrNull { it.startsWith("roms\t") }?.substringAfter('\t') }.getOrNull()
-        val named = runCatching { EsDe.names(root, romsDir, EsDe.parseMeta(lines)) }.onFailure { store.addLog("roms: names for ES-DE: ${it.message}") }.getOrDefault(0)
-        if (named > 0) store.addLog("roms: names of $named games added to ES-DE")
+        val named = esNames(api, lines)
         if (got > 0 || named > 0) {
             val changed = got > 0 && runCatching { EsDe.write(context, api, root) }.getOrDefault(false)
             Notices.frontend(context, root, got, changed, named)

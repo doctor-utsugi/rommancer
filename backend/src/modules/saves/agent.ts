@@ -1195,6 +1195,14 @@ agentRouter.get('/roms', async (req, res) => {
   res.type('text/plain').send(out.join('\n') + (out.length ? '\n' : ''));
 });
 
+/** The "meta" lines of /roms alone, for the frontends' names on every sync (a plan would count as a download) */
+agentRouter.get('/names', async (req, res) => {
+  const device = await deviceFromToken(req);
+  const plan = await devicePlan(device, device.rootPath, device.homeRoot ?? device.rootPath);
+  const lines = await metaLines(plan.files.filter((f) => !f.excluded));
+  res.type('text/plain').send(lines.join('\n') + (lines.length ? '\n' : ''));
+});
+
 agentRouter.get('/rom', async (req, res) => {
   const device = await deviceFromToken(req);
   const ref = readRef(String(req.query.f ?? ''), device.id);
