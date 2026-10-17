@@ -34,6 +34,7 @@ seed/               seed for new deployments: DATs, RA hashes, metadata and medi
 Only Podman and podman-compose are needed: the images build the app and bring `chdman` and `7zz`.
 
 ```bash
+git clone https://github.com/doctor-utsugi/rommancer.git && cd rommancer
 ROMS_DIR=/path/to/my/roms podman-compose --profile full up -d --build
 ```
 
@@ -125,7 +126,7 @@ Then open the web app (port 8080) and follow the installer.
 
 The roms are mounted from `~/roms` (edit `rommancer-api.container` to change it).
 
-Hosts whose Podman has no Quadlet (Debian 12 ships 4.3) can use `deploy/podman/rommancer.sh build` and `deploy/podman/rommancer.sh up`: it serves the web on `127.0.0.1:8096`. `~/.config/rommancer/rommancer.env` is optional (overrides, as in `.env.example`); one from before the installer keeps working, and its MySQL passwords are moved to `data/secrets` on the next start.
+Hosts whose Podman has no Quadlet (Debian 12 ships 4.3) can use `deploy/podman/rommancer.sh build` and `deploy/podman/rommancer.sh up`: it serves the web on `127.0.0.1:8096`. The roms are mounted from `~/rommancer-roms` and the data kept in `~/rommancer-data` (`ROMMANCER_ROMS`, `ROMMANCER_DATA` change them). `~/.config/rommancer/rommancer.env` is optional (overrides, as in `.env.example`); one from before the installer keeps working, and its MySQL passwords are moved to `data/secrets` on the next start.
 
 ## Data seed
 
