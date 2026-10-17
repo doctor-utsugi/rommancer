@@ -1,4 +1,6 @@
 import path from 'node:path';
+// Secrets and the database URL into the environment before anything reads it
+import './bootstrap.js';
 
 function req(name: string): string {
   const v = process.env[name];
@@ -18,14 +20,25 @@ function secret(name: string): string {
 const dataDir = path.resolve(process.env.DATA_DIR ?? './data');
 const list = (v: string | undefined) => (v ?? '').split(',').map((s) => s.trim()).filter(Boolean);
 
+// The server's settings (lib/settings.ts) once it has a database; before, the environment and the defaults
+let settingsLookup: ((key: string) => string) | null = null;
+export function setSettingsLookup(fn: (key: string) => string) {
+  settingsLookup = fn;
+}
+const setting = (key: string, envName: string, fallback: string) => (settingsLookup ? settingsLookup(key) : (process.env[envName] ?? fallback));
+
 export const env = {
   port: Number(process.env.API_PORT ?? 3000),
   jwtSecret: secret('JWT_SECRET'),
   encryptionKey: Buffer.from(secret('ENCRYPTION_KEY'), 'hex'),
   // Allowed web origins (CORS). Empty: same origin only (web served by nginx or the Vite proxy)
-  corsOrigins: list(process.env.CORS_ORIGINS),
+  get corsOrigins() {
+    return list(setting('corsOrigins', 'CORS_ORIGINS', ''));
+  },
   // Web address shown to sync clients for pairing (e.g. http://myserver:8080); guessed from the request if empty
-  publicUrl: (process.env.PUBLIC_URL ?? '').replace(/\/+$/, ''),
+  get publicUrl() {
+    return setting('publicUrl', 'PUBLIC_URL', '').replace(/\/+$/, '');
+  },
   dataDir,
   mediaDir: path.join(dataDir, 'media'),
   savesDir: path.join(dataDir, 'saves'),
@@ -37,8 +50,12 @@ export const env = {
   // Data seed (DATs, RetroAchievements, scraping) for new deployments
   seedDir: path.resolve(process.env.SEED_DIR ?? path.join(dataDir, '..', 'seed')),
   defaultLocale: process.env.DEFAULT_LOCALE ?? 'en',
-  seedOnStart: process.env.SEED_ON_START !== 'false',
-  seedAutoExport: process.env.SEED_AUTO_EXPORT !== 'false',
+  get seedOnStart() {
+    return setting('seedOnStart', 'SEED_ON_START', 'true') !== 'false';
+  },
+  get seedAutoExport() {
+    return setting('seedAutoExport', 'SEED_AUTO_EXPORT', 'true') !== 'false';
+  },
   admin: {
     username: process.env.ADMIN_USERNAME ?? 'admin',
     password: process.env.ADMIN_PASSWORD ?? '',
@@ -49,14 +66,17 @@ export const env = {
     sevenZip: process.env.SEVENZIP_BIN ?? '7zz',
   },
   screenscraper: {
-    devId: process.env.SCREENSCRAPER_DEV_ID ?? '',
-    devPassword: process.env.SCREENSCRAPER_DEV_PASSWORD ?? '',
+    get devId() {
+      return setting('screenscraperDevId', 'SCREENSCRAPER_DEV_ID', '');
+    },
+    get devPassword() {
+      return setting('screenscraperDevPassword', 'SCREENSCRAPER_DEV_PASSWORD', '');
+    },
     user: process.env.SCREENSCRAPER_USER ?? '',
     password: process.env.SCREENSCRAPER_PASSWORD ?? '',
     baseUrl: process.env.SCREENSCRAPER_URL ?? 'https://api.screenscraper.fr/api2',
   },
   ra: {
-    user: process.env.RA_USERNAME ?? '',
     apiKey: process.env.RA_API_KEY ?? '',
     baseUrl: process.env.RA_URL ?? 'https://retroachievements.org/API',
   },
@@ -72,9 +92,13 @@ export const env = {
   },
   libretroThumbsUrl: process.env.LIBRETRO_THUMBS_URL ?? 'https://raw.githubusercontent.com/libretro-thumbnails',
   // Global sync of external sources (Sundays at 4:00 by default). Empty = disabled
-  externalSyncCron: process.env.EXTERNAL_SYNC_CRON ?? '0 4 * * 0',
+  get externalSyncCron() {
+    return setting('externalSyncCron', 'EXTERNAL_SYNC_CRON', '0 4 * * 0');
+  },
   // Minimum interval between forced syncs of the same source and system
-  forceSyncMinMinutes: Number(process.env.FORCE_SYNC_MIN_MINUTES ?? 10),
+  get forceSyncMinMinutes() {
+    return Number(setting('forceSyncMinMinutes', 'FORCE_SYNC_MIN_MINUTES', '10')) || 0;
+  },
   // Identification toward external services (Wikidata policy)
   userAgent: process.env.HTTP_USER_AGENT ?? 'Rommancer/1.0 (self-hosted rom manager)',
 };

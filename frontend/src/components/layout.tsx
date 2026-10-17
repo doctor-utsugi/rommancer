@@ -3,6 +3,7 @@ import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import {
   Activity,
+  Server,
   BookOpen,
   Cable,
   GitMerge,
@@ -85,6 +86,7 @@ export function Layout() {
             <Item to="/admin/review" icon={GitMerge} label={t('more.nav.review')} />
             <Item to="/admin/users" icon={Users} label={t('nav.users')} />
             <Item to="/admin/integrations" icon={Cable} label={t('nav.integrations')} />
+            <Item to="/admin/server" icon={Server} label={t('nav.server')} />
             <Item to="/admin/jobs" icon={Activity} label={t('nav.jobs')} />
           </>
         )}

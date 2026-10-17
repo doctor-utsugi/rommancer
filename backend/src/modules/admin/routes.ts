@@ -5,6 +5,8 @@ import { Prisma } from '@prisma/client';
 import multer from 'multer';
 import { z } from 'zod';
 import { acceptsUnknownFiles, setAcceptsUnknownFiles } from '../roms/destination.js';
+import cron from 'node-cron';
+import { SERVER_SETTINGS, lockedByEnv, serverSetting, setServerSettings, type ServerSettingKey } from '../../lib/settings.js';
 import { env } from '../../config/env.js';
 import { prisma } from '../../lib/prisma.js';
 import { badRequest, intParam, HttpError } from '../../lib/http.js';
@@ -16,6 +18,7 @@ import { applySeed, exportSeed, scheduleSeedExport } from '../seed/service.js';
 import { rematchAll, scanPath } from '../scanner/service.js';
 import { applyOrganize, planOrganize, undoOrganize } from '../roms/organize.js';
 import { SOURCES, forceSync, raCatalogKey } from '../sync/service.js';
+import { credentialsFor } from '../scrape/service.js';
 import { addRomRule, resolveRomGroups } from '../grouping/service.js';
 import { resolveWorks } from '../sync/wikidata.js';
 import { identifyHacks, linkFileAsHack } from '../hacks/identify.js';
@@ -272,14 +275,16 @@ adminRouter.post('/seed/apply', async (req, res) => {
 });
 
 // --- Global settings ---
-adminRouter.get('/tools', async (_req, res) => {
+// Scraping credentials as this admin would use them: their own from the panel, else the .env ones
+adminRouter.get('/tools', async (req, res) => {
   const { hasTool } = await import('../../lib/tools.js');
+  const creds = await credentialsFor(me(req).id);
   res.json({
     chdman: await hasTool(env.bins.chdman),
     sevenZip: await hasTool(env.bins.sevenZip),
-    screenscraper: !!(env.screenscraper.devId && env.screenscraper.user),
+    screenscraper: !!creds.ss,
     retroachievements: !!(await raCatalogKey()),
-    thegamesdb: !!env.tgdb.apiKey,
+    thegamesdb: !!creds.tgdb,
     seed: fs.existsSync(env.seedDir),
   });
 });
@@ -373,6 +378,54 @@ adminRouter.post('/games/:id/work', async (req, res) => {
     await prisma.game.update({ where: { id: game.id }, data: { workId: null, wikidataId: null } });
   }
   res.json(await resolveWorks(game.systemId));
+});
+
+// The server's own settings (Administration > Server); the password is never sent back, only whether one is kept
+function serverSettings() {
+  return {
+    values: {
+      publicUrl: serverSetting('publicUrl'),
+      corsOrigins: serverSetting('corsOrigins'),
+      externalSyncCron: serverSetting('externalSyncCron'),
+      forceSyncMinMinutes: Number(serverSetting('forceSyncMinMinutes')) || 0,
+      seedOnStart: serverSetting('seedOnStart') !== 'false',
+      seedAutoExport: serverSetting('seedAutoExport') !== 'false',
+      screenscraperDevId: serverSetting('screenscraperDevId'),
+      screenscraperDevPassword: !!serverSetting('screenscraperDevPassword'),
+    },
+    locked: (Object.keys(SERVER_SETTINGS) as ServerSettingKey[]).filter(lockedByEnv),
+  };
+}
+
+adminRouter.get('/settings/server', (_req, res) => {
+  res.json(serverSettings());
+});
+
+adminRouter.put('/settings/server', async (req, res) => {
+  const body = z
+    .object({
+      publicUrl: z.string().max(255).optional(),
+      corsOrigins: z.string().max(1024).optional(),
+      externalSyncCron: z.string().max(64).refine((c) => c.trim() === '' || cron.validate(c.trim()), 'Invalid schedule').optional(),
+      forceSyncMinMinutes: z.number().int().min(0).max(10080).optional(),
+      seedOnStart: z.boolean().optional(),
+      seedAutoExport: z.boolean().optional(),
+      screenscraperDevId: z.string().max(64).optional(),
+      screenscraperDevPassword: z.string().max(256).optional(),
+    })
+    .parse(req.body);
+  const str = (v: string | number | boolean | undefined) => (v === undefined ? undefined : String(v).trim());
+  await setServerSettings({
+    publicUrl: body.publicUrl?.trim().replace(/\/+$/, ''),
+    corsOrigins: str(body.corsOrigins),
+    externalSyncCron: str(body.externalSyncCron),
+    forceSyncMinMinutes: str(body.forceSyncMinMinutes),
+    seedOnStart: str(body.seedOnStart),
+    seedAutoExport: str(body.seedAutoExport),
+    screenscraperDevId: str(body.screenscraperDevId),
+    screenscraperDevPassword: body.screenscraperDevPassword || undefined,
+  });
+  res.json(serverSettings());
 });
 
 adminRouter.get('/settings/signup', async (_req, res) => {

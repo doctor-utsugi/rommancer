@@ -122,7 +122,8 @@
     "users": "Usuarios",
     "jobs": "Tareas",
     "integrations": "Integraciones",
-    "logout": "Salir"
+    "logout": "Salir",
+    "server": "Servidor"
   },
   "auth": {
     "login": "Entrar",
@@ -1425,5 +1426,57 @@
       "title": "Aceptar ficheros desconocidos",
       "help": "Lo que una consola tiene y no es un juego de ningún sistema (accesos a apps, lanzadores) se guarda en la carpeta «unknown» de la biblioteca, para que las listas puedan llevarlo a otras consolas, a la misma carpeta."
     }
+  },
+  "setup": {
+    "step": "Paso {{n}} de {{total}}",
+    "next": "Continuar",
+    "dbTitle": "Dónde guarda Rommancer sus datos",
+    "dbBundled": "La base de datos de Rommancer (recomendado)",
+    "dbBundledHint": "El MySQL que viene con Rommancer. Sus contraseñas se generaron al arrancar por primera vez; no hay que rellenar nada.",
+    "dbBundledMissing": "Esta instalación no incluye su propio MySQL.",
+    "dbExternal": "Un servidor MySQL tuyo",
+    "dbExternalHint": "MySQL 8 o MariaDB que ya tengas. La base de datos tiene que existir y el usuario debe poder crear tablas en ella.",
+    "dbHost": "Servidor",
+    "dbPort": "Puerto",
+    "dbName": "Base de datos",
+    "dbUser": "Usuario",
+    "dbConnecting": "Conectando y preparando la base de datos…",
+    "adminTitle": "Administrador y servidor",
+    "adminHint": "La primera cuenta gestiona todo lo demás: usuarios, carpetas de roms y dispositivos. Lo de abajo se puede cambiar luego en Administración > Servidor.",
+    "username": "Usuario",
+    "confirm": "Repite la contraseña",
+    "passwordMin": "Al menos 10 caracteres",
+    "mismatch": "Las contraseñas no coinciden",
+    "finish": "Terminar y entrar"
+  },
+  "server": {
+    "title": "Servidor",
+    "access": "Acceso",
+    "publicUrl": "Dirección pública",
+    "publicUrlHint": "Cómo llegan a este servidor las consolas y los móviles al emparejarse (p. ej. http://192.168.1.10:8096). Vacía: la que usó el navegador.",
+    "corsOrigins": "Orígenes web permitidos",
+    "corsOriginsHint": "Otras webs que pueden llamar a la API, separadas por comas. Vacío: solo esta.",
+    "sources": "Bases de datos y semilla",
+    "externalSync": "Actualizar fuentes externas",
+    "externalSyncHint": "Los DATs, los hashes de RetroAchievements y demás fuentes se vuelven a descargar con esta frecuencia.",
+    "sync": {
+      "weekly": "Cada domingo a las 4:00",
+      "daily": "Cada día a las 4:00",
+      "never": "Nunca (solo cuando se pida)",
+      "custom": "Horario a medida"
+    },
+    "cron": "Horario (cron)",
+    "cronHint": "minuto hora día mes día-de-la-semana, p. ej. 0 4 * * 0",
+    "forceSyncMin": "Minutos entre dos actualizaciones forzadas de una fuente",
+    "seedOnStart": "Aplicar la semilla al arrancar",
+    "seedOnStartHint": "Carga los DATs, hashes e imágenes de la carpeta de semilla al arrancar el servidor; lo que ya está se salta.",
+    "seedAutoExport": "Mantener la semilla al día",
+    "seedAutoExportHint": "Escribe en la carpeta de semilla lo que se importa, para que otro servidor pueda arrancar desde ella.",
+    "screenscraper": "ScreenScraper",
+    "screenscraperHint": "Credenciales de desarrollador (se piden en el foro de ScreenScraper). Cada usuario pone su propia cuenta de ScreenScraper en su perfil.",
+    "devId": "Id de desarrollador",
+    "devPassword": "Contraseña de desarrollador",
+    "stored": "Guardada; déjala vacía para conservarla",
+    "locked": "Lo fija el entorno del servidor; cámbialo allí"
   }
 }

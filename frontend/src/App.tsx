@@ -27,10 +27,18 @@ import { FranchisePage, FranchisesPage, WorkPage } from '@/pages/works'
 import { LinkPage } from '@/pages/link'
 import { GuidesPage } from '@/pages/guides'
 import { DevicePage } from '@/pages/device'
+import { AdminServerPage } from '@/pages/admin/server'
+import { SetupPage, type SetupState } from '@/pages/setup'
+import { useQuery } from '@tanstack/react-query'
+import { get } from '@/lib/api'
 
 export function App() {
   const { user, loading } = useAuth()
   const { t } = useTranslation()
+  // First run: the installer, before anything else asks the server for data it does not have yet
+  const setup = useQuery({ queryKey: ['setup'], queryFn: () => get<SetupState>('/setup'), staleTime: Infinity })
+  if (setup.isPending) return null
+  if (setup.data && (setup.data.needsDatabase || setup.data.needsAdmin)) return <SetupPage state={setup.data} />
   if (loading) return null
   if (!user)
     return (
@@ -76,6 +84,7 @@ export function App() {
             <Route path="admin/users" element={<AdminUsersPage />} />
             <Route path="admin/jobs" element={<AdminJobsPage />} />
             <Route path="admin/integrations" element={<AdminIntegrationsPage />} />
+            <Route path="admin/server" element={<AdminServerPage />} />
             <Route path="admin/sync" element={<AdminSyncPage />} />
             <Route path="admin/review" element={<AdminReviewPage />} />
           </>

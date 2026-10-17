@@ -3,17 +3,18 @@ Description=Rommancer MySQL
 
 [Container]
 ContainerName=rommancer-mysql
-Image=docker.io/library/mysql:8.4
+# MySQL with passwords of its own, generated on the first start into the API's data/secrets (deploy/mysql)
+Image=localhost/rommancer-mysql:latest
 Network=rommancer.network
 NetworkAlias=mysql
 Volume=rommancer-mysql.volume:/var/lib/mysql
-EnvironmentFile=%h/.config/rommancer/rommancer.env
-Exec=--character-set-server=utf8mb4 --collation-server=utf8mb4_0900_ai_ci
-HealthCmd=mysqladmin ping -h 127.0.0.1
+Volume=%h/rommancer/data/secrets:/secrets:z
+HealthCmd=mysqladmin ping -h 127.0.0.1 --silent
 HealthInterval=10s
 
 [Service]
 Restart=always
+ExecStartPre=/bin/mkdir -p %h/rommancer/data/secrets
 
 [Install]
 WantedBy=default.target

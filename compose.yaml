@@ -2,20 +2,19 @@ name: rommancer
 
 services:
   mysql:
-    image: docker.io/library/mysql:8.4
+    # MySQL with passwords of its own, generated on the first start into ./data/secrets (deploy/mysql)
+    build:
+      context: .
+      dockerfile: deploy/mysql/Containerfile
+    image: localhost/rommancer-mysql:latest
     restart: unless-stopped
-    environment:
-      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
-      MYSQL_DATABASE: ${MYSQL_DATABASE}
-      MYSQL_USER: ${MYSQL_USER}
-      MYSQL_PASSWORD: ${MYSQL_PASSWORD}
-    command: ["--character-set-server=utf8mb4", "--collation-server=utf8mb4_0900_ai_ci"]
     ports:
       - "127.0.0.1:${MYSQL_PORT:-3317}:3306"
     volumes:
       - mysql-data:/var/lib/mysql
+      - ./data/secrets:/secrets
     healthcheck:
-      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-u", "root", "-p${MYSQL_ROOT_PASSWORD}"]
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "--silent"]
       interval: 5s
       retries: 30
 
@@ -25,11 +24,11 @@ services:
       dockerfile: backend/Containerfile
     restart: unless-stopped
     profiles: ["full"]
-    env_file: .env
     environment:
-      DATABASE_URL: mysql://${MYSQL_USER}:${MYSQL_PASSWORD}@mysql:3306/${MYSQL_DATABASE}
       DATA_DIR: /data
       SEED_DIR: /seed
+      # The installer offers this database as the recommended one
+      ROMMANCER_BUNDLED_DB: mysql:3306
     depends_on:
       mysql:
         condition: service_healthy

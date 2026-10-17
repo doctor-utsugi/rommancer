@@ -29,7 +29,19 @@ data/               app data: dats, media, saves, uploads, tmp
 seed/               seed for new deployments: DATs, RA hashes, metadata and media
 ```
 
-## Requirements
+## Quick start (Podman)
+
+Only Podman and podman-compose are needed: the images build the app and bring `chdman` and `7zz`.
+
+```bash
+ROMS_DIR=/path/to/my/roms podman-compose --profile full up -d --build
+```
+
+Open http://localhost:8080: the installer asks where to keep the data (Rommancer's own MySQL, recommended, or a MySQL server of yours) and creates the administrator. Nothing has to be written in a `.env`: the secrets and the MySQL passwords are generated on the first start into `data/secrets` (keep that folder with your backups: it holds the key the stored credentials are encrypted with). The roms are mounted at `/roms` inside the container: register paths in Administration as `/roms/...`. Migrations and the seed are applied on startup; the server's settings are in Administration > Server.
+
+For a server that should start it at boot, see [Linux server with Quadlet](#linux-server-with-quadlet). Node and `npm install` are only for development.
+
+## Development requirements
 
 - Node 22 or later, Podman and podman-compose.
 - `chdman` (package `rom-tools` on Homebrew, `mame-tools` on Debian) for CHD.
@@ -37,27 +49,22 @@ seed/               seed for new deployments: DATs, RA hashes, metadata and medi
 
 On macOS Podman needs its virtual machine: `podman machine init` and `podman machine start`. Share the project folder with `--volume` when creating it.
 
-## Configuration
+## Development setup
+
+The API and the web run on the host with Node; only MySQL runs in Podman.
 
 ```bash
-cp .env.example .env    # fill in passwords, JWT_SECRET and ENCRYPTION_KEY (openssl rand -hex 32)
 npm install
-npm run db:up           # MySQL in Podman (port 127.0.0.1:3317)
+npm run db:up           # MySQL in Podman (port 127.0.0.1:3317), passwords in data/secrets
+echo "DATABASE_URL=mysql://rommancer:$(podman unshare cat data/secrets/mysql-password)@127.0.0.1:3317/rommancer" > .env
 npm run db:migrate -w backend
 ```
 
 Schema changes: edit `backend/prisma/schema.prisma` and create the migration with `npm run migration:new -w backend -- <name>` (it needs the `rommancer_shadow` database, with permissions for the MySQL user). The API container applies migrations on startup (`prisma migrate deploy`).
 
-`JWT_SECRET` and `ENCRYPTION_KEY` must not keep the example value: the API will not start. The initial administrator must change their password on first login.
+The first visit to the web app runs the installer (the administrator and the server's settings). Every setting of `.env.example` is optional: one set in the environment wins over the installer and Administration > Server, which then shows it and cannot change it.
 
-External credentials in `.env` (optional). The global ones are only used by the administrator; every other user uses their own, set in their profile:
-
-- `SCREENSCRAPER_DEV_ID` / `SCREENSCRAPER_DEV_PASSWORD`: ScreenScraper developer credentials.
-- `SCREENSCRAPER_USER` / `SCREENSCRAPER_PASSWORD`: ScreenScraper user account.
-- `RA_USERNAME` / `RA_API_KEY`: RetroAchievements Web API Key (global sync).
-- `THEGAMESDB_API_KEY`: media fallback (back covers, fanart, logos, screenshots).
-- `EXTERNAL_SYNC_CRON`: global sync of external sources (default Sundays at 4:00; empty = disabled).
-- `CORS_ORIGINS`: allowed web origins (empty = same origin only).
+External credentials. Each user, the administrator included, sets their own in their profile (Connected services). The ScreenScraper developer credentials are in Administration > Server.
 
 Without ScreenScraper, covers come from libretro-thumbnails.
 
@@ -65,8 +72,7 @@ Without ScreenScraper, covers come from libretro-thumbnails.
 
 The web app ships in English and Spanish.
 
-- `DEFAULT_LOCALE` (`en` or `es`, default `en`) sets the language the app starts in.
-- The administrator chooses the language on first login.
+- The installer takes the language it is shown in as the default for new accounts; Administration > Users changes it.
 - Every user can switch their own language afterwards.
 
 To add a language:
@@ -83,7 +89,7 @@ npm run dev:api   # http://localhost:3000
 npm run dev:web   # http://localhost:5173 (proxy /api -> 3000)
 ```
 
-The first start creates the administrator user defined in `ADMIN_USERNAME` / `ADMIN_PASSWORD`.
+The first visit runs the installer, which creates the administrator.
 
 ## Tests
 
@@ -103,34 +109,30 @@ The test uses the `rommancer_test` database (create it and grant permissions to 
 CREATE DATABASE rommancer_test; GRANT ALL ON rommancer_test.* TO 'rommancer'@'%';
 ```
 
-## Full stack with Podman
-
-```bash
-ROMS_DIR=/path/to/my/roms podman-compose --profile full up -d --build
-```
-
-Web at http://localhost:8080. The roms are mounted at `/roms` inside the container: register paths in Administration as `/roms/...`.
-
 ## Linux server with Quadlet
 
 ```bash
+podman build -t rommancer-mysql -f deploy/mysql/Containerfile .
 podman build -t rommancer-api -f backend/Containerfile .
 podman build -t rommancer-web -f frontend/Containerfile .
-mkdir -p ~/.config/rommancer ~/.config/containers/systemd ~/rommancer/data
-cp .env.example ~/.config/rommancer/rommancer.env   # DATABASE_URL=mysql://USER:PASS@mysql:3306/rommancer
+mkdir -p ~/.config/containers/systemd ~/rommancer/data/secrets
 cp deploy/quadlet/* ~/.config/containers/systemd/
 systemctl --user daemon-reload
 systemctl --user start rommancer-web
 ```
 
+Then open the web app (port 8080) and follow the installer.
+
 The roms are mounted from `~/roms` (edit `rommancer-api.container` to change it).
+
+Hosts whose Podman has no Quadlet (Debian 12 ships 4.3) can use `deploy/podman/rommancer.sh build` and `deploy/podman/rommancer.sh up`: it serves the web on `127.0.0.1:8096`. `~/.config/rommancer/rommancer.env` is optional (overrides, as in `.env.example`); one from before the installer keeps working, and its MySQL passwords are moved to `data/secrets` on the next start.
 
 ## Data seed
 
 The `seed/` folder holds the DATs for every supported console (No-Intro, Redump, FBNeo and libretro-database hacks), the synced RetroAchievements hashes and everything scraped (metadata and media).
 
-- On startup the API applies the seed (`SEED_ON_START=true`): it imports the DATs that are missing and the RA hashes, and fills in metadata and covers for games that lack them. Anything already imported is skipped, so a normal start is quick.
-- After importing DATs, syncing or scraping, the seed updates itself (`SEED_AUTO_EXPORT=true`). It can also be exported or applied by hand in Administration > Integrations.
+- On startup the API applies the seed (Administration > Server, on by default): it imports the DATs that are missing and the RA hashes, and fills in metadata and covers for games that lack them. Anything already imported is skipped, so a normal start is quick.
+- After importing DATs, syncing or scraping, the seed updates itself (Administration > Server, on by default). It can also be exported or applied by hand in Administration > Integrations.
 - It holds the accumulated total: nothing obtained from external sources is deleted even if it disappears from the origin. It also includes grouping evidence (Retool, ScreenScraper), manual decisions, "not found" entries, the local Wikidata subset, patches (`seed/patches`), Retool lists and the media (`seed/media` images, `seed/media-large` manuals and videos).
 - With ScreenScraper content the seed is for private use only: do not publish the repository with that data.
 - In containers it is mounted at `/seed` (`compose.yaml` and Quadlet). For a new deployment, just copy the folder.

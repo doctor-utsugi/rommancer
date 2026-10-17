@@ -254,9 +254,14 @@ export async function forceSync(sources: Source[], system: string | undefined, u
   return enqueue('external-sync', { sources, system, trigger: 'manual' }, userId);
 }
 
+let syncTask: ReturnType<typeof cron.schedule> | null = null;
+
+/** (Re)schedules the global sync with the current setting; called again when the setting changes */
 export function startExternalSyncCron() {
+  void syncTask?.stop();
+  syncTask = null;
   if (!env.externalSyncCron || !cron.validate(env.externalSyncCron)) return;
-  cron.schedule(env.externalSyncCron, async () => {
+  syncTask = cron.schedule(env.externalSyncCron, async () => {
     const running = await prisma.job.findFirst({ where: { type: 'external-sync', status: { in: ['PENDING', 'RUNNING'] } } });
     if (!running) await enqueue('external-sync', { sources: [...SOURCES], trigger: 'cron' });
   });

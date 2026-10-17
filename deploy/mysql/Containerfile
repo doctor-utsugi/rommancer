@@ -1,0 +1,5 @@
+# Rommancer's own MySQL: the official image with passwords nobody has to type (mysql-start.sh)
+FROM docker.io/library/mysql:8.4
+COPY deploy/mysql/mysql-start.sh /usr/local/bin/rommancer-mysql-start.sh
+ENTRYPOINT ["/bin/sh", "/usr/local/bin/rommancer-mysql-start.sh"]
+CMD ["mysqld", "--character-set-server=utf8mb4", "--collation-server=utf8mb4_0900_ai_ci"]

@@ -10,9 +10,11 @@ import { startHealthWatch } from './modules/storage/health.js';
 import { startExternalSyncCron } from './modules/sync/service.js';
 import { migrateWholeCards } from './modules/saves/cards.js';
 import { catalog } from './modules/browse/catalog.js';
+import { loadServerSettings, onServerSettingsChange } from './lib/settings.js';
 
 for (const d of [env.dataDir, env.mediaDir, env.savesDir, env.uploadsDir, env.datsDir, env.tmpDir, env.patchesDir]) fs.mkdirSync(d, { recursive: true });
 
+await loadServerSettings();
 await seed();
 // Lists hold roms now: game and work items saved before are turned into their best rom
 console.log('list items', await convertLegacyItems());
@@ -20,6 +22,7 @@ console.log('list items', await convertLegacyItems());
 await migrateWholeCards().catch((e) => console.error('memory cards', e));
 await startJobRunner();
 startExternalSyncCron();
+onServerSettingsChange((changed) => changed.includes('externalSyncCron') && startExternalSyncCron());
 startLocalDeviceWatcher();
 startSshSweep();
 startHealthWatch();

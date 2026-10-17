@@ -24,5 +24,5 @@ COPY clients clients
 WORKDIR /app/backend
 VOLUME /data
 EXPOSE 3000
-# Sincroniza el esquema y arranca
-CMD ["sh", "-c", "npx prisma migrate deploy && node dist/server.js"]
+# The installer while there is no database; then the schema brought up to date and the server
+CMD ["node", "dist/main.js"]

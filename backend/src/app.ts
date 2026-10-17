@@ -19,6 +19,7 @@ import { configAgentRouter } from './modules/devconfig/agent.js';
 import { configRouter } from './modules/devconfig/routes.js';
 import { linkPublicRouter, linkRouter } from './modules/link/routes.js';
 import { env } from './config/env.js';
+import { setupRouter } from './modules/setup/routes.js';
 import './modules/sync/service.js';
 import { journeysRouter, journeysAgentRouter } from './modules/journeys/routes.js';
 
@@ -28,7 +29,7 @@ export function createApp() {
   app.set('trust proxy', 'loopback');
   app.disable('x-powered-by');
   // CORS closed except for configured origins
-  app.use(cors({ origin: env.corsOrigins.length ? env.corsOrigins : false }));
+  app.use(cors({ origin: (origin, cb) => cb(null, !!origin && env.corsOrigins.includes(origin)) }));
   app.use((_req, res, next) => {
     res.setHeader('X-Content-Type-Options', 'nosniff');
     res.setHeader('X-Frame-Options', 'DENY');
@@ -42,6 +43,8 @@ export function createApp() {
     res.json({ ok: true });
   });
   api.use('/auth', express.json({ limit: '1mb' }), authRouter);
+  // The installer's second step (the first runs before the server has a database: installer.ts)
+  api.use('/setup', express.json({ limit: '64kb' }), setupRouter);
   // Device scripts: authenticated with their own token
   api.use('/agent/config', configAgentRouter);
   api.use('/agent/journeys', journeysAgentRouter);

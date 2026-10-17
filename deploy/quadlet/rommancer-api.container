@@ -8,11 +8,12 @@ ContainerName=rommancer-api
 Image=localhost/rommancer-api:latest
 Network=rommancer.network
 NetworkAlias=api
-EnvironmentFile=%h/.config/rommancer/rommancer.env
 Environment=DATA_DIR=/data
+# The installer offers this database as the recommended one
+Environment=ROMMANCER_BUNDLED_DB=mysql:3306
 Environment=SEED_DIR=/seed
 # App data (media, saves, uploads, dats)
-Volume=%h/rommancer/data:/data:Z
+Volume=%h/rommancer/data:/data:z
 # Seed (copy the repository's seed/ folder here)
 Volume=%h/rommancer/seed:/seed:Z
 # Rom folders: registered in the app as /roms/...

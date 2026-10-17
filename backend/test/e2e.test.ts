@@ -1302,7 +1302,7 @@ test('phase2: global sync, GitHub ETag, libretro metadata and retention', async 
   assert.equal(hits[`gh:${lr}/no-intro/${nesName}.dat`], 1);
 
   // Second pass without changes: conditional requests, nothing downloaded
-  env.forceSyncMinMinutes = 0;
+  process.env.FORCE_SYNC_MIN_MINUTES = '0';
   const r2 = await waitJob((await api('POST', '/admin/sync', { sources: ['libretro'], system: 'nes' })).json.id);
   assert.equal(r2.result.libretro.dats, 0);
   assert.equal(hits[`gh:${lr}/no-intro/${nesName}.dat`], 1);
@@ -1329,8 +1329,7 @@ test('phase2: global sync, GitHub ETag, libretro metadata and retention', async 
 
 test('phase2: grouping by evidence (DAT clones, Retool, RA, ScreenScraper) and review', async () => {
   const prisma = await prismaClient();
-  const { env } = await import('../src/config/env.js');
-  env.forceSyncMinMinutes = 0;
+  process.env.FORCE_SYNC_MIN_MINUTES = '0';
   const gb = (await api('GET', '/systems')).json.find((s: any) => s.slug === 'gb');
   ctx.gbSystemId = gb.id;
   const names = ['Alpha (Japan)', 'Beta Quest (USA)', 'Gamma (USA)', 'Gamma (Europe)', 'Delta (USA)', 'Delta Kun (Japan)', 'Epsilon (USA)', 'Zeta (Japan)', 'Super Mario Bros. 3 (World)'];
