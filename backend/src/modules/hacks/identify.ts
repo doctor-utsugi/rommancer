@@ -203,6 +203,8 @@ export interface IdentifyStats {
   linked: number;
   review: number;
   relinked: number;
+  /** Uploaded games linked to the game they were made from */
+  basesFound: number;
 }
 
 /**
@@ -210,7 +212,7 @@ export interface IdentifyStats {
  * Each file is evaluated once; `recheck` repeats all.
  */
 export async function identifyHacks(opts: { romPathId?: number; fileIds?: number[]; recheck?: boolean } = {}, ctx?: JobContext): Promise<IdentifyStats> {
-  const stats: IdentifyStats = { checked: 0, linked: 0, review: 0, relinked: 0 };
+  const stats: IdentifyStats = { checked: 0, linked: 0, review: 0, relinked: 0, basesFound: await identifyUploadedGames({}, ctx) };
   const systems = (await prisma.system.findMany()).filter((s) => CART_SYSTEMS.has(s.slug));
   const files = await prisma.romFile.findMany({
     where: {
@@ -285,6 +287,42 @@ export async function identifyHacks(opts: { romPathId?: number; fileIds?: number
   }
   ctx?.log(`romhacks: ${JSON.stringify(stats)}`);
   return stats;
+}
+
+/** Links uploaded games (randomizers, hacks stored as new games) to the game their content comes from; once per file */
+export async function identifyUploadedGames(opts: { fileIds?: number[] } = {}, ctx?: JobContext): Promise<number> {
+  const systems = (await prisma.system.findMany()).filter((s) => CART_SYSTEMS.has(s.slug));
+  const files = await prisma.romFile.findMany({
+    where: {
+      status: 'UNVERIFIED',
+      systemId: { in: systems.map((s) => s.id) },
+      sha1: { not: null },
+      hackCheckedAt: null,
+      ...(opts.fileIds ? { id: { in: opts.fileIds } } : {}),
+      romPart: { rom: { game: { createdById: { not: null }, baseGameId: null } } },
+    },
+    include: { romPath: true, romPart: { select: { rom: { select: { gameId: true } } } } },
+  });
+  let linked = 0;
+  const sigCache = new Map<number, Signature[]>();
+  for (const f of files) {
+    const system = systems.find((s) => s.id === f.systemId)!;
+    const gameId = f.romPart!.rom.gameId;
+    const content = await fileContent(f, system).catch(() => null);
+    if (content) {
+      if (!sigCache.has(system.id)) sigCache.set(system.id, await systemSignatures(system, ctx));
+      // The upload's own rom is held too: it would match itself
+      const sigs = sigCache.get(system.id)!.filter((s) => s.gameId !== gameId);
+      const d = decide(rankBases(sampleChunks(content), sigs), [], false);
+      if (d && 'base' in d) {
+        await prisma.game.update({ where: { id: gameId }, data: { baseGameId: d.base.gameId } });
+        ctx?.log(`${f.relativePath}: made from game ${d.base.gameId}`);
+        linked++;
+      }
+    }
+    await prisma.romFile.update({ where: { id: f.id }, data: { hackCheckedAt: new Date() } });
+  }
+  return linked;
 }
 
 export const sha1Of = (b: Buffer) => crypto.createHash('sha1').update(b).digest('hex');

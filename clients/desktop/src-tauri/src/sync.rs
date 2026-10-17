@@ -60,6 +60,9 @@ pub struct Outcome {
     pub config: u32,
     /// Saves of this device waiting for the user's choice
     pub conflicts: u32,
+    /// The lists' games as the server names them ("meta", dest, name, sort name, description), for the frontends
+    #[serde(skip)]
+    pub meta: Vec<Vec<String>>,
 }
 
 impl Outcome {
@@ -676,7 +679,8 @@ impl<'a> Engine<'a> {
         self.progress("roms-plan", 0, 0);
         // Measured live, so the plan's budget is the one a browse check accepted
         let space: Vec<(&str, String)> = crate::browse::space(&self.api, self.roms_dir.as_deref(), &self.root).map(|s| ("X-Space", s)).into_iter().collect();
-        let plan: Vec<_> = pairs(&self.api.get_text_with("/agent/roms", &space)?).into_iter().filter(|r| r.len() >= 4 && r[0] == "rom").collect();
+        let (plan, meta): (Vec<_>, Vec<_>) = pairs(&self.api.get_text_with("/agent/roms?meta=1", &space)?).into_iter().filter(|r| r.len() >= 4 && (r[0] == "rom" || r[0] == "meta")).partition(|r| r[0] == "rom");
+        out.meta = meta.into_iter().filter(|r| r.len() >= 5).collect();
         let mut arrived: Vec<PathBuf> = Vec::new();
         for (i, r) in plan.iter().enumerate() {
             self.check()?;

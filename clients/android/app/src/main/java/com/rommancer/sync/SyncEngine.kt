@@ -638,7 +638,8 @@ class SyncEngine(private val context: Context, private val store: Store, private
         romsProgress(Progress("roms-plan"))
         // Measured live, so the plan's budget is the one a browse check accepted
         val space = runCatching { spaceOf(api) }.getOrNull()
-        val plan = api.text("/agent/roms", headers = listOfNotNull(space?.let { "X-Space" to it }).toMap()).lines().mapNotNull { l -> l.split('\t').takeIf { it.size >= 4 && it[0] == "rom" } }
+        val lines = api.text("/agent/roms?meta=1", headers = listOfNotNull(space?.let { "X-Space" to it }).toMap()).lines()
+        val plan = lines.mapNotNull { l -> l.split('\t').takeIf { it.size >= 4 && it[0] == "rom" } }
         var got = 0
         var have = 0
         var failed = 0
@@ -678,9 +679,12 @@ class SyncEngine(private val context: Context, private val store: Store, private
                 watcher.interrupt()
             }
         }
-        if (got > 0) {
-            val changed = runCatching { EsDe.write(context, api, root) }.getOrDefault(false)
-            Notices.frontend(context, root, got, changed)
+        val romsDir = runCatching { api.text("/agent/roots").lines().firstOrNull { it.startsWith("roms\t") }?.substringAfter('\t') }.getOrNull()
+        val named = runCatching { EsDe.names(root, romsDir, EsDe.parseMeta(lines)) }.onFailure { store.addLog("roms: names for ES-DE: ${it.message}") }.getOrDefault(0)
+        if (named > 0) store.addLog("roms: names of $named games added to ES-DE")
+        if (got > 0 || named > 0) {
+            val changed = got > 0 && runCatching { EsDe.write(context, api, root) }.getOrDefault(false)
+            Notices.frontend(context, root, got, changed, named)
         }
         store.addLog("roms: $got downloaded, $have already here, $failed failed")
         if (STOP_ROMS.get()) sum.stopped = true

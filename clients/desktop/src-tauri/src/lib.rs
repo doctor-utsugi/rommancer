@@ -778,6 +778,14 @@ fn start_sync(app: &AppHandle, state: &AppState, key: String, mode: Mode, roms: 
                 log(format!("error: frontend collections: {e:#}"));
                 vec![]
             });
+            // Games ES-DE knows nothing about get the server's names
+            for l in libs.iter().filter(|l| l.name == "ES-DE") {
+                let n = esde::names(&l.dir, &out.meta);
+                if n > 0 {
+                    log(format!("frontends: names of {n} games added to ES-DE"));
+                    restart.push(l.name.clone());
+                }
+            }
             // Games copied show in the frontends that look through the rom folders when they start
             if out.games_down > 0 {
                 restart.extend(libs.iter().filter(|l| l.name == "ES-DE" || l.name == "Pegasus").map(|l| l.name.clone()));

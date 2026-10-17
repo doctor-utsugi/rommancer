@@ -416,6 +416,79 @@ impl Cache {
     }
 }
 
+fn xml_text(s: &str) -> String {
+    s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;")
+}
+
+fn xml_unescape(s: &str) -> String {
+    s.replace("&lt;", "<").replace("&gt;", ">").replace("&quot;", "\"").replace("&apos;", "'").replace("&amp;", "&")
+}
+
+/// GAMELIST plus an entry for each of WANTED ("./x.sfc"; name, sort name, description) it lacks; None when nothing is
+/// missing or the list cannot be read. Existing entries stay
+pub fn add_entries(gamelist: Option<&str>, wanted: &[(String, [String; 3])]) -> Option<(String, usize)> {
+    let text = gamelist.filter(|t| !t.trim().is_empty()).unwrap_or("<?xml version=\"1.0\"?>\n<gameList>\n</gameList>\n");
+    let end = text.rfind("</gameList>")?;
+    let mut have: HashSet<String> = HashSet::new();
+    let mut rest = text;
+    while let Some(i) = rest.find("<path>") {
+        rest = &rest[i + 6..];
+        let Some(j) = rest.find("</path>") else { break };
+        have.insert(xml_unescape(rest[..j].trim()));
+        rest = &rest[j..];
+    }
+    let mut add = String::new();
+    let mut n = 0;
+    for (path, [name, sort, desc]) in wanted {
+        if !have.insert(path.clone()) {
+            continue;
+        }
+        add += &format!("\t<game>\n\t\t<path>{}</path>\n\t\t<name>{}</name>\n", xml_text(path), xml_text(name));
+        if !sort.is_empty() {
+            add += &format!("\t\t<sortname>{}</sortname>\n", xml_text(sort));
+        }
+        if !desc.is_empty() {
+            add += &format!("\t\t<desc>{}</desc>\n", xml_text(desc));
+        }
+        add += "\t</game>\n";
+        n += 1;
+    }
+    (n > 0).then(|| (format!("{}{}{}", &text[..end], add, &text[end..]), n))
+}
+
+/// Gives the lists' games ES-DE has no entry for the server's name (META: the plan's "meta" lines); returns how many
+pub fn names(dir: &Path, meta: &[Vec<String>]) -> usize {
+    let roms = rom_dir(dir, &settings(dir));
+    // The gamelist folder is the system's name, found by the system's rom folder
+    let mut by_folder: HashMap<String, String> = HashMap::new();
+    for s in systems(dir) {
+        if let Some(f) = s.path.replace('\\', "/").strip_prefix("%ROMPATH%/") {
+            by_folder.entry(f.trim_end_matches('/').to_string()).or_insert(s.name.clone());
+        }
+    }
+    let mut lists: BTreeMap<String, Vec<(String, [String; 3])>> = BTreeMap::new();
+    for m in meta {
+        let dest = PathBuf::from(&m[1]);
+        let Ok(rel) = dest.strip_prefix(&roms) else { continue };
+        let parts: Vec<String> = rel.components().map(|c| c.as_os_str().to_string_lossy().to_string()).collect();
+        if parts.len() < 2 || !dest.is_file() {
+            continue;
+        }
+        let system = by_folder.get(&parts[0]).cloned().unwrap_or_else(|| parts[0].clone());
+        lists.entry(system).or_default().push((format!("./{}", parts[1..].join("/")), [m[2].clone(), m[3].clone(), m[4].clone()]));
+    }
+    let mut added = 0;
+    for (system, wanted) in lists {
+        let file = dir.join("gamelists").join(&system).join("gamelist.xml");
+        let current = crate::frontend::read_xml(&file);
+        let Some((text, n)) = add_entries(current.as_deref(), &wanted) else { continue };
+        if fs::create_dir_all(file.parent().unwrap()).and_then(|_| fs::write(&file, text)).is_ok() {
+            added += n;
+        }
+    }
+    added
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -539,5 +612,34 @@ mod real {
             c.insert("Rommancer - Test list".to_string(), lib.games.iter().map(|g| pc::wire(&g.rom)).collect());
             write_collections(&dir, &c);
         }
+    }
+
+    #[test]
+    fn names_go_only_to_games_es_de_knows_nothing_about() {
+        let write = |p: &Path, text: &str| {
+            fs::create_dir_all(p.parent().unwrap()).unwrap();
+            fs::write(p, text).unwrap();
+        };
+        let base = std::env::temp_dir().join(format!("rommancer-esde-names-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&base);
+        let dir = base.join("ES-DE");
+        let roms = base.join("roms");
+        write(&dir.join("settings/es_settings.xml"), &format!("<?xml version=\"1.0\"?>\n<string name=\"ROMDirectory\" value=\"{}\" />\n", pc::wire(&roms)));
+        write(&roms.join("snes/SMZ3_popoie_fang.sfc"), "x");
+        write(&roms.join("snes/A & B.sfc"), "x");
+        write(&dir.join("gamelists/snes/gamelist.xml"), "<?xml version=\"1.0\"?>\n<gameList>\n\t<game>\n\t\t<path>./A &amp; B.sfc</path>\n\t\t<name>Scraped</name>\n\t</game>\n</gameList>\n");
+        let line = |p: &Path, n: &str, s: &str, d: &str| vec!["meta".to_string(), pc::wire(p), n.into(), s.into(), d.into()];
+        let meta = vec![
+            line(&roms.join("snes/SMZ3_popoie_fang.sfc"), "SMZ3 popoie fang", "Super Metroid SMZ3 popoie fang", ""),
+            line(&roms.join("snes/A & B.sfc"), "Not this", "", ""),
+            line(&roms.join("snes/Gone.sfc"), "Gone", "", ""),
+        ];
+        assert_eq!(names(&dir, &meta), 1);
+        let text = fs::read_to_string(dir.join("gamelists/snes/gamelist.xml")).unwrap();
+        assert!(text.contains("<name>Scraped</name>") && !text.contains("Not this") && !text.contains("Gone"));
+        assert!(text.contains("\t\t<path>./SMZ3_popoie_fang.sfc</path>\n\t\t<name>SMZ3 popoie fang</name>\n\t\t<sortname>Super Metroid SMZ3 popoie fang</sortname>\n\t</game>\n</gameList>"));
+        assert_eq!(names(&dir, &meta), 0);
+        assert!(add_entries(Some("<gameList><game>"), &[("./x".into(), ["x".into(), String::new(), String::new()])]).is_none());
+        let _ = fs::remove_dir_all(&base);
     }
 }

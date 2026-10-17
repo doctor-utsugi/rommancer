@@ -254,6 +254,9 @@ test('browse: the Linux client picks a game, downloads it and then counts it as 
   assert.match(out, /^sum\tgames-down\t1$/m);
   assert.match(out, /^sum\tgames-show\t1\tknulli$/m);
   assert.equal(fs.statSync(path.join(root, 'roms/snes', `${RUN} Mega Hero (USA).sfc`)).size, 1000);
+  // EmulationStation knew nothing of it: it gets the game's name from the server, not its file name
+  const gamelist = fs.readFileSync(path.join(root, 'roms/snes/gamelist.xml'), 'utf8');
+  assert.match(gamelist, new RegExp(`<path>\\./${RUN} Mega Hero \\(USA\\)\\.sfc</path>\\n\t\t<name>${RUN} Mega Hero</name>`), gamelist);
   const after = await sh('browse-games', 'snes', '0', `${RUN} mega hero`, '50', 'all');
   assert.match(after.split('\n')[1], new RegExp(`^game\t${games[`${RUN} Mega Hero`]}\t1000\there\tsnes\t`), 'the inventory pass after the download marks it as here');
   // By default the client leaves out what the console has

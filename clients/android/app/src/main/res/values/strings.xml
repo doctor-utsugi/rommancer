@@ -314,6 +314,7 @@
     <string name="received_many">%1$d saves received: %2$s and more</string>
     <string name="frontend_channel">Games and collections</string>
     <string name="frontend_esde_games">%1$d new games arrived. Close ES-DE and open it again to see them.</string>
+    <string name="frontend_esde_names">ES-DE had no names for %1$d games of your lists: Rommancer gave them theirs. Close ES-DE and open it again to see them.</string>
     <string name="frontend_esde_collections">Rommancer\'s collections changed. Close ES-DE and open it again to see them.</string>
     <string name="frontend_daijisho_games">%1$d new games arrived. Sync their platforms in Daijishō to see them.</string>
 </resources>

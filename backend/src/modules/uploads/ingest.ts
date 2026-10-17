@@ -10,6 +10,7 @@ import { matchByDiscId, matchHashes, processFile } from '../scanner/service.js';
 import { guessSystem, systemIndex } from '../scanner/systems.js';
 import { ownedRomIds } from '../roms/service.js';
 import { placeFile, userDatSource } from '../roms/destination.js';
+import { identifyUploadedGames } from '../hacks/identify.js';
 
 /** Who brings a file in: a user uploading from the web, or the owner of a device sending it. */
 export type IngestUser = { id: number; username: string };
@@ -197,6 +198,7 @@ export async function ingestUnverified(tmp: string, originalName: string, u: Ing
     include: { parts: true },
   });
   const { file, rel } = await placeFile(tmp, { system, fileName: baseName + ext, hashes: h, status: 'UNVERIFIED', romPartId: rom.parts[0].id, raHash, uploadedById: u.id });
+  if (!body.gameId) await identifyUploadedGames({ fileIds: [file.id] }).catch(() => 0);
   return ({ status: 'stored', match: 'UNVERIFIED', romId: rom.id, gameId, file: { id: file.id, path: rel } });
 }
 

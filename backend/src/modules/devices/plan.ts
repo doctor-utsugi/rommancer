@@ -19,6 +19,8 @@ export interface PlanFile {
   system: string;
   gameId: number | null;
   title: string;
+  /** A romhack: TITLE is its own name and GAMEID its base game */
+  hack: boolean;
   present: boolean;
   /** This very file is on the device (present may also mean another version of its game) */
   onDevice: boolean;
@@ -78,7 +80,7 @@ export async function devicePlan(device: Device & { firmware: Firmware }, root =
         const present = onDevice || (gameId !== null && haveGames.has(gameId)) || (!!it.sha1 && haveContent.has(it.sha1));
         // Files of no system follow no system filter
         const excluded = (!it.folder && !copiesSystem(filter, it.systemSlug)) || (gameId !== null && excludedGames.has(gameId));
-        files.push({ dest, size, absPath: f.absPath, archiveEntry: f.archiveEntry ?? null, system: it.systemSlug, gameId, title: it.title, present, onDevice, excluded });
+        files.push({ dest, size, absPath: f.absPath, archiveEntry: f.archiveEntry ?? null, system: it.systemSlug, gameId, title: it.title, hack: !!it.hackId, present, onDevice, excluded });
       }
     }
   }

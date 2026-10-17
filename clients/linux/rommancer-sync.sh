@@ -26,7 +26,7 @@
 #                                   so any computer with this script can sync it. Without a command: sync.
 set -u
 # Raised with every change of this client (any change reaches devices: they update by content, not by this)
-CLIENT_VERSION=1.88.0
+CLIENT_VERSION=1.89.0
 # A clock before this date is surely wrong (no battery-backed clock); kept apart from the version, which may run ahead
 CLOCK_MIN=20261001
 # Onion keeps curl (with TLS) and friends outside the default PATH
@@ -1731,6 +1731,51 @@ EOR
   return 0
 }
 
+# Gives the lists' games EmulationStation has no gamelist entry for the server's name, sort name and description
+# (unnamed, it lists them by file name); existing entries are never touched
+es_meta() {
+  [ -n "${FW:-}" ] || detect
+  case "$FW" in knulli|batocera|rocknix|arkos) ;; *) return 0 ;; esac
+  if [ -z "${ROMS:-}" ]; then roots="$(http GET "$SERVER/api/v1/agent/roots" - -)" || return 0; ROMS="$(field roms "$roots")"; fi
+  [ -n "${ROMS:-}" ] || return 0
+  # Split by awk: the shell's read merges empty fields between tabs
+  grep '^meta' "$WORK/romplan" > "$WORK/esmeta-plan"
+  cut -f2 "$WORK/esmeta-plan" | while IFS= read -r dest; do [ -f "$dest" ] && echo 1 || echo 0; done > "$WORK/esmeta-here"
+  awk -F '\t' -v roms="$ROMS/" 'FNR == NR { here[FNR] = $1; next }
+    here[FNR] == 1 && index($2, roms) == 1 {
+      rel = substr($2, length(roms) + 1); i = index(rel, "/"); if (!i) next
+      printf "%s%s/gamelist.xml\t./%s\t%s\t%s\t%s\n", roms, substr(rel, 1, i - 1), substr(rel, i + 1), $3, $4, $5
+    }' "$WORK/esmeta-here" "$WORK/esmeta-plan" > "$WORK/esmeta"
+  cut -f1 "$WORK/esmeta" | sort -u | while IFS= read -r list; do
+    # A list there but unreadable is left alone
+    if [ ! -s "$list" ]; then printf '<?xml version="1.0"?>\n<gameList>\n</gameList>\n' > "$list"
+    elif ! grep -q '</gameList>' "$list"; then continue; fi
+    awk -F '\t' -v list="$list" '
+      function esc(x) { gsub(/&/, "\\&amp;", x); gsub(/</, "\\&lt;", x); gsub(/>/, "\\&gt;", x); return x }
+      FNR == NR { if ($1 == list && !(esc($2) in want)) { want[esc($2)] = $0; order[++n] = esc($2) }; next }
+      { line[++m] = $0; if (match($0, /<path>[^<]*<\/path>/)) have[substr($0, RSTART + 6, RLENGTH - 13)] = 1; if ($0 ~ /<\/gameList>/) close_at = m }
+      END {
+        for (i = 1; i <= m; i++) {
+          if (i == close_at) for (k = 1; k <= n; k++) {
+            p = order[k]; if (p in have) continue
+            split(want[p], f, "\t"); added++
+            printf "\t<game>\n\t\t<path>%s</path>\n\t\t<name>%s</name>\n", p, esc(f[3])
+            if (f[4] != "") printf "\t\t<sortname>%s</sortname>\n", esc(f[4])
+            if (f[5] != "") printf "\t\t<desc>%s</desc>\n", esc(f[5])
+            printf "\t</game>\n"
+          }
+          print line[i]
+        }
+        print added + 0 > "/dev/stderr"
+      }' "$WORK/esmeta" "$list" > "$WORK/gamelist.xml" 2> "$WORK/esmeta-added" || continue
+    added="$(cat "$WORK/esmeta-added")"
+    [ "${added:-0}" -gt 0 ] || continue
+    cat "$WORK/gamelist.xml" > "$list"
+    roms_changed "$(dirname "$list")/-"
+    log "names of $added games added to $list"
+  done
+}
+
 # A rom download is under way (a lock whose process died does not count)
 roms_running() { [ -f "$WORK/roms-lock/pid" ] && kill -0 "$(cat "$WORK/roms-lock/pid")" 2>/dev/null; }
 
@@ -1752,12 +1797,12 @@ cmd_roms() {
   sh -c 'echo $PPID' > "$WORK/roms-lock/pid"
   progress roms-plan 0 0
   # The space goes with it: the plan's budget and the browse screens' check use the same numbers
-  if ! http GET "$SERVER/api/v1/agent/roms" - "$WORK/romplan" "X-Space: $(roms_space)"; then
+  if ! http GET "$SERVER/api/v1/agent/roms?meta=1" - "$WORK/romplan" "X-Space: $(roms_space)"; then
     log "roms: server unreachable"; rm -rf "$WORK/roms-lock"
     [ -n "${VERBOSE:-}" ] && { sync_failed > /dev/null; sum_line errors 1; }
     return 1
   fi
-  total="$(grep -c . "$WORK/romplan")"; i=0; got=0; fail=0; have=0; stopped=0; nospace=""
+  total="$(grep -c '^rom' "$WORK/romplan")"; i=0; got=0; fail=0; have=0; stopped=0; nospace=""
   if command -v curl >/dev/null 2>&1; then roms_fetch; else
   while IFS="$TAB" read -r kind dest size ref; do
     [ "$kind" = rom ] || continue
@@ -1782,6 +1827,7 @@ cmd_roms() {
   done < "$WORK/romplan"
   fi
   rm -rf "$WORK/roms-lock"
+  es_meta
   refresh_lists
   if [ "$stopped" = 1 ]; then
     rm -f "$WORK/roms-stop"

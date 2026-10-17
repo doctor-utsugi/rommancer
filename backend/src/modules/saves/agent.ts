@@ -25,6 +25,7 @@ import { ingestUnknown, ingestUnverified, ingestVerified } from '../uploads/inge
 import { acceptsUnknownFiles } from '../roms/destination.js';
 import { serverKey } from '../devices/ssh.js';
 import { devicePlan } from '../devices/plan.js';
+import { metaLines } from '../devices/esmeta.js';
 import { prunePlan, queuePrunePulls } from '../devices/prune.js';
 import { deviceUser, listsPreview, setDeviceLists, visibleLists } from '../devices/lists.js';
 import { Prisma } from '@prisma/client';
@@ -1162,6 +1163,7 @@ function readRef(ref: string, deviceId: number): { p: string; e: string | null }
  * Roms the device should have: "rom<TAB>destination<TAB>size<TAB>ref" per file (size 0 = unknown,
  * for files inside archives). The client downloads the ones it lacks with GET /agent/rom?f=ref.
  * Files its last inventory already lists are left out: the client no longer checks them one by one.
+ * With ?meta=1, also "meta<TAB>destination<TAB>name<TAB>sortname<TAB>description" for every file of the lists.
  */
 agentRouter.get('/roms', async (req, res) => {
   const device = await storeSpace(await deviceFromToken(req), req);
@@ -1183,6 +1185,7 @@ agentRouter.get('/roms', async (req, res) => {
     const size = f.archiveEntry ? 0 : f.size;
     out.push(`rom\t${f.dest}\t${size}\t${fileRef(device.id, f.absPath, f.archiveEntry)}`);
   }
+  if (req.query.meta === '1') out.push(...(await metaLines(plan.files.filter((f) => !f.excluded))));
   await prisma.device.update({ where: { id: device.id }, data: { spaceShortfall: skipped.files ? { at: new Date().toISOString(), ...skipped } : Prisma.DbNull } });
   // What a download right after this would take (the files the device does not have yet)
   const missing = plan.files.filter((f) => !f.excluded && !f.onDevice && !f.present);

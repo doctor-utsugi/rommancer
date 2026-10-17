@@ -33,11 +33,12 @@ object Notices {
      * GAMES new roms, COLLECTIONS whether Rommancer's ES-DE collections changed: told for the frontends here that
      * read them only when they start (ES-DE) or sync (Daijishō)
      */
-    fun frontend(context: Context, root: java.io.File, games: Int, collections: Boolean) {
+    fun frontend(context: Context, root: java.io.File, games: Int, collections: Boolean, named: Int = 0) {
         val esde = java.io.File(root, "ES-DE/settings").isDirectory
         val text = when {
             esde && games > 0 -> context.getString(R.string.frontend_esde_games, games)
             esde && collections -> context.getString(R.string.frontend_esde_collections)
+            esde && named > 0 -> context.getString(R.string.frontend_esde_names, named)
             games > 0 && installed(context, "com.magneticchen.daijishou") -> context.getString(R.string.frontend_daijisho_games, games)
             else -> return
         }

@@ -213,8 +213,12 @@ model Game {
   wikidataId      String?    @db.VarChar(16)
   groupConfidence String     @default("high") @db.VarChar(8)
   createdById     Int?
+  // The game an uploaded game was made from (a hack or randomizer stored as a game of its own), found by its content
+  baseGameId      Int?
   system          System     @relation(fields: [systemId], references: [id], onDelete: Cascade)
   work            Work?      @relation(fields: [workId], references: [id], onDelete: SetNull)
+  baseGame        Game?      @relation("GameBase", fields: [baseGameId], references: [id], onDelete: SetNull)
+  derivedGames    Game[]     @relation("GameBase")
   roms            Rom[]
   hacks           RomHack[]
   media           Media[]
@@ -225,6 +229,7 @@ model Game {
   @@index([systemId, titleNormalized])
   @@index([title])
   @@index([workId])
+  @@index([baseGameId])
 }
 
 model Rom {

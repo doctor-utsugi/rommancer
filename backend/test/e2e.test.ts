@@ -1047,6 +1047,21 @@ test('phase2: final destination, unverified uploads and later verification', asy
   assert.ok(!fs.existsSync(path.join(DATA, 'library', 'gb', 'hb.gb')));
   await api('PATCH', `/admin/paths/${def.id}`, { isDefaultTarget: true });
 
+  // A randomizer uploaded as a new game is linked by content to the game it was made from
+  const nesHead = Buffer.from('NES\x1a\x10\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00', 'latin1');
+  const baseBody = crypto.randomBytes(256 * 1024);
+  const baseUp = await send({ systemId: String(ctx.nesSystemId), newGameTitle: 'Base Quest' }, Buffer.concat([nesHead, baseBody]), 'Base Quest.nes');
+  assert.equal(baseUp.status, 201, JSON.stringify(baseUp.json));
+  const randoBody = Buffer.from(baseBody);
+  for (let i = 0; i < 20; i++) crypto.randomBytes(1024).copy(randoBody, i * 12 * 1024);
+  const rando = await send({ systemId: String(ctx.nesSystemId), newGameTitle: 'BQ Randomizer' }, Buffer.concat([nesHead, randoBody]), 'bq_rando_seed.nes');
+  assert.equal(rando.status, 201, JSON.stringify(rando.json));
+  assert.equal((await prisma.game.findUniqueOrThrow({ where: { id: rando.json.gameId } })).baseGameId, baseUp.json.gameId);
+  assert.equal((await prisma.game.findUniqueOrThrow({ where: { id: baseUp.json.gameId } })).baseGameId, null);
+  const { gameMeta } = await import('../src/modules/devices/esmeta.js');
+  assert.deepEqual(gameMeta({ title: 'bq_rando_seed', hack: false }, { title: 'BQ Randomizer', description: null, baseTitle: 'Base Quest' }), { name: 'BQ Randomizer', sortName: 'Base Quest BQ Randomizer', desc: null });
+  assert.deepEqual(gameMeta({ title: 'Base Quest Plus', hack: true }, { title: 'Base Quest', description: 'x', baseTitle: null }), { name: 'Base Quest Plus', sortName: null, desc: null });
+
   // A later DAT with its checksum verifies it
   const dat = `<?xml version="1.0"?><datafile><header><name>Nintendo - Nintendo Entertainment System</name><description>Homebrew test</description><version>1</version></header>
     <game name="Mi Homebrew (World)"><description>Mi Homebrew (World)</description><rom name="Mi Homebrew (World).nes" size="${rom.length}" crc="${crcHex(rom)}" md5="${md5h(rom)}" sha1="${md(rom, 'sha1')}"/></game></datafile>`;
@@ -1837,6 +1852,11 @@ test('sync client: roms of assigned lists, save before a game, conflicts resolve
   const plan = await fetch(`${base}/api/v1/agent/roms`, { headers: { 'X-Device-Token': fs.readFileSync(path.join(dir, 'roms-a-state', 'config'), 'utf8').match(/TOKEN=(.*)/)![1] } });
   const planText = await plan.text();
   assert.match(planText, /^rom\t.*\/roms\/nes\//m);
+  // Names for the gamelists only to clients that ask (older ones count every line as a rom)
+  assert.doesNotMatch(planText, /^meta\t/m);
+  const smb3 = await prisma.game.findUniqueOrThrow({ where: { id: ctx.smb3GameId } });
+  const metaText = await (await fetch(`${base}/api/v1/agent/roms?meta=1`, { headers: { 'X-Device-Token': fs.readFileSync(path.join(dir, 'roms-a-state', 'config'), 'utf8').match(/TOKEN=(.*)/)![1] } })).text();
+  assert.match(metaText, new RegExp(`^meta\t[^\t]*/roms/nes/[^\t]+\t${smb3.title.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\t`, 'm'));
   // A forged reference to another server file is refused
   const forged = planText.split('\t')[3].trim().replace(/^[^.]+/, Buffer.from(JSON.stringify({ d: a.id, p: '/etc/passwd', e: null })).toString('base64url'));
   assert.equal((await fetch(`${base}/api/v1/agent/rom?f=${forged}`, { headers: { 'X-Device-Token': fs.readFileSync(path.join(dir, 'roms-a-state', 'config'), 'utf8').match(/TOKEN=(.*)/)![1] } })).status, 403);
