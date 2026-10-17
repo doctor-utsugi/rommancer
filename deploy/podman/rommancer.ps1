@@ -11,7 +11,6 @@ $ConfDir = [IO.Path]::Combine($HOME, '.config', 'rommancer')
 $EnvFile = if ($env:ROMMANCER_ENV) { $env:ROMMANCER_ENV } else { Join-Path $ConfDir 'rommancer.env' }
 # Deployment choices made by install (the rom folder), kept for the next up
 $Conf = if ($env:ROMMANCER_CONF) { $env:ROMMANCER_CONF } else { Join-Path $ConfDir 'deploy.conf' }
-$WebPort = if ($env:ROMMANCER_WEB_PORT) { $env:ROMMANCER_WEB_PORT } else { '8096' }
 $Net = 'rommancer'
 $Es = (Get-Culture).TwoLetterISOLanguageName -eq 'es'
 
@@ -23,6 +22,11 @@ function Get-ConfValue($file, $name) {
 }
 $Roms = if ($env:ROMMANCER_ROMS) { $env:ROMMANCER_ROMS } else { Get-ConfValue $Conf 'ROMMANCER_ROMS' }
 if (-not $Roms) { $Roms = Join-Path $HOME 'rommancer-roms' }
+$WebPort = if ($env:ROMMANCER_WEB_PORT) { $env:ROMMANCER_WEB_PORT } else { Get-ConfValue $Conf 'ROMMANCER_WEB_PORT' }
+if (-not $WebPort) { $WebPort = '8096' }
+# network: any computer of the local network reaches the web (the consoles need it); local: only this one
+$Listen = if ($env:ROMMANCER_LISTEN) { $env:ROMMANCER_LISTEN } else { Get-ConfValue $Conf 'ROMMANCER_LISTEN' }
+if (-not $Listen) { $Listen = 'network' }
 $Engine = if ($env:ROMMANCER_ENGINE) { $env:ROMMANCER_ENGINE } else { Get-ConfValue $Conf 'ROMMANCER_ENGINE' }
 if (-not $Engine) { $Engine = 'podman' }
 
@@ -38,6 +42,60 @@ function Invoke-Engine {
 }
 function Test-Engine { & $Engine @args *> $null; $LASTEXITCODE -eq 0 }
 $Has = @{ podman = [bool](Get-Command podman -ErrorAction SilentlyContinue); docker = [bool](Get-Command docker -ErrorAction SilentlyContinue) }
+
+# This computer's address on the local network: the one its traffic to the internet leaves from
+function Get-HostIp {
+  try {
+    $u = [Net.Sockets.Socket]::new('InterNetwork', 'Dgram', 'Udp')
+    $u.Connect('1.1.1.1', 53)
+    $ip = $u.LocalEndPoint.Address.ToString()
+    $u.Dispose()
+    return $ip
+  } catch { '127.0.0.1' }
+}
+
+function Get-WebUrl { if ($Listen -eq 'network') { "http://$(Get-HostIp):$WebPort" } else { "http://127.0.0.1:$WebPort" } }
+
+# Whether another program listens on the port (Rommancer's own web, about to be replaced, does not count)
+function Test-PortBusy($port) {
+  if ((& $Engine port rommancer-web 80/tcp 2>$null) -match ":$port$") { return $false }
+  try {
+    $l = [Net.Sockets.TcpListener]::new([Net.IPAddress]::Any, [int]$port)
+    $l.Start(); $l.Stop()
+    $false
+  } catch { $true }
+}
+
+# install's port and who may open the web: the ones given, or the person's answers (a free port is proposed)
+function Select-Web($port, $listen) {
+  $ask = -not [Console]::IsInputRedirected
+  $bad = { param($v) if ($Es) { "El $v no sirve: tiene que ser un número entre 1 y 65535 que no esté usando otro programa." } else { "$v won't do: it has to be a number from 1 to 65535 that no other program uses." } }
+  $ok = { param($v) $v -match '^\d+$' -and [int]$v -ge 1 -and [int]$v -le 65535 -and -not (Test-PortBusy $v) }
+  if ($port) {
+    if (-not (& $ok $port)) { Write-Host (& $bad $port); exit 2 }
+    $script:WebPort = $port
+  } else {
+    $free = [int]$WebPort
+    while ((Test-PortBusy $free) -and $free -lt 65535) { $free++ }
+    $taken = if ($free -ne [int]$WebPort) { $WebPort } else { '' }
+    $script:WebPort = "$free"
+    while ($ask) {
+      if ($Es) { $why = if ($taken) { "El $taken ya lo usa otro programa, así que te propongo el $free, que está libre." } else { "El $free está libre." }; $v = Read-Host "¿En qué puerto quieres abrir Rommancer?`n`n$why`n[$free]" }
+      else { $why = if ($taken) { "Another program already uses $taken, so here is $free, which is free." } else { "$free is free." }; $v = Read-Host "Which port should Rommancer use?`n`n$why`n[$free]" }
+      if (-not $v) { $v = "$free" }
+      if (& $ok $v) { $script:WebPort = $v; break }
+      Write-Host (& $bad $v)
+    }
+  }
+  if ($listen) {
+    if ($listen -ne 'network' -and $listen -ne 'local') { Write-Host '--listen: network or local'; exit 2 }
+    $script:Listen = $listen
+  } elseif ($ask) {
+    if ($Es) { $a = Read-Host "¿Desde dónde se podrá abrir Rommancer?`n`nTus consolas y tus otros equipos solo lo encuentran si se puede abrir desde la red.`n`n 1) Desde cualquier equipo de tu red (recomendado)`n 2) Solo desde este equipo`n[1]" }
+    else { $a = Read-Host "Where can Rommancer be opened from?`n`nYour consoles and other computers only find it when it can be opened from the network.`n`n 1) Any computer on your network (recommended)`n 2) Only this computer`n[1]" }
+    $script:Listen = if ($a -match '^(2|local)$') { 'local' } else { 'network' }
+  }
+}
 
 # install's choice of engine: the one given, the only one there is, or the person's pick (Podman first)
 function Select-Engine($given) {
@@ -109,6 +167,8 @@ function Invoke-Up {
   $script:Roms = (Resolve-Path $Roms).Path
   if ($env:ROMMANCER_ROMS) { Set-ConfValue 'ROMMANCER_ROMS' $Roms }
   if ($env:ROMMANCER_ENGINE) { Set-ConfValue 'ROMMANCER_ENGINE' $Engine }
+  if ($env:ROMMANCER_WEB_PORT) { Set-ConfValue 'ROMMANCER_WEB_PORT' $WebPort }
+  if ($env:ROMMANCER_LISTEN) { Set-ConfValue 'ROMMANCER_LISTEN' $Listen }
   Start-Machine
   if (-not (Test-Engine network inspect $Net)) { Invoke-Engine network create $Net | Out-Null }
   & $Engine rm -f rommancer-web rommancer-api rommancer-mysql *> $null
@@ -121,8 +181,8 @@ function Invoke-Up {
     --security-opt label=disable -v rommancer-data:/data -v rommancer-secrets:/data/secrets `
     -v "$(In-Src seed):/seed" -v "${Roms}:/roms" -v "$(In-Src clients):/app/clients:ro" `
     -e DATA_DIR=/data -e SEED_DIR=/seed -e ROMMANCER_BUNDLED_DB=mysql:3306 -e "TZ=$(Get-HostTz)" rommancer-api:latest | Out-Null
-  Invoke-Engine run -d --name rommancer-web --network $Net --restart=on-failure -p "127.0.0.1:${WebPort}:80" rommancer-web:latest | Out-Null
-  Write-Host "Web on http://127.0.0.1:$WebPort"
+  Invoke-Engine run -d --name rommancer-web --network $Net --restart=on-failure -p "$(if ($Listen -eq 'local') { '127.0.0.1:' })${WebPort}:80" rommancer-web:latest | Out-Null
+  Write-Host "Web on $(Get-WebUrl)"
 }
 
 $Cmd = "powershell -ExecutionPolicy Bypass -File `"$PSCommandPath`""
@@ -144,10 +204,10 @@ function Set-RommancerService($on) {
 # After install: how Rommancer runs and how to handle it, then whether to install it as a service (yes, no or '' to ask)
 function Show-Running($want) {
   if ($Es) {
-    Write-Host "`nRommancer está funcionando en segundo plano: puedes cerrar esta ventana.`nÁbrelo en http://127.0.0.1:$WebPort`n"
+    Write-Host "`nRommancer está funcionando en segundo plano: puedes cerrar esta ventana.`nÁbrelo en $(Get-WebUrl)`n"
     Write-Host "  $Cmd status        ver si está en marcha`n  $Cmd stop          pararlo`n  $Cmd start         arrancarlo`n  $Cmd logs          ver qué está haciendo`n  $Cmd service on    instalarlo como servicio (off para quitarlo)`n"
   } else {
-    Write-Host "`nRommancer is running in the background: you can close this window.`nOpen it at http://127.0.0.1:$WebPort`n"
+    Write-Host "`nRommancer is running in the background: you can close this window.`nOpen it at $(Get-WebUrl)`n"
     Write-Host "  $Cmd status        is it running?`n  $Cmd stop          stop it`n  $Cmd start         start it`n  $Cmd logs          see what it is doing`n  $Cmd service on    install it as a service (off removes it)`n"
   }
   if (-not $StartupCmd) { return }
@@ -171,7 +231,7 @@ function Show-Running($want) {
 function Invoke-Setup($opts) {
   $tty = if ([Console]::IsInputRedirected) { '-i' } else { '-it' }
   $lang = if ($Es) { 'es_ES.UTF-8' } else { 'en_US.UTF-8' }
-  & $Engine run --rm $tty --network $Net -e "LANG=$lang" -e "ROMMANCER_SHOW_URL=http://127.0.0.1:$WebPort" -e ROMMANCER_DB_PASSWORD -e ROMMANCER_ADMIN_PASSWORD `
+  & $Engine run --rm $tty --network $Net -e "LANG=$lang" -e "ROMMANCER_SHOW_URL=$(Get-WebUrl)" -e ROMMANCER_DB_PASSWORD -e ROMMANCER_ADMIN_PASSWORD `
     -v "$(In-Src deploy install.sh):/install.sh:ro" --entrypoint sh rommancer-web:latest `
     /install.sh http://rommancer-web @opts
   $script:SetupCode = $LASTEXITCODE
@@ -192,11 +252,15 @@ switch ($args[0]) {
   'setup' { Invoke-Setup $rest; exit $SetupCode }
   'install' {
     # --roms is this script's; everything else goes to the installer
-    $chosen = '' ; $svc = '' ; $eng = '' ; $opts = @()
+    $chosen = '' ; $svc = '' ; $eng = '' ; $port = '' ; $lis = '' ; $opts = @()
     for ($i = 0; $i -lt $rest.Count; $i++) {
       $a = [string]$rest[$i]
       if ($a -eq '--roms') { $i++; $chosen = [string]$rest[$i] }
       elseif ($a.StartsWith('--roms=')) { $chosen = $a.Substring(7) }
+      elseif ($a -eq '--port') { $i++; $port = [string]$rest[$i] }
+      elseif ($a.StartsWith('--port=')) { $port = $a.Substring(7) }
+      elseif ($a -eq '--listen') { $i++; $lis = [string]$rest[$i] }
+      elseif ($a.StartsWith('--listen=')) { $lis = $a.Substring(9) }
       elseif ($a -eq '--engine') { $i++; $eng = [string]$rest[$i] }
       elseif ($a.StartsWith('--engine=')) { $eng = $a.Substring(9) }
       elseif ($a -eq '--service') { $i++; $svc = [string]$rest[$i] }
@@ -204,6 +268,8 @@ switch ($args[0]) {
       elseif ($a -eq '-h' -or $a -eq '--help') {
         Write-Host "Usage: rommancer.ps1 install [--roms PATH] [--engine podman|docker] [--service yes|no] [installer options]: builds, starts and installs Rommancer"
         Write-Host "  --engine podman|docker   what runs the containers (Podman when both are there and it is not given)"
+        Write-Host "  --port PORT              the web's port (a free one from 8096 on when not given)"
+        Write-Host "  --listen network|local   who may open it: any computer of the network (default) or only this one"
         Write-Host "  --service yes|no   install it as a service, started at every login (asked when not given); the installer's options:"
         # install.sh's own --help text
         $sh = [IO.File]::ReadAllText((In-Src deploy install.sh))
@@ -217,6 +283,9 @@ switch ($args[0]) {
     if (-not $chosen -and -not [Console]::IsInputRedirected) { $chosen = Read-Roms $Roms }
     if ($chosen) { $Roms = $chosen }
     $env:ROMMANCER_ROMS = $Roms
+    Select-Web $port $lis
+    $env:ROMMANCER_WEB_PORT = $WebPort
+    $env:ROMMANCER_LISTEN = $Listen
     Invoke-Build
     Invoke-Up
     Invoke-Setup $opts

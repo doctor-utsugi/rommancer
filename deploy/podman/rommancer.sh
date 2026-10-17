@@ -17,7 +17,11 @@ ROMS="${ROMMANCER_ROMS:-$(confval ROMMANCER_ROMS || true)}"
 ROMS="${ROMS:-$HOME/rommancer-roms}"
 ENGINE="${ROMMANCER_ENGINE:-$(confval ROMMANCER_ENGINE || true)}"
 ENGINE="${ENGINE:-podman}"
-WEB_PORT="${ROMMANCER_WEB_PORT:-8096}"
+WEB_PORT="${ROMMANCER_WEB_PORT:-$(confval ROMMANCER_WEB_PORT || true)}"
+WEB_PORT="${WEB_PORT:-8096}"
+# network: any computer of the local network reaches the web (the consoles need it); local: only this one
+LISTEN="${ROMMANCER_LISTEN:-$(confval ROMMANCER_LISTEN || true)}"
+LISTEN="${LISTEN:-network}"
 NET=rommancer
 OS=$(uname -s)
 
@@ -56,7 +60,7 @@ Rommancer won't move, rename or delete anything inside it. No roms yet? Keep the
 say() {
   case "$LANG_UI" in
     es*) case "$1" in
-      running) printf '\nRommancer está funcionando en segundo plano: puedes cerrar esta terminal.\nÁbrelo en http://127.0.0.1:%s\n\n  %s status        ver si está en marcha\n  %s stop          pararlo\n  %s start         arrancarlo\n  %s logs          ver qué está haciendo\n  %s service on    instalarlo como servicio (off para quitarlo)\n\n' "$WEB_PORT" "$CMD" "$CMD" "$CMD" "$CMD" "$CMD" ;;
+      running) printf '\nRommancer está funcionando en segundo plano: puedes cerrar esta terminal.\nÁbrelo en %s\n\n  %s status        ver si está en marcha\n  %s stop          pararlo\n  %s start         arrancarlo\n  %s logs          ver qué está haciendo\n  %s service on    instalarlo como servicio (off para quitarlo)\n\n' "$(web_url)" "$CMD" "$CMD" "$CMD" "$CMD" "$CMD" ;;
       ask) echo "¿Instalar Rommancer como servicio?
 
 Así arranca solo cada vez que se enciende el equipo, aunque nadie inicie sesión. Si no, después de cada reinicio tendrás que arrancarlo tú con «$CMD start».${2:+
@@ -71,6 +75,15 @@ Rommancer funciona dentro de contenedores, con Podman (recomendado) o con Docker
 
 Primero te pedirá la carpeta de tus roms. Luego preparará los contenedores, que la primera vez tarda unos minutos, y al final elegirás la base de datos y crearás tu cuenta." ;;
       ok) echo Aceptar ;;
+      port) echo "¿En qué puerto quieres abrir Rommancer?
+
+$(if [ -n "$2" ]; then echo "El $2 ya lo usa otro programa, así que te propongo el $3, que está libre."; else echo "El $3 está libre."; fi)" ;;
+      portBad) echo "El $2 no sirve: tiene que ser un número entre 1 y 65535 que no esté usando otro programa." ;;
+      listen) echo "¿Desde dónde se podrá abrir Rommancer?
+
+Tus consolas y tus otros equipos solo lo encuentran si se puede abrir desde la red." ;;
+      network) echo "Desde cualquier equipo de tu red (recomendado)" ;;
+      local) echo "Solo desde este equipo" ;;
       cancel) echo Cancelar ;;
       engine) echo "¿Con qué quieres ejecutar los contenedores?
 
@@ -98,7 +111,7 @@ Para instalarlo como servicio más adelante: $CMD service on" ;;
       noLinger) echo "Sin «sudo loginctl enable-linger $USER», Rommancer arrancará al iniciar sesión, no al encender el equipo." ;;
     esac ;;
     *) case "$1" in
-      running) printf '\nRommancer is running in the background: you can close this terminal.\nOpen it at http://127.0.0.1:%s\n\n  %s status        is it running?\n  %s stop          stop it\n  %s start         start it\n  %s logs          see what it is doing\n  %s service on    install it as a service (off removes it)\n\n' "$WEB_PORT" "$CMD" "$CMD" "$CMD" "$CMD" "$CMD" ;;
+      running) printf '\nRommancer is running in the background: you can close this terminal.\nOpen it at %s\n\n  %s status        is it running?\n  %s stop          stop it\n  %s start         start it\n  %s logs          see what it is doing\n  %s service on    install it as a service (off removes it)\n\n' "$(web_url)" "$CMD" "$CMD" "$CMD" "$CMD" "$CMD" ;;
       ask) echo "Install Rommancer as a service?
 
 Then it starts by itself every time the computer starts, even with nobody logged in. Otherwise you start it after every reboot with \"$CMD start\".${2:+
@@ -113,6 +126,15 @@ Rommancer runs inside containers, with Podman (recommended) or Docker. Everythin
 
 First it asks for your roms folder. Then it prepares the containers, which takes a few minutes the first time, and last you choose the database and create your account." ;;
       ok) echo Ok ;;
+      port) echo "Which port should Rommancer use?
+
+$(if [ -n "$2" ]; then echo "Another program already uses $2, so here is $3, which is free."; else echo "$3 is free."; fi)" ;;
+      portBad) echo "$2 won't do: it has to be a number from 1 to 65535 that no other program uses." ;;
+      listen) echo "Where can Rommancer be opened from?
+
+Your consoles and other computers only find it when it can be opened from the network." ;;
+      network) echo "Any computer on your network (recommended)" ;;
+      local) echo "Only this computer" ;;
       cancel) echo Cancel ;;
       engine) echo "Which one should run the containers?
 
@@ -274,6 +296,77 @@ shared() {
   [ $? = 3 ]
 }
 
+# This computer's address on the local network
+host_ip() {
+  ip=$(ip -4 route get 1.1.1.1 2>/dev/null | sed -n 's/.* src \([0-9.]*\).*/\1/p')
+  [ -n "$ip" ] || ip=$(ipconfig getifaddr en0 2>/dev/null || ipconfig getifaddr en1 2>/dev/null || true)
+  [ -n "$ip" ] || ip=$(hostname -I 2>/dev/null | cut -d' ' -f1)
+  echo "${ip:-127.0.0.1}"
+}
+
+# The address to open Rommancer at: from the network when it listens there
+web_url() {
+  if [ "$LISTEN" = network ]; then echo "http://$(host_ip):$WEB_PORT"; else echo "http://127.0.0.1:$WEB_PORT"; fi
+}
+
+# Whether another program listens on port $1 (Rommancer's own web, about to be replaced, does not count)
+port_busy() {
+  $ENGINE port rommancer-web 80/tcp 2>/dev/null | grep -q ":$1\$" && return 1
+  if command -v ss >/dev/null 2>&1; then [ -n "$(ss -Hltn "sport = :$1" 2>/dev/null)" ]
+  elif command -v lsof >/dev/null 2>&1; then lsof -nP -iTCP:"$1" -sTCP:LISTEN >/dev/null 2>&1
+  else nc -z 127.0.0.1 "$1" >/dev/null 2>&1
+  fi
+}
+
+# The first free port from $1 on
+free_port() {
+  p=$1
+  while port_busy "$p" && [ "$p" -lt 65535 ]; do p=$((p + 1)); done
+  echo "$p"
+}
+
+# install's port and who may open the web: the ones given, or the person's answers (a free port is proposed)
+choose_web() {
+  box=''
+  [ -z "$3" ] && [ -t 2 ] && command -v whiptail >/dev/null 2>&1 && box=1
+  if [ -n "$1" ]; then
+    case "$1" in '' | *[!0-9]*) say portBad "$1" >&2; exit 2 ;; esac
+    if [ "$1" -lt 1 ] || [ "$1" -gt 65535 ] || port_busy "$1"; then say portBad "$1" >&2; exit 2; fi
+    WEB_PORT=$1
+  else
+    free=$(free_port "$WEB_PORT")
+    taken=''
+    [ "$free" = "$WEB_PORT" ] || taken=$WEB_PORT
+    WEB_PORT=$free
+    if [ -t 0 ]; then
+      while :; do
+        if [ -n "$box" ]; then
+          v=$(whiptail --title Rommancer --ok-button "$(say ok)" --cancel-button "$(say cancel)" --inputbox "$(say port "$taken" "$WEB_PORT")" 12 76 "$WEB_PORT" 3>&1 1>&2 2>&3) || exit 1
+        else
+          printf '%s\n[%s]: ' "$(say port "$taken" "$WEB_PORT")" "$WEB_PORT" >&2
+          IFS= read -r v || exit 1
+          v=${v:-$WEB_PORT}
+        fi
+        case "$v" in '' | *[!0-9]*) ;; *) [ "$v" -ge 1 ] && [ "$v" -le 65535 ] && ! port_busy "$v" && break ;; esac
+        if [ -n "$box" ]; then whiptail --title Rommancer --msgbox "$(say portBad "$v")" 9 76; else say portBad "$v" >&2; fi
+      done
+      WEB_PORT=$v
+    fi
+  fi
+  if [ -n "$2" ]; then
+    case "$2" in network | local) LISTEN=$2 ;; *) echo "--listen: network or local" >&2; exit 2 ;; esac
+  elif [ -t 0 ]; then
+    if [ -n "$box" ]; then
+      LISTEN=$(whiptail --title Rommancer --ok-button "$(say ok)" --cancel-button "$(say cancel)" --notags --default-item "$LISTEN" \
+        --menu "$(say listen)" 14 76 2 network "$(say network)" local "$(say local)" 3>&1 1>&2 2>&3) || exit 1
+    else
+      printf '%s\n 1) %s\n 2) %s\n[1]: ' "$(say listen)" "$(say network)" "$(say local)" >&2
+      IFS= read -r a || a=
+      case "$a" in 2 | local) LISTEN=local ;; *) LISTEN=network ;; esac
+    fi
+  fi
+}
+
 remember() {
   mkdir -p "$(dirname "$CONF")"
   { [ -f "$CONF" ] && grep -v "^$1=" "$CONF"; echo "$1=$2"; } > "$CONF.new" || true
@@ -301,6 +394,8 @@ case "${1:-}" in
       remember ROMMANCER_ROMS "$ROMS"
     fi
     [ -n "${ROMMANCER_ENGINE:-}" ] && remember ROMMANCER_ENGINE "$ENGINE"
+    [ -n "${ROMMANCER_WEB_PORT:-}" ] && remember ROMMANCER_WEB_PORT "$WEB_PORT"
+    [ -n "${ROMMANCER_LISTEN:-}" ] && remember ROMMANCER_LISTEN "$LISTEN"
     mkdir -p "$ROMS"
     machine
     if [ "$OS" = Darwin ] && [ "$ENGINE" = podman ] && ! shared "$ROMS"; then
@@ -308,6 +403,8 @@ case "${1:-}" in
       echo "or make the machine again (podman machine rm, then rommancer.sh up makes one that sees both)." >&2
       exit 1
     fi
+    bind=''
+    [ "$LISTEN" = local ] && bind=127.0.0.1:
     $ENGINE network inspect "$NET" >/dev/null 2>&1 || $ENGINE network create "$NET" >/dev/null
     $ENGINE rm -f rommancer-web rommancer-api rommancer-mysql >/dev/null 2>&1 || true
     set --
@@ -334,8 +431,8 @@ case "${1:-}" in
     fi
     $ENGINE run -d --name rommancer-api --network "$NET" --network-alias api --restart=on-failure "$@" \
       -e DATA_DIR=/data -e SEED_DIR=/seed -e ROMMANCER_BUNDLED_DB=mysql:3306 -e TZ="${TZ:-$(host_tz)}" rommancer-api:latest
-    $ENGINE run -d --name rommancer-web --network "$NET" --restart=on-failure -p "127.0.0.1:$WEB_PORT:80" rommancer-web:latest
-    echo "Web on http://127.0.0.1:$WEB_PORT" ;;
+    $ENGINE run -d --name rommancer-web --network "$NET" --restart=on-failure -p "$bind$WEB_PORT:80" rommancer-web:latest
+    echo "Web on $(web_url)" ;;
   start)
     machine
     $ENGINE start rommancer-mysql rommancer-api rommancer-web ;;
@@ -343,11 +440,11 @@ case "${1:-}" in
   service) service "${2:-on}" ;;
   setup)
     shift
-    exec sh "$SRC/deploy/install.sh" "http://127.0.0.1:$WEB_PORT" "$@" ;;
+    ROMMANCER_SHOW_URL=$(web_url) exec sh "$SRC/deploy/install.sh" "http://127.0.0.1:$WEB_PORT" "$@" ;;
   install)
     shift
     # --roms is this script's; everything else goes to the installer
-    roms='' plain='' svc='' engine=''
+    roms='' plain='' svc='' engine='' port='' listen=''
     n=$#
     while [ "$n" -gt 0 ]; do
       a=$1
@@ -359,8 +456,14 @@ case "${1:-}" in
         -h | --help)
           echo "Usage: $0 install [--roms PATH] [--engine podman|docker] [--service yes|no] [installer options]: builds, starts and installs Rommancer"
           echo "  --engine podman|docker   what runs the containers (Podman when both are there and it is not given)"
+          echo "  --port PORT              the web's port (a free one from 8096 on when not given)"
+          echo "  --listen network|local   who may open it: any computer of the network (default) or only this one"
           echo "  --service yes|no   install it as a service, started with the computer (asked when not given); the installer's options:"
           exec sh "$SRC/deploy/install.sh" --help ;;
+        --port) port=${1:-}; [ "$n" -gt 0 ] && { shift; n=$((n - 1)); } ;;
+        --port=*) port=${a#*=} ;;
+        --listen) listen=${1:-}; [ "$n" -gt 0 ] && { shift; n=$((n - 1)); } ;;
+        --listen=*) listen=${a#*=} ;;
         --engine) engine=${1:-}; [ "$n" -gt 0 ] && { shift; n=$((n - 1)); } ;;
         --engine=*) engine=${a#*=} ;;
         --service) svc=${1:-}; [ "$n" -gt 0 ] && { shift; n=$((n - 1)); } ;;
@@ -385,9 +488,11 @@ case "${1:-}" in
     mkdir -p "$roms"
     ROMS=$(cd "$roms" && pwd)
     export ROMMANCER_ROMS="$ROMS"
+    choose_web "$port" "$listen" "$plain"
+    export ROMMANCER_WEB_PORT="$WEB_PORT" ROMMANCER_LISTEN="$LISTEN"
     sh "$0" build
     sh "$0" up
-    sh "$SRC/deploy/install.sh" "http://127.0.0.1:$WEB_PORT" "$@"
+    ROMMANCER_SHOW_URL=$(web_url) sh "$SRC/deploy/install.sh" "http://127.0.0.1:$WEB_PORT" "$@"
     after_install "$svc" ;;
   down) machine; $ENGINE rm -f rommancer-web rommancer-api rommancer-mysql ;;
   logs) $ENGINE logs --tail 100 -f "rommancer-${2:-api}" ;;

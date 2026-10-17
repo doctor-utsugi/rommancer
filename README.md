@@ -21,7 +21,7 @@ curl -fsSL https://github.com/doctor-utsugi/rommancer/releases/latest/download/r
 sh rommancer/deploy/podman/rommancer.sh install
 ```
 
-It asks for your roms folder, the database and your account, and leaves Rommancer running at http://127.0.0.1:8096.
+It asks for your roms folder, the database and your account, and leaves Rommancer running at the address it shows (http://your-ip:8096 by default).
 The [install guide](docs/install.md) has the step-by-step commands, how to start, stop and update it, and the
 unattended install.
 

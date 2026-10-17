@@ -41,7 +41,7 @@ sh rommancer/deploy/podman/rommancer.sh install
 ```
 
 It builds Rommancer (a few minutes the first time), asks you [three things](#what-the-installer-asks) and ends with
-Rommancer running at http://127.0.0.1:8096. Last, it asks whether to install Rommancer as a
+Rommancer running at the address it shows (http://your-ip:8096 by default). Last, it asks whether to install Rommancer as a
 [service](#running-it-as-a-service) that starts with the computer.
 
 The same, step by step:
@@ -58,7 +58,7 @@ sh deploy/podman/rommancer.sh build
 # 3. Start it, with your roms folder
 ROMMANCER_ROMS=/path/to/your/roms sh deploy/podman/rommancer.sh up
 
-# 4. Set it up: in the console, or open http://127.0.0.1:8096 in a browser
+# 4. Set it up: in the console, or open http://your-ip:8096 in a browser
 sh deploy/podman/rommancer.sh setup
 ```
 
@@ -81,7 +81,7 @@ sh rommancer/deploy/podman/rommancer.sh install
 ```
 
 The first time, the script creates Podman's virtual machine (4 GB of memory) and starts it. Then it carries on as on
-Linux, with plain questions instead of dialog boxes, and Rommancer ends up at http://127.0.0.1:8096. Installed as a
+Linux, with plain questions instead of dialog boxes, and Rommancer ends up at the address it shows. Installed as a
 service, it starts every time you log in to the Mac.
 
 Two things differ from Linux:
@@ -116,7 +116,7 @@ powershell -ExecutionPolicy Bypass -File rommancer\deploy\podman\rommancer.ps1 i
 
 `-ExecutionPolicy Bypass` lets this one script run without changing Windows' policy for any other. The script
 creates and starts Podman's virtual machine the first time, asks for your roms folder (you can drag the folder onto
-the window), builds Rommancer and runs the same installer as on Linux. Rommancer ends up at http://127.0.0.1:8096.
+the window), builds Rommancer and runs the same installer as on Linux. Rommancer ends up at the address it shows.
 Installed as a service, it starts every time you log in to Windows.
 
 The step-by-step commands are the same as on Linux with `powershell -ExecutionPolicy Bypass -File
@@ -128,14 +128,20 @@ which is slower than a Linux disk: the first scan of a large collection takes lo
 
 ## What the installer asks
 
-1. **Your roms folder.** It is mounted at `/roms` and remembered in `~/.config/rommancer/deploy.conf` for the next
+1. **What runs the containers**, only when both Podman and Docker are installed. Podman is the default.
+2. **Your roms folder.** It is mounted at `/roms` and remembered in `~/.config/rommancer/deploy.conf` for the next
    `up`. Rommancer reads it as it is: nothing in it is moved, renamed or deleted. If your roms are on several disks,
    choose a folder that holds them all.
-2. **The database.** The one that comes with Rommancer is ready to use and needs nothing filled in. The other choice
+3. **The port.** It proposes 8096, or the first free one after it when another program already uses 8096. If you
+   type a port that is taken, it says so and asks again.
+4. **Where Rommancer can be opened from.** From any computer of your network (the default, and what your consoles
+   need) or only from the computer it runs on (then you reach it through a reverse proxy or an SSH tunnel).
+5. **The database.** The one that comes with Rommancer is ready to use and needs nothing filled in. The other choice
    is a MySQL 8 or MariaDB server of yours, where the database must already exist.
-3. **Your account:** a username and a password. The email is optional; add it later in your profile.
+6. **Your account:** a username and a password. The email is optional; add it later in your profile.
 
-Every other setting (public address, sync schedule, data seed, ScreenScraper keys) starts with a value that works and
+Your choices of engine, roms folder, port and network are kept in `~/.config/rommancer/deploy.conf`, and every later
+`up` uses them. Every other setting (public address, sync schedule, data seed, ScreenScraper keys) starts with a value that works and
 is in Administration > Server. On its first start Rommancer generates its secrets into `data/secrets` (on macOS and
 Windows, the `rommancer-secrets` volume). Keep them in your backups: they hold the key that encrypts the stored
 credentials.
@@ -172,13 +178,14 @@ itself: on Linux with the computer, even with nobody logged in; on macOS and Win
 
 `install --service yes` (or `no`) answers the question beforehand.
 
-To reach Rommancer from other devices, put a reverse proxy (nginx, Caddy) in front of `127.0.0.1:8096`, or change
-`ROMMANCER_WEB_PORT`.
+To serve Rommancer under a domain with HTTPS, put a reverse proxy (nginx, Caddy) in front of its port.
 
 **Updating:** download the new release and extract it over the old folder, then run `build` and `up`. Your data and
 settings live outside the folder.
 
-These variables change the defaults: `ROMMANCER_ROMS`, `ROMMANCER_DATA` (Linux only), `ROMMANCER_WEB_PORT`.
+To change a choice later, give it to `up` once and it is remembered: `ROMMANCER_WEB_PORT=9000 rommancer.sh up`,
+`ROMMANCER_LISTEN=local rommancer.sh up` (or `network`), `ROMMANCER_ROMS=/other/folder rommancer.sh up`.
+`ROMMANCER_DATA` (Linux only) moves the data folder.
 `~/.config/rommancer/rommancer.env` is optional (overrides, as in `.env.example`): a variable set there wins over the
 panel, which then shows it locked.
 
@@ -190,7 +197,7 @@ Every answer can be given as an option, and then nothing is asked (`deploy/insta
 
 ```bash
 ROMMANCER_ADMIN_PASSWORD='your password' sh rommancer/deploy/podman/rommancer.sh install \
-  --roms /srv/roms --lang en --db bundled --admin admin
+  --roms /srv/roms --port 8096 --listen network --service yes --lang en --db bundled --admin admin
 ```
 
 `ROMMANCER_DB_PASSWORD` gives an external database's password the same way.
