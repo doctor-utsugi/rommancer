@@ -62,6 +62,12 @@ Hace falta tu contraseña de sudo una vez, para «$2».}" ;;
       askMac) echo "¿Instalar Rommancer como servicio?
 
 Así arranca solo cada vez que inicias sesión en el Mac. Si no, tendrás que arrancarlo tú con «$CMD start»." ;;
+      intro) echo "Vas a instalar Rommancer.
+
+Rommancer funciona dentro de contenedores de Podman, una herramienta parecida a Docker. Todo lo que necesita (su servidor, su base de datos y sus herramientas) va dentro de ellos, así que no instala nada más en tu sistema ni lo cambia.
+
+Primero te pedirá la carpeta de tus roms. Luego preparará los contenedores, que la primera vez tarda unos minutos, y al final elegirás la base de datos y crearás tu cuenta." ;;
+      ok) echo Aceptar ;;
       yes) echo Sí ;;
       no) echo No ;;
       yn) echo s/N ;;
@@ -86,6 +92,12 @@ It takes your sudo password once, for \"$2\".}" ;;
       askMac) echo "Install Rommancer as a service?
 
 Then it starts by itself every time you log in to the Mac. Otherwise you start it with \"$CMD start\"." ;;
+      intro) echo "You are about to install Rommancer.
+
+Rommancer runs inside Podman containers; Podman is a tool much like Docker. Everything it needs (its server, its database and its tools) goes inside them, so nothing else is installed or changed on your system.
+
+First it asks for your roms folder. Then it prepares the containers, which takes a few minutes the first time, and last you choose the database and create your account." ;;
+      ok) echo Ok ;;
       yes) echo Yes ;;
       no) echo No ;;
       yn) echo y/N ;;
@@ -294,6 +306,13 @@ case "${1:-}" in
         *) [ "$a" = --plain ] && plain=1; set -- "$@" "$a" ;;
       esac
     done
+    if [ -t 0 ]; then
+      if [ -z "$plain" ] && [ -t 2 ] && command -v whiptail >/dev/null 2>&1; then
+        whiptail --title Rommancer --ok-button "$(say ok)" --msgbox "$(say intro)" 16 76 3>&1 1>&2 2>&3 || exit 1
+      else
+        printf '%s\n\n' "$(say intro)" >&2
+      fi
+    fi
     [ -z "$roms" ] && [ -t 0 ] && roms=$(ask_roms "$ROMS" "$plain")
     roms=${roms:-$ROMS}
     case "$roms" in "~"*) roms="$HOME${roms#"~"}" ;; esac

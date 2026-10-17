@@ -193,7 +193,7 @@ note() {
 
 # A box that stays up while something runs (TERM=ansi: whiptail would clear it on leaving otherwise)
 status() {
-  if [ $UI = box ]; then TERM=ansi whiptail --title "$(t title)" --infobox "$1" $(($(rows "$1") + 2)) $W; else printf '%s\n' "$1" >&2; fi
+  if [ $UI = box ]; then TERM=ansi whiptail --title "$(t title)" --infobox "$1" $(($(rows "$1") + 6)) $W; else printf '%s\n' "$1" >&2; fi
 }
 
 # ask LABEL DEFAULT [HINT]: one line of text
