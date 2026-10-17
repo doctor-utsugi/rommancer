@@ -6,6 +6,29 @@ Multi-user ROM collection manager: a database of games and roms built from DATs 
 
 Stack: Node 22 + Express + Prisma + MySQL 8.4 · React + TypeScript + Vite + shadcn/ui · Podman.
 
+## TL;DR: install
+
+One command on a Linux server with Podman (rootless). It builds the images, starts them and asks the installer's
+questions in the console (database, administrator, server settings):
+
+```bash
+git clone https://github.com/doctor-utsugi/rommancer.git && sh rommancer/deploy/podman/rommancer.sh install
+```
+
+The web is then on `http://127.0.0.1:8096`, with the roms read from `~/rommancer-roms`. Prefer a browser? Run
+`rommancer.sh build` and `rommancer.sh up` instead and open that address: the same installer is there.
+
+With podman-compose (web on port 8080):
+
+```bash
+git clone https://github.com/doctor-utsugi/rommancer.git && cd rommancer
+ROMS_DIR=/path/to/my/roms podman-compose --profile full up -d --build
+sh deploy/install.sh http://localhost:8080
+```
+
+`deploy/install.sh` uses boxes when it runs in a terminal with `whiptail`, plain questions otherwise (`--plain`
+forces them). Run again on an installed server, it only says so.
+
 ## Rommancer Sync
 
 Journeys provide independent save/savestate blocks per exact ROM, selected separately on each console.
