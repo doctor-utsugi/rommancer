@@ -163,6 +163,8 @@ Rommancer keeps running in the background; you can close the terminal. Use the s
 | `rommancer.sh up` | makes the containers anew, after an update or a change of roms folder |
 | `rommancer.sh down` | removes the containers (your data stays) |
 | `rommancer.sh setup` | the installer in the console, if you closed it halfway |
+| `rommancer.sh update [--check]` | updates to the newest release ([Updating](#updating)) |
+| `rommancer.sh rollback` | goes back to the version before the last update |
 
 ### Running it as a service
 
@@ -179,8 +181,31 @@ itself: on Linux with the computer, even with nobody logged in; on macOS and Win
 
 To serve Rommancer under a domain with HTTPS, put a reverse proxy (nginx, Caddy) in front of its port.
 
-**Updating:** download the new release and extract it over the old folder, then run `build` and `up`. Your data and
-settings live outside the folder.
+### Updating
+
+Administration > Update says when there is a new version and what it changes. Its button updates Rommancer when it
+is [installed as a service](#running-it-as-a-service): the service watches for the request and runs the update.
+Without the service, run the same from the console:
+
+```bash
+sh rommancer/deploy/podman/rommancer.sh update
+```
+
+`update --check` only says whether there is one. The update:
+
+1. downloads the new release next to your Rommancer folder, without touching what runs;
+2. prepares its images, keeping the current ones;
+3. backs up the database into `~/.config/rommancer/update/backups` (the last five are kept);
+4. puts the new folder in place and starts it, which applies its database changes;
+5. if the new version doesn't answer, goes back to the previous one by itself: its images, its folder and the
+   database as it was backed up.
+
+Your data, settings and roms live outside the folder and stay as they are. `rommancer.sh rollback` goes back to the
+previous version by hand, with the database as it was before the update; what changed since is lost. A database
+change never removes anything, so the previous version also runs on the updated database.
+
+Rommancer 1.97 and older have no `update`: the first time, download the new release, extract it over the old
+folder, then run `build` and `up`. On Windows, updating is still done that way.
 
 To change a choice later, give it to `up` once and it is remembered: `ROMMANCER_WEB_PORT=9000 rommancer.sh up`,
 `ROMMANCER_LISTEN=local rommancer.sh up` (or `network`), `ROMMANCER_ROMS=/other/folder rommancer.sh up`.

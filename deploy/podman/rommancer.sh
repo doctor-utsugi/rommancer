@@ -2,8 +2,9 @@
 # Deployment with Podman (rootless, the default) or Docker, on Linux (no Quadlet needed: Debian 12 ships 4.3) and
 # macOS (Podman's machine, or Docker Desktop). install --engine podman|docker chooses; up remembers it.
 # Started with the computer only as a service (rommancer.sh service on): a systemd user unit, on a Mac a LaunchAgent.
-#   rommancer.sh install | build | up | start | stop | service [on|off] | setup | down | logs [api|web|mysql] | status
+#   rommancer.sh install | build | up | start | stop | service [on|off] | setup | update | rollback | down | logs [api|web|mysql] | status
 # install = build, up, then the installer in the console (setup); the web app runs the same installer.
+# update brings the newest release (update.sh: backup first, back to the old version by itself if the new one fails).
 # install and setup pass their options to deploy/install.sh (--help lists them: unattended installs);
 # install also asks for the folder with your roms, or takes it as --roms PATH, and remembers it for up
 set -eu
@@ -22,6 +23,8 @@ WEB_PORT="${WEB_PORT:-8096}"
 # network: any computer of the local network reaches the web (the consoles need it); local: only this one
 LISTEN="${ROMMANCER_LISTEN:-$(confval ROMMANCER_LISTEN || true)}"
 LISTEN="${LISTEN:-network}"
+# Where update keeps its progress, log and database backups; mounted into the API at /update for the update page
+UPD="${ROMMANCER_UPDATE_DIR:-$(dirname "$CONF")/update}"
 NET=rommancer
 OS=$(uname -s)
 
@@ -164,6 +167,80 @@ service_on() {
   if [ "$OS" = Darwin ]; then [ -f "$AGENT" ]; else [ -f "$UNIT" ] && linger; fi
 }
 
+# The folders and files this deployment was given, for the units that run it later (none when they are the defaults)
+unit_env() {
+  for v in ROMMANCER_CONF ROMMANCER_DATA ROMMANCER_ENV ROMMANCER_UPDATE_DIR ROMMANCER_RELEASES_URL; do
+    eval "x=\${$v:-}"
+    # shellcheck disable=SC2154
+    [ -n "$x" ] && echo "Environment=$v=$x"
+  done
+  return 0
+}
+
+# The update page's button: a watcher that runs rommancer.sh update when the API leaves a request in UPD (a systemd
+# path unit, or a LaunchAgent watching the file). KillMode=process: the containers the update starts outlive it
+watcher() {
+  WUNIT="$HOME/.config/systemd/user/rommancer-update"
+  WAGENT="$HOME/Library/LaunchAgents/com.rommancer.update.plist"
+  case "$1" in
+    on)
+      mkdir -p "$UPD"
+      if [ "$OS" = Darwin ]; then
+        mkdir -p "$(dirname "$WAGENT")"
+        cat > "$WAGENT" <<EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+  <key>Label</key><string>com.rommancer.update</string>
+  <key>ProgramArguments</key><array><string>/bin/sh</string><string>$SRC/deploy/podman/rommancer.sh</string><string>update</string><string>--request</string></array>
+  <key>EnvironmentVariables</key><dict><key>PATH</key><string>$(dirname "$(command -v "$ENGINE")"):/usr/bin:/bin:/usr/sbin:/sbin</string></dict>
+  <key>WatchPaths</key><array><string>$UPD/request</string></array>
+  <key>AbandonProcessGroup</key><true/>
+</dict></plist>
+EOF
+        launchctl unload "$WAGENT" 2>/dev/null || true
+        launchctl load "$WAGENT"
+        echo launchd > "$UPD/watcher"
+        return
+      fi
+      mkdir -p "$(dirname "$WUNIT")"
+      cat > "$WUNIT.path" <<EOF
+[Unit]
+Description=Rommancer's update page asks for an update
+
+[Path]
+PathExists=$UPD/request
+
+[Install]
+WantedBy=default.target
+EOF
+      cat > "$WUNIT.service" <<EOF
+[Unit]
+Description=Update Rommancer
+
+[Service]
+Type=oneshot
+TimeoutStartSec=0
+KillMode=process
+$(unit_env)
+ExecStart=/bin/sh $SRC/deploy/podman/rommancer.sh update --request
+EOF
+      systemctl --user daemon-reload
+      systemctl --user enable --now rommancer-update.path >/dev/null 2>&1
+      echo systemd > "$UPD/watcher" ;;
+    off)
+      if [ "$OS" = Darwin ]; then
+        launchctl unload "$WAGENT" 2>/dev/null || true
+        rm -f "$WAGENT"
+      else
+        systemctl --user disable --now rommancer-update.path >/dev/null 2>&1 || true
+        rm -f "$WUNIT.path" "$WUNIT.service"
+        systemctl --user daemon-reload
+      fi
+      rm -f "$UPD/watcher" ;;
+  esac
+}
+
 # Rommancer as a service: started with the computer (Linux: a systemd user unit, plus lingering so the user's units
 # start at boot, which takes sudo once) or at login (Mac: a LaunchAgent)
 service() {
@@ -181,6 +258,7 @@ service() {
   <key>RunAtLoad</key><true/>
 </dict></plist>
 EOF
+        watcher on
         say onMac
         return
       fi
@@ -194,6 +272,7 @@ After=network-online.target
 [Service]
 Type=oneshot
 RemainAfterExit=yes
+$(unit_env)
 ExecStart=/bin/sh $SRC/deploy/podman/rommancer.sh start
 ExecStop=/bin/sh $SRC/deploy/podman/rommancer.sh stop
 
@@ -202,12 +281,14 @@ WantedBy=default.target
 EOF
       systemctl --user daemon-reload
       systemctl --user enable rommancer.service >/dev/null 2>&1
+      watcher on
       if ! linger && ! sudo loginctl enable-linger "$USER"; then
         say noLinger
         return
       fi
       say on ;;
     off)
+      watcher off
       if [ "$OS" = Darwin ]; then
         rm -f "$AGENT"
       else
@@ -364,9 +445,11 @@ host_tz() {
 case "${1:-}" in
   build)
     machine
-    $ENGINE build -t rommancer-mysql -f "$SRC/deploy/mysql/Containerfile" "$SRC"
-    $ENGINE build -t rommancer-api -f "$SRC/backend/Containerfile" "$SRC"
-    $ENGINE build -t rommancer-web -f "$SRC/frontend/Containerfile" "$SRC" ;;
+    # Tagged with the release's version too, so update can tell them apart
+    v=$(cat "$SRC/VERSION" 2>/dev/null || echo dev)
+    for i in mysql:deploy/mysql api:backend web:frontend; do
+      $ENGINE build -t "rommancer-${i%%:*}:latest" -t "rommancer-${i%%:*}:$v" -f "$SRC/${i#*:}/Containerfile" "$SRC"
+    done ;;
   up)
     # A rom folder or engine given now (ROMMANCER_ROMS, ROMMANCER_ENGINE, or install's questions) is the one every
     # later command uses
@@ -404,16 +487,19 @@ case "${1:-}" in
     [ -f "$ENV_FILE" ] && set -- "$@" --env-file "$ENV_FILE"
     # Chosen before the installer existed: the database the passwords above open
     [ -n "$MYSQL_PASSWORD" ] && [ ! -f "$DATA/app/config/database.json" ] && set -- "$@" -e DATABASE_URL="mysql://rommancer:$MYSQL_PASSWORD@mysql:3306/rommancer"
+    mkdir -p "$UPD"
     if [ "$OS" = Linux ]; then
-      set -- "$@" -v "$DATA/app:/data:z" -v "$SRC/seed:/seed:Z" -v "$ROMS:/roms:z" -v "$SRC/clients:/app/clients:ro,Z"
+      set -- "$@" -v "$DATA/app:/data:z" -v "$SRC/seed:/seed:Z" -v "$ROMS:/roms:z" -v "$SRC/clients:/app/clients:ro,Z" -v "$UPD:/update:z"
     else
       # The Mac's folders come through the machine's own sharing, which SELinux labels can't apply to
       set -- "$@" --security-opt label=disable -v rommancer-data:/data -v rommancer-secrets:/data/secrets \
-        -v "$SRC/seed:/seed" -v "$ROMS:/roms" -v "$SRC/clients:/app/clients:ro"
+        -v "$SRC/seed:/seed" -v "$ROMS:/roms" -v "$SRC/clients:/app/clients:ro" -v "$UPD:/update"
     fi
     $ENGINE run -d --name rommancer-api --network "$NET" --network-alias api --restart=on-failure "$@" \
-      -e DATA_DIR=/data -e SEED_DIR=/seed -e ROMMANCER_BUNDLED_DB=mysql:3306 -e TZ="${TZ:-$(host_tz)}" rommancer-api:latest
+      -e DATA_DIR=/data -e SEED_DIR=/seed -e UPDATE_DIR=/update -e ROMMANCER_BUNDLED_DB=mysql:3306 -e TZ="${TZ:-$(host_tz)}" rommancer-api:latest
     $ENGINE run -d --name rommancer-web --network "$NET" --restart=on-failure -p "$bind$WEB_PORT:80" rommancer-web:latest
+    # A service made before the update page existed gets its watcher
+    if service_on && [ ! -f "$UPD/watcher" ]; then watcher on; fi
     echo "Web on $(web_url)" ;;
   start)
     machine
@@ -476,8 +562,15 @@ case "${1:-}" in
     sh "$0" up
     ROMMANCER_SHOW_URL=$(web_url) sh "$SRC/deploy/install.sh" "http://127.0.0.1:$WEB_PORT" "$@"
     after_install "$svc" ;;
+  update | rollback)
+    # Run from a copy: update replaces the folder this script is in
+    mkdir -p "$UPD"
+    cp "$SRC/deploy/podman/update.sh" "$UPD/update.sh"
+    machine
+    ROMMANCER_SRC="$SRC" ROMMANCER_ENGINE="$ENGINE" ROMMANCER_WEB_PORT="$WEB_PORT" ROMMANCER_UPDATE_DIR="$UPD" \
+      ROMMANCER_RELEASES_URL="${ROMMANCER_RELEASES_URL:-$(confval ROMMANCER_RELEASES_URL || true)}" exec sh "$UPD/update.sh" "$@" ;;
   down) machine; $ENGINE rm -f rommancer-web rommancer-api rommancer-mysql ;;
   logs) $ENGINE logs --tail 100 -f "rommancer-${2:-api}" ;;
   status) $ENGINE ps -a --filter name=rommancer --format '{{.Names}}\t{{.Status}}' ;;
-  *) echo "Usage: $0 install|build|up|start|stop|service [on|off]|setup|down|logs [api|web|mysql]|status"; exit 2 ;;
+  *) echo "Usage: $0 install|build|up|start|stop|service [on|off]|setup|update [--check]|rollback|down|logs [api|web|mysql]|status"; exit 2 ;;
 esac

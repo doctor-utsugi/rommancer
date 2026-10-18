@@ -339,6 +339,10 @@
       },
       "cards": "Las tarjetas sin red (DS, flashcarts de GBA) se sincronizan con la app de PC. Una SD o carpeta montada en este servidor se añade como carpeta local.",
       "local": "Añadir carpeta local"
+    },
+    "ahead": {
+      "badge": "Más nueva que el servidor",
+      "help": "La app de esta consola es más nueva que la que reparte Rommancer {{version}}: se instaló desde otro sitio. Sigue funcionando; lo que necesite de un servidor más nuevo queda oculto hasta que se actualice el servidor (Administración > Actualizar)."
     }
   },
   "saves": {
@@ -1563,5 +1567,50 @@
     "devPassword": "Contraseña de desarrollador",
     "stored": "Guardada; déjala vacía para conservarla",
     "locked": "Lo fija el entorno del servidor; cámbialo allí"
+  },
+  "update": {
+    "nav": "Actualizar",
+    "navAvailable": "Actualización disponible",
+    "title": "Actualizar Rommancer",
+    "check": "Comprobar ahora",
+    "installed": "Rommancer {{version}}",
+    "dev": "Versión de desarrollo",
+    "devHelp": "Este servidor funciona desde un repositorio de git: actualízalo con git pull y luego build y up.",
+    "upToDate": "Al día",
+    "checkedAt": "Última comprobación: {{date}}.",
+    "neverChecked": "Aún no se ha comprobado.",
+    "checkError": "La última comprobación falló: {{error}}",
+    "daily": "Buscar una versión nueva una vez al día (consulta github.com)",
+    "available": "Hay una versión nueva: Rommancer {{version}}",
+    "safety": "Antes de actualizar se guarda una copia de la base de datos. Si la versión nueva no arranca, Rommancer vuelve solo a esta, con la base de datos como estaba. Mientras se actualiza, Rommancer no está disponible durante unos minutos.",
+    "button": "Actualizar a la {{version}}",
+    "confirm": "¿Actualizar Rommancer de la {{from}} a la {{to}}? No estará disponible durante unos minutos.",
+    "noWatcher": "El botón necesita Rommancer instalado como servicio. Mientras tanto, actualízalo desde el equipo donde funciona, en la carpeta de Rommancer:",
+    "noUpdater": "Este servidor no se instaló con rommancer.sh, así que no puede actualizarse solo. Actualízalo como lo instalaste; con rommancer.sh sería:",
+    "serviceHint": "Con ejecutar una vez rommancer.sh service on aparece el botón.",
+    "changes_one": "Qué cambia en esta versión",
+    "changes_other": "Qué cambia en estas {{count}} versiones",
+    "thisVersion": "Qué trajo la {{version}}",
+    "noNotes": "Esta versión no tiene notas.",
+    "running": "Actualizando a la {{to}}…",
+    "restarting": "Rommancer se está reiniciando con la versión nueva. Esta página sigue sola.",
+    "steps": {
+      "queued": "Esperando a que el equipo empiece la actualización.",
+      "download": "Descargando la versión nueva.",
+      "build": "Preparando la versión nueva. Tarda unos minutos.",
+      "backup": "Guardando una copia de la base de datos.",
+      "start": "Arrancando la versión nueva y aplicando sus cambios en la base de datos.",
+      "rollback": "La versión nueva no ha arrancado: volviendo a la anterior.",
+      "finished": "Hecho."
+    },
+    "result": {
+      "failed": "La actualización a la {{to}} falló antes de cambiar nada.",
+      "rolledback": "La {{to}} no arrancó, así que Rommancer volvió a la {{from}} con la base de datos como estaba.",
+      "done": "Actualizado a la {{to}}."
+    },
+    "resultHelp": "El registro de abajo cuenta qué pasó. Rommancer sigue funcionando como antes.",
+    "updated": "Rommancer está actualizado a la {{version}}.",
+    "reload": "Recargar la página",
+    "log": "Registro de la actualización"
   }
 }

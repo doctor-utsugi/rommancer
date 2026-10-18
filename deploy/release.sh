@@ -2,6 +2,7 @@
 # A release of Rommancer that installs without git: the source at HEAD plus the client apps built into
 # clients/*/release (not in git), as dist-release/rommancer.tar.gz and rommancer.zip. With --publish it tags
 # vVERSION and puts both on a GitHub release, so .../releases/latest/download/rommancer.tar.gz is always the newest.
+# CHANGELOG.md needs an entry "## VERSION (DATE)": it becomes the release's notes, which servers show before updating.
 #   deploy/release.sh [VERSION] [--publish]      VERSION defaults to the last tag with its minor number + 1
 set -eu
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
@@ -13,7 +14,7 @@ for a in "$@"; do
   case "$a" in
     --publish) PUBLISH=1 ;;
     v[0-9]* | [0-9]*) VERSION=${a#v} ;;
-    *) sed -n '2,5p' "$0"; exit 2 ;;
+    *) sed -n '2,6p' "$0"; exit 2 ;;
   esac
 done
 if [ -z "$VERSION" ]; then
@@ -23,6 +24,12 @@ if [ -z "$VERSION" ]; then
   VERSION="${major:-0}.$((${rest%%.*} + 1)).0"
 fi
 git rev-parse -q --verify "refs/tags/v$VERSION" >/dev/null && { echo "v$VERSION exists already" >&2; exit 1; }
+
+# This version's entry in CHANGELOG.md as committed: from its heading to the next one
+NOTES=$(git show HEAD:CHANGELOG.md 2>/dev/null | awk -v v="$VERSION" '
+  /^## / { if (found) exit; if (index($0, "## " v " ") == 1 || $0 == "## " v) { found = 1; next } }
+  found { print }' | sed -e '/./,$!d')
+[ -n "$NOTES" ] || { echo "CHANGELOG.md has no entry \"## $VERSION ($(date +%F))\": write it and commit it first" >&2; exit 1; }
 
 OUT="$ROOT/dist-release"
 rm -rf "$OUT"
@@ -59,6 +66,10 @@ TOKEN_FILE="$HOME/.config/git-tokens/github-doctor-utsugi"
 git tag -a "v$VERSION" -m "Rommancer $VERSION"
 git push -q origin "v$VERSION"
 gh release create "v$VERSION" -R "$REPO" --title "Rommancer $VERSION" --notes "$(cat <<EOF
+$NOTES
+
+---
+
 Installs on Linux, macOS and Windows with Podman, no git needed. On Linux:
 
 \`\`\`bash

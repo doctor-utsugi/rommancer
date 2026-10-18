@@ -339,6 +339,10 @@
       },
       "cards": "Cards without network (DS, GBA flashcarts) sync through the PC app. An SD card or folder mounted on this server is added as a local folder.",
       "local": "Add a local folder"
+    },
+    "ahead": {
+      "badge": "Newer than the server",
+      "help": "This console’s app is newer than the one Rommancer {{version}} hands out: it was installed from elsewhere. It keeps working; what it needs from a newer server stays hidden until the server is updated (Administration > Update)."
     }
   },
   "saves": {
@@ -1563,5 +1567,50 @@
     "devPassword": "Developer password",
     "stored": "Stored; leave empty to keep it",
     "locked": "Set by the server's environment; change it there"
+  },
+  "update": {
+    "nav": "Update",
+    "navAvailable": "Update available",
+    "title": "Update Rommancer",
+    "check": "Check now",
+    "installed": "Rommancer {{version}}",
+    "dev": "Development build",
+    "devHelp": "This server runs from a git checkout: update it with git pull, then build and up.",
+    "upToDate": "Up to date",
+    "checkedAt": "Last checked {{date}}.",
+    "neverChecked": "Not checked yet.",
+    "checkError": "The last check failed: {{error}}",
+    "daily": "Check for a new version once a day (asks github.com)",
+    "available": "Rommancer {{version}} is available",
+    "safety": "Before updating, the database is backed up. If the new version doesn’t start, Rommancer goes back to this one by itself, with the database as it was. Rommancer is unavailable for a few minutes while it updates.",
+    "button": "Update to {{version}}",
+    "confirm": "Update Rommancer from {{from}} to {{to}}? It is unavailable for a few minutes.",
+    "noWatcher": "The button needs Rommancer installed as a service. Until then, update it from the computer it runs on, in the Rommancer folder:",
+    "noUpdater": "This server was not installed with rommancer.sh, so it can’t update itself. Update it the way it was installed; with rommancer.sh it is:",
+    "serviceHint": "Running rommancer.sh service on once adds the button.",
+    "changes_one": "What changes in this version",
+    "changes_other": "What changes in these {{count}} versions",
+    "thisVersion": "What came with {{version}}",
+    "noNotes": "No notes for this version.",
+    "running": "Updating to {{to}}…",
+    "restarting": "Rommancer is restarting with the new version. This page carries on by itself.",
+    "steps": {
+      "queued": "Waiting for the computer to start the update.",
+      "download": "Downloading the new version.",
+      "build": "Preparing the new version. This takes a few minutes.",
+      "backup": "Backing up the database.",
+      "start": "Starting the new version and applying its database changes.",
+      "rollback": "The new version did not start: going back to the previous one.",
+      "finished": "Done."
+    },
+    "result": {
+      "failed": "The update to {{to}} failed before changing anything.",
+      "rolledback": "{{to}} did not start, so Rommancer went back to {{from}} with the database as it was.",
+      "done": "Updated to {{to}}."
+    },
+    "resultHelp": "The log below says what happened. Rommancer keeps running as before.",
+    "updated": "Rommancer is updated to {{version}}.",
+    "reload": "Reload the page",
+    "log": "Update log"
   }
 }

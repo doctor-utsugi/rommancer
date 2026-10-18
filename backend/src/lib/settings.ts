@@ -16,6 +16,8 @@ export const SERVER_SETTINGS = {
   seedAutoExport: { env: 'SEED_AUTO_EXPORT', fallback: 'true' },
   screenscraperDevId: { env: 'SCREENSCRAPER_DEV_ID', fallback: '' },
   screenscraperDevPassword: { env: 'SCREENSCRAPER_DEV_PASSWORD', fallback: '', secret: true },
+  // Ask GitHub once a day whether a newer Rommancer exists (Administration > Update)
+  updateCheck: { env: 'UPDATE_CHECK', fallback: 'true' },
 } as const;
 
 export type ServerSettingKey = keyof typeof SERVER_SETTINGS;

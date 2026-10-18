@@ -1257,6 +1257,10 @@ fn auto_update(app: AppHandle) {
             let server = state.settings.lock().unwrap().server.clone();
             let busy = !state.running.lock().unwrap().is_empty() || state.playing.lock().unwrap().is_some();
             let hidden = app.get_webview_window("main").map(|w| !w.is_visible().unwrap_or(false)).unwrap_or(true);
+            // A server older than this app: said in the window until it is updated
+            if let Some((protocol, _)) = update::server_info(&server) {
+                let _ = app.emit("server-older", protocol < update::PROTOCOL);
+            }
             match update::newer(&server) {
                 Some(v) if !busy => match update::kind() {
                     update::Kind::Replace(p) => match update::replace(&server, &p) {

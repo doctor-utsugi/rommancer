@@ -10,6 +10,7 @@ import { startHealthWatch } from './modules/storage/health.js';
 import { startExternalSyncCron } from './modules/sync/service.js';
 import { migrateWholeCards } from './modules/saves/cards.js';
 import { catalog } from './modules/browse/catalog.js';
+import { startUpdateChecks } from './modules/update/service.js';
 import { loadServerSettings, onServerSettingsChange } from './lib/settings.js';
 
 for (const d of [env.dataDir, env.mediaDir, env.savesDir, env.uploadsDir, env.datsDir, env.tmpDir, env.patchesDir]) fs.mkdirSync(d, { recursive: true });
@@ -26,6 +27,7 @@ onServerSettingsChange((changed) => changed.includes('externalSyncCron') && star
 startLocalDeviceWatcher();
 startSshSweep();
 startHealthWatch();
+startUpdateChecks();
 // Applies the seed (DATs, RA, scraping) if present; anything already imported is skipped
 if (env.seedOnStart && fs.existsSync(env.seedDir)) await enqueue('seed-apply', {});
 

@@ -304,15 +304,18 @@ function Main({ status, onChange }: { status: Status; onChange: () => void }) {
   const [results, setResults] = useState<Record<string, Finished>>({})
   const [updated, setUpdated] = useState(false)
   const [available, setAvailable] = useState('')
+  const [serverOlder, setServerOlder] = useState(false)
   const [version, setVersion] = useState('')
   useEffect(() => {
     void getVersion().then(setVersion)
     void invoke<Record<string, Finished>>('results').then((r) => setResults((now) => ({ ...r, ...now })))
     const u = listen('app-updated', () => setUpdated(true))
     const n = listen<string>('update-available', (e) => setAvailable(e.payload))
+    const o = listen<boolean>('server-older', (e) => setServerOlder(e.payload))
     return () => {
       void u.then((f) => f())
       void n.then((f) => f())
+      void o.then((f) => f())
     }
   }, [])
   const loadCards = useCallback(() => void invoke<Card[]>('cards').then(setCards), [])
@@ -465,6 +468,11 @@ function Main({ status, onChange }: { status: Status; onChange: () => void }) {
             <button className="primary" onClick={() => void invoke('restart_app')}>
               {t('restart')}
             </button>
+          </div>
+        )}
+        {serverOlder && (
+          <div className="banner">
+            <span className="grow">{t('serverOlder')}</span>
           </div>
         )}
         {available && !updated && (

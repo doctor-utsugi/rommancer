@@ -158,6 +158,7 @@ const en = {
   copy: 'Copy',
   updatedBanner: 'A newer version of the app has been installed.',
   availableBanner: 'Rommancer {version} is available: install the new package to update.',
+  serverOlder: 'Your Rommancer server is older than this app. Everything you see works; ask whoever runs it to update it (Administration > Update) for what is new.',
   downloadUpdate: 'Download',
   restart: 'Restart',
   g_knulli_title: 'Knulli / Batocera',

@@ -21,6 +21,8 @@ export function DevicesPage() {
   const { t } = useTranslation()
   const qc = useQueryClient()
   const { data } = useQuery({ queryKey: ['devices'], queryFn: () => get<any[]>('/devices') })
+  // The clients this server hands out: one on a console that is newer came from elsewhere (an app from GitHub)
+  const server = useQuery({ queryKey: ['version'], queryFn: () => get<{ version: string; clients: Record<'shell' | 'android' | 'desktop', string | null> }>('/version'), staleTime: Infinity })
   const [editing, setEditing] = useState<any | null | undefined>(undefined)
   const [newConn, setNewConn] = useState('LOCAL')
   const [jobId, setJobId] = useState<number | null>(null)
@@ -130,6 +132,11 @@ export function DevicesPage() {
                   <p className="text-xs text-muted-foreground">
                     {t('more.device.games', { count: d._count?.inventory ?? 0 })}
                     {d.clientVersion && ` · ${t('more.device.client')} ${d.clientVersion}${d.clientUpdatedAt ? ` (${t('more.device.clientSince', { date: formatDate(d.clientUpdatedAt) })})` : ''}`}
+                    {aheadOfServer(d, server.data?.clients) && (
+                      <Badge variant="outline" className="ml-2" title={t('devices.ahead.help', { version: server.data?.version })}>
+                        {t('devices.ahead.badge')}
+                      </Badge>
+                    )}
                   </p>
                 )}
                 <p className="text-xs text-muted-foreground">
@@ -190,6 +197,17 @@ export function DevicesPage() {
       {scripts && <ScriptsDialog device={scripts} onClose={() => setScripts(null)} />}
     </div>
   )
+}
+
+/** Whether the console's client is newer than the one this server hands out for it (Android app or shell client) */
+function aheadOfServer(d: { clientVersion?: string | null; firmware: { slug: string } }, shipped?: Record<string, string | null>) {
+  const mine = d.clientVersion
+  const theirs = shipped?.[d.firmware.slug.startsWith('android') ? 'android' : 'shell']
+  if (!mine || !theirs) return false
+  const n = (v: string) => v.split('.').map((x) => Number.parseInt(x, 10) || 0)
+  const [a, b] = [n(mine), n(theirs)]
+  for (let i = 0; i < 3; i++) if ((a[i] ?? 0) !== (b[i] ?? 0)) return (a[i] ?? 0) > (b[i] ?? 0)
+  return false
 }
 
 function ScriptsDialog({ device, onClose }: { device: any; onClose(): void }) {

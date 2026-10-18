@@ -29,6 +29,7 @@
     <string name="live_download">Downloading games %1$d/%2$d</string>
     <string name="live_pulls">Sending games to the server %1$d/%2$d</string>
     <string name="update_app">Update the app (%1$s)</string>
+    <string name="server_older">Your Rommancer server is older than this app. Everything you see works; ask whoever runs it to update it (Administration, Update) for what is new.</string>
     <string name="updating">Downloading the update…</string>
     <string name="sync_now">Sync now</string>
     <string name="conflicts">Conflicts (%1$d)</string>

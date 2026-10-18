@@ -193,6 +193,16 @@ linkPublicRouter.get('/android/rommancer-sync.apk', (_req, res) => {
   res.type('application/vnd.android.package-archive').download(f, 'rommancer-sync.apk');
 });
 
+/** The versions of the clients this server hands out: the shell client's, the Android app's and the desktop app's */
+export function shippedClients() {
+  const read = (f: string) => (fs.existsSync(f) ? fs.readFileSync(f, 'utf8').trim() : '');
+  return {
+    shell: /^CLIENT_VERSION=([\d.]+)/m.exec(read(CLIENT_SCRIPT))?.[1] ?? null,
+    android: read(path.join(ANDROID_DIR, 'version.txt')).split(/\s+/)[1] || null,
+    desktop: read(path.join(DESKTOP_DIR, 'version.txt')) || null,
+  };
+}
+
 // The Linux client itself, so a device only needs: wget -O- SERVER/api/v1/link/client.sh | sh
 linkPublicRouter.get('/client.sh', (_req, res) => {
   if (!fs.existsSync(CLIENT_SCRIPT)) throw new HttpError(404, 'Client not bundled');

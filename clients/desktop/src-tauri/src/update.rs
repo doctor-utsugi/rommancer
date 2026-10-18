@@ -53,6 +53,23 @@ pub fn newer(server: &str) -> Option<String> {
     (parse(&v) > parse(env!("CARGO_PKG_VERSION"))).then_some(v)
 }
 
+/// The protocol of the server this app was built with (backend/src/lib/version.ts)
+pub const PROTOCOL: i64 = 1;
+
+/// What the server offers (GET /api/v1/version): its protocol and feature names. The app can be newer than its server;
+/// before using something a server gained later, check its feature name and leave it out when it is missing. A server
+/// from before 1.98 has no such route: protocol 0, no features. None when the server could not be reached.
+pub fn server_info(server: &str) -> Option<(i64, Vec<String>)> {
+    let url = format!("{}/api/v1/version", server.trim_end_matches('/'));
+    let r = client().get(url).timeout(Duration::from_secs(20)).send().ok()?;
+    if r.status() == reqwest::StatusCode::NOT_FOUND {
+        return Some((0, Vec::new()));
+    }
+    let v: serde_json::Value = r.error_for_status().ok()?.json().ok()?;
+    let features = v["features"].as_array().map(|a| a.iter().filter_map(|f| f.as_str().map(String::from)).collect()).unwrap_or_default();
+    Some((v["protocol"].as_i64().unwrap_or(0), features))
+}
+
 fn parse(v: &str) -> Vec<u32> {
     v.split('.').map(|n| n.parse().unwrap_or(0)).collect()
 }

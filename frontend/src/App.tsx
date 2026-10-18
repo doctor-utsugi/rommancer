@@ -28,6 +28,7 @@ import { LinkPage } from '@/pages/link'
 import { GuidesPage } from '@/pages/guides'
 import { DevicePage } from '@/pages/device'
 import { AdminServerPage } from '@/pages/admin/server'
+import { AdminUpdatePage } from '@/pages/admin/update'
 import { SetupPage, type SetupState } from '@/pages/setup'
 import { useQuery } from '@tanstack/react-query'
 import { get } from '@/lib/api'
@@ -85,6 +86,7 @@ export function App() {
             <Route path="admin/jobs" element={<AdminJobsPage />} />
             <Route path="admin/integrations" element={<AdminIntegrationsPage />} />
             <Route path="admin/server" element={<AdminServerPage />} />
+            <Route path="admin/update" element={<AdminUpdatePage />} />
             <Route path="admin/sync" element={<AdminSyncPage />} />
             <Route path="admin/review" element={<AdminReviewPage />} />
           </>

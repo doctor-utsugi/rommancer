@@ -14,3 +14,20 @@ Rommancer installs from the web app (`frontend/src/pages/setup.tsx`) or from the
 
 A change to one installer or to the setup API goes to the other in the same commit. `backend/test/installer-parity.test.ts`
 fails when they drift; run it after touching any of these files, and extend it when a new kind of option appears.
+
+## Nothing an update does may break
+
+People update Rommancer from Administration > Update (or `rommancer.sh update`), and an update that fails goes back to
+the previous version by itself. Consoles may run clients older or newer than the server. So:
+
+- **Migrations only add** (`backend/prisma/migration-rules.ts`): new tables, nullable or defaulted columns, wider types.
+  Removing or renaming takes two releases, the second marked `-- rommancer: contract <why>`. New migrations are named
+  `m041_name`, `m042_name`… (`npm run migration:new -w backend -- name` does it). `backend/test/migrations.test.ts`
+  checks both; `backend/test/upgrade.test.ts` migrates a 1.97 database with data.
+- **The API only grows.** No route is removed or renamed (`backend/test/api-surface.test.ts`; new routes go into
+  `backend/test/fixtures/api-routes.txt` with `UPDATE_API_SNAPSHOT=1`), and no field changes meaning.
+- **Clients check before using something new.** A route or field a client needs from a newer server gets a name in
+  `FEATURES` (`backend/src/lib/version.ts`); the Android and desktop apps read `GET /api/v1/version` (`ServerInfo.kt`,
+  `update::server_info`) and leave the feature out when the server lacks it.
+- **Every release has a `CHANGELOG.md` entry** (`## VERSION (DATE)`), written for the people who use Rommancer.
+  `deploy/release.sh` refuses to publish without it, and the update page shows it.

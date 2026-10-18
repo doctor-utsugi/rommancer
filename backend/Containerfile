@@ -21,6 +21,8 @@ COPY --from=build /app/backend/prisma backend/prisma
 COPY --from=build /app/backend/package.json backend/package.json
 # Sync client served at /api/v1/link/client.sh
 COPY clients clients
+# The version and its changelog, for the update page (VERSION says "dev" outside a release)
+COPY VERSION CHANGELOG.md ./
 WORKDIR /app/backend
 VOLUME /data
 EXPOSE 3000

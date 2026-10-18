@@ -17,8 +17,10 @@ import { agentRouter } from './modules/saves/agent.js';
 import { browseRouter } from './modules/browse/agent.js';
 import { configAgentRouter } from './modules/devconfig/agent.js';
 import { configRouter } from './modules/devconfig/routes.js';
-import { linkPublicRouter, linkRouter } from './modules/link/routes.js';
+import { linkPublicRouter, linkRouter, shippedClients } from './modules/link/routes.js';
 import { env } from './config/env.js';
+import { FEATURES, PROTOCOL, VERSION } from './lib/version.js';
+import { updateRouter } from './modules/update/routes.js';
 import { setupRouter } from './modules/setup/routes.js';
 import './modules/sync/service.js';
 import { journeysRouter, journeysAgentRouter } from './modules/journeys/routes.js';
@@ -40,7 +42,11 @@ export function createApp() {
 
   const api = express.Router();
   api.get('/health', (_req, res) => {
-    res.json({ ok: true });
+    res.json({ ok: true, version: VERSION });
+  });
+  // What this server is and offers, for clients newer than it (lib/version.ts) and for the update page
+  api.get('/version', (_req, res) => {
+    res.json({ version: VERSION, protocol: PROTOCOL, features: FEATURES, clients: shippedClients() });
   });
   api.use('/auth', express.json({ limit: '1mb' }), authRouter);
   // The installer's second step (the first runs before the server has a database: installer.ts)
@@ -55,6 +61,7 @@ export function createApp() {
   api.use(requireAuth);
   api.use('/users', usersRouter);
   api.use('/invitations', invitationsRouter);
+  api.use('/admin/update', updateRouter);
   api.use('/admin', adminRouter);
   api.use('/jobs', jobsRouter);
   api.use('/lists', listsRouter);

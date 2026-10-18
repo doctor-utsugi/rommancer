@@ -23,7 +23,10 @@ import {
   Upload,
   User,
   Users,
+  ArrowUpCircle,
 } from 'lucide-react'
+import { useQuery } from '@tanstack/react-query'
+import { fetchUpdate } from '@/pages/admin/update'
 import { cn } from '@/lib/utils'
 import { useAuth } from '@/lib/auth'
 import { Button } from '@/components/ui/button'
@@ -32,7 +35,7 @@ import { LOCALES } from '@/i18n/locales'
 import { patch } from '@/lib/api'
 import { ActivityDock } from '@/components/activity'
 
-function Item({ to, icon: Icon, label }: { to: string; icon: typeof Home; label: string }) {
+function Item({ to, icon: Icon, label, dot }: { to: string; icon: typeof Home; label: string; dot?: boolean }) {
   return (
     <NavLink
       to={to}
@@ -46,6 +49,7 @@ function Item({ to, icon: Icon, label }: { to: string; icon: typeof Home; label:
     >
       <Icon className="size-4" />
       {label}
+      {dot && <span className="ml-auto size-2 rounded-full bg-primary" aria-hidden />}
     </NavLink>
   )
 }
@@ -54,6 +58,8 @@ export function Layout() {
   const { t } = useTranslation()
   const { user, logout, can } = useAuth()
   const [navigationOpen, setNavigationOpen] = useState(false)
+  // A newer Rommancer: a dot on Update for admins
+  const update = useQuery({ queryKey: ['update'], queryFn: fetchUpdate, enabled: user?.role === 'ADMIN', staleTime: 3600_000, retry: false })
   const switchLang = async (next: string) => {
     await setLanguage(next)
     await patch('/users/me', { locale: next }).catch(() => {})
@@ -87,6 +93,7 @@ export function Layout() {
             <Item to="/admin/users" icon={Users} label={t('nav.users')} />
             <Item to="/admin/integrations" icon={Cable} label={t('nav.integrations')} />
             <Item to="/admin/server" icon={Server} label={t('nav.server')} />
+            <Item to="/admin/update" icon={ArrowUpCircle} label={update.data?.available ? t('update.navAvailable') : t('update.nav')} dot={update.data?.available} />
             <Item to="/admin/jobs" icon={Activity} label={t('nav.jobs')} />
           </>
         )}

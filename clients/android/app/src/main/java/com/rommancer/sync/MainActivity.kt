@@ -515,9 +515,12 @@ private fun Linked(store: Store, ownScroll: Boolean, setOwnScroll: (Boolean) -> 
 
     // A newer app on the server: offered at the top of the menu; asked again every hour, as the app may stay open for days
     var update by remember { mutableStateOf<Updater.Available?>(null) }
+    // The server's version and what it offers: one older than this app is said under the state
+    var serverInfo by remember { mutableStateOf(ServerInfo.last) }
     LaunchedEffect(Unit) {
         while (true) {
             withContext(Dispatchers.IO) { Updater.check(context, store) }?.let { update = it }
+            withContext(Dispatchers.IO) { ServerInfo.fetch(store) }?.let { serverInfo = it }
             delay(3_600_000)
         }
     }
@@ -764,6 +767,7 @@ private fun Linked(store: Store, ownScroll: Boolean, setOwnScroll: (Boolean) -> 
             // Live work, only while it runs
             live?.takeIf { it.phase == "roms-download" }?.let { Text(stringResource(R.string.live_download, it.done, it.total), fontSize = 16.sp, color = Accent) }
             pullLive?.let { Text(stringResource(R.string.live_pulls, it.done, it.total), fontSize = 16.sp, color = Accent) }
+            serverInfo?.takeIf { it.older }?.let { Text(stringResource(R.string.server_older), fontSize = 14.sp, color = Dim) }
             Spacer(Modifier.height(4.dp))
 
             val titleUpdate = stringResource(R.string.updating)
