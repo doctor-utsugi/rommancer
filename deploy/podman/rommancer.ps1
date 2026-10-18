@@ -66,7 +66,8 @@ function Test-PortBusy($port) {
   } catch { $true }
 }
 
-# install's port and who may open the web: the ones given, or the person's answers (a free port is proposed)
+# install's port: the one given, or the person's answer to a free one proposed. --listen local (behind a reverse
+# proxy) is only taken, never asked: Rommancer is for the network
 function Select-Web($port, $listen) {
   $ask = -not [Console]::IsInputRedirected
   $bad = { param($v) if ($Es) { "El $v no sirve: tiene que ser un número entre 1 y 65535 que no esté usando otro programa." } else { "$v won't do: it has to be a number from 1 to 65535 that no other program uses." } }
@@ -90,10 +91,6 @@ function Select-Web($port, $listen) {
   if ($listen) {
     if ($listen -ne 'network' -and $listen -ne 'local') { Write-Host '--listen: network or local'; exit 2 }
     $script:Listen = $listen
-  } elseif ($ask) {
-    if ($Es) { $a = Read-Host "¿Desde dónde se podrá abrir Rommancer?`n`nTus consolas y tus otros equipos solo lo encuentran si se puede abrir desde la red.`n`n 1) Desde cualquier equipo de tu red (recomendado)`n 2) Solo desde este equipo`n[1]" }
-    else { $a = Read-Host "Where can Rommancer be opened from?`n`nYour consoles and other computers only find it when it can be opened from the network.`n`n 1) Any computer on your network (recommended)`n 2) Only this computer`n[1]" }
-    $script:Listen = if ($a -match '^(2|local)$') { 'local' } else { 'network' }
   }
 }
 
@@ -269,7 +266,7 @@ switch ($args[0]) {
         Write-Host "Usage: rommancer.ps1 install [--roms PATH] [--engine podman|docker] [--service yes|no] [installer options]: builds, starts and installs Rommancer"
         Write-Host "  --engine podman|docker   what runs the containers (Podman when both are there and it is not given)"
         Write-Host "  --port PORT              the web's port (a free one from 8096 on when not given)"
-        Write-Host "  --listen network|local   who may open it: any computer of the network (default) or only this one"
+        Write-Host "  --listen local           only this computer may open it (behind a reverse proxy); the network by default"
         Write-Host "  --service yes|no   install it as a service, started at every login (asked when not given); the installer's options:"
         # install.sh's own --help text
         $sh = [IO.File]::ReadAllText((In-Src deploy install.sh))

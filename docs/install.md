@@ -134,13 +134,12 @@ which is slower than a Linux disk: the first scan of a large collection takes lo
    choose a folder that holds them all.
 3. **The port.** It proposes 8096, or the first free one after it when another program already uses 8096. If you
    type a port that is taken, it says so and asks again.
-4. **Where Rommancer can be opened from.** From any computer of your network (the default, and what your consoles
-   need) or only from the computer it runs on (then you reach it through a reverse proxy or an SSH tunnel).
-5. **The database.** The one that comes with Rommancer is ready to use and needs nothing filled in. The other choice
+4. **The database.** The one that comes with Rommancer is ready to use and needs nothing filled in. The other choice
    is a MySQL 8 or MariaDB server of yours, where the database must already exist.
-6. **Your account:** a username and a password. The email is optional; add it later in your profile.
+5. **Your account:** a username and a password. The email is optional; add it later in your profile.
 
-Your choices of engine, roms folder, port and network are kept in `~/.config/rommancer/deploy.conf`, and every later
+Rommancer opens to your local network, since that is where your consoles reach it. Behind a reverse proxy you can
+keep it to the computer it runs on with `install --listen local`. Your choices of engine, roms folder and port are kept in `~/.config/rommancer/deploy.conf`, and every later
 `up` uses them. Every other setting (public address, sync schedule, data seed, ScreenScraper keys) starts with a value that works and
 is in Administration > Server. On its first start Rommancer generates its secrets into `data/secrets` (on macOS and
 Windows, the `rommancer-secrets` volume). Keep them in your backups: they hold the key that encrypts the stored
@@ -197,7 +196,7 @@ Every answer can be given as an option, and then nothing is asked (`deploy/insta
 
 ```bash
 ROMMANCER_ADMIN_PASSWORD='your password' sh rommancer/deploy/podman/rommancer.sh install \
-  --roms /srv/roms --port 8096 --listen network --service yes --lang en --db bundled --admin admin
+  --roms /srv/roms --port 8096 --service yes --lang en --db bundled --admin admin
 ```
 
 `ROMMANCER_DB_PASSWORD` gives an external database's password the same way.

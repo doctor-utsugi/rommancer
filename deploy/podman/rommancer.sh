@@ -79,11 +79,6 @@ Primero te pedirá la carpeta de tus roms. Luego preparará los contenedores, qu
 
 $(if [ -n "$2" ]; then echo "El $2 ya lo usa otro programa, así que te propongo el $3, que está libre."; else echo "El $3 está libre."; fi)" ;;
       portBad) echo "El $2 no sirve: tiene que ser un número entre 1 y 65535 que no esté usando otro programa." ;;
-      listen) echo "¿Desde dónde se podrá abrir Rommancer?
-
-Tus consolas y tus otros equipos solo lo encuentran si se puede abrir desde la red." ;;
-      network) echo "Desde cualquier equipo de tu red (recomendado)" ;;
-      local) echo "Solo desde este equipo" ;;
       cancel) echo Cancelar ;;
       engine) echo "¿Con qué quieres ejecutar los contenedores?
 
@@ -130,11 +125,6 @@ First it asks for your roms folder. Then it prepares the containers, which takes
 
 $(if [ -n "$2" ]; then echo "Another program already uses $2, so here is $3, which is free."; else echo "$3 is free."; fi)" ;;
       portBad) echo "$2 won't do: it has to be a number from 1 to 65535 that no other program uses." ;;
-      listen) echo "Where can Rommancer be opened from?
-
-Your consoles and other computers only find it when it can be opened from the network." ;;
-      network) echo "Any computer on your network (recommended)" ;;
-      local) echo "Only this computer" ;;
       cancel) echo Cancel ;;
       engine) echo "Which one should run the containers?
 
@@ -325,7 +315,8 @@ free_port() {
   echo "$p"
 }
 
-# install's port and who may open the web: the ones given, or the person's answers (a free port is proposed)
+# install's port: the one given, or the person's answer to a free one proposed. --listen local (behind a reverse
+# proxy) is only taken, never asked: Rommancer is for the network
 choose_web() {
   box=''
   [ -z "$3" ] && [ -t 2 ] && command -v whiptail >/dev/null 2>&1 && box=1
@@ -355,15 +346,6 @@ choose_web() {
   fi
   if [ -n "$2" ]; then
     case "$2" in network | local) LISTEN=$2 ;; *) echo "--listen: network or local" >&2; exit 2 ;; esac
-  elif [ -t 0 ]; then
-    if [ -n "$box" ]; then
-      LISTEN=$(whiptail --title Rommancer --ok-button "$(say ok)" --cancel-button "$(say cancel)" --notags --default-item "$LISTEN" \
-        --menu "$(say listen)" 14 76 2 network "$(say network)" local "$(say local)" 3>&1 1>&2 2>&3) || exit 1
-    else
-      printf '%s\n 1) %s\n 2) %s\n[1]: ' "$(say listen)" "$(say network)" "$(say local)" >&2
-      IFS= read -r a || a=
-      case "$a" in 2 | local) LISTEN=local ;; *) LISTEN=network ;; esac
-    fi
   fi
 }
 
@@ -457,7 +439,7 @@ case "${1:-}" in
           echo "Usage: $0 install [--roms PATH] [--engine podman|docker] [--service yes|no] [installer options]: builds, starts and installs Rommancer"
           echo "  --engine podman|docker   what runs the containers (Podman when both are there and it is not given)"
           echo "  --port PORT              the web's port (a free one from 8096 on when not given)"
-          echo "  --listen network|local   who may open it: any computer of the network (default) or only this one"
+          echo "  --listen local           only this computer may open it (behind a reverse proxy); the network by default"
           echo "  --service yes|no   install it as a service, started with the computer (asked when not given); the installer's options:"
           exec sh "$SRC/deploy/install.sh" --help ;;
         --port) port=${1:-}; [ "$n" -gt 0 ] && { shift; n=$((n - 1)); } ;;
