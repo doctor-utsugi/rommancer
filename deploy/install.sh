@@ -13,6 +13,7 @@ Usage: install.sh [URL] [options]
     --db-host HOST  --db-port PORT  --db-name NAME  --db-user USER  --db-password PASSWORD
   --admin USER  --password PASSWORD     your account
   --public-url URL       the web address, when Rommancer is reached from the internet (empty: a home network)
+  --roms PATH            the folder with your roms, when installed with rommancer.sh install --web
 Every option given skips its question; with all of them nothing is asked (unattended installs).
 The passwords can come from ROMMANCER_DB_PASSWORD and ROMMANCER_ADMIN_PASSWORD instead, out of sight of ps.
 EOF
@@ -20,7 +21,7 @@ EOF
 
 URL="http://127.0.0.1:8096"
 PLAIN=
-O_LANG='' O_DB='' O_DB_HOST='' O_DB_PORT='' O_DB_NAME='' O_DB_USER='' O_ADMIN='' O_PUBLIC_URL=''
+O_LANG='' O_DB='' O_DB_HOST='' O_DB_PORT='' O_DB_NAME='' O_DB_USER='' O_ADMIN='' O_PUBLIC_URL='' O_ROMS='' TOKEN='' A_GIVEN='' TOTAL=2
 O_DB_PASSWORD=${ROMMANCER_DB_PASSWORD:-} O_PASSWORD=${ROMMANCER_ADMIN_PASSWORD:-}
 # Which answers came with the command (an empty database password is an answer too)
 G_DB_PASSWORD=${ROMMANCER_DB_PASSWORD+1} G_PASSWORD=${ROMMANCER_ADMIN_PASSWORD+1} G_PUBLIC_URL=
@@ -44,6 +45,7 @@ while [ $# -gt 0 ]; do
     --admin) O_ADMIN=$val ;;
     --password) O_PASSWORD=$val G_PASSWORD=1 ;;
     --public-url) O_PUBLIC_URL=$val G_PUBLIC_URL=1 ;;
+    --roms) O_ROMS=$val ;;
     --*) usage >&2; exit 2 ;;
     *) URL="${opt%/}" ;;
   esac
@@ -76,7 +78,7 @@ t() {
       waiting) echo "Esperando a que Rommancer responda en $SHOWN" ;;
       unreachable) echo "Rommancer no responde en $SHOWN. Comprueba que está en marcha (rommancer.sh status)." ;;
       installed) echo "Rommancer ya estaba instalado. Entra en $SHOWN" ;;
-      step) echo "Paso $2 de 2" ;;
+      step) echo "Paso $2 de $TOTAL" ;;
       dbTitle) echo "Elige dónde guardar los datos" ;;
       dbBundled) echo "La base de datos que trae Rommancer (recomendado)" ;;
       dbBundledHint) echo "Ya está preparada y con sus contraseñas puestas. No tienes que rellenar nada." ;;
@@ -108,6 +110,10 @@ t() {
       publicUrl) echo "Dirección web (opcional)" ;;
       publicUrlHint) echo "Solo si Rommancer va a estar accesible desde internet, por ejemplo https://roms.ejemplo.com. Las consolas y los móviles se conectan a través de ella. En una red de casa, déjala vacía. Se puede cambiar luego en Administración > Servidor." ;;
       badUrl) echo "La dirección web tiene que empezar por http:// o https://." ;;
+      romsTitle) echo "¿Dónde están tus roms?" ;;
+      romsHint) echo "Elige la carpeta donde están; si las tienes en varios discos, una que los contenga a todos. Rommancer la lee tal cual: no mueve, renombra ni borra nada si no se lo pides." ;;
+      romsRestarting) echo "Arrancando Rommancer con esa carpeta. Tarda unos segundos…" ;;
+      romsFailed) echo "Rommancer no ha arrancado con esa carpeta. Vuelve a intentarlo, o elígela luego con rommancer.sh up." ;;
       badDb) echo "--db: bundled o external" ;;
       creating) echo "Creando tu cuenta…" ;;
       failed) echo "Algo ha fallado" ;;
@@ -123,7 +129,7 @@ t() {
       waiting) echo "Waiting for Rommancer to answer at $SHOWN" ;;
       unreachable) echo "Rommancer doesn't answer at $SHOWN. Check that it is running (rommancer.sh status)." ;;
       installed) echo "Rommancer was already installed. Log in at $SHOWN" ;;
-      step) echo "Step $2 of 2" ;;
+      step) echo "Step $2 of $TOTAL" ;;
       dbTitle) echo "Choose where to keep the data" ;;
       dbBundled) echo "The database that comes with Rommancer (recommended)" ;;
       dbBundledHint) echo "It is ready and its passwords are already set. Nothing to fill in." ;;
@@ -155,6 +161,10 @@ t() {
       publicUrl) echo "Web address (optional)" ;;
       publicUrlHint) echo "Only if Rommancer will be reachable from the internet, for example https://roms.example.com. Consoles and phones connect through it. On a home network, leave it empty. Administration > Server changes it later." ;;
       badUrl) echo "The web address has to start with http:// or https://." ;;
+      romsTitle) echo "Where are your roms?" ;;
+      romsHint) echo "Pick the folder that holds them; if they are on several disks, one that holds them all. Rommancer reads it as it is: nothing in it is moved, renamed or deleted unless you ask." ;;
+      romsRestarting) echo "Starting Rommancer with that folder. It takes a few seconds…" ;;
+      romsFailed) echo "Rommancer didn't start with that folder. Try again, or choose it later with rommancer.sh up." ;;
       badDb) echo "--db: bundled or external" ;;
       creating) echo "Creating your account…" ;;
       failed) echo "Something went wrong" ;;
@@ -273,10 +283,10 @@ jget() { printf '%s' "$OUT" | sed -nE "s/.*\"$1\":\"(([^\"\\\\]|\\\\.)*)\".*/\\1
 # call METHOD PATH [BODY]: sets CODE and OUT
 call() {
   if [ -n "${3:-}" ]; then
-    r=$(curl -s -m 600 -X "$1" -H 'Content-Type: application/json' --data-binary "$3" -w '\n%{http_code}' "$API$2" 2>/dev/null) || r="
+    r=$(curl -s -m 600 -X "$1" -H 'Content-Type: application/json' ${TOKEN:+-H "Authorization: Bearer $TOKEN"} --data-binary "$3" -w '\n%{http_code}' "$API$2" 2>/dev/null) || r="
 000"
   else
-    r=$(curl -s -m 10 -w '\n%{http_code}' "$API$2" 2>/dev/null) || r="
+    r=$(curl -s -m 10 ${TOKEN:+-H "Authorization: Bearer $TOKEN"} -w '\n%{http_code}' "$API$2" 2>/dev/null) || r="
 000"
   fi
   CODE=$(printf '%s' "$r" | tail -n 1)
@@ -439,7 +449,46 @@ $(t adminHint)"
     # Someone finished the installation meanwhile (the web installer, another console)
     [ "$CODE" = 409 ] && exit 1
   done
-  if [ -n "$given" ]; then [ $UI = box ] && clear; t finished "$SHOWN" "$A_USER"; return; fi
+  A_GIVEN=$given
+  # Logged in: the roms step is the administrator's
+  TOKEN=$(jget accessToken)
+}
+
+roms_body() {
+  printf '{%s}' "$(jstr path "$R_PATH")"
+}
+
+# Installed from the browser (rommancer.sh install --web): the folder with the roms, which the computer mounts
+roms_step() {
+  call GET /setup/roms
+  R_PATH=${O_ROMS:-$(jget current)}
+  given=
+  [ -n "$O_ROMS" ] && given=1
+  [ -n "$given" ] || note "$(t step 3) · $(t romsTitle)
+
+$(t romsHint)"
+  while :; do
+    [ -n "$given" ] || R_PATH=$(need "$(t romsTitle)" "$R_PATH")
+    call_waiting "$(t romsRestarting)" POST /setup/roms "$(roms_body)"
+    [ "$CODE" = 200 ] && break
+    [ -n "$given" ] && die "$(why)"
+    note "$(why)"
+  done
+  case "$OUT" in *'"restarting":true'*) ;; *) return ;; esac
+  # The computer starts Rommancer again with that folder: done once it answers with it
+  R_PATH=$(jget path) s=0
+  status "$(t romsRestarting)"
+  while :; do
+    sleep 2
+    s=$((s + 2))
+    call GET /setup/roms
+    [ "$CODE" = 200 ] && [ "$(jget current)" = "$R_PATH" ] && return
+    [ $s -ge 180 ] && die "$(t romsFailed)"
+  done
+}
+
+finish() {
+  if [ -n "$A_GIVEN" ]; then [ $UI = box ] && clear; t finished "$SHOWN" "$A_USER"; return; fi
   note "$(t finished "$SHOWN" "$A_USER")"
   if [ $UI = box ]; then clear; t finished "$SHOWN" "$A_USER"; fi
 }
@@ -455,6 +504,7 @@ if [ -n "${G_PASSWORD:-}" ] && [ -z "$O_PASSWORD" ]; then die "--password: $(t r
 
 wait_setup
 SETUP=$OUT
+case "$SETUP" in *'"needsRoms":true'*) TOTAL=3 ;; esac
 case "$SETUP" in *'"needsAdmin":false'*) note "$(t installed)"; exit 0 ;; esac
 
 if [ -z "$O_LANG" ]; then
@@ -468,3 +518,5 @@ case "$SETUP" in *'"needsDatabase":true'*) database_step ;; esac
 # A database chosen anew may already hold an installation
 case "$OUT" in *'"needsAdmin":false'*) note "$(t installed)"; exit 0 ;; esac
 admin_step
+case "$SETUP" in *'"needsRoms":true'*) roms_step ;; esac
+finish

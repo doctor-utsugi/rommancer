@@ -150,6 +150,8 @@ GET /api/v1/scrape/archive-manuals/:gameId
 GET /api/v1/scrape/status
 GET /api/v1/settings/consoles
 GET /api/v1/setup/
+GET /api/v1/setup/roms
+GET /api/v1/setup/roms/folders
 GET /api/v1/systems
 GET /api/v1/users/
 GET /api/v1/users/directory
@@ -285,6 +287,7 @@ POST /api/v1/scrape/game/:id
 POST /api/v1/settings/consoles/wifi
 POST /api/v1/setup/admin
 POST /api/v1/setup/database
+POST /api/v1/setup/roms
 POST /api/v1/uploads/
 POST /api/v1/uploads/unverified
 POST /api/v1/users/

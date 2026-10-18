@@ -3,8 +3,8 @@
 #   curl -fsSL https://github.com/doctor-utsugi/rommancer/releases/latest/download/get.sh | sh
 # Downloads the newest release into ~/rommancer (ROMMANCER_DIR elsewhere), starts it with its ready-made images and
 # as a service (so it starts with the computer and Administration > Update works), asking nothing, and ends with the
-# address where the installer in the browser finishes: database, account, web address. The roms go in
-# ~/rommancer-roms unless ROMMANCER_ROMS says otherwise. Options after "sh -s --" go to rommancer.sh install.
+# address where the installer in the browser finishes: database, account and the folder with the roms. Options
+# after "sh -s --" go to rommancer.sh install.
 set -eu
 REPO=doctor-utsugi/rommancer
 DIR="${ROMMANCER_DIR:-$HOME/rommancer}"

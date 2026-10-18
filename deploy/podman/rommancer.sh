@@ -78,7 +78,7 @@ Rommancer funciona dentro de contenedores, con Podman (recomendado) o con Docker
 
 Primero te pedirá la carpeta de tus roms. Luego preparará los contenedores, que la primera vez tarda unos minutos, y al final elegirás la base de datos y crearás tu cuenta." ;;
       ok) echo Aceptar ;;
-      web) printf '\nFalta un paso: abre %s en el navegador para terminar la instalación (base de datos y tu cuenta).\nTus roms van en %s.\n\n' "$(web_url)" "$ROMS" ;;
+      web) printf '\nFalta un paso: abre %s en el navegador para terminar la instalación.\n\n' "$(web_url)" ;;
       port) echo "¿En qué puerto quieres abrir Rommancer?
 
 $(if [ -n "$2" ]; then echo "El $2 ya lo usa otro programa, así que te propongo el $3, que está libre."; else echo "El $3 está libre."; fi)" ;;
@@ -125,7 +125,7 @@ Rommancer runs inside containers, with Podman (recommended) or Docker. Everythin
 
 First it asks for your roms folder. Then it prepares the containers, which takes a few minutes the first time, and last you choose the database and create your account." ;;
       ok) echo Ok ;;
-      web) printf '\nOne step left: open %s in your browser to finish installing (database and your account).\nYour roms go in %s.\n\n' "$(web_url)" "$ROMS" ;;
+      web) printf '\nOne step left: open %s in your browser to finish installing.\n\n' "$(web_url)" ;;
       port) echo "Which port should Rommancer use?
 
 $(if [ -n "$2" ]; then echo "Another program already uses $2, so here is $3, which is free."; else echo "$3 is free."; fi)" ;;
@@ -378,6 +378,15 @@ host_ip() {
 }
 
 # The address to open Rommancer at: from the network when it listens there
+# Where roms usually are on this computer, for the installer in the browser to browse
+browse_roots() {
+  if [ "$OS" = Darwin ]; then set -- "$HOME" /Volumes; else set -- "$HOME" /mnt /media /run/media /srv; fi
+  for d in "$@"; do
+    case "$d" in *[[:space:]:]*) continue ;; esac
+    [ -d "$d" ] && echo "$d"
+  done
+}
+
 # The release's images from the registry (deploy/release.sh puts them there), named as a local build names them
 REGISTRY="${ROMMANCER_REGISTRY:-ghcr.io/doctor-utsugi}"
 pull_images() {
@@ -507,6 +516,17 @@ case "${1:-}" in
     # Chosen before the installer existed: the database the passwords above open
     [ -n "$MYSQL_PASSWORD" ] && [ ! -f "$DATA/app/config/database.json" ] && set -- "$@" -e DATABASE_URL="mysql://rommancer:$MYSQL_PASSWORD@mysql:3306/rommancer"
     mkdir -p "$UPD"
+    set -- "$@" -e ROMMANCER_ROMS_HOST="$ROMS"
+    # While the installer in the browser asks for the roms folder, the places it usually is can be browsed, read-only
+    if [ -f "$UPD/choose-roms" ]; then
+      browse=''
+      for d in $(browse_roots); do
+        set -- "$@" -v "$d:/host$d:ro"
+        browse="$browse${browse:+:}$d"
+      done
+      set -- "$@" -e ROMMANCER_BROWSE="$browse"
+      [ "$OS" = Linux ] && set -- "$@" --security-opt label=disable
+    fi
     if [ "$OS" = Linux ]; then
       set -- "$@" -v "$DATA/app:/data:z" -v "$SRC/seed:/seed:Z" -v "$ROMS:/roms:z" -v "$SRC/clients:/app/clients:ro,Z" -v "$UPD:/update:z"
     else
@@ -580,6 +600,8 @@ case "${1:-}" in
     choose_web "$port" "$listen" "$plain"
     export ROMMANCER_WEB_PORT="$WEB_PORT" ROMMANCER_LISTEN="$LISTEN"
     sh "$0" build
+    # The installer in the browser asks for the roms folder: until then the computer's folders can be browsed
+    if [ -n "$web" ]; then mkdir -p "$UPD"; touch "$UPD/choose-roms"; fi
     sh "$0" up
     if [ -n "$web" ]; then
       after_install "$svc"
@@ -589,6 +611,14 @@ case "${1:-}" in
       after_install "$svc"
     fi ;;
   update | rollback)
+    # The installer in the browser asks the same watcher for another roms folder: Rommancer starts again with it
+    if [ "$1" = update ] && [ "${2:-}" = --request ] && grep -q '"roms":' "$UPD/request" 2>/dev/null; then
+      roms=$(sed -n 's/.*"roms":"\([^"]*\)".*/\1/p' "$UPD/request")
+      rm -f "$UPD/request"
+      [ -d "$roms" ] || { echo "Not a folder: $roms" >&2; exit 1; }
+      rm -f "$UPD/choose-roms"
+      ROMMANCER_ROMS="$roms" exec sh "$0" up
+    fi
     # Run from a copy: update replaces the folder this script is in
     mkdir -p "$UPD"
     cp "$SRC/deploy/podman/update.sh" "$UPD/update.sh"

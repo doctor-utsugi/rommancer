@@ -75,7 +75,7 @@ test('installer: without a database only the installer answers; a database that 
   };
   try {
     await until(async () => (await fetch(`${base}/setup`)).ok);
-    assert.deepEqual(await (await fetch(`${base}/setup`)).json(), { needsDatabase: true, bundledDatabase: false, needsAdmin: true });
+    assert.deepEqual(await (await fetch(`${base}/setup`)).json(), { needsDatabase: true, bundledDatabase: false, needsAdmin: true, needsRoms: false });
     assert.equal((await fetch(`${base}/users/me`)).status, 503);
     const send = (body: object) => fetch(`${base}/setup/database`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
     assert.equal((await send({ mode: 'bundled' })).status, 400, 'no database of its own here');
@@ -129,6 +129,49 @@ test('installer: the administrator only while no user exists; server settings wi
   } finally {
     await new Promise((r) => server.close(r));
     await prisma.setting.deleteMany({ where: { key: { startsWith: 'server.' } } });
+    await prisma.user.delete({ where: { id: admin.id } });
+  }
+});
+
+test('installer from the browser: the roms folder, browsed on the computer and mounted by its watcher', async () => {
+  const { prisma } = await import('../src/lib/prisma.js');
+  const { createApp } = await import('../src/app.js');
+  const { signAccess } = await import('../src/modules/auth/middleware.js');
+  // What rommancer.sh install --web leaves: the step pending, the watcher, the computer's home mounted under a root
+  const upd = tmp('roms-update');
+  const root = tmp('roms-host');
+  fs.writeFileSync(path.join(upd, 'choose-roms'), '');
+  fs.writeFileSync(path.join(upd, 'watcher'), 'systemd\n');
+  for (const d of ['home/me/rommancer-roms', 'home/me/games/snes', 'home/me/.cache', 'etc']) fs.mkdirSync(path.join(root, d), { recursive: true });
+  const env = { UPDATE_DIR: upd, ROMMANCER_HOST_ROOT: root, ROMMANCER_BROWSE: '/home/me:/not-there', ROMMANCER_ROMS_HOST: '/home/me/rommancer-roms' };
+  Object.assign(process.env, env);
+  const name = `adm-${crypto.randomUUID().slice(0, 8)}`;
+  const admin = await prisma.user.create({ data: { username: name, passwordHash: 'x', role: 'ADMIN' } });
+  const server = createApp().listen(0);
+  await new Promise((r) => server.once('listening', r));
+  const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}/api/v1`;
+  const call = (method: string, route: string, body?: object) =>
+    fetch(base + route, { method, headers: { Authorization: `Bearer ${signAccess(admin)}`, 'Content-Type': 'application/json' }, body: body && JSON.stringify(body) });
+  try {
+    assert.equal((await (await fetch(`${base}/setup`)).json()).needsRoms, true);
+    assert.equal((await fetch(`${base}/setup/roms`)).status, 401, 'only for the administrator');
+    assert.deepEqual(await (await call('GET', '/setup/roms')).json(), { pending: true, current: '/home/me/rommancer-roms', canChange: true, roots: ['/home/me'] });
+    const listed = await (await call('GET', '/setup/roms/folders?path=/home/me')).json();
+    assert.deepEqual(listed.folders.map((f: { name: string }) => f.name), ['games', 'rommancer-roms'], 'hidden folders left out');
+    for (const p of ['/etc', '/home/me/../../etc', 'home/me', '/home/me/nothing']) assert.equal((await call('GET', `/setup/roms/folders?path=${encodeURIComponent(p)}`)).status, 400, p);
+    assert.equal((await call('POST', '/setup/roms', { path: '/etc' })).status, 400);
+
+    // Another folder: the watcher is asked to start Rommancer with it, which is no update
+    assert.deepEqual(await (await call('POST', '/setup/roms', { path: '/home/me/games/' })).json(), { restarting: true, path: '/home/me/games' });
+    assert.equal(JSON.parse(fs.readFileSync(path.join(upd, 'request'), 'utf8')).roms, '/home/me/games');
+    // Started again with it (rommancer.sh removes the request and the pending step): the current one ends the step
+    fs.rmSync(path.join(upd, 'request'));
+    process.env.ROMMANCER_ROMS_HOST = '/home/me/games';
+    assert.deepEqual(await (await call('POST', '/setup/roms', { path: '/home/me/games' })).json(), { restarting: false, path: '/home/me/games' });
+    assert.equal((await (await fetch(`${base}/setup`)).json()).needsRoms, false);
+  } finally {
+    for (const k of Object.keys(env)) delete process.env[k];
+    await new Promise((r) => server.close(r));
     await prisma.user.delete({ where: { id: admin.id } });
   }
 });

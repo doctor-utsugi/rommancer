@@ -35,18 +35,21 @@ const sorted = (s: Iterable<string>) => [...s].sort();
 
 test('both installers send every field the setup API takes, and nothing else', async () => {
   const { databaseBody } = await import('../src/installer.js');
-  const { adminBody } = await import('../src/modules/setup/routes.js');
+  const { adminBody, romsBody } = await import('../src/modules/setup/routes.js');
   const dbKeys = new Set(databaseBody.options.flatMap((o) => Object.keys(o.shape)));
   const adminKeys = new Set(Object.keys(adminBody.shape));
+  const romsKeys = new Set(Object.keys(romsBody.shape));
 
   assert.deepEqual(sorted(cliFields('db_body')), sorted(dbKeys), 'install.sh db_body() against POST /setup/database');
   assert.deepEqual(sorted(cliFields('admin_body')), sorted(adminKeys), 'install.sh admin_body() against POST /setup/admin');
+  assert.deepEqual(sorted(cliFields('roms_body')), sorted(romsKeys), 'install.sh roms_body() against POST /setup/roms');
   for (const mode of databaseBody.options.map((o) => o.shape.mode.value)) {
     assert.match(shellFunction('db_body'), new RegExp(`jstr mode ${mode}\\b`), `install.sh offers the ${mode} database`);
     assert.match(webComponent('DatabaseStep'), new RegExp(`'${mode}'`), `setup.tsx offers the ${mode} database`);
   }
   for (const k of dbKeys) assert.match(webComponent('DatabaseStep'), new RegExp(`\\b${k}\\b`), `setup.tsx DatabaseStep sends ${k}`);
   for (const k of adminKeys) assert.match(webComponent('AdminStep'), new RegExp(`\\b${k}\\b`), `setup.tsx AdminStep sends ${k}`);
+  for (const k of romsKeys) assert.match(webComponent('RomsStep'), new RegExp(`\\b${k}\\b`), `setup.tsx RomsStep sends ${k}`);
 });
 
 test('the same languages and setup states', async () => {
@@ -61,8 +64,8 @@ test('the same languages and setup states', async () => {
   for (const k of keys) assert.deepEqual(k, keys[0], 'install.sh t() has the same texts in every language');
   assert.equal(blocks.length, cliLocales.length, 'install.sh t() has one block per language');
 
-  const states = [...web.match(/interface SetupState \{([\s\S]*?)\}/)![1].matchAll(/^\s*(\w+): boolean/gm)].map((m) => m[1]);
-  assert.deepEqual(sorted(states), ['bundledDatabase', 'needsAdmin', 'needsDatabase']);
+  const states = [...web.match(/interface SetupState \{([\s\S]*?)\}/)![1].matchAll(/^\s*(\w+)\??: boolean/gm)].map((m) => m[1]);
+  assert.deepEqual(sorted(states), ['bundledDatabase', 'needsAdmin', 'needsDatabase', 'needsRoms']);
   for (const s of states) assert.match(cli, new RegExp(`"${s}":(true|false)`), `install.sh reads ${s}`);
 });
 
@@ -73,7 +76,7 @@ const SHARED_TEXTS: Record<string, string> = {
   dbUser: 'setup.dbUser', dbConnecting: 'setup.dbConnecting', details: 'setup.details', adminTitle: 'setup.adminTitle', adminHint: 'setup.adminHint',
   username: 'setup.username', usernameHint: 'setup.usernameHint', confirm: 'setup.confirm',
   invalidUsername: 'setup.invalidUsername', mismatch: 'setup.mismatch',
-  badPort: 'setup.badPort', publicUrl: 'setup.publicUrl', publicUrlHint: 'setup.publicUrlHint', badUrl: 'setup.badUrl', creating: 'setup.creating', password: 'common.password',
+  badPort: 'setup.badPort', romsTitle: 'setup.romsTitle', romsHint: 'setup.romsHint', romsRestarting: 'setup.romsRestarting', romsFailed: 'setup.romsFailed', publicUrl: 'setup.publicUrl', publicUrlHint: 'setup.publicUrlHint', badUrl: 'setup.badUrl', creating: 'setup.creating', password: 'common.password',
 };
 
 /** install.sh t() as { language: { key: text } }; its blocks follow LOCALES' order reversed (es first, then the else) */
@@ -104,14 +107,14 @@ test('the console says what the web says, in every language, and translates ever
 // Every field of the setup API can also come with the command (unattended installs), by these options
 const CLI_OPTIONS: Record<string, string> = {
   mode: '--db', host: '--db-host', port: '--db-port', database: '--db-name', user: '--db-user', password: '--db-password',
-  username: '--admin', locale: '--lang', publicUrl: '--public-url',
+  username: '--admin', locale: '--lang', publicUrl: '--public-url', path: '--roms',
 };
 
 test('the console takes every field as an option too', async () => {
   const { databaseBody } = await import('../src/installer.js');
-  const { adminBody } = await import('../src/modules/setup/routes.js');
+  const { adminBody, romsBody } = await import('../src/modules/setup/routes.js');
   const usage = shellFunction('usage');
-  const fields = [...databaseBody.options.flatMap((o) => Object.keys(o.shape)), ...Object.keys(adminBody.shape)];
+  const fields = [...databaseBody.options.flatMap((o) => Object.keys(o.shape)), ...Object.keys(adminBody.shape), ...Object.keys(romsBody.shape)];
   for (const f of new Set(fields)) {
     const opt = f === 'password' ? ['--db-password', '--password'] : [CLI_OPTIONS[f]];
     for (const o of opt) {

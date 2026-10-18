@@ -48,6 +48,8 @@ export function App() {
         <Route path="*" element={<LoginPage />} />
       </Routes>
     )
+  // Installed from the browser: the administrator's last step, the roms folder
+  if (setup.data?.needsRoms && user.role === 'ADMIN') return <SetupPage state={setup.data} />
   // Initial or weak password: the only allowed action is changing it
   if (user.mustChangePassword)
     return (

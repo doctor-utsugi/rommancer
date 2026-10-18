@@ -42,11 +42,7 @@ curl -fsSL https://github.com/doctor-utsugi/rommancer/releases/latest/download/g
 It asks nothing. It downloads Rommancer into `~/rommancer` with its ready-made images (a minute or two), starts it as
 a [service](#running-it-as-a-service) that starts with the computer (your sudo password may be asked once, for
 `loginctl enable-linger`), and shows the address to open, http://your-ip:8096 by default. The browser then asks
-[the rest](#what-the-installer-asks). Your roms go in `~/rommancer-roms`; to use another folder, give it beforehand:
-
-```bash
-curl -fsSL https://github.com/doctor-utsugi/rommancer/releases/latest/download/get.sh | ROMMANCER_ROMS=/path/to/your/roms sh
-```
+[the rest](#what-the-installer-asks), the folder with your roms last: you pick it among your computer's folders.
 
 To answer everything in the console instead, with dialog boxes:
 
@@ -139,8 +135,10 @@ which is slower than a Linux disk: the first scan of a large collection takes lo
 
 ## What the installer asks
 
-`get.sh` takes the defaults for the first three (Podman, `~/rommancer-roms`, a free port from 8096) and leaves the
-last two to the browser. `rommancer.sh install` asks all of them in the console.
+`get.sh` takes the defaults for the engine and the port (Podman, a free port from 8096) and leaves the rest to the
+browser: the database, your account, then your roms folder. While you pick it, Rommancer can browse your home folder,
+`/mnt`, `/media`, `/run/media` and `/srv` (on a Mac, your home folder and `/Volumes`), read-only; once it is chosen,
+the computer starts Rommancer again with only that folder. `rommancer.sh install` asks everything in the console.
 
 1. **What runs the containers**, only when both Podman and Docker are installed. Podman is the default.
 2. **Your roms folder.** It is mounted at `/roms` and remembered in `~/.config/rommancer/deploy.conf` for the next

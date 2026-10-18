@@ -21,7 +21,7 @@ curl -fsSL https://github.com/doctor-utsugi/rommancer/releases/latest/download/g
 ```
 
 It downloads Rommancer ready-made, starts it and shows the address to open (http://your-ip:8096 by default), where
-the browser asks for the database and your account. Your roms go in `~/rommancer-roms`.
+the browser asks for the database, your account and the folder with your roms.
 The [install guide](docs/install.md) has the step-by-step commands, how to start, stop and update it, and the
 unattended install.
 

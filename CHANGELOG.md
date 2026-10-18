@@ -3,6 +3,14 @@
 What changes for you in each version of Rommancer. The update page in Administration shows the entries between
 your version and the newest one.
 
+## 1.104.0 (2026-10-18)
+
+- Installed with the one command, Rommancer asks for your roms folder in the browser, as the installer's last step:
+  you browse your computer's folders and pick it, and Rommancer starts again with it in a few seconds. The command
+  no longer needs to know where your roms are.
+- The installer in the browser goes on by itself once the database is ready. Before, it could stay on the first step
+  until the page was reloaded.
+
 ## 1.103.0 (2026-10-18)
 
 - Rommancer installs with one command and finishes in the browser:

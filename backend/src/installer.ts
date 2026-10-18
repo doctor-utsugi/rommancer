@@ -7,6 +7,7 @@ import express from 'express';
 import { spawn } from 'node:child_process';
 import type { Server } from 'node:http';
 import { z } from 'zod';
+import { romsPending } from './modules/setup/roms.js';
 import { applyBootstrap, bundledDatabase, bundledPassword, databaseUrl, writeDatabaseConfig, type DatabaseConfig } from './config/bootstrap.js';
 
 // The console installer (deploy/install.sh) sends the same fields: test/installer-parity.test.ts
@@ -88,7 +89,7 @@ export function runInstaller(port: number): Promise<void> {
     let busy = false;
     app.disable('x-powered-by');
     app.get('/api/v1/health', (_req, res) => res.json({ ok: true, installing: true }));
-    app.get('/api/v1/setup', (_req, res) => res.json({ needsDatabase: true, bundledDatabase: !!bundledDatabase, needsAdmin: true }));
+    app.get('/api/v1/setup', (_req, res) => res.json({ needsDatabase: true, bundledDatabase: !!bundledDatabase, needsAdmin: true, needsRoms: romsPending() }));
     app.post('/api/v1/setup/database', express.json(), async (req, res) => {
       const parsed = databaseBody.safeParse(req.body);
       if (!parsed.success) return res.status(400).json({ error: 'Invalid data' });

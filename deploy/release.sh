@@ -79,6 +79,10 @@ for i in mysql:deploy/mysql api:backend web:frontend; do
   podman manifest push --all "$name:$VERSION" "docker://$name:latest"
   podman manifest rm "$name:$VERSION" >/dev/null 2>&1 || true
 done
+# Building for ARM left its base images under their usual names: this computer's own again, for local builds
+sed -n 's/^FROM \([^ ]*\).*/\1/p' deploy/mysql/Containerfile backend/Containerfile frontend/Containerfile | sort -u | while IFS= read -r base; do
+  podman pull -q "$base" >/dev/null
+done
 rm -rf "$OUT/stage"
 ls -lh "$OUT"
 git tag -a "v$VERSION" -m "Rommancer $VERSION"

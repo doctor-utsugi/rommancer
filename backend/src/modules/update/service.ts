@@ -88,8 +88,9 @@ export function updateInProgress(): { step: string; from: string; to: string; at
   // at: when the step began, for the web's progress bar
   if (status?.state === 'running') return { step: status.step, from: status.from, to: status.to, at: status.at };
   try {
-    const request = JSON.parse(fs.readFileSync(path.join(DIR, 'request'), 'utf8')) as { to: string; at?: string };
-    return { step: 'queued', from: VERSION, to: request.to, at: request.at ?? null };
+    const request = JSON.parse(fs.readFileSync(path.join(DIR, 'request'), 'utf8')) as { to?: string; at?: string };
+    // The installer's request for another roms folder is no update
+    return request.to ? { step: 'queued', from: VERSION, to: request.to, at: request.at ?? null } : null;
   } catch {
     return null;
   }
