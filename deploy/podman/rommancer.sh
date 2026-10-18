@@ -78,6 +78,7 @@ Rommancer funciona dentro de contenedores, con Podman (recomendado) o con Docker
 
 Primero te pedirá la carpeta de tus roms. Luego preparará los contenedores, que la primera vez tarda unos minutos, y al final elegirás la base de datos y crearás tu cuenta." ;;
       ok) echo Aceptar ;;
+      web) printf '\nFalta un paso: abre %s en el navegador para terminar la instalación (base de datos y tu cuenta).\nTus roms van en %s.\n\n' "$(web_url)" "$ROMS" ;;
       port) echo "¿En qué puerto quieres abrir Rommancer?
 
 $(if [ -n "$2" ]; then echo "El $2 ya lo usa otro programa, así que te propongo el $3, que está libre."; else echo "El $3 está libre."; fi)" ;;
@@ -124,6 +125,7 @@ Rommancer runs inside containers, with Podman (recommended) or Docker. Everythin
 
 First it asks for your roms folder. Then it prepares the containers, which takes a few minutes the first time, and last you choose the database and create your account." ;;
       ok) echo Ok ;;
+      web) printf '\nOne step left: open %s in your browser to finish installing (database and your account).\nYour roms go in %s.\n\n' "$(web_url)" "$ROMS" ;;
       port) echo "Which port should Rommancer use?
 
 $(if [ -n "$2" ]; then echo "Another program already uses $2, so here is $3, which is free."; else echo "$3 is free."; fi)" ;;
@@ -376,6 +378,19 @@ host_ip() {
 }
 
 # The address to open Rommancer at: from the network when it listens there
+# The release's images from the registry (deploy/release.sh puts them there), named as a local build names them
+REGISTRY="${ROMMANCER_REGISTRY:-ghcr.io/doctor-utsugi}"
+pull_images() {
+  for i in mysql api web; do
+    $ENGINE pull "$REGISTRY/rommancer-$i:$1" || return 1
+  done
+  for i in mysql api web; do
+    $ENGINE tag "$REGISTRY/rommancer-$i:$1" "rommancer-$i:latest"
+    $ENGINE tag "$REGISTRY/rommancer-$i:$1" "rommancer-$i:$1"
+    $ENGINE rmi "$REGISTRY/rommancer-$i:$1" >/dev/null 2>&1 || true
+  done
+}
+
 web_url() {
   if [ "$LISTEN" = network ]; then echo "http://$(host_ip):$WEB_PORT"; else echo "http://127.0.0.1:$WEB_PORT"; fi
 }
@@ -447,6 +462,10 @@ case "${1:-}" in
     machine
     # Tagged with the release's version too, so update can tell them apart
     v=$(cat "$SRC/VERSION" 2>/dev/null || echo dev)
+    # A release's images come ready-made from the registry; a checkout of the code, --source, or a computer the
+    # registry has no images for (another processor) builds them here
+    if [ "$v" != dev ] && [ "${2:-}" != --source ] && pull_images "$v"; then exit 0; fi
+    [ "$v" != dev ] && [ "${2:-}" != --source ] && echo "No ready-made images of $v for this computer: building them here (a few minutes)" >&2
     for i in mysql:deploy/mysql api:backend web:frontend; do
       $ENGINE build -t "rommancer-${i%%:*}:latest" -t "rommancer-${i%%:*}:$v" -f "$SRC/${i#*:}/Containerfile" "$SRC"
     done ;;
@@ -512,7 +531,7 @@ case "${1:-}" in
   install)
     shift
     # --roms is this script's; everything else goes to the installer
-    roms='' plain='' svc='' engine='' port='' listen=''
+    roms='' plain='' svc='' engine='' port='' listen='' web=''
     n=$#
     while [ "$n" -gt 0 ]; do
       a=$1
@@ -521,8 +540,10 @@ case "${1:-}" in
       case "$a" in
         --roms) roms=${1:-}; [ "$n" -gt 0 ] && { shift; n=$((n - 1)); } ;;
         --roms=*) roms=${a#*=} ;;
+        --web) web=1 ;;
         -h | --help)
           echo "Usage: $0 install [--roms PATH] [--engine podman|docker] [--service yes|no] [installer options]: builds, starts and installs Rommancer"
+          echo "  --web                    the installer's questions in the browser instead of here (deploy/get.sh does this)"
           echo "  --engine podman|docker   what runs the containers (Podman when both are there and it is not given)"
           echo "  --port PORT              the web's port (a free one from 8096 on when not given)"
           echo "  --listen local           only this computer may open it (behind a reverse proxy); the network by default"
@@ -560,8 +581,13 @@ case "${1:-}" in
     export ROMMANCER_WEB_PORT="$WEB_PORT" ROMMANCER_LISTEN="$LISTEN"
     sh "$0" build
     sh "$0" up
-    ROMMANCER_SHOW_URL=$(web_url) sh "$SRC/deploy/install.sh" "http://127.0.0.1:$WEB_PORT" "$@"
-    after_install "$svc" ;;
+    if [ -n "$web" ]; then
+      after_install "$svc"
+      say web
+    else
+      ROMMANCER_SHOW_URL=$(web_url) sh "$SRC/deploy/install.sh" "http://127.0.0.1:$WEB_PORT" "$@"
+      after_install "$svc"
+    fi ;;
   update | rollback)
     # Run from a copy: update replaces the folder this script is in
     mkdir -p "$UPD"

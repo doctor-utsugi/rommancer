@@ -33,16 +33,27 @@ With Docker instead, your user has to be able to run it without sudo (`sudo user
 again). The files Rommancer writes in `~/rommancer-data` then belong to root and MySQL's user, so deleting that folder
 by hand takes sudo.
 
-Install with one command:
+Install with one command, then finish in the browser:
+
+```bash
+curl -fsSL https://github.com/doctor-utsugi/rommancer/releases/latest/download/get.sh | sh
+```
+
+It asks nothing. It downloads Rommancer into `~/rommancer` with its ready-made images (a minute or two), starts it as
+a [service](#running-it-as-a-service) that starts with the computer (your sudo password may be asked once, for
+`loginctl enable-linger`), and shows the address to open, http://your-ip:8096 by default. The browser then asks
+[the rest](#what-the-installer-asks). Your roms go in `~/rommancer-roms`; to use another folder, give it beforehand:
+
+```bash
+curl -fsSL https://github.com/doctor-utsugi/rommancer/releases/latest/download/get.sh | ROMMANCER_ROMS=/path/to/your/roms sh
+```
+
+To answer everything in the console instead, with dialog boxes:
 
 ```bash
 curl -fsSL https://github.com/doctor-utsugi/rommancer/releases/latest/download/rommancer.tar.gz | tar xz
 sh rommancer/deploy/podman/rommancer.sh install
 ```
-
-It builds Rommancer (a few minutes the first time), asks you [three things](#what-the-installer-asks) and ends with
-Rommancer running at the address it shows (http://your-ip:8096 by default). Last, it asks whether to install Rommancer as a
-[service](#running-it-as-a-service) that starts with the computer.
 
 The same, step by step:
 
@@ -52,7 +63,7 @@ curl -fsSLO https://github.com/doctor-utsugi/rommancer/releases/latest/download/
 tar xzf rommancer.tar.gz
 cd rommancer
 
-# 2. Build the images
+# 2. Get the images: downloaded ready-made (built here only on a computer they don't exist for)
 sh deploy/podman/rommancer.sh build
 
 # 3. Start it, with your roms folder
@@ -73,15 +84,15 @@ too):
 brew install podman
 ```
 
-Then, in Terminal, from your home folder:
+Then, in Terminal:
 
 ```bash
-curl -fsSL https://github.com/doctor-utsugi/rommancer/releases/latest/download/rommancer.tar.gz | tar xz
-sh rommancer/deploy/podman/rommancer.sh install
+curl -fsSL https://github.com/doctor-utsugi/rommancer/releases/latest/download/get.sh | sh
 ```
 
 The first time, the script creates Podman's virtual machine (4 GB of memory) and starts it. Then it carries on as on
-Linux, with plain questions instead of dialog boxes, and Rommancer ends up at the address it shows. Installed as a
+Linux and ends with the address to open in the browser. `rommancer.sh install`, as on Linux, asks in the console
+instead. Installed as a
 service, it starts every time you log in to the Mac.
 
 Two things differ from Linux:
@@ -116,7 +127,7 @@ powershell -ExecutionPolicy Bypass -File rommancer\deploy\podman\rommancer.ps1 i
 
 `-ExecutionPolicy Bypass` lets this one script run without changing Windows' policy for any other. The script
 creates and starts Podman's virtual machine the first time, asks for your roms folder (you can drag the folder onto
-the window), builds Rommancer and runs the same installer as on Linux. Rommancer ends up at the address it shows.
+the window), downloads Rommancer's ready-made images and runs the same installer as on Linux. Rommancer ends up at the address it shows.
 Installed as a service, it starts every time you log in to Windows.
 
 The step-by-step commands are the same as on Linux with `powershell -ExecutionPolicy Bypass -File
@@ -128,6 +139,9 @@ which is slower than a Linux disk: the first scan of a large collection takes lo
 
 ## What the installer asks
 
+`get.sh` takes the defaults for the first three (Podman, `~/rommancer-roms`, a free port from 8096) and leaves the
+last two to the browser. `rommancer.sh install` asks all of them in the console.
+
 1. **What runs the containers**, only when both Podman and Docker are installed. Podman is the default.
 2. **Your roms folder.** It is mounted at `/roms` and remembered in `~/.config/rommancer/deploy.conf` for the next
    `up`. Rommancer reads it as it is: nothing in it is moved, renamed or deleted. If your roms are on several disks,
@@ -136,7 +150,8 @@ which is slower than a Linux disk: the first scan of a large collection takes lo
    type a port that is taken, it says so and asks again.
 4. **The database.** The one that comes with Rommancer is ready to use and needs nothing filled in. The other choice
    is a MySQL 8 or MariaDB server of yours, where the database must already exist.
-5. **Your account:** a username and a password. The email is optional; add it later in your profile.
+5. **Your account:** a username and a password, and the web address when Rommancer will be reached from the
+   internet (empty on a home network). The email is optional; add it later in your profile.
 
 Rommancer opens to your local network, since that is where your consoles reach it. Behind a reverse proxy you can
 keep it to the computer it runs on with `install --listen local`. Your choices of engine, roms folder and port are kept in `~/.config/rommancer/deploy.conf`, and every later
@@ -194,7 +209,7 @@ sh rommancer/deploy/podman/rommancer.sh update
 `update --check` only says whether there is one. The update:
 
 1. downloads the new release next to your Rommancer folder, without touching what runs;
-2. prepares its images, keeping the current ones;
+2. downloads its ready-made images (only what changed), keeping the current ones;
 3. backs up the database into `~/.config/rommancer/update/backups` (the last five are kept);
 4. puts the new folder in place and starts it, which applies its database changes;
 5. if the new version doesn't answer, goes back to the previous one by itself: its images, its folder and the
@@ -209,7 +224,8 @@ folder, then run `build` and `up`. On Windows, updating is still done that way.
 
 To change a choice later, give it to `up` once and it is remembered: `ROMMANCER_WEB_PORT=9000 rommancer.sh up`,
 `ROMMANCER_LISTEN=local rommancer.sh up` (or `network`), `ROMMANCER_ROMS=/other/folder rommancer.sh up`.
-`ROMMANCER_DATA` (Linux only) moves the data folder.
+`ROMMANCER_DATA` (Linux only) moves the data folder. `rommancer.sh build --source` builds the images from the folder
+instead of downloading them, for a changed copy of the code.
 `~/.config/rommancer/rommancer.env` is optional (overrides, as in `.env.example`): a variable set there wins over the
 panel, which then shows it locked.
 

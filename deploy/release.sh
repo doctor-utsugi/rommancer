@@ -1,7 +1,9 @@
 #!/bin/sh
 # A release of Rommancer that installs without git: the source at HEAD plus the client apps built into
-# clients/*/release (not in git), as dist-release/rommancer.tar.gz and rommancer.zip. With --publish it tags
-# vVERSION and puts both on a GitHub release, so .../releases/latest/download/rommancer.tar.gz is always the newest.
+# clients/*/release (not in git), as dist-release/rommancer.tar.gz and rommancer.zip. With --publish it builds the
+# images (for x86_64 and ARM) and pushes them to ghcr.io, where installs and updates download them instead of building,
+# then tags vVERSION and puts both files and get.sh on a GitHub release, so .../releases/latest/download/ is always
+# the newest.
 # CHANGELOG.md needs an entry "## VERSION (DATE)": it becomes the release's notes, which servers show before updating.
 #   deploy/release.sh [VERSION] [--publish]      VERSION defaults to the last tag with its minor number + 1
 set -eu
@@ -55,14 +57,30 @@ source=$(sed -n 's/^ *"version": *"\(.*\)".*/\1/p' clients/desktop/src-tauri/tau
 
 tar -czf "$OUT/rommancer.tar.gz" -C "$OUT/stage" rommancer
 (cd "$OUT/stage" && zip -qr ../rommancer.zip rommancer)
-rm -rf "$OUT/stage"
-ls -lh "$OUT"
+cp deploy/get.sh "$OUT/get.sh"
 echo "Rommancer $VERSION ($(git rev-parse --short HEAD))"
 
-[ -n "$PUBLISH" ] || exit 0
+[ -n "$PUBLISH" ] || { rm -rf "$OUT/stage"; ls -lh "$OUT"; exit 0; }
 git branch -r --contains HEAD | grep -q 'origin/main' || { echo "push HEAD to origin/main first" >&2; exit 1; }
 TOKEN_FILE="$HOME/.config/git-tokens/github-doctor-utsugi"
 [ -f "$TOKEN_FILE" ] && GH_TOKEN=$(cat "$TOKEN_FILE") && export GH_TOKEN
+[ -n "${GH_TOKEN:-}" ] || GH_TOKEN=$(gh auth token -u "${REPO%%/*}") && export GH_TOKEN
+
+# The images, from the same files as the tar, before the release exists: an update never finds a release without them
+REGISTRY=ghcr.io/${REPO%%/*}
+printf '%s' "$GH_TOKEN" | podman login ghcr.io -u "${REPO%%/*}" --password-stdin >/dev/null
+for i in mysql:deploy/mysql api:backend web:frontend; do
+  name=$REGISTRY/rommancer-${i%%:*}
+  podman manifest rm "$name:$VERSION" >/dev/null 2>&1 || true
+  podman build --platform linux/amd64,linux/arm64 --manifest "$name:$VERSION" \
+    --label "org.opencontainers.image.source=https://github.com/$REPO" --label "org.opencontainers.image.version=$VERSION" \
+    -f "$OUT/stage/rommancer/${i#*:}/Containerfile" "$OUT/stage/rommancer"
+  podman manifest push --all "$name:$VERSION" "docker://$name:$VERSION"
+  podman manifest push --all "$name:$VERSION" "docker://$name:latest"
+  podman manifest rm "$name:$VERSION" >/dev/null 2>&1 || true
+done
+rm -rf "$OUT/stage"
+ls -lh "$OUT"
 git tag -a "v$VERSION" -m "Rommancer $VERSION"
 git push -q origin "v$VERSION"
 gh release create "v$VERSION" -R "$REPO" --title "Rommancer $VERSION" --notes "$(cat <<EOF
@@ -70,14 +88,13 @@ $NOTES
 
 ---
 
-Installs on Linux, macOS and Windows with Podman, no git needed. On Linux:
+Installs on Linux and macOS with one command, then finishes in the browser:
 
 \`\`\`bash
-curl -fsSL https://github.com/$REPO/releases/latest/download/rommancer.tar.gz | tar xz
-sh rommancer/deploy/podman/rommancer.sh install
+curl -fsSL https://github.com/$REPO/releases/latest/download/get.sh | sh
 \`\`\`
 
 \`rommancer.zip\` holds the same, for Windows. macOS, Windows and updating:
 https://github.com/$REPO/blob/v$VERSION/docs/install.md
 EOF
-)" "$OUT/rommancer.tar.gz" "$OUT/rommancer.zip"
+)" "$OUT/rommancer.tar.gz" "$OUT/rommancer.zip" "$OUT/get.sh"

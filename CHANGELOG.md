@@ -3,6 +3,15 @@
 What changes for you in each version of Rommancer. The update page in Administration shows the entries between
 your version and the newest one.
 
+## 1.103.0 (2026-10-18)
+
+- Rommancer installs with one command and finishes in the browser:
+  `curl -fsSL https://github.com/doctor-utsugi/rommancer/releases/latest/download/get.sh | sh`. It asks nothing,
+  starts Rommancer as a service and shows the address where the browser asks for the database and your account.
+  Your roms go in `~/rommancer-roms` unless you choose another folder.
+- Installing and updating no longer build Rommancer on your computer: each version comes ready-made, for x86_64 and
+  ARM, and only what changed is downloaded. Updates take a minute or two instead of several.
+
 ## 1.102.0 (2026-10-18)
 
 - The update screen has a progress bar that shows the step and the percentage done. It turns red if the update goes

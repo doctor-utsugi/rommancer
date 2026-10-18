@@ -151,8 +151,26 @@ function Get-HostTz {
   'UTC'
 }
 
+# A release's images come ready-made from the registry (deploy/release.sh puts them there); a checkout of the code, or
+# a computer the registry has no images for, builds them here
+$Registry = if ($env:ROMMANCER_REGISTRY) { $env:ROMMANCER_REGISTRY } else { 'ghcr.io/doctor-utsugi' }
+function Get-Images([string]$Version) {
+  foreach ($i in 'mysql', 'api', 'web') {
+    if (-not (Test-Engine pull "$Registry/rommancer-${i}:$Version")) { return $false }
+  }
+  foreach ($i in 'mysql', 'api', 'web') {
+    Invoke-Engine tag "$Registry/rommancer-${i}:$Version" "rommancer-${i}:latest"
+    Invoke-Engine tag "$Registry/rommancer-${i}:$Version" "rommancer-${i}:$Version"
+    & $Engine rmi "$Registry/rommancer-${i}:$Version" *> $null
+  }
+  $true
+}
+
 function Invoke-Build {
   Start-Machine
+  $v = if (Test-Path (In-Src VERSION)) { (Get-Content (In-Src VERSION) -Raw).Trim() } else { 'dev' }
+  if ($v -ne 'dev' -and (Get-Images $v)) { return }
+  if ($v -ne 'dev') { Write-Host "No ready-made images of $v for this computer: building them here (a few minutes)" }
   Invoke-Engine build -t rommancer-mysql -f (In-Src deploy mysql Containerfile) $Src
   Invoke-Engine build -t rommancer-api -f (In-Src backend Containerfile) $Src
   Invoke-Engine build -t rommancer-web -f (In-Src frontend Containerfile) $Src

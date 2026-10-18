@@ -17,11 +17,11 @@ Docker, so you don't need git, Node or MySQL.
 On Linux, with Podman installed (`sudo apt install podman curl` on Debian or Ubuntu):
 
 ```bash
-curl -fsSL https://github.com/doctor-utsugi/rommancer/releases/latest/download/rommancer.tar.gz | tar xz
-sh rommancer/deploy/podman/rommancer.sh install
+curl -fsSL https://github.com/doctor-utsugi/rommancer/releases/latest/download/get.sh | sh
 ```
 
-It asks for your roms folder, the database and your account, and leaves Rommancer running at the address it shows (http://your-ip:8096 by default).
+It downloads Rommancer ready-made, starts it and shows the address to open (http://your-ip:8096 by default), where
+the browser asks for the database and your account. Your roms go in `~/rommancer-roms`.
 The [install guide](docs/install.md) has the step-by-step commands, how to start, stop and update it, and the
 unattended install.
 
