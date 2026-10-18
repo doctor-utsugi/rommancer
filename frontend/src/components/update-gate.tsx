@@ -5,10 +5,11 @@ import { CircleAlert, CircleCheck, Loader2 } from 'lucide-react'
 import { get } from '@/lib/api'
 import { useAuth } from '@/lib/auth'
 import { Button } from '@/components/ui/button'
+import { UpdateProgress } from '@/components/update-progress'
 
 interface Version {
   version: string
-  updating: { step: string; from: string; to: string } | null
+  updating: { step: string; from: string; to: string; at?: string | null } | null
 }
 
 // The update this browser saw start: kept through the restart and a reload of the page
@@ -70,14 +71,17 @@ export function UpdateGate({ children }: { children: ReactNode }) {
           {t('app.name')}
         </div>
         {!finished ? (
-          <div className="flex items-start gap-3">
-            <Loader2 className="mt-1 size-5 shrink-0 animate-spin" />
-            <div className="space-y-2">
-              <h1 className="text-xl font-semibold">{t('update.gate.title', { to: (updating ?? started)!.to })}</h1>
-              <p className="text-sm text-muted-foreground">{restarting ? t('update.restarting') : t(`update.steps.${updating?.step ?? 'queued'}`, { defaultValue: updating?.step })}</p>
-              <p className="text-sm text-muted-foreground">{t('update.gate.wait')}</p>
+          <>
+            <div className="flex items-start gap-3">
+              <Loader2 className="mt-1 size-5 shrink-0 animate-spin" />
+              <div className="space-y-2">
+                <h1 className="text-xl font-semibold">{t('update.gate.title', { to: (updating ?? started)!.to })}</h1>
+                <p className="text-sm text-muted-foreground">{restarting ? t('update.restarting') : t(`update.steps.${updating?.step ?? 'queued'}`, { defaultValue: updating?.step })}</p>
+                <p className="text-sm text-muted-foreground">{t('update.gate.wait')}</p>
+              </div>
             </div>
-          </div>
+            <UpdateProgress step={restarting ? 'start' : (updating?.step ?? 'queued')} at={updating?.at ?? null} />
+          </>
         ) : (
           <div className="flex items-start gap-3">
             {ok ? <CircleCheck className="mt-1 size-5 shrink-0 text-primary" /> : <CircleAlert className="mt-1 size-5 shrink-0 text-destructive" />}
@@ -91,7 +95,7 @@ export function UpdateGate({ children }: { children: ReactNode }) {
         {log.data && (
           <details className="text-sm">
             <summary className="cursor-pointer text-muted-foreground">{t('update.log')}</summary>
-            <pre className="mt-2 max-h-64 overflow-auto rounded-md bg-muted p-3 font-mono text-xs whitespace-pre-wrap">{log.data}</pre>
+            <pre className="mt-2 max-h-64 overflow-auto rounded-md bg-muted p-3 font-mono text-xs break-all whitespace-pre-wrap">{log.data}</pre>
           </details>
         )}
       </div>

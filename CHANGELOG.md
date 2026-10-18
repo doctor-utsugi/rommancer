@@ -3,6 +3,12 @@
 What changes for you in each version of Rommancer. The update page in Administration shows the entries between
 your version and the newest one.
 
+## 1.102.0 (2026-10-18)
+
+- The update screen has a progress bar that shows the step and the percentage done. It turns red if the update goes
+  back to the previous version.
+- The update log no longer scrolls sideways: long lines wrap.
+
 ## 1.101.0 (2026-10-18)
 
 - When a new version of Rommancer is out, Update in the menu shows a "New" badge. Opening the Update page clears it

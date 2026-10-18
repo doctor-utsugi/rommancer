@@ -1607,6 +1607,10 @@
     "noNotes": "Esta versión no tiene notas.",
     "running": "Actualizando a la {{to}}…",
     "restarting": "Rommancer se está reiniciando con la versión nueva. Esta página sigue sola.",
+    "progress": {
+      "step": "Paso {{n}} de {{total}}",
+      "rollback": "Volviendo a la versión anterior"
+    },
     "steps": {
       "queued": "Esperando a que el equipo empiece la actualización.",
       "download": "Descargando la versión nueva.",

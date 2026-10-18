@@ -82,13 +82,14 @@ function readStatus() {
  * The update under way, for every page of the web app (which shows only the update while it runs): asked for and
  * not started yet, or running. Null otherwise.
  */
-export function updateInProgress(): { step: string; from: string; to: string } | null {
+export function updateInProgress(): { step: string; from: string; to: string; at: string | null } | null {
   if (!DIR) return null;
   const status = readStatus();
-  if (status?.state === 'running') return { step: status.step, from: status.from, to: status.to };
+  // at: when the step began, for the web's progress bar
+  if (status?.state === 'running') return { step: status.step, from: status.from, to: status.to, at: status.at };
   try {
-    const request = JSON.parse(fs.readFileSync(path.join(DIR, 'request'), 'utf8')) as { to: string };
-    return { step: 'queued', from: VERSION, to: request.to };
+    const request = JSON.parse(fs.readFileSync(path.join(DIR, 'request'), 'utf8')) as { to: string; at?: string };
+    return { step: 'queued', from: VERSION, to: request.to, at: request.at ?? null };
   } catch {
     return null;
   }
