@@ -3,6 +3,11 @@
 What changes for you in each version of Rommancer. The update page in Administration shows the entries between
 your version and the newest one.
 
+## 1.101.0 (2026-10-18)
+
+- When a new version of Rommancer is out, Update in the menu shows a "New" badge. Opening the Update page clears it
+  until the next version comes out.
+
 ## 1.100.0 (2026-10-18)
 
 - While Rommancer updates, the whole web app becomes one update page for everyone, so nothing can be changed half

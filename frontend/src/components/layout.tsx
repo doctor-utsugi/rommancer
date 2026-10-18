@@ -35,8 +35,9 @@ import { LOCALES } from '@/i18n/locales'
 import { patch } from '@/lib/api'
 import { ActivityDock } from '@/components/activity'
 import { UpdateGate } from '@/components/update-gate'
+import { useUpdateSeen } from '@/lib/update-seen'
 
-function Item({ to, icon: Icon, label, dot }: { to: string; icon: typeof Home; label: string; dot?: boolean }) {
+function Item({ to, icon: Icon, label, badge }: { to: string; icon: typeof Home; label: string; badge?: string }) {
   return (
     <NavLink
       to={to}
@@ -50,7 +51,7 @@ function Item({ to, icon: Icon, label, dot }: { to: string; icon: typeof Home; l
     >
       <Icon className="size-4" />
       {label}
-      {dot && <span className="ml-auto size-2 rounded-full bg-primary" aria-hidden />}
+      {badge && <span className="ml-auto rounded-full bg-primary px-1.5 py-0.5 text-[10px] leading-none font-medium text-primary-foreground">{badge}</span>}
     </NavLink>
   )
 }
@@ -59,8 +60,10 @@ export function Layout() {
   const { t } = useTranslation()
   const { user, logout, can } = useAuth()
   const [navigationOpen, setNavigationOpen] = useState(false)
-  // A newer Rommancer: a dot on Update for admins
+  // A newer Rommancer: a badge on Update for admins, until they have looked at it
   const update = useQuery({ queryKey: ['update'], queryFn: fetchUpdate, enabled: user?.role === 'ADMIN', staleTime: 3600_000, retry: false })
+  const seen = useUpdateSeen()
+  const newUpdate = !!update.data?.available && update.data.latest !== seen
   const switchLang = async (next: string) => {
     await setLanguage(next)
     await patch('/users/me', { locale: next }).catch(() => {})
@@ -95,7 +98,7 @@ export function Layout() {
               <Item to="/admin/users" icon={Users} label={t('nav.users')} />
               <Item to="/admin/integrations" icon={Cable} label={t('nav.integrations')} />
               <Item to="/admin/server" icon={Server} label={t('nav.server')} />
-              <Item to="/admin/update" icon={ArrowUpCircle} label={update.data?.available ? t('update.navAvailable') : t('update.nav')} dot={update.data?.available} />
+              <Item to="/admin/update" icon={ArrowUpCircle} label={t('update.nav')} badge={newUpdate ? t('update.navNew') : undefined} />
               <Item to="/admin/jobs" icon={Activity} label={t('nav.jobs')} />
             </>
           )}

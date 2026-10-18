@@ -9,6 +9,7 @@ import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Switch } from '@/components/ui/switch'
 import { PageHeader, errMsg, formatDate } from '@/components/common'
+import { markUpdateSeen } from '@/lib/update-seen'
 
 interface Entry {
   version: string
@@ -90,6 +91,11 @@ export function AdminUpdatePage() {
       return waiting.current ? 3000 : false
     },
   })
+  // Looking at the page is enough to take the badge off Update
+  const latest = q.data?.available ? q.data.latest : null
+  useEffect(() => {
+    if (latest) markUpdateSeen(latest)
+  }, [latest])
   const loadedWith = useRef<string | null>(null)
   useEffect(() => {
     if (q.data && !loadedWith.current) loadedWith.current = q.data.version

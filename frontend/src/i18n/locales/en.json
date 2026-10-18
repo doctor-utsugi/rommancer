@@ -1583,7 +1583,7 @@
   },
   "update": {
     "nav": "Update",
-    "navAvailable": "Update available",
+    "navNew": "New",
     "title": "Update Rommancer",
     "check": "Check now",
     "installed": "Rommancer {{version}}",
