@@ -154,6 +154,7 @@ test('console installer: the same two steps as the web one, in Spanish, against 
       u.hostname, u.port, shadow, decodeURIComponent(u.username), 'not-the-password',
       '', '', '', '', decodeURIComponent(u.password),
       'boss', '', 'pw-1', 'pw-2', 'abc', 'abc',
+      'roms.example.com', 'https://roms.example.com/',
     ];
     const cli = spawn('sh', [path.join(backend, '..', 'deploy', 'install.sh'), base, '--plain'], { env: cleanEnv({}), stdio: ['pipe', 'pipe', 'pipe'] });
     let out = '';
@@ -166,6 +167,7 @@ test('console installer: the same two steps as the web one, in Spanish, against 
     assert.match(out, /Falta rellenar: Contraseña/, 'an empty password is asked again');
     assert.match(out, /Letras, números, punto, guion o guion bajo; mínimo 3/, 'the username rule is said before asking');
     assert.match(out, /Las dos contraseñas no coinciden/);
+    assert.match(out, /La dirección web tiene que empezar por http:\/\/ o https:\/\//, 'an address without its scheme is asked again');
     assert.match(out, /Listo\. Entra en http:\/\/127\.0\.0\.1:\d+ con el usuario «boss»/);
     assert.doesNotMatch(out, /pw-2|abc/, 'passwords are never shown');
 
@@ -178,8 +180,8 @@ test('console installer: the same two steps as the web one, in Spanish, against 
     assert.equal(me.email, null, 'no email asked; it can be added later in the profile');
     assert.equal(me.locale, 'es');
     const settings = await (await fetch(`${base}/api/v1/admin/settings/server`, { headers: auth })).json();
-    // The installer asks only for the account: the server's settings keep their defaults
-    assert.equal(settings.values.publicUrl, '');
+    // The installer asks only for the account and the web address: the other settings keep their defaults
+    assert.equal(settings.values.publicUrl, 'https://roms.example.com');
     assert.equal(settings.values.externalSyncCron, '0 4 * * 0');
     // Run again, it only says so
     const again = spawn('sh', [path.join(backend, '..', 'deploy', 'install.sh'), base, '--plain'], { env: cleanEnv({}), stdio: ['ignore', 'pipe', 'pipe'] });
@@ -220,6 +222,9 @@ test('console installer, unattended: every answer as an option, nothing asked', 
     const u = new URL(testDbUrl());
     const db = ['--db', 'external', '--db-host', u.hostname, `--db-port=${u.port}`, '--db-name', shadow, '--db-user', decodeURIComponent(u.username)];
     // A wrong answer given with the command ends the run: nobody is there to ask again
+    const badUrl = await run(['--lang', 'en', ...db, '--admin', 'ops', '--public-url', 'roms.example.com'], { ROMMANCER_ADMIN_PASSWORD: 'long-enough-ok' });
+    assert.equal(badUrl.code, 2, badUrl.out);
+    assert.match(badUrl.out, /--public-url: The web address has to start with http:\/\/ or https:\/\//);
     const bad = await run(['--lang', 'en', ...db, '--admin', 'ops'], { ROMMANCER_DB_PASSWORD: 'not-the-password', ROMMANCER_ADMIN_PASSWORD: 'long-enough-ok' });
     assert.equal(bad.code, 2, bad.out);
     assert.match(bad.out, /MySQL doesn't accept that user or that password/);

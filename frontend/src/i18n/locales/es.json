@@ -860,10 +860,10 @@
       "tgdbStep2": "Con la sesión iniciada, abre tu página de claves de API",
       "tgdbStep3": "Copia tu clave pública (Public API key) y pégala aquí. Rommancer la prueba antes de guardarla.",
       "checking": "comprobando…",
-      "ssNoDevId": "Este servidor no tiene identificador de desarrollador de ScreenScraper, y sin él ScreenScraper no responde a nadie (tu cuenta se guarda igual para cuando lo tenga). Lo pide una vez quien administra Rommancer:",
-      "ssDevStep1": "Abre un tema en el foro de desarrolladores de ScreenScraper (con tu cuenta de ScreenScraper)",
-      "ssDevStep2": "Presenta el programa: Rommancer, un gestor de roms y partidas para uso propio que pide medios y datos de juegos. Ellos responden con un devid y una contraseña de desarrollador.",
-      "ssDevStep3": "Ponlos en el .env del servidor y reinícialo:",
+      "ssNoDevId": "ScreenScraper solo responde a las aplicaciones que tienen un id de desarrollador, y este servidor aún no lo tiene. Tu cuenta queda guardada y funcionará cuando lo tenga. Quien administra Rommancer lo pide una sola vez:",
+      "ssDevStep1": "Entra en ScreenScraper con tu cuenta y abre un tema nuevo en su foro de desarrolladores",
+      "ssDevStep2": "Cuenta qué es la aplicación: Rommancer, un gestor de roms y partidas guardadas que se instala en tu propio servidor y descarga portadas y datos de los juegos. Te responden con un id y una contraseña de desarrollador.",
+      "ssDevStep3": "Añade los dos al fichero .env del servidor y reinicia Rommancer:",
       "works": "Funciona: el servicio acepta tus datos.",
       "fails": "No funciona: {{error}}"
     },
@@ -1537,6 +1537,9 @@
     "required": "Falta rellenar: {{field}}",
     "invalidUsername": "Ese nombre de usuario no vale: usa al menos 3 caracteres entre letras, números, punto, guion o guion bajo.",
     "badPort": "El puerto tiene que ser un número entre 1 y 65535.",
+    "publicUrl": "Dirección web (opcional)",
+    "publicUrlHint": "Solo si Rommancer va a estar accesible desde internet, por ejemplo https://roms.ejemplo.com. Las consolas y los móviles se conectan a través de ella. En una red de casa, déjala vacía. Se puede cambiar luego en Administración > Servidor.",
+    "badUrl": "La dirección web tiene que empezar por http:// o https://.",
     "creating": "Creando tu cuenta…",
     "details": "Detalles",
     "errors": {
@@ -1600,7 +1603,7 @@
     "serviceHint": "Con ejecutar una vez rommancer.sh service on aparece el botón.",
     "changes_one": "Qué cambia en esta versión",
     "changes_other": "Qué cambia en estas {{count}} versiones",
-    "thisVersion": "Qué trajo la {{version}}",
+    "thisVersion": "Changelog v{{version}}",
     "noNotes": "Esta versión no tiene notas.",
     "running": "Actualizando a la {{to}}…",
     "restarting": "Rommancer se está reiniciando con la versión nueva. Esta página sigue sola.",
@@ -1621,6 +1624,15 @@
     "resultHelp": "El registro de abajo cuenta qué pasó. Rommancer sigue funcionando como antes.",
     "updated": "Rommancer está actualizado a la {{version}}.",
     "reload": "Recargar la página",
-    "log": "Registro de la actualización"
+    "log": "Registro de la actualización",
+    "gate": {
+      "title": "Actualizando Rommancer a la {{to}}",
+      "wait": "Rommancer no se puede usar hasta que termine; esta página sigue sola. No apagues el equipo donde funciona.",
+      "done": "Rommancer está actualizado a la {{version}}",
+      "doneHelp": "Todo sigue como lo dejaste.",
+      "back": "Rommancer no ha podido actualizarse a la {{to}}",
+      "backHelp": "Vuelve a estar en la {{version}}, como antes. Un admin puede ver qué pasó en Administración > Actualizar.",
+      "continue": "Continuar"
+    }
   }
 }

@@ -21,6 +21,7 @@ import { linkPublicRouter, linkRouter, shippedClients } from './modules/link/rou
 import { env } from './config/env.js';
 import { FEATURES, PROTOCOL, VERSION } from './lib/version.js';
 import { updateRouter } from './modules/update/routes.js';
+import { updateInProgress } from './modules/update/service.js';
 import { setupRouter } from './modules/setup/routes.js';
 import './modules/sync/service.js';
 import { journeysRouter, journeysAgentRouter } from './modules/journeys/routes.js';
@@ -46,7 +47,7 @@ export function createApp() {
   });
   // What this server is and offers, for clients newer than it (lib/version.ts) and for the update page
   api.get('/version', (_req, res) => {
-    res.json({ version: VERSION, protocol: PROTOCOL, features: FEATURES, clients: shippedClients() });
+    res.json({ version: VERSION, protocol: PROTOCOL, features: FEATURES, clients: shippedClients(), updating: updateInProgress() });
   });
   api.use('/auth', express.json({ limit: '1mb' }), authRouter);
   // The installer's second step (the first runs before the server has a database: installer.ts)

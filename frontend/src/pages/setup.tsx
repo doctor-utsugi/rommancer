@@ -21,6 +21,7 @@ export interface SetupState {
 
 // The console installer (deploy/install.sh) checks the same, in the same order
 const USERNAME = /^[a-zA-Z0-9_.-]{3,64}$/
+const PUBLIC_URL = /^(https?:\/\/\S+)?$/
 
 /** What went wrong, kept as a translation key so it follows a change of language */
 interface Problem {
@@ -30,7 +31,7 @@ interface Problem {
   detail?: string
 }
 
-const ADMIN_FIELD_ERRORS: Record<string, string> = { username: 'setup.invalidUsername' }
+const ADMIN_FIELD_ERRORS: Record<string, string> = { username: 'setup.invalidUsername', publicUrl: 'setup.badUrl' }
 
 /** A refusal from the setup API as a problem to show: database codes and validated fields are translated */
 function problemOf(err: unknown): Problem {
@@ -189,7 +190,7 @@ function AdminStep() {
   const { t } = useTranslation()
   const { reload } = useAuth()
   const qc = useQueryClient()
-  const [form, setForm] = useState({ username: 'admin', password: '', confirm: '' })
+  const [form, setForm] = useState({ username: 'admin', password: '', confirm: '', publicUrl: '' })
   const [problem, setProblem] = useState<Problem | null>(null)
   const [busy, setBusy] = useState(false)
   const submit = async (e: FormEvent) => {
@@ -199,6 +200,7 @@ function AdminStep() {
     if (missing) return setProblem({ key: 'setup.required', params: { field: t(labels[missing]) } })
     if (!USERNAME.test(form.username)) return setProblem({ key: 'setup.invalidUsername' })
     if (form.password !== form.confirm) return setProblem({ key: 'setup.mismatch' })
+    if (!PUBLIC_URL.test(form.publicUrl.trim())) return setProblem({ key: 'setup.badUrl' })
     setBusy(true)
     setProblem(null)
     try {
@@ -230,6 +232,11 @@ function AdminStep() {
           <Field label={t('setup.confirm')}>
             <Input type="password" value={form.confirm} onChange={set('confirm')} autoComplete="new-password" required />
           </Field>
+          <div className="sm:col-span-2">
+            <Field label={t('setup.publicUrl')} hint={t('setup.publicUrlHint')}>
+              <Input type="url" value={form.publicUrl} onChange={set('publicUrl')} placeholder="https://roms.example.com" autoComplete="url" inputMode="url" />
+            </Field>
+          </div>
         </fieldset>
         <ProblemNote problem={problem} />
         <Button type="submit" disabled={busy} className="h-auto min-h-9 whitespace-normal py-2">

@@ -12,6 +12,7 @@ Usage: install.sh [URL] [options]
   --db bundled|external  Rommancer's own database, or a MySQL server of your own:
     --db-host HOST  --db-port PORT  --db-name NAME  --db-user USER  --db-password PASSWORD
   --admin USER  --password PASSWORD     your account
+  --public-url URL       the web address, when Rommancer is reached from the internet (empty: a home network)
 Every option given skips its question; with all of them nothing is asked (unattended installs).
 The passwords can come from ROMMANCER_DB_PASSWORD and ROMMANCER_ADMIN_PASSWORD instead, out of sight of ps.
 EOF
@@ -19,10 +20,10 @@ EOF
 
 URL="http://127.0.0.1:8096"
 PLAIN=
-O_LANG='' O_DB='' O_DB_HOST='' O_DB_PORT='' O_DB_NAME='' O_DB_USER='' O_ADMIN=''
+O_LANG='' O_DB='' O_DB_HOST='' O_DB_PORT='' O_DB_NAME='' O_DB_USER='' O_ADMIN='' O_PUBLIC_URL=''
 O_DB_PASSWORD=${ROMMANCER_DB_PASSWORD:-} O_PASSWORD=${ROMMANCER_ADMIN_PASSWORD:-}
 # Which answers came with the command (an empty database password is an answer too)
-G_DB_PASSWORD=${ROMMANCER_DB_PASSWORD+1} G_PASSWORD=${ROMMANCER_ADMIN_PASSWORD+1}
+G_DB_PASSWORD=${ROMMANCER_DB_PASSWORD+1} G_PASSWORD=${ROMMANCER_ADMIN_PASSWORD+1} G_PUBLIC_URL=
 while [ $# -gt 0 ]; do
   opt=$1 val=
   case "$opt" in
@@ -42,6 +43,7 @@ while [ $# -gt 0 ]; do
     --db-password) O_DB_PASSWORD=$val G_DB_PASSWORD=1 ;;
     --admin) O_ADMIN=$val ;;
     --password) O_PASSWORD=$val G_PASSWORD=1 ;;
+    --public-url) O_PUBLIC_URL=$val G_PUBLIC_URL=1 ;;
     --*) usage >&2; exit 2 ;;
     *) URL="${opt%/}" ;;
   esac
@@ -103,6 +105,9 @@ t() {
       invalidUsername) echo "Ese nombre de usuario no vale: usa al menos 3 caracteres entre letras, números, punto, guion o guion bajo." ;;
       mismatch) echo "Las dos contraseñas no coinciden. Escríbelas otra vez." ;;
       badPort) echo "El puerto tiene que ser un número entre 1 y 65535." ;;
+      publicUrl) echo "Dirección web (opcional)" ;;
+      publicUrlHint) echo "Solo si Rommancer va a estar accesible desde internet, por ejemplo https://roms.ejemplo.com. Las consolas y los móviles se conectan a través de ella. En una red de casa, déjala vacía. Se puede cambiar luego en Administración > Servidor." ;;
+      badUrl) echo "La dirección web tiene que empezar por http:// o https://." ;;
       badDb) echo "--db: bundled o external" ;;
       creating) echo "Creando tu cuenta…" ;;
       failed) echo "Algo ha fallado" ;;
@@ -147,6 +152,9 @@ t() {
       invalidUsername) echo "That username won't work: use at least 3 letters, digits, dots, dashes or underscores." ;;
       mismatch) echo "The two passwords don't match. Type them again." ;;
       badPort) echo "The port has to be a number from 1 to 65535." ;;
+      publicUrl) echo "Web address (optional)" ;;
+      publicUrlHint) echo "Only if Rommancer will be reachable from the internet, for example https://roms.example.com. Consoles and phones connect through it. On a home network, leave it empty. Administration > Server changes it later." ;;
+      badUrl) echo "The web address has to start with http:// or https://." ;;
       badDb) echo "--db: bundled or external" ;;
       creating) echo "Creating your account…" ;;
       failed) echo "Something went wrong" ;;
@@ -305,6 +313,7 @@ why() {
   f=$(printf '%s' "$OUT" | sed -n 's/.*"path":\["\([^"]*\)".*/\1/p' | head -n 1)
   case "$f" in
     username) t invalidUsername ;;
+    publicUrl) t badUrl ;;
     *) e=$(jget error); printf '%s: %s' "$(t failed)" "${e:-HTTP $CODE}" ;;
   esac
 }
@@ -326,6 +335,7 @@ wait_setup() {
 }
 
 valid_port() { case "$1" in '' | *[!0-9]*) return 1 ;; esac; [ "$1" -ge 1 ] && [ "$1" -le 65535 ]; }
+valid_url() { case "$1" in '' | http://?* | https://?*) case "$1" in *[[:space:]]*) return 1 ;; esac ;; *) return 1 ;; esac; }
 valid_user() { case "$1" in *[!a-zA-Z0-9_.-]*) return 1 ;; esac; [ ${#1} -ge 3 ] && [ ${#1} -le 64 ]; }
 
 # --- Steps ---
@@ -387,12 +397,12 @@ $(t dbExternal): $(t dbExternalHint)"
 }
 
 admin_body() {
-  printf '{%s,%s,%s}' "$(jstr username "$A_USER")" "$(jstr password "$A_PASSWORD")" "$(jstr locale "$L")"
+  printf '{%s,%s,%s,%s}' "$(jstr username "$A_USER")" "$(jstr password "$A_PASSWORD")" "$(jstr locale "$L")" "$(jstr publicUrl "$A_URL")"
 }
 
-# The same checks as the web form, in the same order: username, a password, the repeated password
+# The same checks as the web form, in the same order: username, a password, the repeated password, the web address
 admin_step() {
-  A_USER=${O_ADMIN:-admin} A_PASSWORD=$O_PASSWORD
+  A_USER=${O_ADMIN:-admin} A_PASSWORD=$O_PASSWORD A_URL=$O_PUBLIC_URL
   given=
   [ -n "$O_ADMIN" ] && [ -n "${G_PASSWORD:-}" ] && given=1
   [ -n "$given" ] || note "$(t step 2) · $(t adminTitle)
@@ -415,6 +425,13 @@ $(t adminHint)"
         note "$(t mismatch)"
       done
     fi
+    if [ -z "$G_PUBLIC_URL" ] && [ -z "$given" ]; then
+      while :; do
+        A_URL=$(ask "$(t publicUrl)" "$A_URL" "$(t publicUrlHint)")
+        valid_url "$A_URL" && break
+        note "$(t badUrl)"
+      done
+    fi
     call_waiting "$(t creating)" POST /setup/admin "$(admin_body)"
     [ "$CODE" = 201 ] && break
     [ -n "$given" ] && die "$(why)"
@@ -432,6 +449,7 @@ $(t adminHint)"
 # Answers given with the command are checked before anything is done with them
 case "$O_DB" in '' | bundled | external) ;; *) die "$(t badDb)" ;; esac
 if [ -n "$O_DB_PORT" ] && ! valid_port "$O_DB_PORT"; then die "--db-port: $(t badPort)"; fi
+if ! valid_url "$O_PUBLIC_URL"; then die "--public-url: $(t badUrl)"; fi
 if [ -n "$O_ADMIN" ] && ! valid_user "$O_ADMIN"; then die "--admin: $(t invalidUsername)"; fi
 if [ -n "${G_PASSWORD:-}" ] && [ -z "$O_PASSWORD" ]; then die "--password: $(t required "$(t password)")"; fi
 

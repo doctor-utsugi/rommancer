@@ -3,6 +3,16 @@
 What changes for you in each version of Rommancer. The update page in Administration shows the entries between
 your version and the newest one.
 
+## 1.100.0 (2026-10-18)
+
+- While Rommancer updates, the whole web app becomes one update page for everyone, so nothing can be changed half
+  way. It shows each step, and at the end whether the update worked or went back to the previous version.
+- Install asks for Rommancer's web address when it will be reachable from the internet, for example
+  https://roms.example.com. Consoles and phones connect through it. On a home network it stays empty.
+  `--public-url` gives it beforehand.
+- The update page titles each version's notes "Changelog vX".
+- The ScreenScraper notice explains in plainer words how to get a developer id.
+
 ## 1.99.0 (2026-10-18)
 
 - Devices with no consoles yet asks first how the console will connect, then shows only that way's steps: the app

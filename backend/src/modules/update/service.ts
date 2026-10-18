@@ -78,6 +78,22 @@ function readStatus() {
   }
 }
 
+/**
+ * The update under way, for every page of the web app (which shows only the update while it runs): asked for and
+ * not started yet, or running. Null otherwise.
+ */
+export function updateInProgress(): { step: string; from: string; to: string } | null {
+  if (!DIR) return null;
+  const status = readStatus();
+  if (status?.state === 'running') return { step: status.step, from: status.from, to: status.to };
+  try {
+    const request = JSON.parse(fs.readFileSync(path.join(DIR, 'request'), 'utf8')) as { to: string };
+    return { step: 'queued', from: VERSION, to: request.to };
+  } catch {
+    return null;
+  }
+}
+
 /** The end of the update's log, for when something went wrong */
 export function readLog(lines = 200) {
   try {

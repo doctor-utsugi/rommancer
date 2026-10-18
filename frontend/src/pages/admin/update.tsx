@@ -187,7 +187,7 @@ export function AdminUpdatePage() {
           <CardContent className="space-y-4 text-sm">
             <p className="text-muted-foreground">{t('update.safety')}</p>
             {d.updater === 'watcher' ? (
-              <Button onClick={() => confirm(t('update.confirm', { from: d.version, to: d.latest })) && void act(() => post('/admin/update', { to: d.latest }))} disabled={running}>
+              <Button onClick={() => confirm(t('update.confirm', { from: d.version, to: d.latest })) && void act(() => post<UpdateState>('/admin/update', { to: d.latest }).finally(() => void qc.invalidateQueries({ queryKey: ['version'] })))} disabled={running}>
                 {t('update.button', { version: d.latest })}
               </Button>
             ) : (

@@ -860,10 +860,10 @@
       "tgdbStep2": "Signed in, open your API keys page",
       "tgdbStep3": "Copy your public API key and paste it here. Rommancer tries it before keeping it.",
       "checking": "checking…",
-      "ssNoDevId": "This server has no ScreenScraper developer id, and without one ScreenScraper answers no one (your account is kept anyway for when it has one). Whoever runs Rommancer asks for it once:",
-      "ssDevStep1": "Open a topic in ScreenScraper's developer forum (with your ScreenScraper account)",
-      "ssDevStep2": "Present the program: Rommancer, a self-hosted rom and save manager that fetches game media and details. They answer with a developer id and password.",
-      "ssDevStep3": "Put them in the server's .env and restart it:",
+      "ssNoDevId": "ScreenScraper only answers apps that have a developer id, and this server doesn't have one yet. Your account is saved and will work once it does. The person who runs Rommancer asks for the id once:",
+      "ssDevStep1": "Sign in to ScreenScraper and open a new topic in its developer forum",
+      "ssDevStep2": "Say what the app is: Rommancer, a self-hosted manager for roms and saves that downloads game covers and details. They reply with a developer id and password.",
+      "ssDevStep3": "Add both to the server's .env file and restart Rommancer:",
       "works": "Works: the service accepts your details.",
       "fails": "Does not work: {{error}}"
     },
@@ -1537,6 +1537,9 @@
     "required": "Still empty: {{field}}",
     "invalidUsername": "That username won't work: use at least 3 letters, digits, dots, dashes or underscores.",
     "badPort": "The port has to be a number from 1 to 65535.",
+    "publicUrl": "Web address (optional)",
+    "publicUrlHint": "Only if Rommancer will be reachable from the internet, for example https://roms.example.com. Consoles and phones connect through it. On a home network, leave it empty. Administration > Server changes it later.",
+    "badUrl": "The web address has to start with http:// or https://.",
     "creating": "Creating your account…",
     "details": "Details",
     "errors": {
@@ -1600,7 +1603,7 @@
     "serviceHint": "Running rommancer.sh service on once adds the button.",
     "changes_one": "What changes in this version",
     "changes_other": "What changes in these {{count}} versions",
-    "thisVersion": "What came with {{version}}",
+    "thisVersion": "Changelog v{{version}}",
     "noNotes": "No notes for this version.",
     "running": "Updating to {{to}}…",
     "restarting": "Rommancer is restarting with the new version. This page carries on by itself.",
@@ -1621,6 +1624,15 @@
     "resultHelp": "The log below says what happened. Rommancer keeps running as before.",
     "updated": "Rommancer is updated to {{version}}.",
     "reload": "Reload the page",
-    "log": "Update log"
+    "log": "Update log",
+    "gate": {
+      "title": "Updating Rommancer to {{to}}",
+      "wait": "Rommancer can’t be used until it finishes; this page carries on by itself. Don’t turn off the computer it runs on.",
+      "done": "Rommancer is updated to {{version}}",
+      "doneHelp": "Everything is as you left it.",
+      "back": "Rommancer could not update to {{to}}",
+      "backHelp": "It is back on {{version}}, as it was before. An admin can see what happened in Administration > Update.",
+      "continue": "Continue"
+    }
   }
 }

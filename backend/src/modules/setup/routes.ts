@@ -1,6 +1,7 @@
 /**
- * The installer's second step, once the database is there: the first account, an administrator (the server's
- * settings keep their defaults until Administration > Server). Open only while no user exists; it starts logged in.
+ * The installer's second step, once the database is there: the first account, an administrator, and the web address
+ * when Rommancer is reached from the internet (the other settings keep their defaults until Administration > Server).
+ * Open only while no user exists; it starts logged in.
  */
 import { Router } from 'express';
 import bcrypt from 'bcryptjs';
@@ -10,6 +11,7 @@ import { HttpError } from '../../lib/http.js';
 import { PERMISSIONS } from '../../lib/permissions.js';
 import { localeSchema, setDefaultLocale } from '../../lib/locales.js';
 import { bundledDatabase } from '../../config/bootstrap.js';
+import { setServerSettings } from '../../lib/settings.js';
 import { issueTokens } from '../auth/routes.js';
 
 export const setupRouter = Router();
@@ -27,6 +29,8 @@ export const adminBody = z.object({
   username: z.string().min(3).max(64).regex(/^[a-zA-Z0-9_.-]+$/),
   password: z.string().min(1).max(512),
   locale: localeSchema.catch('en').default('en'),
+  // Empty: each request's own address (a home network)
+  publicUrl: z.string().trim().max(255).regex(/^(https?:\/\/\S+)?$/).default(''),
 });
 
 // Two submissions at once must not make two administrators
@@ -46,6 +50,7 @@ setupRouter.post('/admin', async (req, res) => {
 async function createAdmin(body: z.infer<typeof adminBody>) {
   const locale = body.locale;
   await setDefaultLocale(locale);
+  if (body.publicUrl) await setServerSettings({ publicUrl: body.publicUrl.replace(/\/+$/, '') });
   const user = await prisma.user.create({
     data: {
       username: body.username,
