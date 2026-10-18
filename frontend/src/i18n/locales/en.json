@@ -281,7 +281,65 @@
     "both": "Both",
     "lastSync": "Last sync",
     "newConsole": "New console",
-    "manufacturer": "Manufacturer"
+    "manufacturer": "Manufacturer",
+    "empty": {
+      "title": "Connect your first console",
+      "intro": "There are two ways. With the Rommancer Sync app the console syncs by itself; over SSH nothing is installed on it, but files are only copied when you ask.",
+      "recommended": "Recommended",
+      "app": {
+        "title": "Install Rommancer Sync on the console",
+        "summary": "A small app that runs on the console and syncs by itself, in the background and around each game.",
+        "pick": "Your console's firmware",
+        "code": "The zip packages already carry your account, so the console links itself. The Android app and the terminal command show a code instead: type it in Link a device.",
+        "allGuides": "All guides",
+        "viaSsh": "Does the console have SSH? The server can install the app for you.",
+        "viaSshHelp": "Give its IP address, user and password. The server logs in, installs Rommancer Sync and runs a first sync, then forgets the password."
+      },
+      "ssh": {
+        "title": "Connect over SSH, with nothing installed",
+        "summary": "The server logs into the console over SSH when you ask it to and copies the files itself.",
+        "steps": [
+          "Turn on SSH on the console, usually in its network settings, and note its IP address.",
+          "Add the console: its model, its firmware, the IP address, and the SSH user and password.",
+          "Press Test. It lists the roms folders it finds, which tells you the firmware's folders are right.",
+          "Press Sync saves whenever you want them copied. To copy a list's games, open the list and use Assign list to device(s)."
+        ],
+        "login": "Usual SSH logins: root / linux on Knulli and Batocera, ark / ark on ArkOS, root with no password on Onion. If one fails, look it up in your firmware's documentation.",
+        "add": "Add an SSH console"
+      },
+      "compare": {
+        "title": "Which one to choose",
+        "app": "Rommancer Sync app",
+        "ssh": "SSH only",
+        "install": {
+          "label": "On the console",
+          "app": "The app, installed once",
+          "ssh": "Nothing"
+        },
+        "when": {
+          "label": "When it syncs",
+          "app": "By itself: at power-on, in the background and around each game",
+          "ssh": "When you press Sync saves on this page"
+        },
+        "what": {
+          "label": "What it syncs",
+          "app": "Saves and states, the games of your lists, the games you send from the console to the server, and its settings",
+          "ssh": "Saves and states, and a list's games when you copy them"
+        },
+        "reach": {
+          "label": "Who connects",
+          "app": "The console connects to the server, from any network that reaches it",
+          "ssh": "The server connects to the console: both on the same network, with the console on and awake"
+        },
+        "consoles": {
+          "label": "Consoles",
+          "app": "The firmwares in the guides: Knulli, Batocera, Onion, ArkOS, NextUI, Android and other Linux ones",
+          "ssh": "Any console with SSH, as long as Rommancer knows its firmware's folders"
+        }
+      },
+      "cards": "Cards without network (DS, GBA flashcarts) sync through the PC app. An SD card or folder mounted on this server is added as a local folder.",
+      "local": "Add a local folder"
+    }
   },
   "saves": {
     "title": "Saves and savestates",

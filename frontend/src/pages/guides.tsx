@@ -1,4 +1,5 @@
 import { useTranslation } from 'react-i18next'
+import type { TFunction } from 'i18next'
 import { Download } from 'lucide-react'
 import { toast } from 'sonner'
 import { authUrl } from '@/lib/api'
@@ -6,18 +7,17 @@ import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { PageHeader } from '@/components/common'
 
-interface Guide {
+export interface Guide {
   key: string
   devices: string
   downloads: { label: string; href: string }[]
   command?: string
 }
 
-// One card per kind of console: what to download and the few steps to get it syncing
-export function GuidesPage() {
-  const { t } = useTranslation()
+/** Every kind of console Rommancer Sync runs on: what to download and, for some, a command to run on it */
+export function consoleGuides(t: TFunction): Guide[] {
   const origin = window.location.origin
-  const guides: Guide[] = [
+  return [
     { key: 'knulli', devices: 'Anbernic RG40XX, RG35XX, RG406H…', downloads: [{ label: 'Knulli / Batocera (.zip)', href: authUrl('/link/package/knulli') }] },
     { key: 'onion', devices: 'Miyoo Mini, Miyoo Mini Plus', downloads: [{ label: 'Onion (.zip)', href: authUrl('/link/package/onion') }] },
     { key: 'arkos', devices: 'Anbernic RG353, RG503, Powkiddy RGB30…', downloads: [{ label: 'ArkOS / dArkOS (.zip)', href: authUrl('/link/package/arkos') }] },
@@ -41,6 +41,12 @@ export function GuidesPage() {
     },
     { key: 'ssh', devices: t('more.guides.ssh.devices'), downloads: [] },
   ]
+}
+
+// One card per kind of console: what to download and the few steps to get it syncing
+export function GuidesPage() {
+  const { t } = useTranslation()
+  const guides = consoleGuides(t)
   return (
     <div className="space-y-6">
       <PageHeader title={t('more.guides.title')} />
@@ -53,35 +59,45 @@ export function GuidesPage() {
               <p className="text-xs text-muted-foreground">{g.devices}</p>
             </CardHeader>
             <CardContent className="space-y-3 text-sm">
-              <ol className="list-decimal space-y-1 pl-5">
-                {(t(`more.guides.${g.key}.steps`, { returnObjects: true }) as string[]).map((s, i) => (
-                  <li key={i}>{s}</li>
-                ))}
-              </ol>
-              {g.command && (
-                <button
-                  type="button"
-                  className="block w-full rounded-md bg-muted px-3 py-2 text-left font-mono text-xs break-all"
-                  title={t('more.guides.copy')}
-                  onClick={() => void navigator.clipboard.writeText(g.command!).then(() => toast.success(t('more.guides.copied')))}
-                >
-                  {g.command}
-                </button>
-              )}
-              {g.downloads.length > 0 && (
-                <div className="flex flex-wrap gap-2">
-                  {g.downloads.map((d) => (
-                    <Button key={d.href} size="sm" variant="outline" nativeButton={false} render={<a href={d.href} />}>
-                      <Download className="size-4" />
-                      {d.label}
-                    </Button>
-                  ))}
-                </div>
-              )}
+              <GuideSteps guide={g} />
             </CardContent>
           </Card>
         ))}
       </div>
     </div>
+  )
+}
+
+/** A guide's steps, then its command to copy and its downloads */
+export function GuideSteps({ guide }: { guide: Guide }) {
+  const { t } = useTranslation()
+  return (
+    <>
+      <ol className="list-decimal space-y-1 pl-5">
+        {(t(`more.guides.${guide.key}.steps`, { returnObjects: true }) as string[]).map((s, i) => (
+          <li key={i}>{s}</li>
+        ))}
+      </ol>
+      {guide.command && (
+        <button
+          type="button"
+          className="block w-full rounded-md bg-muted px-3 py-2 text-left font-mono text-xs break-all"
+          title={t('more.guides.copy')}
+          onClick={() => void navigator.clipboard.writeText(guide.command!).then(() => toast.success(t('more.guides.copied')))}
+        >
+          {guide.command}
+        </button>
+      )}
+      {guide.downloads.length > 0 && (
+        <div className="flex flex-wrap gap-2">
+          {guide.downloads.map((d) => (
+            <Button key={d.href} size="sm" variant="outline" nativeButton={false} render={<a href={d.href} />}>
+              <Download className="size-4" />
+              {d.label}
+            </Button>
+          ))}
+        </div>
+      )}
+    </>
   )
 }

@@ -281,7 +281,65 @@
     "both": "Ambos",
     "lastSync": "Última sincronización",
     "newConsole": "Nueva consola",
-    "manufacturer": "Fabricante"
+    "manufacturer": "Fabricante",
+    "empty": {
+      "title": "Conecta tu primera consola",
+      "intro": "Hay dos formas. Con la app Rommancer Sync la consola se sincroniza sola; por SSH no se instala nada en ella, pero los ficheros solo se copian cuando tú lo pides.",
+      "recommended": "Recomendado",
+      "app": {
+        "title": "Instala Rommancer Sync en la consola",
+        "summary": "Una app pequeña que corre en la consola y se sincroniza sola, en segundo plano y antes y después de cada partida.",
+        "pick": "El firmware de tu consola",
+        "code": "Los paquetes zip ya llevan tu cuenta, así que la consola se vincula sola. La app de Android y el comando de terminal muestran un código: escríbelo en Vincular dispositivo.",
+        "allGuides": "Todas las guías",
+        "viaSsh": "¿La consola tiene SSH? El servidor puede instalarte la app.",
+        "viaSshHelp": "Indica su IP, usuario y contraseña. El servidor entra, instala Rommancer Sync y hace una primera sincronización; después olvida la contraseña."
+      },
+      "ssh": {
+        "title": "Conecta por SSH, sin instalar nada",
+        "summary": "El servidor entra en la consola por SSH cuando se lo pides y copia él mismo los ficheros.",
+        "steps": [
+          "Activa SSH en la consola, normalmente en sus ajustes de red, y apunta su IP.",
+          "Añade la consola: su modelo, su firmware, la IP y el usuario y contraseña de SSH.",
+          "Pulsa Probar. Lista las carpetas de roms que encuentra, y así sabes que las carpetas del firmware son las buenas.",
+          "Pulsa Sincronizar saves cuando quieras copiarlas. Para copiar los juegos de una lista, ábrela y usa Asignar lista a dispositivo/s."
+        ],
+        "login": "Accesos SSH habituales: root / linux en Knulli y Batocera, ark / ark en ArkOS, root sin contraseña en Onion. Si no entra, búscalo en la documentación de tu firmware.",
+        "add": "Añadir consola por SSH"
+      },
+      "compare": {
+        "title": "Cuál elegir",
+        "app": "App Rommancer Sync",
+        "ssh": "Solo SSH",
+        "install": {
+          "label": "En la consola",
+          "app": "La app, instalada una vez",
+          "ssh": "Nada"
+        },
+        "when": {
+          "label": "Cuándo sincroniza",
+          "app": "Sola: al encenderla, en segundo plano y antes y después de cada partida",
+          "ssh": "Cuando pulsas Sincronizar saves en esta página"
+        },
+        "what": {
+          "label": "Qué sincroniza",
+          "app": "Partidas y estados, los juegos de tus listas, los que mandas desde la consola al servidor y sus ajustes",
+          "ssh": "Partidas y estados, y los juegos de una lista cuando los copias"
+        },
+        "reach": {
+          "label": "Quién conecta",
+          "app": "La consola conecta con el servidor, desde cualquier red que llegue a él",
+          "ssh": "El servidor conecta con la consola: los dos en la misma red, con la consola encendida y despierta"
+        },
+        "consoles": {
+          "label": "Consolas",
+          "app": "Los firmwares de las guías: Knulli, Batocera, Onion, ArkOS, NextUI, Android y otros Linux",
+          "ssh": "Cualquier consola con SSH, siempre que Rommancer conozca las carpetas de su firmware"
+        }
+      },
+      "cards": "Las tarjetas sin red (DS, flashcarts de GBA) se sincronizan con la app de PC. Una SD o carpeta montada en este servidor se añade como carpeta local.",
+      "local": "Añadir carpeta local"
+    }
   },
   "saves": {
     "title": "Saves y savestates",

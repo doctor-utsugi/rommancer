@@ -14,13 +14,15 @@ import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
 import { DeviceArt } from '@/components/device-art'
-import { Empty, Field, JobProgress, NativeSelect, PageHeader, errMsg, formatDate, useJob, useSystems } from '@/components/common'
+import { DevicesEmpty } from './devices-empty'
+import { Field, JobProgress, NativeSelect, PageHeader, errMsg, formatDate, useJob, useSystems } from '@/components/common'
 
 export function DevicesPage() {
   const { t } = useTranslation()
   const qc = useQueryClient()
   const { data } = useQuery({ queryKey: ['devices'], queryFn: () => get<any[]>('/devices') })
   const [editing, setEditing] = useState<any | null | undefined>(undefined)
+  const [newConn, setNewConn] = useState('LOCAL')
   const [jobId, setJobId] = useState<number | null>(null)
   const job = useJob(jobId, [['devices'], ['saves']])
   const { can, user } = useAuth()
@@ -52,6 +54,8 @@ export function DevicesPage() {
   return (
     <div>
       <PageHeader title={t('devices.title')}>
+        {!!data?.length && (
+          <>
         <Button size="sm" variant="outline" nativeButton={false} render={<a href={authUrl('/link/package/onion')} />} title={t('more.link.installerHelp')}>
           {t('more.link.installer', { os: 'Onion' })}
         </Button>
@@ -72,9 +76,17 @@ export function DevicesPage() {
             {t('more.ssh.add')}
           </Button>
         )}
-        <Button size="sm" onClick={() => setEditing(null)}>
-          {t('devices.new')}
-        </Button>
+            <Button
+              size="sm"
+              onClick={() => {
+                setNewConn('LOCAL')
+                setEditing(null)
+              }}
+            >
+              {t('devices.new')}
+            </Button>
+          </>
+        )}
       </PageHeader>
       {sshAdd && <SshInstallDialog onClose={() => setSshAdd(false)} />}
       {jobId && (
@@ -82,8 +94,14 @@ export function DevicesPage() {
           <JobProgress job={job} />
         </div>
       )}
-      {!data?.length ? (
-        <Empty />
+      {!data ? null : !data.length ? (
+        <DevicesEmpty
+          onNew={(conn) => {
+            setNewConn(conn)
+            setEditing(null)
+          }}
+          onSshInstall={() => setSshAdd(true)}
+        />
       ) : (
         <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
           {data.map((d) => (
@@ -168,7 +186,7 @@ export function DevicesPage() {
           ))}
         </div>
       )}
-      {editing !== undefined && <DeviceDialog device={editing} onClose={() => setEditing(undefined)} />}
+      {editing !== undefined && <DeviceDialog device={editing} connType={newConn} onClose={() => setEditing(undefined)} />}
       {scripts && <ScriptsDialog device={scripts} onClose={() => setScripts(null)} />}
     </div>
   )
@@ -222,7 +240,7 @@ function ScriptsDialog({ device, onClose }: { device: any; onClose(): void }) {
   )
 }
 
-function DeviceDialog({ device, onClose }: { device: any | null; onClose(): void }) {
+function DeviceDialog({ device, connType = 'LOCAL', onClose }: { device: any | null; connType?: string; onClose(): void }) {
   const { t } = useTranslation()
   const qc = useQueryClient()
   const consoles = useQuery({ queryKey: ['consoles'], queryFn: () => get<any[]>('/devices/consoles') })
@@ -234,7 +252,7 @@ function DeviceDialog({ device, onClose }: { device: any | null; onClose(): void
     name: device?.name ?? '',
     consoleId: String(device?.consoleId ?? ''),
     firmwareId: String(device?.firmwareId ?? ''),
-    connType: device?.connType ?? 'LOCAL',
+    connType: device?.connType ?? connType,
     rootPath: device?.rootPath ?? '',
     sshHost: device?.sshHost ?? '',
     sshPort: String(device?.sshPort ?? 22),
