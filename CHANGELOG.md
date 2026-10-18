@@ -3,6 +3,13 @@
 What changes for you in each version of Rommancer. The update page in Administration shows the entries between
 your version and the newest one.
 
+## 1.99.0 (2026-10-18)
+
+- Devices with no consoles yet asks first how the console will connect, then shows only that way's steps: the app
+  on the console, the app on your computer, or SSH. The computer way is new on this page: put a console's SD card in
+  your computer, or plug the console in by USB, and the Rommancer app there syncs it. One app looks after all your
+  consoles.
+
 ## 1.98.0 (2026-10-18)
 
 - Rommancer updates itself: Administration > Update shows the new versions and what each one changes, and its button
