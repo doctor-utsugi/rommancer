@@ -243,9 +243,9 @@ EOF
   esac
 }
 
-# Rommancer as a service: started with the computer (Linux: a systemd user unit, plus lingering so the user's units
-# start at boot, which takes sudo once) or at login (Mac: a LaunchAgent)
-service() {
+# Started with the computer or not (Linux: a systemd user unit, started at boot thanks to lingering; Mac: a
+# LaunchAgent, started at login), without touching the watcher
+autostart() {
   case "$1" in
     on)
       if [ "$OS" = Darwin ]; then
@@ -260,8 +260,6 @@ service() {
   <key>RunAtLoad</key><true/>
 </dict></plist>
 EOF
-        watcher on
-        say onMac
         return
       fi
       mkdir -p "$(dirname "$UNIT")"
@@ -282,22 +280,36 @@ ExecStop=/bin/sh $SRC/deploy/podman/rommancer.sh stop
 WantedBy=default.target
 EOF
       systemctl --user daemon-reload
-      systemctl --user enable rommancer.service >/dev/null 2>&1
-      watcher on
-      if ! linger && ! sudo loginctl enable-linger "$USER"; then
-        say noLinger
-        return
-      fi
-      say on ;;
+      systemctl --user enable rommancer.service >/dev/null 2>&1 ;;
     off)
-      watcher off
       if [ "$OS" = Darwin ]; then
         rm -f "$AGENT"
       else
         systemctl --user disable rommancer.service >/dev/null 2>&1 || true
         rm -f "$UNIT"
         systemctl --user daemon-reload
-      fi
+      fi ;;
+  esac
+}
+
+# The user's units keep running after they log out and start with the computer (Linux; sudo once when the system asks
+# for it). Without it the watcher stops at logout
+keep_running() {
+  [ "$OS" = Linux ] || return 0
+  linger || loginctl enable-linger "$USER" 2>/dev/null || sudo loginctl enable-linger "$USER" || { say noLinger; return 1; }
+}
+
+# Rommancer as a service: started with the computer, with the update page's watcher
+service() {
+  case "$1" in
+    on)
+      autostart on
+      watcher on
+      if [ "$OS" = Darwin ]; then say onMac; return; fi
+      keep_running && say on ;;
+    off)
+      watcher off
+      autostart off
       say off ;;
     *) echo "Usage: $0 service on|off" >&2; exit 2 ;;
   esac
@@ -604,7 +616,9 @@ case "${1:-}" in
     if [ -n "$web" ]; then mkdir -p "$UPD"; touch "$UPD/choose-roms"; fi
     sh "$0" up
     if [ -n "$web" ]; then
-      after_install "$svc"
+      # The installer in the browser asks whether it starts with the computer; it needs the watcher meanwhile
+      watcher on
+      keep_running || true
       say web
     else
       ROMMANCER_SHOW_URL=$(web_url) sh "$SRC/deploy/install.sh" "http://127.0.0.1:$WEB_PORT" "$@"
@@ -614,9 +628,11 @@ case "${1:-}" in
     # The installer in the browser asks the same watcher for another roms folder: Rommancer starts again with it
     if [ "$1" = update ] && [ "${2:-}" = --request ] && grep -q '"roms":' "$UPD/request" 2>/dev/null; then
       roms=$(sed -n 's/.*"roms":"\([^"]*\)".*/\1/p' "$UPD/request")
+      auto=$(sed -n 's/.*"autostart":\([a-z]*\).*/\1/p' "$UPD/request")
       rm -f "$UPD/request"
       [ -d "$roms" ] || { echo "Not a folder: $roms" >&2; exit 1; }
       rm -f "$UPD/choose-roms"
+      case "$auto" in true) autostart on ;; false) autostart off ;; esac
       ROMMANCER_ROMS="$roms" exec sh "$0" up
     fi
     # Run from a copy: update replaces the folder this script is in

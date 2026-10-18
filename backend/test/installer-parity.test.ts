@@ -76,7 +76,7 @@ const SHARED_TEXTS: Record<string, string> = {
   dbUser: 'setup.dbUser', dbConnecting: 'setup.dbConnecting', details: 'setup.details', adminTitle: 'setup.adminTitle', adminHint: 'setup.adminHint',
   username: 'setup.username', usernameHint: 'setup.usernameHint', confirm: 'setup.confirm',
   invalidUsername: 'setup.invalidUsername', mismatch: 'setup.mismatch',
-  badPort: 'setup.badPort', romsTitle: 'setup.romsTitle', romsHint: 'setup.romsHint', romsRestarting: 'setup.romsRestarting', romsFailed: 'setup.romsFailed', publicUrl: 'setup.publicUrl', publicUrlHint: 'setup.publicUrlHint', badUrl: 'setup.badUrl', creating: 'setup.creating', password: 'common.password',
+  badPort: 'setup.badPort', romsTitle: 'setup.romsTitle', romsHint: 'setup.romsHint', romsRestarting: 'setup.romsRestarting', romsFailed: 'setup.romsFailed', autostart: 'setup.autostart', autostartHint: 'setup.autostartHint', publicUrl: 'setup.publicUrl', publicUrlHint: 'setup.publicUrlHint', badUrl: 'setup.badUrl', creating: 'setup.creating', password: 'common.password',
 };
 
 /** install.sh t() as { language: { key: text } }; its blocks follow LOCALES' order reversed (es first, then the else) */
@@ -107,7 +107,7 @@ test('the console says what the web says, in every language, and translates ever
 // Every field of the setup API can also come with the command (unattended installs), by these options
 const CLI_OPTIONS: Record<string, string> = {
   mode: '--db', host: '--db-host', port: '--db-port', database: '--db-name', user: '--db-user', password: '--db-password',
-  username: '--admin', locale: '--lang', publicUrl: '--public-url', path: '--roms',
+  username: '--admin', locale: '--lang', publicUrl: '--public-url', path: '--roms', autostart: '--autostart',
 };
 
 test('the console takes every field as an option too', async () => {

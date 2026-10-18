@@ -3,6 +3,16 @@
 What changes for you in each version of Rommancer. The update page in Administration shows the entries between
 your version and the newest one.
 
+## 1.105.0 (2026-10-18)
+
+- The roms folder you pick in the installer goes straight into your library and is scanned, so your games show up
+  without visiting Storage setup. An install that has no library folders yet gets its roms folder added the same
+  way on its next start.
+- The installer in the browser asks whether Rommancer starts with the computer. The one command no longer turns it
+  into a service by itself, and Administration > Update works either way.
+- Keeping the current roms folder also stops showing the computer's other folders to Rommancer.
+- The database step just says "Preparing the database…".
+
 ## 1.104.0 (2026-10-18)
 
 - Installed with the one command, Rommancer asks for your roms folder in the browser, as the installer's last step:

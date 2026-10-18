@@ -1,9 +1,9 @@
 #!/bin/sh
 # Rommancer in one command, on Linux and macOS:
 #   curl -fsSL https://github.com/doctor-utsugi/rommancer/releases/latest/download/get.sh | sh
-# Downloads the newest release into ~/rommancer (ROMMANCER_DIR elsewhere), starts it with its ready-made images and
-# as a service (so it starts with the computer and Administration > Update works), asking nothing, and ends with the
-# address where the installer in the browser finishes: database, account and the folder with the roms. Options
+# Downloads the newest release into ~/rommancer (ROMMANCER_DIR elsewhere) and starts it with its ready-made images,
+# asking nothing, and ends with the address where the installer in the browser finishes: database, account, the folder
+# with the roms and whether Rommancer starts with the computer. Options
 # after "sh -s --" go to rommancer.sh install.
 set -eu
 REPO=doctor-utsugi/rommancer
@@ -26,4 +26,4 @@ if [ -f "$DIR/deploy/podman/rommancer.sh" ]; then printf "$have" "$DIR" "$DIR" >
 printf "$get" "$DIR" >&2
 mkdir -p "$DIR"
 curl -fsSL "https://github.com/$REPO/releases/latest/download/rommancer.tar.gz" | tar -xz -C "$DIR" --strip-components=1
-exec sh "$DIR/deploy/podman/rommancer.sh" install --web --service yes "$@" </dev/null
+exec sh "$DIR/deploy/podman/rommancer.sh" install --web "$@" </dev/null

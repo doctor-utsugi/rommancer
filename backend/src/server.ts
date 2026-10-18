@@ -12,6 +12,7 @@ import { migrateWholeCards } from './modules/saves/cards.js';
 import { catalog } from './modules/browse/catalog.js';
 import { startUpdateChecks } from './modules/update/service.js';
 import { loadServerSettings, onServerSettingsChange } from './lib/settings.js';
+import { adoptRoms } from './modules/setup/roms.js';
 
 for (const d of [env.dataDir, env.mediaDir, env.savesDir, env.uploadsDir, env.datsDir, env.tmpDir, env.patchesDir]) fs.mkdirSync(d, { recursive: true });
 
@@ -30,6 +31,8 @@ startHealthWatch();
 startUpdateChecks();
 // Applies the seed (DATs, RA, scraping) if present; anything already imported is skipped
 if (env.seedOnStart && fs.existsSync(env.seedDir)) await enqueue('seed-apply', {});
+// The roms folder chosen in the installer goes into the library and is scanned
+await adoptRoms().catch((e) => console.error('roms folder', e));
 
 createApp().listen(env.port, () => console.log(`Rommancer API listening on :${env.port}`));
 // Built now, so the first console that browses does not wait for it

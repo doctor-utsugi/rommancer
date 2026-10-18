@@ -162,15 +162,49 @@ test('installer from the browser: the roms folder, browsed on the computer and m
     assert.equal((await call('POST', '/setup/roms', { path: '/etc' })).status, 400);
 
     // Another folder: the watcher is asked to start Rommancer with it, which is no update
-    assert.deepEqual(await (await call('POST', '/setup/roms', { path: '/home/me/games/' })).json(), { restarting: true, path: '/home/me/games' });
-    assert.equal(JSON.parse(fs.readFileSync(path.join(upd, 'request'), 'utf8')).roms, '/home/me/games');
-    // Started again with it (rommancer.sh removes the request and the pending step): the current one ends the step
+    assert.deepEqual(await (await call('POST', '/setup/roms', { path: '/home/me/games/', autostart: false })).json(), { restarting: true, path: '/home/me/games' });
+    assert.deepEqual(JSON.parse(fs.readFileSync(path.join(upd, 'request'), 'utf8')), { roms: '/home/me/games', autostart: false, at: JSON.parse(fs.readFileSync(path.join(upd, 'request'), 'utf8')).at });
+    assert.equal((await (await call('GET', '/version')).json()).updating, null);
+    // The current folder too: Rommancer starts again without the computer's folders, started with the computer or not
+    assert.deepEqual(await (await call('POST', '/setup/roms', { path: '/home/me/rommancer-roms' })).json(), { restarting: true, path: '/home/me/rommancer-roms' });
+    assert.equal(JSON.parse(fs.readFileSync(path.join(upd, 'request'), 'utf8')).autostart, true, 'started with the computer unless said otherwise');
+    // Started again with it: rommancer.sh removed the request and the pending step
     fs.rmSync(path.join(upd, 'request'));
+    fs.rmSync(path.join(upd, 'choose-roms'));
     process.env.ROMMANCER_ROMS_HOST = '/home/me/games';
-    assert.deepEqual(await (await call('POST', '/setup/roms', { path: '/home/me/games' })).json(), { restarting: false, path: '/home/me/games' });
+    assert.equal((await (await call('GET', '/setup/roms')).json()).pending, false);
     assert.equal((await (await fetch(`${base}/setup`)).json()).needsRoms, false);
+
+    // That first start puts the folder in the library and scans it, once and only into an empty library
+    const { adoptRoms } = await import('../src/modules/setup/roms.js');
+    process.env.ROMMANCER_ROMS_MOUNT = path.join(root, 'home/me/games');
+    await prisma.setting.deleteMany({ where: { key: 'roms.adopted' } });
+    const before = await prisma.romPath.count();
+    await adoptRoms();
+    const added = await prisma.romPath.findUnique({ where: { path: process.env.ROMMANCER_ROMS_MOUNT } });
+    if (before) assert.equal(added, null, 'a library with folders is left alone');
+    else {
+      assert.equal(added?.isDefaultTarget, true, 'new roms go there');
+      assert.equal(added?.readOnly, false);
+      const job = await prisma.job.findFirst({ where: { type: 'scan' }, orderBy: { id: 'desc' } });
+      assert.equal((job?.params as { romPathId?: number })?.romPathId, added!.id, 'and it is scanned');
+      await prisma.job.delete({ where: { id: job!.id } });
+      await prisma.romPath.delete({ where: { id: added!.id } });
+      await adoptRoms();
+      assert.equal(await prisma.romPath.count({ where: { path: process.env.ROMMANCER_ROMS_MOUNT } }), 0, 'once');
+    }
+    await prisma.setting.deleteMany({ where: { key: 'roms.adopted' } });
+
+    // Without the watcher (Windows) only the current folder can be kept, and the step ends there
+    fs.writeFileSync(path.join(upd, 'choose-roms'), '');
+    fs.rmSync(path.join(upd, 'watcher'));
+    await prisma.setting.create({ data: { key: 'roms.adopted', value: 'test' } });
+    assert.equal((await call('POST', '/setup/roms', { path: '/home/me/other' })).status, 400);
+    assert.deepEqual(await (await call('POST', '/setup/roms', { path: '/home/me/games' })).json(), { restarting: false, path: '/home/me/games' });
+    assert.equal(fs.existsSync(path.join(upd, 'choose-roms')), false);
+    await prisma.setting.deleteMany({ where: { key: 'roms.adopted' } });
   } finally {
-    for (const k of Object.keys(env)) delete process.env[k];
+    for (const k of [...Object.keys(env), 'ROMMANCER_ROMS_MOUNT']) delete process.env[k];
     await new Promise((r) => server.close(r));
     await prisma.user.delete({ where: { id: admin.id } });
   }

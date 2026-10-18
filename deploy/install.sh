@@ -14,6 +14,7 @@ Usage: install.sh [URL] [options]
   --admin USER  --password PASSWORD     your account
   --public-url URL       the web address, when Rommancer is reached from the internet (empty: a home network)
   --roms PATH            the folder with your roms, when installed with rommancer.sh install --web
+  --autostart yes|no     whether Rommancer starts with the computer, when installed with rommancer.sh install --web
 Every option given skips its question; with all of them nothing is asked (unattended installs).
 The passwords can come from ROMMANCER_DB_PASSWORD and ROMMANCER_ADMIN_PASSWORD instead, out of sight of ps.
 EOF
@@ -21,7 +22,7 @@ EOF
 
 URL="http://127.0.0.1:8096"
 PLAIN=
-O_LANG='' O_DB='' O_DB_HOST='' O_DB_PORT='' O_DB_NAME='' O_DB_USER='' O_ADMIN='' O_PUBLIC_URL='' O_ROMS='' TOKEN='' A_GIVEN='' TOTAL=2
+O_LANG='' O_DB='' O_DB_HOST='' O_DB_PORT='' O_DB_NAME='' O_DB_USER='' O_ADMIN='' O_PUBLIC_URL='' O_ROMS='' O_AUTOSTART='' TOKEN='' A_GIVEN='' TOTAL=2
 O_DB_PASSWORD=${ROMMANCER_DB_PASSWORD:-} O_PASSWORD=${ROMMANCER_ADMIN_PASSWORD:-}
 # Which answers came with the command (an empty database password is an answer too)
 G_DB_PASSWORD=${ROMMANCER_DB_PASSWORD+1} G_PASSWORD=${ROMMANCER_ADMIN_PASSWORD+1} G_PUBLIC_URL=
@@ -46,6 +47,7 @@ while [ $# -gt 0 ]; do
     --password) O_PASSWORD=$val G_PASSWORD=1 ;;
     --public-url) O_PUBLIC_URL=$val G_PUBLIC_URL=1 ;;
     --roms) O_ROMS=$val ;;
+    --autostart) O_AUTOSTART=$val ;;
     --*) usage >&2; exit 2 ;;
     *) URL="${opt%/}" ;;
   esac
@@ -90,7 +92,7 @@ t() {
       dbName) echo "Nombre de la base de datos" ;;
       dbUser) echo "Usuario de MySQL" ;;
       password) echo "Contraseña" ;;
-      dbConnecting) echo "Preparando la base de datos. La primera vez puede tardar un minuto…" ;;
+      dbConnecting) echo "Preparando la base de datos…" ;;
       details) echo "Detalles" ;;
       db_unreachable) echo "No hay respuesta en ese servidor y puerto. Comprueba la dirección, que MySQL esté en marcha y que acepte conexiones desde esta máquina." ;;
       db_auth) echo "MySQL no acepta ese usuario o esa contraseña." ;;
@@ -113,6 +115,8 @@ t() {
       romsTitle) echo "¿Dónde están tus roms?" ;;
       romsHint) echo "Elige la carpeta donde están; si las tienes en varios discos, una que los contenga a todos. Rommancer la lee tal cual: no mueve, renombra ni borra nada si no se lo pides." ;;
       romsRestarting) echo "Arrancando Rommancer con esa carpeta. Tarda unos segundos…" ;;
+      autostart) echo "Arrancar Rommancer con el equipo" ;;
+      autostartHint) echo "Si no, cuando el equipo se reinicie Rommancer quedará parado hasta que alguien lo arranque." ;;
       romsFailed) echo "Rommancer no ha arrancado con esa carpeta. Vuelve a intentarlo, o elígela luego con rommancer.sh up." ;;
       badDb) echo "--db: bundled o external" ;;
       creating) echo "Creando tu cuenta…" ;;
@@ -141,7 +145,7 @@ t() {
       dbName) echo "Database name" ;;
       dbUser) echo "MySQL user" ;;
       password) echo "Password" ;;
-      dbConnecting) echo "Preparing the database. The first time can take a minute…" ;;
+      dbConnecting) echo "Preparing the database…" ;;
       details) echo "Details" ;;
       db_unreachable) echo "Nothing answers at that server and port. Check the address, that MySQL is running and that it accepts connections from this machine." ;;
       db_auth) echo "MySQL doesn't accept that user or that password." ;;
@@ -164,6 +168,8 @@ t() {
       romsTitle) echo "Where are your roms?" ;;
       romsHint) echo "Pick the folder that holds them; if they are on several disks, one that holds them all. Rommancer reads it as it is: nothing in it is moved, renamed or deleted unless you ask." ;;
       romsRestarting) echo "Starting Rommancer with that folder. It takes a few seconds…" ;;
+      autostart) echo "Start Rommancer with the computer" ;;
+      autostartHint) echo "Otherwise, when the computer restarts, Rommancer stays off until someone starts it." ;;
       romsFailed) echo "Rommancer didn't start with that folder. Try again, or choose it later with rommancer.sh up." ;;
       badDb) echo "--db: bundled or external" ;;
       creating) echo "Creating your account…" ;;
@@ -455,7 +461,7 @@ $(t adminHint)"
 }
 
 roms_body() {
-  printf '{%s}' "$(jstr path "$R_PATH")"
+  printf '{%s,%s}' "$(jstr path "$R_PATH")" "$(jnum autostart "$([ "$R_AUTO" = yes ] && echo true || echo false)")"
 }
 
 # Installed from the browser (rommancer.sh install --web): the folder with the roms, which the computer mounts
@@ -467,22 +473,25 @@ roms_step() {
   [ -n "$given" ] || note "$(t step 3) · $(t romsTitle)
 
 $(t romsHint)"
+  R_AUTO=${O_AUTOSTART:-yes}
   while :; do
     [ -n "$given" ] || R_PATH=$(need "$(t romsTitle)" "$R_PATH")
+    # shellcheck disable=SC2046
+    [ -n "$O_AUTOSTART" ] || R_AUTO=$(set -- $(t buttons) && choose "$(text "$(t autostart)" "$(t autostartHint)")" "$R_AUTO" yes "$3" no "$4")
     call_waiting "$(t romsRestarting)" POST /setup/roms "$(roms_body)"
     [ "$CODE" = 200 ] && break
     [ -n "$given" ] && die "$(why)"
     note "$(why)"
   done
   case "$OUT" in *'"restarting":true'*) ;; *) return ;; esac
-  # The computer starts Rommancer again with that folder: done once it answers with it
+  # The computer starts Rommancer again with that folder: done once it answers with it and the step is over
   R_PATH=$(jget path) s=0
   status "$(t romsRestarting)"
   while :; do
     sleep 2
     s=$((s + 2))
     call GET /setup/roms
-    [ "$CODE" = 200 ] && [ "$(jget current)" = "$R_PATH" ] && return
+    [ "$CODE" = 200 ] && [ "$(jget current)" = "$R_PATH" ] && case "$OUT" in *'"pending":false'*) return ;; esac
     [ $s -ge 180 ] && die "$(t romsFailed)"
   done
 }
@@ -499,6 +508,7 @@ finish() {
 case "$O_DB" in '' | bundled | external) ;; *) die "$(t badDb)" ;; esac
 if [ -n "$O_DB_PORT" ] && ! valid_port "$O_DB_PORT"; then die "--db-port: $(t badPort)"; fi
 if ! valid_url "$O_PUBLIC_URL"; then die "--public-url: $(t badUrl)"; fi
+case "$O_AUTOSTART" in "" | yes | no) ;; *) usage >&2; exit 2 ;; esac
 if [ -n "$O_ADMIN" ] && ! valid_user "$O_ADMIN"; then die "--admin: $(t invalidUsername)"; fi
 if [ -n "${G_PASSWORD:-}" ] && [ -z "$O_PASSWORD" ]; then die "--password: $(t required "$(t password)")"; fi
 

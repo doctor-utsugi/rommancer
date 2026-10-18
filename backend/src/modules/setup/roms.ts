@@ -14,6 +14,9 @@ const dir = () => process.env.UPDATE_DIR ?? '';
 // Where rommancer.sh mounts the computer's folders (another place in tests)
 const host = () => process.env.ROMMANCER_HOST_ROOT || '/host';
 const PENDING = 'choose-roms';
+// Where the roms folder is inside the container (another place in tests)
+const mount = () => process.env.ROMMANCER_ROMS_MOUNT || '/roms';
+const ADOPTED = 'roms.adopted';
 
 /** The roms folder as the computer names it (rommancer.sh passes it), or null outside rommancer.sh */
 export const romsOnHost = () => process.env.ROMMANCER_ROMS_HOST || null;
@@ -58,8 +61,28 @@ export function finishRoms() {
   if (dir()) fs.rmSync(path.join(dir(), PENDING), { force: true });
 }
 
-/** Asks the computer to start Rommancer again with this folder at /roms; the step ends with it */
-export function requestRoms(p: string) {
-  fs.writeFileSync(path.join(dir(), 'request.new'), `${JSON.stringify({ roms: p, at: new Date().toISOString() })}\n`);
+/**
+ * Asks the computer to start Rommancer again with this folder at /roms (the same one too: the computer's folders are
+ * mounted no more), and as a service started with the computer or not; the step ends with it
+ */
+export function requestRoms(p: string, autostart: boolean) {
+  fs.writeFileSync(path.join(dir(), 'request.new'), `${JSON.stringify({ roms: p, autostart, at: new Date().toISOString() })}\n`);
   fs.renameSync(path.join(dir(), 'request.new'), path.join(dir(), 'request'));
+}
+
+/**
+ * The first start with the roms folder chosen: it becomes the library's folder (where new roms go too) and is scanned,
+ * unless the library already has folders. Done once, so a library emptied on purpose stays empty.
+ */
+export async function adoptRoms() {
+  if (!romsOnHost() || romsPending() || !fs.existsSync(mount())) return;
+  // Loaded here: the installer reads this file before there is a database to connect to
+  const { prisma } = await import('../../lib/prisma.js');
+  const { enqueue } = await import('../../lib/jobs.js');
+  const { registerIdentity } = await import('../storage/health.js');
+  if (await prisma.setting.findUnique({ where: { key: ADOPTED } })) return;
+  await prisma.setting.create({ data: { key: ADOPTED, value: new Date().toISOString() } });
+  if (await prisma.romPath.count()) return;
+  const rp = await registerIdentity(await prisma.romPath.create({ data: { label: 'Roms', path: mount(), isDefaultTarget: true } }));
+  await enqueue('scan', { romPathId: rp.id });
 }

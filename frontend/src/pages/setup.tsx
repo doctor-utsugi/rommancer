@@ -289,6 +289,7 @@ function RomsStep() {
   })
   const [problem, setProblem] = useState<Problem | null>(null)
   const [busy, setBusy] = useState<'saving' | 'restarting' | null>(null)
+  const [autostart, setAutostart] = useState(true)
   const d = state.data
   const root = d?.roots.find((r) => browsing === r || browsing?.startsWith(r + '/'))
   const parent = browsing && root && browsing !== root ? browsing.slice(0, browsing.lastIndexOf('/')) || '/' : null
@@ -297,16 +298,17 @@ function RomsStep() {
     setBusy('saving')
     setProblem(null)
     try {
-      const r = await api<{ restarting: boolean; path: string }>('POST', '/setup/roms', { path })
+      const r = await api<{ restarting: boolean; path: string }>('POST', '/setup/roms', { path, autostart })
       if (r.restarting) {
-        // The computer starts Rommancer again with that folder: done once it answers with it
+        // The computer starts Rommancer again with that folder: done once it answers with it and the step is over
         setBusy('restarting')
+        const done = (s: RomsState | null) => s?.current === r.path && !s.pending
         let now: RomsState | null = null
-        for (let i = 0; i < 90 && now?.current !== r.path; i++) {
+        for (let i = 0; i < 90 && !done(now); i++) {
           await sleep(2000)
           now = await get<RomsState>('/setup/roms').catch(() => null)
         }
-        if (now?.current !== r.path) {
+        if (!done(now)) {
           setBusy(null)
           return setProblem({ key: 'setup.romsFailed' })
         }
@@ -359,6 +361,13 @@ function RomsStep() {
                 {folders.data && folders.data.folders.length === 0 && <li className="px-3 py-1.5 text-muted-foreground">{t('setup.romsEmpty')}</li>}
               </ul>
             </div>
+            <label className="flex cursor-pointer gap-3 text-sm">
+              <input type="checkbox" checked={autostart} disabled={!!busy} onChange={(e) => setAutostart(e.target.checked)} className="mt-1 self-start" />
+              <span>
+                <span className="font-medium">{t('setup.autostart')}</span>
+                <span className="block text-muted-foreground">{t('setup.autostartHint')}</span>
+              </span>
+            </label>
             <ProblemNote problem={problem} />
             <Button type="button" disabled={!!busy || !browsing} onClick={() => void choose(browsing!)} className="h-auto min-h-9 whitespace-normal py-2">
               {t('setup.romsUse', { path: browsing })}

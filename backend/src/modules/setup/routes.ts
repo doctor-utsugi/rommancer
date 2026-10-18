@@ -16,7 +16,7 @@ import { setServerSettings } from '../../lib/settings.js';
 import { issueTokens } from '../auth/routes.js';
 import { requireAdmin, requireAuth } from '../auth/middleware.js';
 import { badRequest } from '../../lib/http.js';
-import { browseRoots, canChangeRoms, finishRoms, hostPath, isDir, listFolders, requestRoms, romsOnHost, romsPending } from './roms.js';
+import { adoptRoms, browseRoots, canChangeRoms, finishRoms, hostPath, isDir, listFolders, requestRoms, romsOnHost, romsPending } from './roms.js';
 
 export const setupRouter = Router();
 
@@ -68,7 +68,7 @@ async function createAdmin(body: z.infer<typeof adminBody>) {
 }
 
 // The console installer (deploy/install.sh) sends the same field: test/installer-parity.test.ts
-export const romsBody = z.object({ path: z.string().min(1).max(1024) });
+export const romsBody = z.object({ path: z.string().min(1).max(1024), autostart: z.boolean().default(true) });
 
 /** Where the roms are now, and whether the computer can mount another folder */
 setupRouter.get('/roms', requireAuth, requireAdmin, (_req, res) => {
@@ -82,17 +82,22 @@ setupRouter.get('/roms/folders', requireAuth, requireAdmin, (req, res) => {
   res.json({ path: p, folders: listFolders(p) });
 });
 
-/** The roms' folder: the current one ends the step; another one is mounted by the computer, which restarts Rommancer */
-setupRouter.post('/roms', requireAuth, requireAdmin, (req, res) => {
+/**
+ * The roms' folder and whether Rommancer starts with the computer: the computer's watcher starts Rommancer again with
+ * both. Without a watcher only the current folder can be kept, and the step ends there.
+ */
+setupRouter.post('/roms', requireAuth, requireAdmin, async (req, res) => {
   const body = romsBody.parse(req.body);
   const current = romsOnHost();
-  if (body.path.replace(/\/+$/, '') === current) {
+  const same = body.path.replace(/\/+$/, '') === current;
+  if (!canChangeRoms()) {
+    if (!same) throw badRequest('This computer cannot change the roms folder from the browser');
     finishRoms();
+    await adoptRoms();
     return res.json({ restarting: false, path: current });
   }
-  if (!canChangeRoms()) throw badRequest('This computer cannot change the roms folder from the browser');
-  const p = hostPath(body.path);
-  if (!p || !isDir(p)) throw badRequest('Not a folder Rommancer can see');
-  requestRoms(p);
+  const p = same ? current! : hostPath(body.path);
+  if (!p || (!same && !isDir(p))) throw badRequest('Not a folder Rommancer can see');
+  requestRoms(p, body.autostart);
   res.json({ restarting: true, path: p });
 });

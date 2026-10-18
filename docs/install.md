@@ -39,10 +39,12 @@ Install with one command, then finish in the browser:
 curl -fsSL https://github.com/doctor-utsugi/rommancer/releases/latest/download/get.sh | sh
 ```
 
-It asks nothing. It downloads Rommancer into `~/rommancer` with its ready-made images (a minute or two), starts it as
-a [service](#running-it-as-a-service) that starts with the computer (your sudo password may be asked once, for
-`loginctl enable-linger`), and shows the address to open, http://your-ip:8096 by default. The browser then asks
-[the rest](#what-the-installer-asks), the folder with your roms last: you pick it among your computer's folders.
+It asks nothing. It downloads Rommancer into `~/rommancer` with its ready-made images (a minute or two), starts it
+and shows the address to open, http://your-ip:8096 by default. On Linux your sudo password may be asked once, for
+`loginctl enable-linger`, so Rommancer keeps working after you log out. The browser then asks
+[the rest](#what-the-installer-asks), last the folder with your roms, which you pick among your computer's folders,
+and whether Rommancer [starts with the computer](#running-it-as-a-service). That folder goes into the library and is
+scanned straight away.
 
 To answer everything in the console instead, with dialog boxes:
 
@@ -88,8 +90,7 @@ curl -fsSL https://github.com/doctor-utsugi/rommancer/releases/latest/download/g
 
 The first time, the script creates Podman's virtual machine (4 GB of memory) and starts it. Then it carries on as on
 Linux and ends with the address to open in the browser. `rommancer.sh install`, as on Linux, asks in the console
-instead. Installed as a
-service, it starts every time you log in to the Mac.
+instead. Started with the computer, it starts every time you log in to the Mac.
 
 Two things differ from Linux:
 
@@ -190,14 +191,16 @@ itself: on Linux with the computer, even with nobody logged in; on macOS and Win
 - **macOS:** a login item, `~/Library/LaunchAgents/com.rommancer.start.plist`.
 - **Windows:** a shortcut in your Startup folder, `rommancer.cmd`.
 
-`install --service yes` (or `no`) answers the question beforehand.
+`install --service yes` (or `no`) answers the question beforehand. Installed with `get.sh`, the browser asks it
+instead, and Administration > Update works either way.
 
 To serve Rommancer under a domain with HTTPS, put a reverse proxy (nginx, Caddy) in front of its port.
 
 ### Updating
 
 Administration > Update says when there is a new version and what it changes. Its button updates Rommancer when it
-is [installed as a service](#running-it-as-a-service): the service watches for the request and runs the update.
+was installed with `get.sh` or [as a service](#running-it-as-a-service): a watcher on the computer sees the request
+and runs the update.
 Without the service, run the same from the console:
 
 ```bash
